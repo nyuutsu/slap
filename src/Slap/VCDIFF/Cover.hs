@@ -4,7 +4,7 @@
 -- It is its own type to keep two jobs apart: the matcher ('Slap.VCDIFF.FFI.vcdiffCover', Rust-backed) works out the plan, the emitter ('Slap.VCDIFF.Create') turns it into wire bytes.
 -- That split keeps a wrong plan (a matcher bug) separate from garbled bytes (an encoder bug).
 --
--- A literal holds no bytes: it names a slice of the target, by offset and length.
+-- A literal holds no bytes: it names a slice of the target.
 -- A copy's offset points into the superstring @U@, the same space 'Slap.VCDIFF.Apply' uses, so the two agree on what an address means.
 module Slap.VCDIFF.Cover
   ( Cover(..)

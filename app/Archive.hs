@@ -85,11 +85,11 @@ unwrapViaExternalTool format path = do
     Left unwrapError -> pure (Left unwrapError)
     Right name       -> extractEntry format path name
 
--- | Capture an external tool's stderr as a 'ToolDiagnostic'.
+-- | Capture an external tool's stderr.
 toolDiagnostic :: String -> ToolDiagnostic
 toolDiagnostic = ToolDiagnostic . Text.pack
 
--- | Wrap a raw entry path from a tool listing as an 'EntryName'.
+-- | Wrap a raw entry path from a tool listing.
 toEntryName :: String -> EntryName
 toEntryName = EntryName . Text.pack
 

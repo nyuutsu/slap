@@ -24,7 +24,7 @@ data Constraint
   = SMCShapeConstraint
   deriving (Show, Eq, Ord)
 
--- | Display name for a 'Constraint'. Used by 'Slap.Status' renderers.
+-- | Used by 'Slap.Status' renderers.
 constraintName :: Constraint -> Text
 constraintName SMCShapeConstraint = "SMC-shaped target size"
 

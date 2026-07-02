@@ -57,8 +57,7 @@ data PPF2Record = PPF2Record
 
 -- | The 1024-byte block sampled from the source ROM at offset
 -- 'ppf2ValidationOffset' and stored in the patch for at-apply
--- verification. The role newtype keeps this distinct from
--- record-payload bytes elsewhere in the pipeline.
+-- verification.
 newtype PPF2ValidationBlock = PPF2ValidationBlock
   { unPPF2ValidationBlock :: ByteString }
   deriving (Show, Eq)
@@ -71,10 +70,7 @@ newtype PPF2ValidationBlock = PPF2ValidationBlock
 -- against PPF2's 4-byte LE length field. Constructor private;
 -- values come from one of two named producers:
 --
--- * 'narrowPPF2FileId' — runtime check, encodes the typed text as
---   UTF-8 (lenient) and refuses with
---   'Slap.Narrow.FieldValueExceedsBound' if the produced byte count
---   exceeds @0xFFFFFFFF@.
+-- * 'narrowPPF2FileId' — runtime check.
 -- * 'ppf2FileIdFromParsed' — parse-time, trusts the wire format's
 --   4-byte length field has already constrained the bytes the
 --   typed text was decoded from.

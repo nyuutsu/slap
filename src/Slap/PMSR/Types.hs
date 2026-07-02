@@ -26,13 +26,11 @@ import Slap.Measure (Length(..), Offset(..),
                      FileSize, ActualSize(..), ExpectedSize(..))
 import Slap.Narrow (EncodingLimits(..), narrowToWord32)
 
--- | A single PMSR record: offset + data to write.
 data PMSRRecord = PMSRRecord
   { pmsrOffset :: !Offset
   , pmsrData   :: !ByteString
   } deriving (Show)
 
--- | A parsed PMSR patch.
 data PMSRPatch = PMSRPatch
   { pmsrRecords :: Vector PMSRRecord
   } deriving (Show)
@@ -48,7 +46,7 @@ narrowPMSRRecordCount n =
     Left  failure -> Left (NarrowingError failure)
     Right word    -> Right (PMSRRecordCount word)
 
--- | PMSR magic bytes (@"PMSR"@) per Star Rod (Paper Mario 64).
+-- | PMSR magic bytes, per Star Rod (Paper Mario 64).
 pmsrMagicBytes :: ByteString
 pmsrMagicBytes = "PMSR"
 

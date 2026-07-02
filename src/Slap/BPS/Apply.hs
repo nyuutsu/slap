@@ -44,8 +44,7 @@ newtype SourceRelativeOffset = SourceRelativeOffset
   } deriving (Eq, Ord, Show)
 
 -- | A relative-displacement cursor for BPS's @TargetCopy@ action.
--- Mirrors 'SourceRelativeOffset'; the two are role-distinct so the
--- action-stream walker cannot transpose them at the recursive call.
+-- Mirrors 'SourceRelativeOffset'.
 newtype TargetRelativeOffset = TargetRelativeOffset
   { unTargetRelativeOffset :: SignedOffset
   } deriving (Eq, Ord, Show)
@@ -62,7 +61,7 @@ instance Cursor TargetRelativeOffset where
 -- TargetCopy classification
 ----------------------------------------------------------------------------
 
--- | How to execute a 'TargetCopy' action, given its validated source position, the current write position, and the copy length.
+-- | How to execute a 'TargetCopy' action.
 data TargetCopyStrategy
   = TargetCopyNonOverlapping
     -- ^ The source range ends at or before the destination begins.
@@ -328,7 +327,7 @@ applyBPS patch (InputFileContents source)
 ----------------------------------------------------------------------------
 
 -- | The three cursors threaded through the BPS action-stream walk.
--- Bundled into a record so 'BPSApply' (a 'StateT' over 'IO') can carry them implicitly.
+-- Bundled into a record so 'BPSApply' can carry them implicitly.
 -- Each handler updates only the slots its action class touches.
 data BPSCursors = BPSCursors
   { outputPosition :: !WritePosition

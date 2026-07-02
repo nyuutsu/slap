@@ -107,7 +107,6 @@ narrowPPF3FileId description =
 ppf3FileIdFromParsed :: EncodedText -> PPF3FileId
 ppf3FileIdFromParsed = PPF3FileId
 
--- | A fully parsed PPF3 patch.
 data PPF3Patch = PPF3Patch
   { ppf3Description     :: !EncodedText
     -- ^ 50-byte description field, decoded at parse time under the

@@ -52,10 +52,8 @@ createGDIFF inputContents@(InputFileContents original) outputContents@(OutputFil
       in copyPart <> dataBuilder
          <> buildCommands (hunkEnd currentHunk) remaining
 
--- | Encode a DATA command. Payloads larger than 'maxSingleCommandLength' bytes
--- are split into multiple DATA 248 commands. The W3C GDIFF spec defines int
--- as signed 32-bit, so a single DATA command can carry at most
--- @unLength maxSingleCommandLength@ bytes.
+-- | Encode a DATA command.
+-- Payloads larger than 'maxSingleCommandLength' bytes are split into multiple DATA 248 commands.
 --
 -- Each branch's guard establishes the bound the 'fromIntegral' relies on.
 encodeData :: ByteString -> Builder
@@ -74,25 +72,14 @@ splitData :: ByteString -> Builder
 splitData remaining
   | ByteString.null remaining = mempty
   | otherwise =
-      -- 'chunkLength' is bounded above by 'unLength maxSingleCommandLength'
-      -- (the lower of the two arguments to 'min'); the 'fromIntegral'
-      -- below therefore fits 'Word32'.
+      -- 'chunkLength' is bounded above by 'unLength maxSingleCommandLength', so the 'fromIntegral' below fits 'Word32'.
       let chunkLength    = min (unLength maxSingleCommandLength) (ByteString.length remaining)
           (chunk, leftover) = ByteString.splitAt chunkLength remaining
       in word8 248 <> putWord32BE (fromIntegral chunkLength) <> byteString chunk
          <> splitData leftover
 
--- | A single COPY command, opcode-tagged so the constructor field types
--- match the wire field widths exactly. Reads top-to-bottom as the W3C
--- GDIFF spec's COPY table:
---
--- > 249  ushort offset, ubyte  length
--- > 250  ushort offset, ushort length
--- > 251  ushort offset, int    length
--- > 252  int    offset, ubyte  length
--- > 253  int    offset, ushort length
--- > 254  int    offset, int    length
--- > 255  long   offset, int    length
+-- | A single COPY command, opcode-tagged so the constructor field types match the wire field widths exactly.
+-- Reads top-to-bottom as the W3C GDIFF spec's COPY table.
 --
 -- 'Copy255' is the only opcode whose offset spans a full 'Int64'; all
 -- length fields top out at 'maxSingleCommandLength' (the spec's signed
@@ -113,11 +100,8 @@ data CopyEncoding
 -- and how many bytes are still to be planned.
 data CopyPlanCursor = CopyPlanCursor !Offset !Length
 
--- | Split a COPY request into a sequence of in-range 'CopyEncoding'
--- chunks. Implemented as an 'unfoldr' because the work is a corecursion:
--- one chunk per step, advancing a 'CopyPlanCursor' until it is
--- exhausted. Above 'maxSingleCommandLength' this yields a run of
--- 'Copy255' commands; below it, a singleton.
+-- | Split a COPY request into a sequence of in-range 'CopyEncoding' chunks:
+-- a singleton at or below 'maxSingleCommandLength', a run of capped chunks above it.
 planCopy :: Offset -> Length -> [CopyEncoding]
 planCopy initialOffset initialLength =
   unfoldr peelChunk (CopyPlanCursor initialOffset initialLength)
@@ -166,8 +150,6 @@ renderCopy = \case
   Copy254 wireOffset wireLength -> word8 254 <> putWord32BE wireOffset <> putWord32BE wireLength
   Copy255 wireOffset wireLength -> word8 255 <> putInt64BE  wireOffset <> putWord32BE wireLength
 
--- | Encode a COPY command for a region of @regionLength@ bytes starting
--- at @regionOffset@ in source. Larger-than-spec regions are split into
--- a run of 'Copy255' commands by 'planCopy'.
+-- | Encode a COPY command for a region of @regionLength@ bytes starting at @regionOffset@ in source.
 encodeCopy :: Offset -> Length -> Builder
 encodeCopy regionOffset regionLength = foldMap renderCopy (planCopy regionOffset regionLength)

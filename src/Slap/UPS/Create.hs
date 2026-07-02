@@ -89,7 +89,7 @@ diffToBlocks (InputFileContents source) (OutputFileContents target)
       | otherwise = 0
       where byteIndex = offsetToInt position
 
-    -- Tail-recursive scan. Accumulates skip count while bytes match;
+    -- Accumulates skip count while bytes match;
     -- on diff, collects the run and emits a block.
     scan :: Offset -> Length -> [UPSBlock] -> [UPSBlock]
     scan !position !skipCount !accumulatedBlocks
@@ -104,12 +104,9 @@ diffToBlocks (InputFileContents source) (OutputFileContents target)
               block = UPSBlock skipCount runBytes
           in scan nextPosition (Length 0) (block : accumulatedBlocks)
 
-    -- Scan forward from 'start' while bytes differ, then consume the
-    -- terminating matching byte. If no match is found within
-    -- @[start, targetLength)@, the run extends to @targetLength@ and
-    -- the implicit terminator's "phantom" position is @targetLength@
-    -- itself — past the output buffer's last byte. The apply path
-    -- handles that via the OOB-clipping branch in 'applyUPS'.
+    -- Scan forward from 'start' while bytes differ, then consume the terminating matching byte.
+    -- A run with no match in @[start, targetLength)@ extends to @targetLength@:
+    -- the phantom-terminator shape covered in the header above.
     collectRun :: Offset -> (ByteString, Offset)
     collectRun start =
       let runEnd = findFirstMatchPosition start

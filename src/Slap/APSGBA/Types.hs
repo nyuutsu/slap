@@ -47,12 +47,10 @@ data APSGBARecord = APSGBARecord
 -- Wire-format wrappers
 ----------------------------------------------------------------------------
 
--- | APS-GBA's 4-byte LE source-ROM-size header field, narrowed from a
--- runtime 'FileSize'. Constructor private; values come from
--- 'narrowAPSGBASourceSize'. APS-GBA has no parser-side exit because
--- the parser does not roundtrip through 'APSGBASourceSize' — its
--- 'APSGBAHeader' carries the raw 'FileSize' instead, since the apply
--- side needs the file-size type directly.
+-- | APS-GBA's 4-byte LE source-ROM-size header field, narrowed from a runtime 'FileSize'.
+-- Values come from 'narrowAPSGBASourceSize'.
+-- APS-GBA has no parser-side exit because the parser does not roundtrip through 'APSGBASourceSize':
+-- its 'APSGBAHeader' carries the raw 'FileSize' instead, since the apply side needs the file-size type directly.
 newtype APSGBASourceSize = APSGBASourceSize { unAPSGBASourceSize :: Word32 }
   deriving (Show, Eq)
 
@@ -85,7 +83,7 @@ apsGbaMagicBytes = "APS1"
 apsGbaHeaderSize :: Int
 apsGbaHeaderSize = 12
 
--- | XOR data block size: 65536 bytes (64 KB).
+-- | XOR data block size (64 KB).
 apsGbaBlockSize :: Int
 apsGbaBlockSize = 65536
 

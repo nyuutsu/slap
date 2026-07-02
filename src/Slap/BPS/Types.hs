@@ -47,8 +47,7 @@ data BPSPatch = BPSPatch
   { bpsSourceSize :: !FileSize
   , bpsTargetSize :: !FileSize
   , bpsMetadata   :: !BPSMetadata
-  -- | Action stream as a boxed 'Vector'.
-  -- Boxed (not unboxed/storable) because 'BPSAction' is a sum type containing a 'ByteString'.
+  -- | Boxed (not unboxed/storable) because 'BPSAction' is a sum type containing a 'ByteString'.
   -- A 'Vector' rather than a list so the whole stream is one contiguous array of pointers —
   -- a single GC object instead of a chain of cons cells.
   , bpsActions    :: !(Vector BPSAction)
@@ -130,12 +129,8 @@ data BPSMetadataShape
     -- The "literally anything" case the spec permits.
   deriving (Eq, Show)
 
--- | Classify a BPS metadata blob. Total and pure — the only place the
--- UTF-8-or-not judgment lives. An empty blob is 'MetadataAbsent'; a
--- blob the lenient UTF-8 decoder accepted with no substitution is
--- 'MetadataUTF8Text'; a blob that needed even one substitution is
--- 'MetadataNotUTF8', because a single undecodeable byte means the
--- bytes are not UTF-8, whatever else they may be.
+-- | Total and pure: the only place the UTF-8-or-not judgment lives.
+-- Even one substitution from the lenient decoder means the bytes are not UTF-8, whatever else they may be.
 classifyBPSMetadata :: BPSMetadata -> BPSMetadataShape
 classifyBPSMetadata (BPSMetadata bytes)
   | ByteString.null bytes          = MetadataAbsent

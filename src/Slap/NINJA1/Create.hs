@@ -31,10 +31,10 @@ import Data.Int (Int64)
 
 -- | Encode pre-diffed records as a NINJA1 Binary patch.
 encodeNINJA1 :: [EncodedHunk]
-             -> CRC32           -- source CRC32
+             -> CRC32           -- source
              -> MD5Hash         -- source MD5 (16 bytes)
              -> SHA1Hash        -- source SHA1 (20 bytes)
-             -> NINJA1RomType   -- ROM platform type
+             -> NINJA1RomType
              -> NINJA1Compression
              -> PatchFileContents
 encodeNINJA1 records sourceCRC sourceMD5 sourceSHA1 romType compression =
@@ -113,8 +113,7 @@ ninja1HashInput input
 --   the colliding offset, and the conversion aborts rather than
 --   emitting bytes a parser could not faithfully round-trip.
 --
--- Records whose offset is not the sentinel pass through unchanged —
--- the explicit "not a collision" branch, not a silent catch-all.
+-- Records whose offset is not the sentinel pass through unchanged.
 --
 -- This function is a deliberate structural duplicate of
 -- 'Slap.IPS.Create.resolveSentinelCollisions'. The two formats share
@@ -123,14 +122,9 @@ ninja1HashInput input
 -- the parameterized signature keeps both copies pin-compatible so
 -- future drift is easy to spot.
 --
--- The function operates on already-split records ('SplitHunk') and
--- unwraps them to raw 'Hunk's on output, parallel to
--- 'Slap.IPS.Create.resolveSentinelCollisions'. NINJA1's wire format
--- uses a variable-width length-of-length encoding with no per-record
--- cap, so the second 'splitHunksUnbounded' pass that the convert
--- pipeline runs after this function is a no-op for NINJA1 — present
--- for type uniformity with the IPS variants where the same pass
--- closes a real overflow hazard.
+-- NINJA1's wire format uses a variable-width length-of-length encoding with no per-record cap,
+-- so the second 'splitHunksUnbounded' pass that the convert pipeline runs after this function is a no-op for NINJA1;
+-- it is present for type uniformity with the IPS variants, where the same pass closes a real overflow hazard.
 resolveSentinelCollisions
   :: FormatLabel
   -> SentinelOffset

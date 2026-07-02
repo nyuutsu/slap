@@ -75,8 +75,8 @@ newtype SameBlockCount = SameBlockCount { unSameBlockCount :: Int }
 -- The default code table fixes these ('defaultAddressCacheConfig'); a custom code table declares its own.
 -- The cache carries its configuration so the sizes drive the round-robin wrap, the slot bounds, and the same-block arithmetic at runtime, rather than being baked into the types.
 data AddressCacheConfig = AddressCacheConfig
-  { nearSlotCount  :: !NearSlotCount   -- ^ @s_near@: the number of near slots.
-  , sameBlockCount :: !SameBlockCount  -- ^ @s_same@: the number of 256-slot same blocks.
+  { nearSlotCount  :: !NearSlotCount
+  , sameBlockCount :: !SameBlockCount
   }
   deriving (Eq, Show)
 
@@ -122,7 +122,7 @@ slotsPerSameBlock = 256
 sameSlotCount :: AddressCacheConfig -> Int
 sameSlotCount config = unSameBlockCount (sameBlockCount config) * slotsPerSameBlock
 
--- | The address held in one near slot; an untouched slot holds zero.
+-- | The address held in one near slot.
 readNearSlot :: NearSlotIndex -> IntMap Offset -> Offset
 readNearSlot (NearSlotIndex slot) = IntMap.findWithDefault (Offset 0) slot
 
@@ -137,7 +137,7 @@ nearSlotIndices :: AddressCacheConfig -> [NearSlotIndex]
 nearSlotIndices config =
   [ NearSlotIndex slot | slot <- [0 .. unNearSlotCount (nearSlotCount config) - 1] ]
 
--- | The address held in one same slot: the block index and the one-byte operand select within the block's 256-slot span, and an untouched slot holds zero.
+-- | The address held in one same slot: the block index and the one-byte operand select within the block's 256-slot span.
 readSameSlot :: SameBlockIndex -> SameSlotByte -> IntMap Offset -> Offset
 readSameSlot (SameBlockIndex block) (SameSlotByte slotByte) =
   IntMap.findWithDefault (Offset 0) (block * slotsPerSameBlock + fromIntegral slotByte)
@@ -204,7 +204,7 @@ data AddressModeFamily
     -- ^ Same modes: a single byte indexing the block's 256 slots.
 
 -- | Name a mode byte's family against a cache configuration: SELF, then HERE, then 'nearSlotCount' near slots, then 'sameBlockCount' same blocks (RFC 3284 §5.3's @2 + s_near + s_same@ bands).
--- 'Nothing' is a mode past the last band, the 'UnknownAddressMode' decline at the caller. The near and same indices are made here, each inside its own band, so neither can name a slot the cache lacks.
+-- 'Nothing' is a mode past the last band, the 'UnknownAddressMode' decline at the caller.
 classifyAddressMode :: AddressCacheConfig -> Word8 -> Maybe AddressModeFamily
 classifyAddressMode config mode
   | modeNumber == selfMode            = Just SelfAddress

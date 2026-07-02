@@ -82,14 +82,8 @@ newtype XDelta1DataSegment = XDelta1DataSegment
   { unXDelta1DataSegment :: ByteString
   } deriving (Eq, Show)
 
--- | Whether bit 0 (@FLAG_NO_VERIFY@) of the patch header's flags
--- word was set. Threaded from 'parseVersion1Point1' (where the
--- flags word is read) into 'parseControl' (which decides how to
--- wrap parsed MD5 values: under 'NoVerifyFlagSet', target MD5
--- goes into 'CreatorOptedOutOfVerification' and per-source MD5s
--- become 'Nothing'; under 'NoVerifyFlagClear', target MD5 goes
--- into 'VerifyAgainstStoredMD5s' and per-source MD5s become
--- 'Just').
+-- | Whether bit 0 (@FLAG_NO_VERIFY@) of the patch header's flags word was set.
+-- Threaded from 'parseVersion1Point1' (where the flags word is read) into 'parseControl' (which decides how to wrap parsed MD5 values).
 data XDelta1NoVerifyFlag
   = NoVerifyFlagClear
   | NoVerifyFlagSet
@@ -328,11 +322,7 @@ parseControl metadataEncoding noVerifyFlag compressionPosture controlSegment dat
             , xdelta1ToName           = toName
             , xdelta1Verification     = verificationPosture
             , xdelta1PatchCompression = compressionPosture
-              -- 'parseControl' is scoped to the control segment;
-              -- bits 1/2 of the header flags word are not in scope
-              -- here. 'parseVersion1Point1' overrides both fields
-              -- after the parse returns. Tests that drive
-              -- 'parseControl' directly see the defaults.
+              -- 'parseVersion1Point1' overrides both fields after the parse returns.
             , xdelta1FromAtDeltaTime  = FileWasRawBytes
             , xdelta1ToAtDeltaTime    = FileWasRawBytes
             , xdelta1TargetLength     = targetLength
@@ -420,7 +410,6 @@ parseOneSource = do
     }
 
 -- | Parse @count@ source records off the wire as a flat list, flag bytes still raw.
--- 'validateSourceFlags' decodes each, and the shape is validated in 'requireDataAndFileRecords'.
 parseSourceList :: Int -> ByteParser [RawSourceRecord]
 parseSourceList 0 = pure []
 parseSourceList count = do
@@ -503,8 +492,7 @@ parseInstructions count = do
 -- offsets are zero and the real offset is the running total of all
 -- preceding instructions' lengths against that source. The data
 -- record's offset-mode is consulted for data-targeting instructions;
--- the file source's for file-targeting instructions. Folds across
--- instructions maintaining a per-target running position.
+-- the file source's for file-targeting instructions.
 fixSequentialOffsets :: XDelta1OffsetMode -> XDelta1OffsetMode -> [XDelta1Instruction] -> [XDelta1Instruction]
 fixSequentialOffsets dataOffsetMode fileOffsetMode instructions =
   snd (mapAccumL resolveSequentialOffset initialPositions instructions)
@@ -540,9 +528,7 @@ fixSequentialOffsets dataOffsetMode fileOffsetMode instructions =
           | otherwise -> (positions, instruction)
 
 -- | Per-target running positions for 'fixSequentialOffsets'.
--- Replaces the prior association-list lookup with two named fields;
--- there are only ever two sources so the structure is fixed-shape.
--- Internal to the parser; not exported.
+-- There are only ever two sources, so the structure is fixed-shape.
 data SequentialPositions = SequentialPositions
   { dataPosition :: !Int
   , filePosition :: !Int

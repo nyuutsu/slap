@@ -277,8 +277,7 @@ encodeTruncationMarker offsetWidth (FileSize truncatedSizeBytes) =
 -- whatever record covers @sentinel - 1@ (the last one, in wire
 -- order), and only from the source when no record does.
 --
--- Records whose offset is not the sentinel pass through unchanged —
--- the explicit "not a collision" branch, not a silent catch-all.
+-- Records whose offset is not the sentinel pass through unchanged.
 --
 -- Both 'Slap.Convert.createPatch' (with real source bytes) and
 -- 'Slap.Convert.convertDirect' (with an empty 'InputFileContents')
@@ -286,14 +285,10 @@ encodeTruncationMarker offsetWidth (FileSize truncatedSizeBytes) =
 -- sentinel resolution at all based on whether the format has a
 -- sentinel (IPS, IPS32, EBP do; nothing else does).
 --
--- The function operates on already-split records ('SplitHunk') and
--- unwraps them to raw 'Hunk's on output. The byte-prepend on a fixable
--- collision can push a record's payload one byte past the original
--- 'splitHunks' cap, so the proof is dropped: the convert pipeline
--- runs 'splitHunks' a second time after this function returns,
--- restoring the typed bound and catching the case where a
--- @0xFFFF@-byte payload at the sentinel offset would otherwise overflow
--- IPS's 16-bit length field on the wire.
+-- The byte-prepend on a fixable collision can push a record's payload one byte past the original 'splitHunks' cap,
+-- so the 'SplitHunk' proof is dropped: the convert pipeline runs 'splitHunks' a second time after this function returns,
+-- restoring the typed bound
+-- and catching the case where a @0xFFFF@-byte payload at the sentinel offset would otherwise overflow IPS's 16-bit length field on the wire.
 resolveSentinelCollisions
   :: FormatLabel
   -> SentinelOffset
@@ -348,12 +343,8 @@ resolveSentinelCollisions label sentinel (InputFileContents source) records =
         recordOffset  = splitOffset record
         recordPayload = splitPayload record
 
--- | Build the EBP-style JSON metadata blob from a structured
--- 'EBPMetadata'. The four-key shape (@patcher@, @title@, @author@,
--- @description@) matches what EBPatcher and every long-standing
--- community tool emits. Each field is emitted only when 'Just';
--- absent ('Nothing') fields simply do not appear in the JSON
--- output.
+-- | The four-key shape matches what EBPatcher and every long-standing community tool emits;
+-- each field is emitted only when 'Just'.
 --
 -- EBP metadata is JSON, so the emitter goes through @aeson@: the
 -- field values arrive as 'EncodedText' (each tagged with whichever

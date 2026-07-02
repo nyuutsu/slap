@@ -34,7 +34,7 @@ parseBPS (PatchFileContents input)
   | ByteString.length input < unLength bpsFooterLength =
       Left (InputTooShort LabelBPS (RequiredLength bpsFooterLength) (ActualLength (byteLength input)))
   | otherwise = do
-      -- Validate patch CRC (covers everything except the trailing patch CRC)
+      -- The patch CRC covers everything except itself
       let inputLength    = ByteString.length input
           crcLength      = unLength bpsCRC32Length
           footerLength   = unLength bpsFooterLength
@@ -47,7 +47,7 @@ parseBPS (PatchFileContents input)
         else pure ()
       let sourceCRC = CRC32 (getWord32LE (inputLength - footerLength) input)
           targetCRC = CRC32 (getWord32LE (inputLength - 2 * crcLength) input)
-          -- Parse body between magic and footer using ByteParser monad
+          -- Parse body between magic and footer
           bodyBytes = ByteString.take (inputLength - overheadLength) (ByteString.drop magicLength input)
       case runByteParser parseBPSBody bodyBytes of
         Left parserError -> Left (ParseError LabelBPS parserError)
@@ -99,7 +99,7 @@ parseBPSBody = do
 
 -- | The result of walking the BPS action stream:
 -- the decoded actions in wire order, paired with any per-action warnings the walk accumulated.
--- The only warning emitted here is 'NegativeZeroInBPS' (the non-canonical @0x81@ encoding of zero in a copy action's signed-delta varint).
+-- The only warning emitted here is 'NegativeZeroInBPS'.
 -- Strictly private to 'Slap.BPS.Parse' —
 -- the public surface of 'BPSBody' carries the same two pieces of information through 'bpsBodyActions' and 'bpsBodyWarnings'.
 data BPSParsedActionStream = BPSParsedActionStream
@@ -108,20 +108,14 @@ data BPSParsedActionStream = BPSParsedActionStream
   }
 
 -- | One decoded action plus the warnings its decoding emitted.
--- 'decodeOneAction' returns this so the per-arm logic for the four
--- BPS command codes — including the @0x81@ negative-zero detection
--- on 'SourceCopy' / 'TargetCopy' offset varints — lives in one
--- helper, leaving 'parseActions' as a thin tail-recursive walker
--- that just stitches results into its two reversed accumulators.
+-- 'decodeOneAction' returns this so the per-arm logic for the four BPS command codes lives in one helper,
+-- leaving 'parseActions' as a thin tail-recursive walker that just stitches results into its two reversed accumulators.
 data BPSDecodedAction = BPSDecodedAction
   { bpsDecodedActionValue    :: !BPSAction
   , bpsDecodedActionWarnings :: ![SlapAdvisory]
   }
 
--- | Which kind of copy action 'decodeCopyAction' is decoding. The
--- two BPS copy commands have identical wire shapes (signed-delta
--- varint following the packed header) and differ only in which
--- buffer their copy reads from.
+-- | Which kind of copy action 'decodeCopyAction' is decoding.
 data BPSCopyKind = CopyFromSource | CopyFromTarget
 
 -- | Walk the BPS action stream until 'atEnd', returning every

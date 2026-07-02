@@ -22,8 +22,8 @@ data BSDiffPatch = BSDiffPatch
   , bsdiffExtraData    :: ByteString  -- decompressed
   } deriving (Show)
 
--- | A single bsdiff control instruction: a triple of (add length, copy length, seek delta).
--- It tells the apply algorithm to add that many bytes from the diff stream, copy that many from the extra stream, then seek the source-cursor by that signed amount.
+-- | A single bsdiff control instruction.
+-- The apply runs the three fields in order: add, then copy, then seek.
 data BSDiffInstruction = BSDiffInstruction
   { controlAdd  :: !Length  -- bytes to add from diff stream to source
   , controlCopy :: !Length  -- bytes to copy from extra stream

@@ -87,8 +87,7 @@ applyXDelta1 patch sourceContents =
             advanceOutputByInstruction stride =
               modify (\outputPosition -> advance outputPosition stride)
 
-            -- | The output cursor lives in 'XDelta1Apply' state, so each step needs only the remaining instructions and the running action index.
-            -- End-of-stream verifies the walker filled the entire target buffer.
+            -- | End-of-stream verifies the entire target buffer was filled.
             applyLoop :: [XDelta1Instruction] -> ActionIndex -> XDelta1Apply (Maybe ApplyError)
             applyLoop [] _actionIndex = do
               outputPosition <- get
@@ -117,5 +116,5 @@ applyXDelta1 patch sourceContents =
 -- Cursor state
 ----------------------------------------------------------------------------
 
--- | The state slot carries the output cursor, the apply's only threaded value, advanced by one instruction's length per step.
+-- | The state slot carries the output cursor, advanced by one instruction's length per step.
 type XDelta1Apply = StateT Offset IO

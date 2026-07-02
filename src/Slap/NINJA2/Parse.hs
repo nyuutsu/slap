@@ -28,21 +28,13 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 
 ----------------------------------------------------------------------------
--- Fixed header (2048 bytes): NINJA2 format
+-- Fixed header (2048 bytes)
 -- Spec says "first sector of the patch (1024 bytes)" but actual total is 2048.
 -- PATCH_ENC (1B text mode at offset 6) is stored in ninja2TextMode.
 ----------------------------------------------------------------------------
 
--- | Parse the fixed header region. Field offsets/widths per
--- ninja2-filespec20.txt §2; the eight named constants in
--- 'Slap.NINJA2.Types' are the single source of truth. The patch's
--- declared 'TextMode' and the chosen metadata encoding meet here to
--- pick each field's decoder: a wire-declared UTF-8 patch decodes as
--- UTF-8, an undeclared patch decodes under the user's choice. Per-
--- field substitution events surface as
--- 'Slap.Status.FieldDecodedSubstituted' advisories tagged with the
--- field name. An empty (all-zero-padded) slot decodes to 'Nothing'
--- and never emits an advisory.
+-- | Per-field substitution events surface as 'Slap.Status.FieldDecodedSubstituted' advisories tagged with the field name;
+-- an empty (all-zero-padded) slot decodes to 'Nothing' and never emits an advisory.
 parseFixedHeader :: EncodingName -> TextMode -> ByteString -> (NINJA2Info, [SlapAdvisory])
 parseFixedHeader metadataEncoding textMode input =
   let (authorField,      authorAdvisories)      = extractField FieldAuthor      ninja2AuthorOffset      ninja2AuthorWidth

@@ -94,9 +94,7 @@ data OffsetWidth
   | Offset32
   deriving (Show, Eq)
 
--- | The byte count occupied by an 'OffsetWidth' in the wire format.
--- The one place the 3/4 mapping lives; callers receive a 'Length'
--- and never touch the raw integer.
+-- | The one place the 3/4 mapping lives; callers receive a 'Length' and never touch the raw integer.
 offsetWidthByteCount :: OffsetWidth -> Length
 offsetWidthByteCount Offset24 = Length 3
 offsetWidthByteCount Offset32 = Length 4
@@ -257,7 +255,7 @@ data EBPPatch = EBPPatch
 -- IPS-family patch and whose record stream passed the per-record
 -- validation pass. Parse is still free to return 'Left SlapError'
 -- for inputs that violate the wire format in ways this sum does
--- not cover — bad magic, ceiling overrun, zero-count RLE,
+-- not cover: bad magic, ceiling overrun,
 -- unrecognized trailing bytes after @"EOF"@/@"EEOF"@, and so on.
 data IPSParseResult
   = IPSParseCleanIPS IPSPatch

@@ -47,17 +47,14 @@ import Slap.Text (EncodedText)
 -- (the "game code" portion of the cartridge ID, e.g. @"SM"@ for
 -- Super Mario 64). Carried by APS-N64 patches in the N64-specific
 -- header variant and used to warn when the source ROM's cart ID
--- doesn't match. The newtype names the role at the wire boundary;
--- unwrapping happens at the advisory 'ByteCheck' construction site.
+-- doesn't match.
 newtype N64CartId = N64CartId { unN64CartId :: ByteString }
   deriving (Show, Eq)
 
 -- | The 8-byte checksum pair at N64 ROM header offset 0x10 (CRC1 +
 -- CRC2, together sometimes called the "CIC checksum"). Carried by
 -- APS-N64 patches in the N64-specific header variant as an advisory
--- identity gate on the source ROM. The newtype names the role at the
--- wire boundary; unwrapping happens at the advisory 'ByteCheck'
--- construction site.
+-- identity gate on the source ROM.
 newtype N64ChecksumPair = N64ChecksumPair { unN64ChecksumPair :: ByteString }
   deriving (Show, Eq)
 
@@ -117,8 +114,7 @@ data APSN64Country
   | APSN64CountryUnrecognized !Word8
   deriving (Show, Eq)
 
--- | Parse a country byte as an 'APSN64Country'. Total: bytes that
--- aren't recognized N64 country codes become 'APSN64CountryUnrecognized'.
+-- | Total: bytes that aren't recognized N64 country codes become 'APSN64CountryUnrecognized'.
 toAPSN64Country :: Word8 -> APSN64Country
 toAPSN64Country 0x00 = APSN64CountryRegionFree
 toAPSN64Country 0x37 = APSN64CountryBeta
@@ -250,13 +246,10 @@ apsN64Limits = EncodingLimits
   , formatLabel   = LabelAPSN64
   }
 
--- | APS-N64's 4-byte little-endian destination-size header field,
--- narrowed from a runtime 'FileSize'. Constructor private; values come
--- from 'narrowAPSN64DestinationSize' (the create-path width check, which
--- refuses a value past @0xFFFFFFFF@ rather than masking it) or
--- 'apsN64DestinationSizeFromParsed' (parse-time trust). APS-N64 imposes
--- no source/target size-pair rule, so this rides the create path on its
--- own channel.
+-- | APS-N64's 4-byte little-endian destination-size header field, narrowed from a runtime 'FileSize'.
+-- Values come from 'narrowAPSN64DestinationSize' (the create-path width check, which refuses a value past @0xFFFFFFFF@ rather than masking it)
+-- or 'apsN64DestinationSizeFromParsed' (parse-time trust).
+-- APS-N64 imposes no source/target size-pair rule, so this rides the create path on its own channel.
 newtype APSN64DestinationSize =
   APSN64DestinationSize { unAPSN64DestinationSize :: Word32 }
   deriving (Show, Eq)

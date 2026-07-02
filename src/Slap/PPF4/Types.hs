@@ -27,11 +27,9 @@ import Slap.Text (EncodedText)
 
 -- | A fully parsed PPF4 patch.
 --
--- PPF4 is a two-phase format: REPLACE records first, then ADD records,
--- with a one-way phase transition. The two phases are reflected as
--- separate fields on this record. The wire-format ordering — all
--- Replace records before any Append record — is enforced at parse
--- time; values of this type are guaranteed to satisfy that invariant.
+-- PPF4 is a two-phase format: REPLACE records first, then ADD records, with a one-way phase transition.
+-- The wire-format ordering (all Replace records before any Append record) is enforced at parse time;
+-- values of this type are guaranteed to satisfy that invariant.
 --
 -- PPF4 has no validation block, no source CRC, no file-size advisory,
 -- no undo data, no image type, no File_ID.diz trailer. Those are
@@ -60,10 +58,9 @@ data PPF4Replace = PPF4Replace
 
 -- | A PPF4 Append record: writes 'appendData' at the end of the file
 -- (where "end" is captured before any apply work begins; Replaces
--- cannot extend the file). The wire format spends 4 bytes on a
--- per-record offset field that is dropped at parse time — Append
--- records have no meaningful offset, and the type does not carry the
--- discarded wire bytes.
+-- cannot extend the file).
+-- The wire format spends 4 bytes on a per-record offset field that is dropped at parse time:
+-- Append records have no meaningful offset.
 newtype PPF4Append = PPF4Append { appendData :: ByteString }
   deriving (Show)
 

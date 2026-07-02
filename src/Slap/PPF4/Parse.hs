@@ -24,12 +24,7 @@ import Slap.Text (EncodedText, EncodingName(..), decodeFixedWidthTextField)
 import Control.Monad (when)
 import qualified Data.ByteString as ByteString
 
--- | Intermediate result of running the PPF4 body parser: the typed
--- description, any advisories from the description's lenient decode,
--- and the record stream in wire order with commands still attached.
--- 'parsePPF4' judges the two-phase order ('partitionPhases') and
--- reshapes the result into the final 'PPF4Patch' and 'Parsed'
--- envelope.
+-- | Intermediate result of running the PPF4 body parser.
 data PPF4ParsedBody = PPF4ParsedBody
   { ppf4BodyDescription           :: !EncodedText
   , ppf4BodyDescriptionAdvisories :: ![SlapAdvisory]

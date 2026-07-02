@@ -88,7 +88,7 @@ data AppHeaderShape
     -- ^ Declared, carrying these bytes, read through the lens at display.
   deriving (Eq, Show)
 
--- | Frame an application header by presence alone. Flag-free and pure; 'vcdiffEmbeddedContent' turns the framing into the displayed field.
+-- | Frame an application header by presence alone; 'vcdiffEmbeddedContent' turns the framing into the displayed field.
 classifyAppHeader :: Maybe ByteString -> AppHeaderShape
 classifyAppHeader Nothing = AppHeaderAbsent
 classifyAppHeader (Just headerBytes)
@@ -165,7 +165,7 @@ analyzeVCDIFF patch = PatchAnalysis
     totalOutput     = FileSize (sum [ unFileSize (windowTargetSize (windowWithChecksumBody pairedWindow))
                                     | pairedWindow <- windows ])
 
--- | One window described: its labeled header, then its instructions as a region list, the output cursor carried across so the next window picks up where this one ended.
+-- | One window described: its labeled header, then its instructions as a region list.
 describeWindow
   :: Offset -> (Int, WindowWithChecksum) -> (Offset, [AnalysisSection])
 describeWindow outputCursor (windowNumber, pairedWindow) =
@@ -179,7 +179,7 @@ describeWindow outputCursor (windowNumber, pairedWindow) =
                 (Vector.toList (windowInstructions window))
 
 -- | A window's header block: the roomy key-value shape 'SectionLabeled' exists for, VCDIFF being the one format with repeated structured sub-units to head.
--- Target size, where its copies draw from (or "self-contained"), and its checksum when it carries one. Summary-mode explain drops 'SectionLabeled', so this is a @--records@-only detail.
+-- Summary-mode explain drops 'SectionLabeled', so this is a @--records@-only detail.
 windowHeader :: Int -> Window -> Maybe Adler32 -> AnalysisSection
 windowHeader windowNumber window maybeAdler =
   SectionLabeled ("window " <> renderAsText windowNumber <> ":") $
@@ -187,7 +187,7 @@ windowHeader windowNumber window maybeAdler =
        , InfoLine "source"      (renderSourceSegment (windowSourceSegment window)) ]
     ++ [ InfoLine "adler32" (showAdler32 adler) | Just adler <- [maybeAdler] ]
 
--- | A window's copy-source segment as a line, or its absence as "self-contained". Names the side it is cut from, where it begins, and how long it is.
+-- | A window's copy-source segment as a line, or its absence as "self-contained".
 renderSourceSegment :: Maybe SourceSegment -> Text
 renderSourceSegment Nothing = "self-contained"
 renderSourceSegment (Just (SourceSegment origin (Offset position) segmentLength)) =
@@ -218,7 +218,7 @@ makeVCDIFFRegion maybeSegment outputPosition instruction = case instruction of
            (AnnotationAt AtOutput outputPosition details) )
 
 -- | Where a COPY's bytes come from, read off its decoded superstring address: a source-file read when the address lands inside a source-file segment (then 'DetailSource' carries the absolute source offset @--records --source@ resolves the real bytes through), a produced-target read otherwise.
--- A window with no segment, a target-backed segment, or an address past the segment all read from the produced target: the one source-file case is the guarded arm, everything else falls through to it.
+-- A window with no segment, a target-backed segment, or an address past the segment all read from the produced target.
 describeCopyAddress :: Maybe SourceSegment -> Offset -> (CopySource, [AnnotDetail])
 describeCopyAddress maybeSegment (Offset address) = case maybeSegment of
   Just (SourceSegment FromSourceFile (Offset segmentPosition) segmentLength)

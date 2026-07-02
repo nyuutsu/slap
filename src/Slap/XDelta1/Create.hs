@@ -97,19 +97,7 @@ import Data.Word (Word8, Word32, Word64)
 -- 'XDelta1Patch' value (computing MD5s and choosing the offset mode
 -- per source) and runs the wire encoder.
 --
--- The 'VerificationInclusion' choice (set by @slap create
--- --no-verify@ at the porcelain) gates two paired wire effects:
--- under 'OmitVerification' the patch's verification posture is
--- 'CreatorOptedOutOfVerification', the @FLAG_NO_VERIFY@ header
--- bit is set, and every MD5 slot carries
--- 'xdelta1EmptyInputMD5Sentinel'; under 'IncludeVerification' the
--- posture is 'VerifyAgainstStoredMD5s' with computed hashes and
--- the bit is clear.
---
--- The 'XDelta1PatchCompression' choice (set by @slap create
--- --no-compress@ at the porcelain) decides whether the data and
--- control segments are gzip-deflated independently before placement
--- and whether @FLAG_PATCH_COMPRESSED@ is set.
+-- The 'VerificationInclusion' and 'XDelta1PatchCompression' choices gate the @FLAG_NO_VERIFY@ and @FLAG_PATCH_COMPRESSED@ wire effects; see the module header.
 createXDelta1 :: VerificationInclusion -> XDelta1PatchCompression
               -> ResolvedXDelta1FileNames
                  -- ^ from-name and to-name, already resolved and
@@ -139,15 +127,12 @@ createXDelta1 inclusion compression resolvedNames inputContents outputContents =
 -- per-source sequential-mode flags) into an 'XDelta1Patch' ready
 -- for the wire encoder. The MD5s, the 'VerificationInclusion'
 -- wiring, and the 'XDelta1PatchCompression' wiring live here; the
--- differ doesn't know about them. The data-record's metadata (name,
--- MD5, length, offset-mode) doesn't live on the patch type — those
--- values are inline constants in 'encodeControl' below, derived from
--- the data-segment bytes and 'xdelta1DataRecordName'.
+-- differ doesn't know about them.
 assemblePatch
   :: VerificationInclusion -> XDelta1PatchCompression
   -> ResolvedXDelta1FileNames
   -> ByteString -> ByteString
-     -- ^ source bytes and target bytes (for MD5 and size computation).
+     -- ^ source bytes and target bytes (for MD5 and size).
   -> XDelta1DiffOutput -> XDelta1Patch
 assemblePatch inclusion compression resolvedNames sourceBytes targetBytes diff = XDelta1Patch
   { xdelta1FromName         = resolvedXDelta1FromName resolvedNames
@@ -326,14 +311,8 @@ narrowXDelta1ControlOffset value =
 -- and its sub-allocation accountant (@libedsio\/default.c@) caps every reconstructed pointer at the declared allocation bound.
 -- An all-zeros prelude is therefore rejected by canonical even though it carries no instruction data.
 --
--- The data-record's wire bytes (name, MD5, length, kind, offset-
--- mode) are inline constants here: name is 'xdelta1DataRecordName';
--- MD5 is computed from the data-segment bytes (or the sentinel
--- under 'CreatorOptedOutOfVerification'); length is the data
--- segment's byte count; kind byte is @1@ (data); offset-mode byte
--- is @1@ (sequential — slap's differ never emits non-sequential
--- data). The source-file record's bytes come from the patch's
--- flat @xdelta1Source*@ fields.
+-- The data-record's wire bytes don't live on 'XDelta1Patch': 'encodeDataRecord' derives them from the data-segment bytes and 'xdelta1DataRecordName'.
+-- The source-file record's bytes come from the patch's flat @xdelta1Source*@ fields.
 encodeControl :: XDelta1Patch -> ByteString
 encodeControl patch = LazyByteString.toStrict (toLazyByteString builder)
   where
@@ -371,14 +350,8 @@ encodeControl patch = LazyByteString.toStrict (toLazyByteString builder)
       VerifyAgainstStoredMD5s md5Hash    -> md5Hash
       CreatorOptedOutOfVerification      -> xdelta1EmptyInputMD5Sentinel
 
--- | Encode the data-record's EDSIO source-record bytes. The wire
--- bytes here are all inline constants in the slap model: the name
--- is 'xdelta1DataRecordName', the MD5 is the data segment's MD5
--- (or the sentinel under 'CreatorOptedOutOfVerification'), the
--- length is the data segment's byte count, the kind byte is @1@
--- (data), and the offset-mode byte is @1@ (sequential). See
--- 'encodeControl' for why these are constants rather than fields
--- on 'XDelta1Patch'.
+-- | Encode the data-record's EDSIO source-record bytes;
+-- see 'encodeControl' for why these are inline constants rather than fields on 'XDelta1Patch'.
 encodeDataRecord :: XDelta1Patch -> Builder
 encodeDataRecord patch =
   putEdsioVarint (fromIntegral (ByteString.length xdelta1DataRecordName))
@@ -408,11 +381,7 @@ encodeFileSourceRecord patch =
   <> word8 0  -- kind: file source
   <> word8 (offsetModeByte (xdelta1SourceOffsetMode patch))
   where
-    -- Re-encode the source-record name from its 'EncodedText' under
-    -- the value's tag. The notice list is discarded here because
-    -- 'encodeXDelta1' has already surfaced the same substitution
-    -- advisories via the header from-name slot (the two slots share
-    -- one value; see 'assemblePatch').
+    -- The notice list is discarded: 'encodeXDelta1' already surfaced the same substitution advisories via the from-name slot.
     (sourceNameBytes, _notices) =
       encodeTextLenient (encodedTextEncoding sourceName)
                         (encodedTextContent sourceName)

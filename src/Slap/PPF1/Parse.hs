@@ -24,10 +24,8 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Bifunctor (first)
 
--- | Intermediate result of running the PPF1 body parser: the typed
--- description, any advisories from the description's lenient decode,
--- and the parsed record stream. Reshaped by 'parsePPF1' into the
--- final 'PPF1Patch' and 'Parsed' envelope.
+-- | Intermediate result of running the PPF1 body parser,
+-- reshaped by 'parsePPF1' into the final 'PPF1Patch' and 'Parsed' envelope.
 data PPF1ParsedBody = PPF1ParsedBody
   { ppf1BodyDescription           :: !EncodedText
   , ppf1BodyDescriptionAdvisories :: ![SlapAdvisory]

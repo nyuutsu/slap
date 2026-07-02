@@ -61,9 +61,7 @@ foreign import ccall unsafe "rusty_xdelta1_diff"
     -> Ptr (Ptr Word8) -> Ptr CSize    -- error_cause
     -> IO CInt
 
--- | Invoke the Rust xdelta1 differ. Marshals the parallel-array FFI
--- output back into typed Haskell; lifts the Rust-side cause into
--- 'SlapError' via 'XDelta1DiffFailed' at this seam.
+-- | Invoke the Rust xdelta1 differ.
 xdelta1Diff
   :: InputFileContents
   -> OutputFileContents
@@ -118,8 +116,7 @@ xdelta1Diff (InputFileContents sourceBytes) (OutputFileContents targetBytes) =
 -- | Reconstruct '[XDelta1Instruction]' from the three parallel
 -- buffers the Rust side surfaces (one byte per target tag; eight LE
 -- bytes per source offset; eight LE bytes per length).
--- Buffer-shape mismatches and unknown tag bytes register as typed failures ('XDelta1DiffFailed') rather than runtime exceptions:
--- a malformed buffer from the Rust side gets a structured answer, not a crash.
+-- Buffer-shape mismatches and unknown tag bytes register as typed failures ('XDelta1DiffFailed') rather than runtime exceptions.
 parseParallelInstructions
   :: ByteString
   -> ByteString
@@ -161,8 +158,7 @@ parseParallelInstructions targetTags sourceOffsetBytes lengthBytes = do
 -- per-instruction-offset encoding for the file source. Inverse of
 -- the byte the Rust side writes from
 -- 'xdelta1_diff::FileSourceOffsetMode' — see @rusty-slap/src/lib.rs@
--- (the @rusty_xdelta1_diff@ entry point). Any byte other than 0 or
--- 1 is an FFI-invariant violation rather than a silent fallback.
+-- (the @rusty_xdelta1_diff@ entry point).
 decodeOffsetModeByte :: Word8 -> Either SlapError XDelta1OffsetMode
 decodeOffsetModeByte modeByte = case modeByte of
   0 -> Right AbsoluteOffsets

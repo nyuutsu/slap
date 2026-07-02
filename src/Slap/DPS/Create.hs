@@ -27,11 +27,7 @@ import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 
--- Encodes changed regions as EnclosedData records and unchanged regions
--- as CopyFromROM records. The source size and the record list are run
--- through the per-format narrowing layer first; downstream the encoder
--- consumes 'EncodedDPSRecord' values whose 'Word32' offsets and lengths
--- have already been validated against the wire-format width.
+-- Encodes changed regions as EnclosedData records and unchanged regions as CopyFromROM records.
 createDPS :: InputFileContents -> OutputFileContents
           -> DPSCreateMetadata -> DPSStability
           -> Either SlapError CreateResult
@@ -52,10 +48,7 @@ createDPS inputContents@(InputFileContents original) outputContents metadata sta
   Right (CreateResult (PatchFileContents patchBytes)
                       (nameWarnings ++ authorWarnings ++ versionWarnings))
   where
-    -- | Codepoint-aware bounded encode of one 64-byte metadata field,
-    -- null-padded on the right. The @0x00@ padding byte matches DPS's
-    -- reference encoder; both substitution and truncation notices
-    -- surface as 'SlapAdvisory' values tagged with the field name.
+    -- | The @0x00@ padding byte matches DPS's reference encoder.
     encodeField :: FieldName -> EncodedText
                 -> (ByteString, [SlapAdvisory])
     encodeField fieldName fieldText =
@@ -88,11 +81,9 @@ dpsRecordsFromDiff inputContents outputContents@(OutputFileContents modified) =
               : dataRecord : continue
          else dataRecord : continue
 
--- | Serialise an 'EncodedDPSRecord' to wire bytes. The 'Word32'
--- selectors carry values 'narrowDPSRecord' already validated against the
--- 4-byte LE wire fields, so the surviving 'fromIntegral' (the payload
--- length on the 'EnclosedData' arm) cannot truncate: the smart
--- constructor checked that bytestring's length on the way in.
+-- | The matched 'Word32' values were already validated by 'narrowDPSRecord' against the 4-byte LE wire fields,
+-- so the surviving 'fromIntegral' (the payload length on the 'EnclosedData' arm) cannot truncate:
+-- the smart constructor checked that bytestring's length on the way in.
 encodeRecord :: EncodedDPSRecord -> Builder
 encodeRecord (EncodedDPSCopyFromROM outputOffset sourceOffset copyLength) =
     word8 0

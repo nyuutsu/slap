@@ -104,9 +104,8 @@ data TextMode
   | TextModeUndeclared
   deriving (Show, Eq)
 
--- | Resolve a raw PATCH_ENC byte. 'Left' carries the unrecognized byte
--- so the parse site can construct a structured rejection from it;
--- 'Right' carries the resolved text mode for the rest of the parse.
+-- | Resolve a raw PATCH_ENC byte;
+-- 'Left' carries the unrecognized byte for the 'NINJA2UnrecognizedTextMode' rejection.
 toTextMode :: Word8 -> Either Word8 TextMode
 toTextMode 0    = Right TextModeUndeclared
 toTextMode 1    = Right TextModeUTF8
@@ -259,14 +258,14 @@ data NINJA2CreateMetadata = NINJA2CreateMetadata
   , ninja2CreateMetadataPlatform    :: Maybe PlatformType
   } deriving (Show)
 
--- | A NINJA2 binary record: an offset followed by the XOR payload
--- bytes for that offset.
+-- | The payload is an XOR mask for the bytes at the record's offset,
+-- not literal replacement bytes.
 data NINJA2Record = NINJA2Record
   { ninja2RecordOffset  :: !Offset
   , ninja2RecordPayload :: !ByteString
   } deriving (Show)
 
--- | An XOR record for encoding: offset + XOR'd payload.
+-- | The create-side twin of 'NINJA2Record'.
 data XorRecord = XorRecord
   { xorRecordOffset  :: !Offset
   , xorRecordPayload :: !ByteString
@@ -295,11 +294,10 @@ parsePackedByteString = do
 ninja2MagicBytes :: ByteString
 ninja2MagicBytes = "NINJA2"
 
--- | Total size of the NINJA2 fixed header in bytes (per
--- ninja2-filespec20.txt §2). Held as 'Length' because every use site
--- treats it as a region size: parsers read this many bytes off the
--- front of the input ('getBytes headerSize'); guards compare it
--- against 'byteLength' of the input. Equals @0x800@.
+-- | Total size of the NINJA2 fixed header in bytes (per ninja2-filespec20.txt §2).
+-- Held as 'Length' because every use site treats it as a region size:
+-- parsers read this many bytes off the front of the input ('getBytes headerSize');
+-- guards compare it against 'byteLength' of the input.
 headerSize :: Length
 headerSize = Length 0x800
 

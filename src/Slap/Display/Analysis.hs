@@ -48,7 +48,7 @@ import Data.Word (Word8)
 
 -- | The analytical-pass result: per-record breakdown and structured summary.
 -- Populated by per-format @analyze\<Format\>@ functions (in each format's @Describe@ module).
--- Each walks the record stream and produces 'AnalysisSection' values describing every record's offset, size, label, payload, and annotation.
+-- Each walks the record stream into 'AnalysisSection' values.
 --
 -- Consumed by @slap explain@ (both verbosity modes), never by @slap info@ or @slap apply@ —
 -- those read the cheaper 'Slap.Display.Info.PatchInfo' instead.

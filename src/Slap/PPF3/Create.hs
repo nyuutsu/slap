@@ -79,13 +79,10 @@ encodeWriteRecord ehunk =
   <> byteString (encodedPayload ehunk)
 
 -- | Encode a PPF3 patch from pre-split, pre-narrowed records.
--- Write records: @[EncodedHunk]@, each payload ≤ @ppf3MaxRecordPayload@
--- (offset is unbounded — Int64-shaped on the wire — so the convert
--- pipeline narrows via 'Slap.Narrow.narrowHunksUnbounded').
--- Undo hunks (if provided): @[EncodedUndoHunk]@, each payload
--- ≤ @ppf3MaxRecordPayload@; the parallel undo pipeline
--- 'Slap.Measure.splitUndoHunks' →
--- 'Slap.Narrow.narrowUndoHunksUnbounded' enforces this.
+-- Each write payload ≤ @ppf3MaxRecordPayload@
+-- (the offset is unbounded, Int64-shaped on the wire, so the convert pipeline narrows via 'Slap.Narrow.narrowHunksUnbounded').
+-- Each undo payload ≤ @ppf3MaxRecordPayload@;
+-- the parallel undo pipeline 'Slap.Measure.splitUndoHunks' → 'Slap.Narrow.narrowUndoHunksUnbounded' enforces this.
 encodePPF3 :: [EncodedHunk]
            -> EncodedText
            -> Maybe [EncodedUndoHunk]
@@ -104,8 +101,6 @@ encodePPF3 records description undoHunks validationBlock imageType =
        descriptionAdvisories
 
 -- | Encode a FILE_ID.DIZ trailer in PPF3 format (2-byte LE length).
--- Returns the trailer bytes plus any substitution advisories from
--- encoding the typed-text content as UTF-8.
 encodeFileIdDiz :: PPF3FileId -> (ByteString, [SlapAdvisory])
 encodeFileIdDiz fid =
   let description = unPPF3FileId fid

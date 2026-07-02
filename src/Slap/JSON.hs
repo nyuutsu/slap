@@ -1,8 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 -- | JSON parsing for slap.
--- The only JSON in the slap world is the trailing metadata blob carried by EBP patches, so the public surface is shaped to that one job:
--- turn the trailer bytes into a structured 'EBPMetadata' value.
--- The four recognised fields (@patcher@, @title@, @author@, @description@) are the contract EBPatcher established;
+-- The only JSON in the slap world is the trailing metadata blob carried by EBP patches, so the public surface is shaped to that one job.
+-- The four recognised fields are the contract EBPatcher established;
 -- everything else aeson reads and discards.
 --
 -- Producers disagree on key casing and on which fields they emit, so lookup is case-insensitive and each field is a 'Maybe' —
@@ -42,12 +41,9 @@ parseEBPMetadata bytes = case Aeson.eitherDecodeStrict bytes of
     )
   _ -> (emptyEBPMetadata, [EBPMetadataMalformed LabelEBP])
 
--- | Case-insensitive lookup of a top-level string-valued field.
--- The expected key name is given in lowercase; each key in the
--- parsed object is folded to lowercase before comparison so a
--- producer using either lowercase or capitalised keys lands the
--- same value. The extracted text is tagged 'EncodingUtf8' — aeson
--- already decoded it under JSON's UTF-8 wire contract.
+-- | The expected key name is given in lowercase;
+-- each key in the parsed object is folded to lowercase before comparison so a producer using either lowercase or capitalised keys lands the same value.
+-- The extracted text is tagged 'EncodingUtf8': aeson already decoded it under JSON's UTF-8 wire contract.
 lookupTopLevelStringField :: Text.Text -> Aeson.Object -> Maybe EncodedText
 lookupTopLevelStringField expectedLowercaseKey obj =
   let folded = [ (Text.toLower (AesonKey.toText actualKey), actualValue)

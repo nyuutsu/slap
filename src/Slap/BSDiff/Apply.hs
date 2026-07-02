@@ -27,7 +27,7 @@ import System.IO.Unsafe (unsafePerformIO)
 -- Apply-time cursors
 ----------------------------------------------------------------------------
 
--- | The four cursors threaded through 'applyLoop': one per stream (diff, extra, source, output).
+-- | The four cursors threaded through 'applyLoop', one per stream.
 data BSDiffCursors = BSDiffCursors
   { -- | Read cursor into the diff byte stream. Advances by
     -- @addLength@ per instruction.
@@ -110,7 +110,7 @@ applyBSDiff patch (InputFileContents source) = unsafePerformIO $ do
     runApply targetPointer =
       let
         -- | Cursor transition after an instruction's ADD region.
-        -- The source cursor advances by @addLength@, then moves by the signed seek delta, re-basing it for the next match.
+        -- The seek delta re-bases the source cursor for the next match.
         advanceForAdd :: Length -> Delta -> BSDiffApply ()
         advanceForAdd addLength seekDelta = modify $ \cursors -> cursors
           { diffStreamRead = advance (diffStreamRead cursors) addLength
@@ -119,7 +119,7 @@ applyBSDiff patch (InputFileContents source) = unsafePerformIO $ do
           }
 
         -- | Cursor transition after an instruction's COPY region.
-        -- The extra cursor advances by @copyLength@ (one extra byte consumed per output byte).
+        -- Each output byte consumes one byte of the extra stream.
         advanceForCopy :: Length -> BSDiffApply ()
         advanceForCopy copyLength = modify $ \cursors -> cursors
           { extraStreamRead = advance (extraStreamRead cursors) copyLength
@@ -128,9 +128,8 @@ applyBSDiff patch (InputFileContents source) = unsafePerformIO $ do
 
         -- | Materialise one ADD region into the target buffer:
         -- @target[outputPosition+i] = source[originalPosition+i] + diff[diffReadOffset+i]@
-        -- for @i@ in @[0, addLength)@. The source read goes through
-        -- 'sourceByteOrZero', so positions outside the source contribute
-        -- zero per the matching-window extension rule.
+        -- for @i@ in @[0, addLength)@.
+        -- The source read goes through 'sourceByteOrZero'.
         executeAddRegion :: Length -> SignedOffset -> Offset -> Offset -> IO ()
         executeAddRegion addLength originalPosition diffReadOffset outputPosition =
             writeRemainingBytes 0

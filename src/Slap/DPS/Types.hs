@@ -68,7 +68,7 @@ toDPSFormatVersion byte = Left (BadVersion LabelDPS (FoundVersion byte))
 fromDPSFormatVersion :: DPSFormatVersion -> Word8
 fromDPSFormatVersion DPSVersion1 = 1
 
--- | The three header fields a DPS create call supplies: name, author, and version.
+-- | The header fields a DPS create call supplies.
 -- Each is typed 'EncodedText' so the encoding decision (locale today; declared-on-the-wire when DPS gains an encoding flag) travels with the value.
 data DPSCreateMetadata = DPSCreateMetadata
   { dpsCreateMetadataName    :: !EncodedText
@@ -78,8 +78,8 @@ data DPSCreateMetadata = DPSCreateMetadata
 
 data DPSPatch = DPSPatch
   { dpsName          :: !EncodedText
-    -- ^ Wire format: 64-byte null-padded field, decoded at parse time under the process locale.
-    -- Re-encoded under the same locale on create via 'Slap.DPS.Create.encodeField'.
+    -- ^ Decoded at parse time under the process locale;
+    -- re-encoded under the same locale on create via 'Slap.DPS.Create.encodeField'.
   , dpsAuthor        :: !EncodedText
   , dpsVersion       :: !EncodedText
   , dpsStability     :: !DPSStability
@@ -104,11 +104,9 @@ data DPSRecord
 -- Wire-format wrappers
 ----------------------------------------------------------------------------
 
--- | DPS's 4-byte LE source-ROM-size header field, narrowed from a
--- runtime 'FileSize'. Constructor private; values come from
--- 'narrowDPSSourceSize' (runtime check) or 'dpsSourceSizeFromParsed'
--- (parse-time trust, since the field's wire shape constrains the
--- bytestring before it reaches the constructor).
+-- | DPS's 4-byte LE source-ROM-size header field, narrowed from a runtime 'FileSize'.
+-- Values come from 'narrowDPSSourceSize' (runtime check)
+-- or 'dpsSourceSizeFromParsed' (parse-time trust, since the field's wire shape constrains the bytestring before it reaches the constructor).
 newtype DPSSourceSize = DPSSourceSize { unDPSSourceSize :: Word32 }
   deriving (Show, Eq)
 
@@ -130,11 +128,9 @@ dpsSourceSizeFromParsed = DPSSourceSize
 dpsSourceSizeAsFileSize :: DPSSourceSize -> FileSize
 dpsSourceSizeAsFileSize (DPSSourceSize word) = FileSize (fromIntegral word)
 
--- | A 'DPSRecord' whose offsets and lengths have been validated
--- against the 4-byte LE wire fields. Constructor private; values
--- come from 'narrowDPSRecord' / 'narrowDPSRecords'. Encoders consume
--- this type and access the validated 'Word32' fields directly via
--- the selectors.
+-- | A 'DPSRecord' whose offsets and lengths have been validated against the 4-byte LE wire fields.
+-- Values come from 'narrowDPSRecord' / 'narrowDPSRecords' only;
+-- the constructors are exported so 'Slap.DPS.Create' can pattern-match the arms, not as a second way to build one.
 data EncodedDPSRecord
   = EncodedDPSCopyFromROM
       { encodedDPSCopyOutputOffset :: !Word32

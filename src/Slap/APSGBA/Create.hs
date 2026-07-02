@@ -21,8 +21,8 @@ import Data.ByteString.Builder (Builder, byteString, toLazyByteString)
 import Data.Bits (xor)
 import Data.Word (Word32)
 
--- | Zero-pad a block's bytes up to @size@.
--- Callers pass a 'viewBytesInRange' slice of length @size@, so the input is already at most @size@ bytes and this only ever pads a short final block.
+-- | Callers pass a 'viewBytesInRange' slice of length @size@,
+-- so the input is already at most @size@ bytes and this only ever pads a short final block.
 zeroPadToBlockSize :: Int -> ByteString -> ByteString
 zeroPadToBlockSize size input =
   input <> ByteString.replicate (size - ByteString.length input) 0

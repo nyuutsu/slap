@@ -49,10 +49,8 @@ import Slap.XDelta1.Types (ResolvedXDelta1FileNames, XDelta1PatchCompression(..)
 -- Differential-format porcelain
 ----------------------------------------------------------------------------
 
--- | Create a BPS patch. The metadata blob is an opaque bytestring
--- wrapped in 'BPSMetadata' so the porcelain surface names what the
--- bytes are for; the wire-level encoder in "Slap.BPS.Create" still
--- takes raw bytes and the unwrap happens at this boundary.
+-- | Create a BPS patch.
+-- The metadata blob is an opaque bytestring wrapped in 'BPSMetadata' so the porcelain surface names what the bytes are for.
 createBPS
   :: InputFileContents
   -> OutputFileContents
@@ -61,11 +59,7 @@ createBPS
 createBPS source target (BPSMetadata metadataBytes) =
   BPS.createBPS source target metadataBytes
 
--- | Create a DPS patch. 'DPSCreateMetadata' carries the three header
--- fields (name, author, version) as typed 'EncodedText' values
--- (locale-tagged on the create path, but the type carries the
--- encoding decision); 'DPSStability' names the stable-vs-unstable
--- flag byte.
+-- | Create a DPS patch.
 createDPS
   :: InputFileContents
   -> OutputFileContents
@@ -74,10 +68,7 @@ createDPS
   -> Either SlapError CreateResult
 createDPS = DPS.createDPS
 
--- | Create a NINJA2 patch. 'NINJA2CreateMetadata' is the large record
--- covering the eight fixed-header text fields (each typed as
--- 'Slap.Text.EncodedText'), the @PATCH_ENC@ wire choice, and the
--- platform type.
+-- | Create a NINJA2 patch.
 createNINJA2
   :: InputFileContents
   -> OutputFileContents

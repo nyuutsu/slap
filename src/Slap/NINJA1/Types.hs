@@ -37,12 +37,9 @@ import Slap.FormatLabel (FormatLabel(..))
 data NINJA1SubFormat = NINJA1Binary | NINJA1BinaryCompressed | NINJA1Text | NINJA1TextCompressed
   deriving (Show, Eq)
 
--- | Decode the two-byte subformat identifier that follows the
--- 'ninja1MagicBytes' header. The four wire values are @"B "@,
--- @"BZ"@, @"T\\n"@ (bytes 0x54 0x0A), and @"TZ"@; anything else
--- means slap doesn't know what this NINJA1 payload claims to be
--- and 'Slap.NINJA1.Parse.parseNINJA1' refuses it as
--- 'UnsupportedNINJA1Subformat'.
+-- | Decode the two-byte subformat identifier that follows the 'ninja1MagicBytes' header.
+-- An unrecognized identifier means slap doesn't know what this NINJA1 payload claims to be;
+-- 'Slap.NINJA1.Parse.parseNINJA1' refuses it as 'UnsupportedNINJA1Subformat'.
 --
 -- The text-uncompressed identifier is the one historical divergence between spec and reference implementation:
 -- the archived format spec (@docs/ninja1/upstream/ninja1-filespec10.txt@) says the second byte is @0x0D@,
@@ -64,8 +61,8 @@ toNINJA1SubFormat bytes
 data NINJA1Compression = NINJA1Uncompressed | NINJA1Compressed
   deriving (Show, Eq)
 
--- | ROM platform type. Values 0-17 are defined by the NINJA1 spec; an
--- unrecognized value is kept — 'RomUnknown' for a binary patch's type byte,
+-- | Values 0-17 are defined by the NINJA1 spec;
+-- an unrecognized value is kept: 'RomUnknown' for a binary patch's type byte,
 -- 'RomUnknownName' for a textual patch's type name.
 data NINJA1RomType
   = RomRAW | RomNES | RomSNES | RomN64 | RomGB | RomGBC | RomGBA
@@ -160,14 +157,12 @@ ninja1MagicBytes = "NINJA1"
 -- followed by the bytes "EOF" (0x45 0x4F 0x46). When a record's offset
 -- minimally encodes to exactly those three bytes — which happens for
 -- offset value 0x454F46 = 4,542,278 — its emitted bytes collide with
--- the footer. Slap detects this collision at create time and shifts
--- the record back to offset 0x454F45, prepending the source byte at
--- 0x454F45 to the payload.
+-- the footer. 'Slap.NINJA1.Create.resolveSentinelCollisions' resolves the collision at create time.
 ninja1SentinelOffset :: SentinelOffset
 ninja1SentinelOffset = SentinelOffset (Offset 0x454F46)
 
--- | The trailer that closes a NINJA1 binary record stream: @"EOF"@.
--- See 'ninja1SentinelOffset' for the collision case the encoder works around.
+-- | The trailer that closes a NINJA1 binary record stream;
+-- see 'ninja1SentinelOffset' for the collision case the encoder works around.
 ninja1BinaryEOFMarkerBytes :: ByteString
 ninja1BinaryEOFMarkerBytes = "EOF"
 

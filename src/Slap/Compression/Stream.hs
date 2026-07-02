@@ -99,7 +99,7 @@ foreign import ccall unsafe "rusty_yay0_decompress"
 ----------------------------------------------------------------------------
 
 -- | Call a Rust decompression function that allocates its own output buffer.
--- Returns Left on error, Right on success.  Empty input → empty output.
+-- Empty input → empty output.
 {-# INLINE callDecompressor #-}
 callDecompressor
   :: ( Ptr Word8 -> CSize

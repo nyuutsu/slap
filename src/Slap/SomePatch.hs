@@ -239,17 +239,14 @@ newtype UndoStrategy = UndoStrategy
 
 -- | How the patch's records relate to the target file.
 --
--- 'Direct' patches carry replacement bytes that get written into the
--- target; the @'Maybe' 'PatchContents'@ payload is the universal
--- direct-patch bag when the format's data is bag-shaped, or 'Nothing'
--- when a structural feature prevents the bag from being constructed
--- (e.g. PPF4 with Append commands — Appends carry no meaningful
--- offset, so they can't be expressed as 'Hunk's). 'Differential'
--- patches carry delta instructions whose meaning depends on the
--- source file, so they have no universal bag to publish and the
--- constructor is nullary. The kind drives whether source-less
--- conversion is structurally possible: only @'Direct' ('Just' _)@
--- can convert without source.
+-- 'Direct' patches carry replacement bytes that get written into the target;
+-- the @'Maybe' 'PatchContents'@ payload is the universal direct-patch bag when the format's data is bag-shaped,
+-- or 'Nothing' when a structural feature prevents the bag from being constructed
+-- (e.g. PPF4 with Append commands: Appends carry no meaningful offset, so they can't be expressed as 'Hunk's).
+-- 'Differential' patches carry delta instructions whose meaning depends on the source file,
+-- so they have no universal bag to publish.
+-- The kind drives whether source-less conversion is structurally possible:
+-- only @'Direct' ('Just' _)@ can convert without source.
 data PatchKind
   = Direct (Maybe PatchContents)
   | Differential

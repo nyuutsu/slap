@@ -65,10 +65,8 @@ makeNINJA1Region (NINJA1Record recordOffset recordPayload) = AnalysisRegion
 -- Display range
 ----------------------------------------------------------------------------
 
--- | The 'OffsetRange' spanning a non-empty NINJA1 record stream,
--- consumed by the cheap display path's 'Slap.Display.Info.PatchInfo'
--- construction. Returns 'Nothing' on an empty stream so the display
--- layer suppresses the range line.
+-- | Consumed by the cheap display path's 'Slap.Display.Info.PatchInfo' construction;
+-- 'Nothing' on an empty stream so the display layer suppresses the range line.
 ninja1RecordsRange :: [NINJA1Record] -> Maybe OffsetRange
 ninja1RecordsRange [] = Nothing
 ninja1RecordsRange records =

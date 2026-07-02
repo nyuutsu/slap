@@ -32,16 +32,14 @@ encodeAPSN64 records destinationSize description =
         patchBytes = LazyByteString.toStrict $ toLazyByteString $
             byteString apsN64MagicBytes
             <> word8 (fromAPSPatchType APSSimple)
-            <> word8 0  -- encoding method: 0, the only one
+            <> word8 0  -- encoding method
             <> byteString descriptionBytes
             <> putWord32LE (unAPSN64DestinationSize destinationSize)
             <> foldMap encodeAPSN64Record records
     in CreateResult (PatchFileContents patchBytes) descriptionAdvisories
 
--- | Codepoint-aware bounded encode of the description into APS-N64's
--- 50-byte field, space-padded on the right with @0x20@ to match the
--- format spec ("Space padded free text") and the original maker, which
--- fills the field with spaces (n64caps.c's @memset(Description,' ',50)@).
+-- | Space padding matches the format spec ("Space padded free text") and the original maker,
+-- which fills the field with spaces (n64caps.c's @memset(Description,' ',50)@).
 padDescription :: EncodedText -> (ByteString, [SlapAdvisory])
 padDescription description =
   let (truncatedBytes, notices) =
@@ -54,9 +52,8 @@ padDescription description =
       advisories = encodeLossAdvisories LabelAPSN64 FieldDescription notices
   in (padded, advisories)
 
--- | Encode one APS-N64 record. Caller must ensure the payload's length
--- is at most 'Slap.APSN64.Types.apsN64MaxChunkSize' (255 bytes); the
--- wire format reserves one byte for the length field.
+-- | Caller must ensure the payload's length is at most 'Slap.APSN64.Types.apsN64MaxChunkSize' (255 bytes);
+-- the wire format reserves one byte for the length field.
 encodeAPSN64Record :: EncodedHunk -> Builder
 encodeAPSN64Record ehunk =
     let recordOffset  = encodedOffset ehunk

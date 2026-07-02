@@ -7,10 +7,9 @@ module Slap.PlatformType
 
 import Data.Text (Text)
 
--- | Platform type representing the union of all platforms known to
--- NINJA1 and NINJA2.  Used as the lingua franca for cross-format
--- ROM type conversion; format-specific types (NINJA1RomType,
--- NINJA2RomType) preserve per-format details at the boundaries.
+-- | The union of all platforms known to NINJA1 and NINJA2.
+-- Used as the lingua franca for cross-format ROM type conversion;
+-- format-specific types (NINJA1RomType, NINJA2RomType) preserve per-format details at the boundaries.
 --
 -- The conversions ('platformToNINJA1', 'platformToNINJA2',
 -- 'ninja1ToPlatform', 'ninja2ToPlatform') live in "Slap.Platform";
@@ -39,12 +38,9 @@ data PlatformType
   | PlatformGP32             -- NINJA1 only
   deriving (Show, Eq)
 
--- | The user-facing display name for a 'PlatformType'. Used by
--- 'Slap.Status' when rendering the 'PlatformNotAvailable' advisory
--- and by any other site that needs to name a platform in human-
--- readable form. The strings track the names slap surfaces in CLI
--- output and error messages — distinct from any format-specific
--- wire encoding (NINJA1's 'RomNES', NINJA2's 'NINJA2NES', etc.).
+-- | The user-facing display name for a 'PlatformType',
+-- as 'Slap.Status' renders it in the 'PlatformNotAvailable' advisory.
+-- Distinct from any format-specific wire encoding (NINJA1's 'RomNES', NINJA2's 'NINJA2NES', etc.).
 platformName :: PlatformType -> Text
 platformName PlatformRaw            = "Raw"
 platformName PlatformNES            = "NES"

@@ -296,15 +296,11 @@ data UnencodeabilityReason
 -- sites without needing to consult documentation.
 data ApplyError
 
-  -- | A relative cursor (source or target) went negative after
-  -- applying the action's delta. Arguments are all distinct types,
-  -- so no role newtypes needed.
+  -- | A relative cursor (source or target) went negative after applying the action's delta.
   = ApplyCursorUnderflow CursorKind ActionIndex SignedOffset
 
   -- | An action would read past the end of the source ByteString.
-  -- The 'Offset' is the would-be read end; the 'FileSize' is the
-  -- actual source size. Arguments are distinct types, so no role
-  -- newtypes needed.
+  -- The 'Offset' is the would-be read end; the 'FileSize' is the actual source size.
   | ApplySourceReadOutOfBounds ActionIndex Offset FileSize
 
   -- | A TargetCopy referenced an output position at or past the
@@ -1260,9 +1256,7 @@ data Parsed value = Parsed !value ![SlapAdvisory]
 -- side — every value-producing operation in slap pairs its value with
 -- an advisory channel. The polymorphic parameter lets a single envelope
 -- serve both apply (carrying 'OutputFileContents') and undo (carrying
--- 'InputFileContents') without duplicating the shape; the 'Functor'
--- instance lets a wrapper function the inner value through 'fmap'
--- without unpacking the envelope.
+-- 'InputFileContents') without duplicating the shape.
 --
 -- Wrap sites that don't emit advisories use 'noAdvisories' to lift
 -- their bare value into the envelope; sites that do construct
@@ -1288,10 +1282,8 @@ noAdvisories value = Outcome value []
 -- IPS-family parse. Carried by the 'OverlappingRecords' warning so
 -- the reader sees both that the patch contains overlapping writes
 -- and how many such intersections were found, without enumerating
--- every pair (a pathological mutually-overlapping cluster of @k@
--- records would otherwise produce @k*(k-1)/2@ near-duplicate
--- warning lines). A value of zero is structurally impossible: the
--- warning is only emitted when at least one pair was found.
+-- every pair. A value of zero is structurally impossible:
+-- the warning is only emitted when at least one pair was found.
 newtype OverlapCount = OverlapCount { unOverlapCount :: Int }
   deriving (Eq, Ord, Show)
 
@@ -2018,11 +2010,7 @@ renderSlapError (VerificationFatal advisory) =
 ----------------------------------------------------------------------------
 
 -- | The compression algorithm in flight at a given failure site.
--- Implicit per constructor for the four sites with fixed algorithms;
--- read off the value for 'VCDIFFSectionFailed', the one site whose
--- algorithm varies.  The exhaustive match is the seam that fires
--- '-Wincomplete-patterns' when a new 'DecompressionFailure'
--- constructor lands.
+-- The exhaustive match is the seam that fires '-Wincomplete-patterns' when a new 'DecompressionFailure' constructor lands.
 decompressionAlgorithm :: DecompressionFailure -> CompressionAlgorithm
 decompressionAlgorithm Yay0WrapperFailed{}                 = Yay0
 decompressionAlgorithm NINJA1Failed{}                      = Zlib
@@ -2030,13 +2018,9 @@ decompressionAlgorithm XDelta1Failed{}                     = Gzip
 decompressionAlgorithm BSDiffSectionFailed{}               = Bzip2
 decompressionAlgorithm (VCDIFFSectionFailed _ algorithm _) = algorithm
 
--- | Display name for a 'CompressionAlgorithm'.  Read by the
--- 'VCDIFFSectionFailed' renderer arm and the secondary-stream
--- malformation renders, where the algorithm genuinely varies; the
--- four fixed-algorithm arms render their algorithm name as a literal
--- in their site description instead.  Exhaustive over
--- 'CompressionAlgorithm' so that adding a new compression algorithm
--- fires '-Wincomplete-patterns' here.
+-- | Read by the 'VCDIFFSectionFailed' renderer arm and the secondary-stream malformation renders, where the algorithm genuinely varies;
+-- the four fixed-algorithm arms render their algorithm name as a literal in their site description instead.
+-- Exhaustive over 'CompressionAlgorithm' so that adding a new compression algorithm fires '-Wincomplete-patterns' here.
 compressionAlgorithmName :: CompressionAlgorithm -> Text
 compressionAlgorithmName Zlib  = "zlib"
 compressionAlgorithmName Gzip  = "gzip"
@@ -2405,13 +2389,11 @@ renderSlapAdvisory (VerificationOptedOutByCreator label) =
 -- Helpers
 ----------------------------------------------------------------------------
 
--- | Choose the singular or plural label for a count, by simple
--- @== 1@ comparison. Each call site supplies the leading space (or
--- absence thereof) inside the singular and plural strings, so the
--- helper composes uniformly into the surrounding sentence whether
--- the number is followed by @" record"@ \/ @" records"@ or @" byte"@
--- \/ @" bytes"@. Used by every 'renderSlapAdvisory' equation whose
--- prose carries a count.
+-- | Choose the singular or plural label for a count.
+-- Each call site supplies the leading space (or absence thereof) inside the singular and plural strings,
+-- so the helper composes uniformly into the surrounding sentence
+-- whether the number is followed by @" record"@ / @" records"@ or @" byte"@ / @" bytes"@.
+-- Used by every 'renderSlapAdvisory' equation whose prose carries a count.
 plural :: Int -> Text -> Text -> Text
 plural n singular pluralForm = if n == 1 then singular else pluralForm
 

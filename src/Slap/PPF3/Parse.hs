@@ -138,9 +138,8 @@ parsePPF3Records hasUndo recordIndex = do
 -- FILE_ID.DIZ trailer split (PPF3-specific 2-byte length field)
 ----------------------------------------------------------------------------
 
--- | The optional FILE_ID.DIZ trailer separated from a PPF3 record body:
--- the typed metadata when present, the record body with the trailer
--- removed, and any decode advisories.
+-- | The optional FILE_ID.DIZ trailer separated from a PPF3 record body;
+-- 'ppf3SplitRecordBody' has the trailer already removed.
 data PPF3FileIdSplit = PPF3FileIdSplit
   { ppf3SplitFileId     :: !(Maybe PPF3FileId)
   , ppf3SplitRecordBody :: !ByteString

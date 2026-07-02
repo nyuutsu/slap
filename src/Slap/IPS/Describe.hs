@@ -80,11 +80,8 @@ import qualified Data.Vector as Vector
 -- ipsMeta — plain IPSPatch
 ----------------------------------------------------------------------------
 
--- | One-line-per-field metadata for an 'IPSPatch'. The variant's
--- wire facts come from 'variantSpec' so nothing in this module
--- hardcodes @"PATCH"@ / @"IPS32"@ / @"EOF"@ / @"EEOF"@ strings or
--- the 24/32-bit offset widths. The truncation line is emitted
--- only when the parser observed a post-EOF truncation marker.
+-- | One-line-per-field metadata for an 'IPSPatch'.
+-- The truncation line is emitted only when the parser observed a post-EOF truncation marker.
 ipsMeta :: IPSPatch -> [InfoLine]
 ipsMeta patch =
   ipsVariantInfoLines (ipsVariant patch)
@@ -105,9 +102,9 @@ ipsVariantInfoLines variant =
      , InfoLine "max offset" (renderMaxOffset    (ipsVariantMaxAddressableOffset spec))
      ]
 
--- | The optional truncation field. @Just n@ renders as a single
--- @"truncate"@ line stating the post-apply target size; 'Nothing'
--- emits no line at all (no @"no truncation"@ noise).
+-- | The optional truncation field.
+-- @Just n@ renders as a single @"truncate"@ line stating the post-apply target size;
+-- 'Nothing' emits no line at all (no @"no truncation"@ noise).
 truncationInfoLine :: Maybe FileSize -> [InfoLine]
 truncationInfoLine Nothing =
   []
@@ -121,8 +118,8 @@ truncationInfoLine (Just truncatedTargetSize) =
 -- | One-line-per-field metadata for an 'EBPPatch'. Delegates the
 -- wire-fact fields to 'ipsMeta' on the underlying 'IPSPatch', then
 -- appends one line per populated metadata field — @title@, @author@,
--- @description@, @patcher@, in that declared order. Absent fields
--- (the 'Nothing' arm of each 'Maybe') produce no line.
+-- @description@, @patcher@, in that declared order.
+-- Absent fields produce no line.
 --
 -- The all-'Nothing' shape is also what 'Slap.JSON.parseEBPMetadata'
 -- returns when the wire metadata bytes were malformed; in that case
@@ -211,13 +208,8 @@ analyzeIPS patch = PatchAnalysis
 analyzeEBP :: EBPPatch -> PatchAnalysis
 analyzeEBP = analyzeIPS . ebpBasePatch
 
--- | Build a single 'AnalysisRegion' from an 'IPSRecord'. Copy records
--- become 'PayloadWrite' regions carrying their literal bytes; RLE
--- records become 'PayloadFill' regions tagged with 'DetailRLE'.
--- The offset and the region size are both taken from the
--- constructor-agnostic 'ipsRecordOffset' and 'recordPayloadLength'
--- helpers, so this walk never re-pattern-matches to recompute
--- either.
+-- | Build a single 'AnalysisRegion' from an 'IPSRecord'.
+-- The offset and the region size are both taken from the constructor-agnostic 'ipsRecordOffset' and 'recordPayloadLength' helpers.
 makeIPSRegion :: IPSRecord -> AnalysisRegion
 makeIPSRegion record = AnalysisRegion
   { regionOffset     = recordTargetOffset
@@ -263,9 +255,8 @@ renderMaxOffset (Offset offsetValue) = "0x" <> padHex 8 offsetValue
 -- | The 'OffsetRange' spanning a non-empty IPS record stream. Used by
 -- the cheap display path's 'Slap.Display.Info.PatchInfo' construction
 -- on plain IPS, IPS32, and EBP — all three carry the same record
--- shape, so a single helper covers them. Returns 'Nothing' on an
--- empty stream so the display layer suppresses the range line
--- rather than printing an empty @0x0 - 0x0@.
+-- shape, so a single helper covers them.
+-- 'Nothing' on an empty stream keeps the display layer from printing an empty @0x0 - 0x0@ range line.
 ipsRecordsRange :: Vector IPSRecord -> Maybe OffsetRange
 ipsRecordsRange records
   | Vector.null records = Nothing

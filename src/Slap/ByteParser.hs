@@ -98,7 +98,7 @@ instance MonadFail ByteParser where
     throwByteParserError (ByteParserUnexpectedDoPatternFailure message)
 
 -- | Run a parser against an input 'ByteString' starting at offset zero.
--- The final position is discarded — no consumer cares where the parser ended up, only what it produced.
+-- The final position is discarded.
 runByteParser :: ByteParser a -> ByteString -> Either ByteParserError a
 runByteParser (ByteParser parser) input =
   runReaderT (evalStateT parser (Position 0)) input

@@ -65,13 +65,10 @@ data EncodedHunk = EncodedHunk
   , encodedPayload :: !ByteString
   } deriving (Eq, Show)
 
--- | The wire-format offset range an encoder can address, paired with
--- the format label used to tag overflow errors. Each format with a
--- bounded per-record offset width defines an 'EncodingLimits' value
--- in its @Types@ module: 'Slap.APSN64.Types.apsN64Limits',
--- 'Slap.PMSR.Types.pmsrLimits', 'Slap.PPF1.Types.ppf1Limits',
--- 'Slap.PPF2.Types.ppf2Limits', 'Slap.IPS.Types.ipsLimits',
--- 'Slap.IPS.Types.ips32Limits', 'Slap.IPS.Types.ebpLimits'.
+-- | The wire-format offset range an encoder can address,
+-- paired with the format label used to tag overflow errors.
+-- Each format with a bounded per-record offset width defines one in its @Types@ module;
+-- 'Slap.Convert.encodingLimits' is the table that maps each direct target to its value.
 data EncodingLimits = EncodingLimits
   { maximumOffset :: !Offset
   , formatLabel   :: !FormatLabel

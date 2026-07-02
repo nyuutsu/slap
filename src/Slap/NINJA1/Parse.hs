@@ -59,7 +59,7 @@ parseNINJA1 (PatchFileContents input)
     payload             = ByteString.drop 8 input
     wrapParsed          = fmap (\patch -> Parsed patch [])
 
--- | Zlib decompression (PHP gzcompress = RFC 1950 zlib format).
+-- | PHP gzcompress = RFC 1950 zlib format.
 zlibDecompress :: ByteString -> Either SlapError ByteString
 zlibDecompress compressed = case zlibInflate compressed of
   Left cause   -> Left (DecompressionFailed (NINJA1Failed cause))

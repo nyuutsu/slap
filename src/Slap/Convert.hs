@@ -210,9 +210,8 @@ data CreateFormat
 -- matrix; the per-arm reading is in 'createPatch' / 'encodeDirect'.
 data RequestedPatchMetadata = RequestedPatchMetadata
   { requestedTitle                :: Maybe EncodedText
-    -- ^ Typed 'EncodedText' across the convert seam end-to-end:
-    -- the CLI parser wraps incoming text as @'EncodedText' 'EncodingUtf8'@,
-    -- and the create-side encoders (DPS, NINJA2) consume it directly via 'Slap.Text.encodeTextBounded'.
+    -- ^ The CLI parser wraps incoming text as @'EncodedText' 'EncodingUtf8'@;
+    -- the create-side encoders (DPS, NINJA2) consume it directly via 'Slap.Text.encodeTextBounded'.
   , requestedAuthor               :: Maybe EncodedText
   , requestedDescription          :: Maybe EncodedText
   , requestedVersion              :: Maybe EncodedText
@@ -224,10 +223,8 @@ data RequestedPatchMetadata = RequestedPatchMetadata
     -- its default," which for xdelta1 is 'CompressedPatch'.
   , requestedStability            :: Maybe PatchStability
   , requestedRomType              :: Maybe PlatformType
-    -- ^ Shared platform type: NINJA1 and NINJA2 define different
-    -- ROM type enumerations (18 vs 10 values, diverging at byte 2).
-    -- PlatformType represents the union; format-specific conversion
-    -- (platformToNINJA1, platformToNINJA2) handles lossy mappings.
+    -- ^ NINJA1 and NINJA2 define different ROM type enumerations (18 vs 10 values, diverging at byte 2);
+    -- 'PlatformType' unions them, and 'Slap.Platform' owns the lossy per-format mappings.
   , requestedImageType            :: Maybe PPF3ImageType
   , requestedFileIdDiz            :: FileIdDizRequest
     -- ^ PPF2/PPF3 FILE_ID.DIZ: carry the source's, set it, or drop it.
@@ -928,9 +925,8 @@ encodingLimits CreatePPF3    = Nothing  -- Int64-shaped offset, no per-record ca
 encodingLimits CreatePPF4    = Just ppf4Limits
 encodingLimits CreateNINJA1  = Nothing  -- variable-width length-of-offset, no per-record cap
 
--- | Encode PatchContents into the target format.
--- Validation (offset range, sentinel collision) runs after format-specific
--- splitting, so split-induced sentinel collisions are caught.
+-- | Validation (offset range, sentinel collision) runs after format-specific splitting,
+-- so split-induced sentinel collisions are caught.
 encodeDirect :: PatchContents -> InputFileContents -> DirectCreate -> RequestedPatchMetadata
              -> Maybe EncodingLimits -> RequestedConstraints -> RequestedDialects
              -> Either SlapError CreateResult
@@ -1277,12 +1273,9 @@ data DescriptionSources = DescriptionSources
   , descriptionSourceFallback  :: !EncodedText
   }
 
--- | Resolve a description from CLI flag, EBP metadata, source patch's
--- typed description, or default. Returns 'EncodedText'; the typed
--- value travels end-to-end so the format-specific encoder can route
--- a re-encode through the tag the source declared (UTF-8 for EBP
--- JSON, and the chosen metadata encoding for fields read from a patch
--- whose spec leaves the encoding undeclared).
+-- | The typed value travels end-to-end,
+-- so the format-specific encoder can route a re-encode through the tag the source declared:
+-- UTF-8 for EBP JSON, the chosen metadata encoding for fields whose format leaves the encoding undeclared.
 resolveDescription :: DescriptionSources -> EncodedText
 resolveDescription sources
   | Just description <- descriptionSourceCLI sources = description

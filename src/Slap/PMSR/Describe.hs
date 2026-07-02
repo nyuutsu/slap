@@ -60,10 +60,8 @@ pmsrRecordRegion record = AnalysisRegion
 -- Display range
 ----------------------------------------------------------------------------
 
--- | The 'OffsetRange' spanning a non-empty PMSR record stream,
--- consumed by the cheap display path's 'Slap.Display.Info.PatchInfo'
--- construction. Returns 'Nothing' on an empty stream so the display
--- layer suppresses the range line.
+-- | Consumed by the cheap display path's 'Slap.Display.Info.PatchInfo' construction;
+-- 'Nothing' on an empty stream so the display layer suppresses the range line.
 pmsrRecordsRange :: Vector PMSRRecord -> Maybe OffsetRange
 pmsrRecordsRange records
   | Vector.null records = Nothing

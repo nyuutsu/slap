@@ -107,7 +107,7 @@ parseVCDIFFWith tablePolicy (PatchFileContents input)
   where
     magicLength = ByteString.length vcdiffMagicBytes
 
--- | The note-severity advisories the framing stage produces: overlong (non-canonical) varint encodings in wire order, then the framer's trailing remnant, then any VCD_TARGET window that reaches nothing.
+-- | The note-severity advisories the framing stage produces.
 -- All are readings of the framed patch, attached only on a parse that succeeds; the decode stage's notes are gathered separately, in 'classifyAndDecode'.
 parseNotes :: RawPatch -> [SlapAdvisory]
 parseNotes rawPatch =
@@ -582,7 +582,7 @@ vetWindowFraming rawWindow
   where
     windowIndicator = rawWindowIndicator rawWindow
 
--- | Decode one resolved window's instruction stream against the active code table (the default pair for an ordinary patch, the built pair for one carrying a custom table).
+-- | Decode one resolved window's instruction stream against the active code table.
 -- The 'ResolvedWindow' proof is what lets the body read the sections as plain bytes without checking: the instruction decode never learns that compression existed.
 decodeWindow :: ActiveTable -> ResolvedWindow -> Either SlapError DecodedWindow
 decodeWindow activeTable (ResolvedWindow rawWindow) = do

@@ -226,16 +226,10 @@ runUPSXorWalk patch source outputSize
                 (unLength copyLength)
 
         -- | XOR source bytes with xorData, writing result to output.
-        -- Past source end, source bytes are treated as 0x00 (so
-        -- xorData bytes are written verbatim — x XOR 0 == x).
-        -- Dispatches on 'classifySourceCopy': the in-source arm runs
-        -- only 'xorWithSourceLoop'; the past-source arm runs only
-        -- 'xorWithZeroLoop' (writing xorData verbatim); the straddle
-        -- arm runs both phases back-to-back, each over the length
-        -- the classifier hands back. The caller is responsible for
-        -- ensuring the write fits within target bounds — this helper
-        -- does not clip to target.
-        --
+        -- Past source end, source bytes are treated as 0x00 (so xorData bytes are written verbatim: x XOR 0 == x).
+        -- Dispatches on 'classifySourceCopy'.
+        -- The caller is responsible for ensuring the write fits within target bounds —
+        -- this helper does not clip to target.
         xorSourceSlice :: Offset -> Length -> ByteString -> IO ()
         xorSourceSlice outputPosition xorDataLength xorData =
           let readBase  = sourcePointer `plusPtr` unOffset outputPosition
@@ -251,8 +245,7 @@ runUPSXorWalk patch source outputSize
                       (sourceByte `xor` xorByte :: Word8)
                     xorWithSourceLoop (byteOffset + 1) endByteOffset
 
-              -- Phase 2: source is past end. Source byte is virtually
-              -- 0, so the result is just xorData[byteOffset].
+              -- Phase 2: source past end.
               xorWithZeroLoop !byteOffset !endByteOffset
                 | byteOffset >= endByteOffset = pure ()
                 | otherwise = do
@@ -360,8 +353,7 @@ runUPSXorWalk patch source outputSize
 -- Cursor state
 ----------------------------------------------------------------------------
 
--- | The state slot carries the output cursor, the apply's only threaded value.
--- It advances by one block's full declared span ('advanceOutputByBlock') after every block, regardless of how that block was classified.
+-- | The state slot carries the output cursor.
 -- Kept as a bare 'Offset' rather than a one-field record because there is nothing else to bundle with it;
 -- UPS's apply has a single piece of state.
 type UPSApply = StateT Offset IO

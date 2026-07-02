@@ -28,8 +28,7 @@ apsN64Meta (APSN64Patch header _) = concat
   , [InfoLine "dest size" (renderAsText (unFileSize (apsN64DestinationSizeAsFileSize (apsN64DestinationSize header))))]
   ]
   where
-    -- The field is trimmed to its content at parse time; show it, or
-    -- nothing when it was blank padding.
+    -- The field is trimmed to its content at parse time.
     descriptionField description
       | Text.null text = []
       | otherwise      = [InfoLine "description" text]

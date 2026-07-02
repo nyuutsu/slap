@@ -93,10 +93,7 @@ byteRunEndExclusive run = advance (byteRunStart run) (byteRunLength run)
 --     most that of any other partition into copy and RLE records
 --     bounded by the same per-record payload cap.
 --
--- The 'OffsetWidth' parameter determines the cost-model constants
--- (different overhead for 'Offset24' and 'Offset32'); the source
--- and target are wrapped in their role newtypes so neither can be
--- mis-passed at the call site.
+-- The 'OffsetWidth' parameter determines the cost-model constants (different overhead for 'Offset24' and 'Offset32').
 optimalIPSRecords
   :: OffsetWidth
   -> InputFileContents
@@ -418,9 +415,7 @@ partitionDiffRegion offsetWidth _target region
                     slicePayload =
                       ByteString.take (unLength sliceLength)
                                       (ByteString.drop (unOffset predecessorPosition) regionPayload)
-                    -- Region-relative Offset to absolute file Offset by
-                    -- advancing the region's absolute start by the
-                    -- distance from the region-zero origin.
+                    -- Region-relative Offset to absolute file Offset.
                     absoluteOffset = advance regionStart
                                              (distance (Offset 0) predecessorPosition)
                     chosenRecord = Hunk
@@ -509,11 +504,9 @@ ensureMaxGap maxGap (firstPosition : secondPosition : remainingPositions)
       : ensureMaxGap maxGap
           (advance firstPosition maxGap : secondPosition : remainingPositions)
 
--- | Sort and remove consecutive duplicates from a list. Used as
--- the seed-position list preparation for the DP. Library functions
--- @nub@ and @group@ are O(n²) and O(n log n) respectively but
--- allocate; this fused sort + linear sweep matches the existing
--- behavior and stays in one shape.
+-- | Seed-position list preparation for the DP.
+-- Library functions @nub@ and @group@ are O(n²) and O(n log n) respectively but allocate;
+-- this fused sort + linear sweep matches their result and stays in one shape.
 sortAndDeduplicate :: Ord a => [a] -> [a]
 sortAndDeduplicate = removeConsecutiveDuplicates . sort
   where

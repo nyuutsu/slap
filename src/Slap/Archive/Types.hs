@@ -92,8 +92,7 @@ data UnwrapError
     -- alternatives via 'toolsFor' at render time, so this variant
     -- carries nothing.
     NoToolForArchive
-  | -- | A tool was invoked and exited nonzero. Carries which tool, and
-    -- the diagnostic it printed.
+  | -- | A tool was invoked and exited nonzero.
     ArchiveToolFailed ToolName ToolDiagnostic
   | -- | The archive opened, but every entry was filtered as chaff
     -- (readme, image, and so on), leaving nothing to treat as the patch.

@@ -176,7 +176,7 @@ defaultCodeTable = CodeTable (Vector.fromList (concat
     sized = SizeIs . FixedInstructionSize
 
 -- | Derive a code table from another by replacing the entries at the listed opcodes, leaving every other entry untouched.
--- The base supplies the entry count and the result keeps it ('Vector.//' preserves length, and every 'Opcode' wraps a 'Word8'), so a table built this way is as total under 'codeTableEntry' as 'defaultCodeTable' and 'deserializeCodeTable'.
+-- The base supplies the entry count and the result keeps it: 'Vector.//' preserves length.
 -- The third and last way a 'CodeTable' comes to exist: the encoder mints a handful of combined entries into donor opcodes the patch never uses, keeping the rest of the default table intact (@docs\/vcdiff\/rfc-vcdiff\/spec.md@, "Custom code tables").
 codeTableWithEntriesReplaced :: CodeTable -> [(Opcode, CodeTableEntry)] -> CodeTable
 codeTableWithEntriesReplaced (CodeTable entries) replacements =
@@ -189,7 +189,7 @@ codeTableWithEntriesReplaced (CodeTable entries) replacements =
 codeTableEntryCount :: Int
 codeTableEntryCount = 256
 
--- | The byte length of a serialized code table: six 'codeTableEntryCount'-byte arrays (the two instructions' types, then sizes, then modes). 1536 with the default count.
+-- | The byte length of a serialized code table: six 'codeTableEntryCount'-byte arrays. 1536 with the default count.
 serializedCodeTableLength :: Length
 serializedCodeTableLength = Length (6 * codeTableEntryCount)
 

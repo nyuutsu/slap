@@ -49,14 +49,10 @@ import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as LazyByteString
 
 -- | Encode a PPF2 patch from pre-split, pre-narrowed records.
--- 'EncodedHunk' is the typed proof that each record's offset fits the
--- 4-byte LE field ('Slap.PPF2.Types.ppf2Limits') and each payload
--- fits the single-byte count field
--- ('Slap.PPF2.Types.ppf2MaxRecordPayload') — the convert-layer
--- pipeline runs @splitHunks ppf2MaxRecordPayload@ and
--- @narrowHunks ppf2Limits@ before reaching this encoder.
+-- 'EncodedHunk' is the typed proof that each record's offset fits the 4-byte LE field ('Slap.PPF2.Types.ppf2Limits')
+-- and each payload fits the single-byte count field ('Slap.PPF2.Types.ppf2MaxRecordPayload').
 encodePPF2
-  :: [EncodedHunk]         -- ^ pre-split, pre-narrowed records
+  :: [EncodedHunk]
   -> EncodedText           -- ^ description (truncated and space-padded to 50 bytes)
   -> PPF2SourceSize        -- ^ source ROM size (written into the header for verification)
   -> PPF2ValidationBlock   -- ^ 1024-byte block sampled from source[0x9320]
@@ -69,9 +65,7 @@ encodePPF2 records description sourceSize (PPF2ValidationBlock validationBytes) 
        (PatchFileContents (LazyByteString.toStrict (toLazyByteString (header <> body))))
        descriptionAdvisories
 
--- | Space-pad the description to 50 bytes. Same shape as PPF1.Create's
--- helper — see that module for the rationale (matches the reference
--- @memset(buf,' ',50)@ + @strcpy@ + @space-overwrite@ idiom).
+-- | Same shape as PPF1.Create's helper; see that module for the rationale.
 padDescription :: EncodedText -> (ByteString, [SlapAdvisory])
 padDescription description =
   let (truncatedBytes, notices) =
@@ -101,9 +95,7 @@ encodeRecord ehunk =
 -- @"\@BEGIN_FILE_ID.DIZ" <content> "\@END_FILE_ID.DIZ" <length:LE32>@
 --
 -- Differs from PPF3's trailer only in the length field width
--- (PPF2: 4 bytes; PPF3: 2 bytes). Returns the trailer bytes plus any
--- substitution advisories from encoding the typed-text content
--- as UTF-8.
+-- (PPF2: 4 bytes; PPF3: 2 bytes).
 encodeFileIdDiz :: PPF2FileId -> (ByteString, [SlapAdvisory])
 encodeFileIdDiz fid =
   let description = unPPF2FileId fid

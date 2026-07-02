@@ -28,17 +28,10 @@ import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 import Data.Bits (xor)
 
 
--- | Encode one fixed-header metadata field as UTF-8. A 'Nothing'
--- value yields a zero-padded slot of @fieldWidth@ bytes and no
--- advisories; a 'Just' value runs through 'encodeTextBounded' as
--- UTF-8, and any substitution or truncation events surface as
--- 'SlapAdvisory' values via 'encodeLossAdvisories'. The actually-
--- stored value (not the requested codepoint count) is what
--- 'parseFixedHeader' reads back from the same patch; the @0x00@
--- padding matches NINJA2's reference encoder. The @PATCH_ENC@ byte
--- slap writes is an independent choice ('fromTextMode'), so the field
--- bytes are always UTF-8 while the declared byte is whatever the
--- target 'TextMode' is.
+-- | The actually-stored value (not the requested codepoint count) is what 'parseFixedHeader' reads back from the same patch;
+-- the @0x00@ padding matches NINJA2's reference encoder.
+-- The @PATCH_ENC@ byte slap writes is an independent choice ('fromTextMode'),
+-- so the field bytes are always UTF-8 while the declared byte is whatever the target 'TextMode' is.
 encodeBoundedField :: FieldName -> Length -> Maybe EncodedText
                    -> (ByteString, [SlapAdvisory])
 encodeBoundedField fieldName fieldWidth = \case
@@ -56,8 +49,7 @@ encodeBoundedField fieldName fieldWidth = \case
     in (padded, advisories)
 
 
--- | Create a NINJA2 patch from original and modified ByteStrings.
--- XOR-based records with VLV encoding; handles size changes via overflow.
+-- | XOR-based records with VLV encoding; handles size changes via overflow.
 -- Field-truncation and field-substitution advisories (from fields
 -- that overflow the fixed header, or that contain codepoints the
 -- target encoding can't represent) and platform advisories (from
@@ -120,8 +112,6 @@ createNINJA2 (InputFileContents original) (OutputFileContents modified) metadata
       in XorRecord hunkOffset (ByteString.packZipWith xor oldData newData)
 
     -- Overflow section: emitted whenever sizes differ (parser expects it).
-    -- Type byte: 'A' (0x41) = append, 'M' (0x4D) = truncate/minify.
-    -- Data is XOR'd with 0xFF on disk (RomPatcher.js convention).
     overflowPart
       | ByteString.length modified > ByteString.length original =
           let extra = ByteString.drop (ByteString.length original) modified

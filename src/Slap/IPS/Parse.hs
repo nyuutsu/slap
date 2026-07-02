@@ -72,16 +72,8 @@ import Data.Word (Word8)
 
 -- | Parse a patch from any IPS-family wire format.
 --
--- The success payload is an 'IPSParseResult' — a three-way sum that
--- names the shapes the parser actually produces. 'IPSParseCleanIPS'
--- and 'IPSParseCleanEBP' cover the two EOF-terminated dispositions;
--- 'IPSParseTruncated' covers the case where the input ran out before
--- a matching EOF marker was found, and is accompanied in the
--- 'Parsed' warnings channel by a 'NoEOFMarker' warning. The error
--- channel is reserved for inputs that violate the wire format in
--- ways no shape covers — bad magic, variant-ceiling overrun,
--- unrecognized trailing bytes after a valid @"EOF"@\/@"EEOF"@
--- marker, and so on.
+-- The error channel is reserved for inputs that violate the wire format in ways no 'IPSParseResult' shape covers:
+-- bad magic, variant-ceiling overrun, unrecognized trailing bytes after a valid @"EOF"@/@"EEOF"@ marker, and so on.
 --
 -- The variant ('StandardIPS' vs 'IPS32') is decided once, by reading
 -- the first 'ipsMagicLength' bytes against each variant's
@@ -216,24 +208,8 @@ data IPSStreamHead
 -- | Walk the post-magic record stream record by record, peeking at
 -- every iteration for the variant's EOF marker.
 --
--- Three things can happen on each iteration — 'IPSStreamHead' names
--- them:
---
---   * 'EOFMarkerAhead': the bytes at the cursor are the variant's
---     EOF marker. We consume the marker, capture the rest of the
---     input as the post-trailer slice, and return 'IPSBodyClean'.
---     The trailer disambiguation (plain / truncated / EBP / reject)
---     happens outside this loop in 'assembleCleanResult'.
---
---   * 'RecordAhead': the bytes at the cursor are not the EOF marker
---     and we have enough remaining input to read another complete
---     record. We decode the record and recurse.
---
---   * 'TooShortToContinue': the remaining input is too short to hold
---     either an EOF marker or a complete next record. We return
---     'IPSBodyTruncated' with the records decoded so far; 'parseIPS'
---     will surface this as an 'IPSParseTruncated' with a
---     'NoEOFMarker' warning.
+-- Three things can happen on each iteration; 'IPSStreamHead' names them.
+-- The captured trailer's disambiguation (plain / truncated / EBP / reject) happens after the walk, in 'assembleCleanResult'.
 --
 -- The peek is genuinely non-destructive: 'lookAhead' from
 -- 'Slap.ByteParser' runs the sub-parser and rewinds the cursor regardless
@@ -279,12 +255,8 @@ parseIPSBody variant = bodyLoop [] [] firstAction
       pure (IPSBodyTruncated (reverse accumulatedReversed)
                              (reverse warningsReversed))
 
-    -- | @accumulatedReversed@ and @warningsReversed@ are the
-    -- walker's two reversed accumulators; @currentIndex@ is the
-    -- 'ActionIndex' that the next successfully-decoded record
-    -- will be tagged with in wire order. The index advances
-    -- exactly once per accepted record — a truncated tail leaves
-    -- it unchanged, since no record was committed.
+    -- | @currentIndex@ advances exactly once per accepted record;
+    -- a truncated tail leaves it unchanged, since no record was committed.
     bodyLoop :: [IPSRecord] -> [SlapAdvisory] -> ActionIndex -> ByteParser IPSBodyShape
     bodyLoop accumulatedReversed warningsReversed currentIndex = do
       streamHead <- peekStreamHead
@@ -335,12 +307,9 @@ parseIPSBody variant = bodyLoop [] [] firstAction
         else decodeCopyBody accumulatedReversed warningsReversed currentIndex recordOffset declaredPayload
 
     -- | Decode an RLE record. A zero-count run is accepted verbatim
-    -- (stored as an 'IPSRecordRLE' with @ipsRleCount = Length 0@) and
-    -- flagged with a 'ZeroCountRLERecord' warning keyed to the
-    -- record's wire-order 'ActionIndex'. The ceiling check in
-    -- 'validateRecordList' still runs against the final record list;
-    -- a zero-count RLE whose offset is in range is a no-op, which is
-    -- exactly what Apply will execute.
+    -- and flagged with a 'ZeroCountRLERecord' warning keyed to the record's wire-order 'ActionIndex'.
+    -- The ceiling check in 'validateRecordList' still runs against the final record list;
+    -- a zero-count RLE whose offset is in range is a no-op, which is exactly what Apply will execute.
     decodeRLEBody :: [IPSRecord] -> [SlapAdvisory] -> ActionIndex -> Offset -> ByteParser IPSBodyShape
     decodeRLEBody accumulatedReversed warningsReversed currentIndex recordOffset = do
       tailSpace <- remaining
@@ -395,9 +364,7 @@ parseIPSBody variant = bodyLoop [] [] firstAction
 -- record sits at offset @0xFFFFFF@ and writes a payload ending at
 -- @0x1000000@: the offset is at the limit, but a record may still
 -- write @ipsMaxRecordPayload@ bytes past it, so the real ceiling is
--- the sum of the two caps. The sum-of-two-limits ceiling makes that case
--- legal exactly because the offset and payload caps are
--- independent — any single record can saturate both at once.
+-- the sum of the two caps.
 --
 -- Validation runs on both 'IPSBodyClean' and 'IPSBodyTruncated'
 -- record lists: a truncated body whose partial records already
@@ -466,7 +433,7 @@ validateRecordList variant = walkAt firstAction
 -- The function is shared across every IPS-family parse path,
 -- including 'IPS32' whose 32-bit offset space lets record counts grow into the hundred-thousand range.
 -- At that scale the @O(n log n)@ sweep is what keeps overlap detection cheap;
--- a pairwise @O(n^2)@ comparison answers the same question but is quadratic in the record count.
+-- a pairwise @O(n^2)@ comparison answers the same question.
 detectOverlappingRecords :: FormatLabel
                          -> Vector IPSRecord
                          -> [SlapAdvisory]

@@ -38,7 +38,7 @@ import Data.Word (Word8)
 vcdiffMagicBytes :: ByteString
 vcdiffMagicBytes = ByteString.pack [0xD6, 0xC3, 0xC4]
 
--- | A parsed VCDIFF patch, named for which of the three flavors it is.
+-- | A parsed VCDIFF patch.
 -- An xdelta3 patch can carry an application header and per-window checksums an RFC patch cannot; an RFC patch can carry a custom code table an xdelta3 decoder rejects.
 -- 'PatchCoreOnly' uses no flavor-distinguishing feature and decodes identically under either flavor.
 data VCDIFFPatch
@@ -110,7 +110,7 @@ patchWindowsWithChecksums patch = case patch of
     withChecksum xdelta3Window =
       WindowWithChecksum (xdelta3WindowBody xdelta3Window) (xdelta3WindowAdler32 xdelta3Window)
 
--- | A window paired with the per-window Adler32 it carries, the flavor-flattened unit 'patchWindowsWithChecksums' yields.
+-- | A window paired with the per-window Adler32 it carries.
 data WindowWithChecksum = WindowWithChecksum
   { windowWithChecksumBody    :: !Window
   , windowWithChecksumAdler32 :: !(Maybe Adler32)
