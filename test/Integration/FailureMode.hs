@@ -14,7 +14,7 @@ import Integration.Helpers
   , applyPatch
   , withTempFile
   , mmapRomFile
-  , parseCreateFormat
+  , lookupCreateFormatToken
   , expectFail
   , expectOkWithWarning
   , writeGarbage
@@ -501,7 +501,7 @@ crossFormatRoundTripTests base bps =
                                             expectedSha (sha1Hex outputC)
 
     parseFormat :: String -> IO CreateFormat
-    parseFormat formatString = case parseCreateFormat formatString of
+    parseFormat formatString = case lookupCreateFormatToken formatString of
       Just format -> pure format
       Nothing -> assertFailure ("unknown format: " ++ formatString) >> error "unreachable"
 
@@ -552,7 +552,7 @@ createRoundTripTests getTargets dm4yBase dm4yBps
 
     createAndVerify :: String -> ByteString -> ByteString -> IO ()
     createAndVerify formatString baseBytes targetBytes = do
-      createFormat <- case parseCreateFormat formatString of
+      createFormat <- case lookupCreateFormatToken formatString of
         Just format -> pure format
         Nothing -> assertFailure ("unknown format: " ++ formatString) >> error "unreachable"
       case createPatch createFormat Nothing (InputFileContents baseBytes) (OutputFileContents targetBytes) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of

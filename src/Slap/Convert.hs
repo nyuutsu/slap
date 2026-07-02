@@ -36,6 +36,10 @@ module Slap.Convert
   , formatExtension
   , formatName
   , createFormatLabel
+  , TokenVisibility(..)
+  , createFormatTokens
+  , advertisedCreateFormats
+  , lookupCreateFormatToken
   , acceptedMetadataFields
   , requestedMetadataFields
   , rejectIncompatibleMetadata
@@ -122,6 +126,7 @@ import Control.Applicative ((<|>))
 import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import Data.Char (toLower)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (fromMaybe, isJust, isNothing)
 import qualified Data.Set as Set
@@ -1303,6 +1308,50 @@ slapPatcherIdentity = EncodedText EncodingUtf8 (Text.pack "slap")
 ----------------------------------------------------------------------------
 -- Format metadata
 ----------------------------------------------------------------------------
+
+-- | Whether a create-format token is advertised in help text ('Canonical') or accepted quietly ('Alias').
+data TokenVisibility = Canonical | Alias
+
+-- | Source of truth for slap's create-format tokens, shared by the CLI parser, the advertised help list,
+-- and the test harness's spec files — one table, so what the parser accepts, what we tell users to type,
+-- and what a spec row may name cannot drift apart.
+-- Tokens are 'String' because both consumers are 'String' seams: optparse argv and spec-file lines.
+createFormatTokens :: [(String, CreateFormat, TokenVisibility)]
+createFormatTokens =
+  [ ("bps",     CreateDifferential CreateBPS,    Canonical)
+  , ("ips",     CreateDirect       CreateIPS,    Canonical)
+  , ("ips32",   CreateDirect       CreateIPS32,  Canonical)
+  , ("ebp",     CreateDirect       CreateEBP,    Canonical)
+  , ("ups",     CreateDifferential CreateUPS,    Canonical)
+  , ("ppf1",    CreateDirect       CreatePPF1,   Canonical)
+  , ("ppf2",    CreateDirect       CreatePPF2,   Canonical)
+  , ("ppf3",    CreateDirect       CreatePPF3,   Canonical)
+  , ("ppf4",    CreateDirect       CreatePPF4,   Canonical)
+  , ("ppf",     CreateDirect       CreatePPF3,   Alias)
+  , ("pmsr",    CreateDirect       CreatePMSR,   Canonical)
+  , ("ninja1",  CreateDirect       CreateNINJA1, Canonical)
+  , ("dps",     CreateDifferential CreateDPS,    Canonical)
+  , ("ninja2",  CreateDifferential CreateNINJA2, Canonical)
+  , ("aps-n64", CreateDirect       CreateAPSN64, Canonical)
+  , ("apsn64",  CreateDirect       CreateAPSN64, Alias)
+  , ("aps-gba", CreateDifferential CreateAPSGBA, Canonical)
+  , ("apsgba",  CreateDifferential CreateAPSGBA, Alias)
+  , ("gdiff",   CreateDifferential CreateGDIFF,  Canonical)
+  , ("xdelta1", CreateDifferential CreateXDelta1, Canonical)
+  , ("xdelta",  CreateDifferential CreateXDelta1, Alias)
+  , ("rfc-vcdiff", CreateDifferential CreateRFCVCDIFF, Canonical)
+  ]
+
+-- | The tokens users are told about: the 'Canonical' rows, in table order.
+advertisedCreateFormats :: [String]
+advertisedCreateFormats =
+  [token | (token, _format, Canonical) <- createFormatTokens]
+
+-- | The 'CreateFormat' a token names, matched case-insensitively; 'Nothing' for a token outside the table.
+lookupCreateFormatToken :: String -> Maybe CreateFormat
+lookupCreateFormatToken input =
+  lookup (map toLower input)
+         [(token, format) | (token, format, _visibility) <- createFormatTokens]
 
 formatExtension :: CreateFormat -> String
 formatExtension (CreateDirect format) = directExtension format

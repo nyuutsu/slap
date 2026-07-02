@@ -16,7 +16,7 @@ import Integration.Helpers
   ( Tier(..)
   , repoDir
   , parseSpecFile
-  , parseCreateFormat
+  , lookupCreateFormatToken
   , sha1Hex
   , withTempFile
   , withTempDir
@@ -62,7 +62,7 @@ crossValTests AllTests getTargets = do
 planCrossValRow :: IO BootstrapTargets -> FilePath -> [String] -> IO [MaybeTest]
 planCrossValRow getTargets repo fields = case fields of
   (formatString : scenario : baseRelative : bootRelative : targetSha : toolName : _)
-    | Just format <- parseCreateFormat formatString
+    | Just format <- lookupCreateFormatToken formatString
     , Just tool   <- parseExternalToolName toolName ->
         let basePath = repo </> baseRelative
             bootPath = repo </> bootRelative
@@ -159,7 +159,8 @@ applyExternal tool baseFile patchFile outFile = case tool of
     expectExternalSuccess "bspatch" run
 
   Xdelta3 -> do
-    run <- runExternal Xdelta3 ["-d", "-s", baseFile, patchFile, outFile] Nothing ""
+    -- -f because the harness pre-creates the output temp file, and xdelta3 (alone among these tools) refuses to overwrite without it.
+    run <- runExternal Xdelta3 ["-d", "-f", "-s", baseFile, patchFile, outFile] Nothing ""
     expectExternalSuccess "xdelta3" run
 
   -- The crossval spec only references the four tools above; any other

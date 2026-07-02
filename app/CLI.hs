@@ -37,7 +37,8 @@ module CLI
   , parseCommandLine
   ) where
 
-import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
+import Slap.Convert (CreateFormat(..), DifferentialCreate(CreateBPS),
+                     TokenVisibility(..), advertisedCreateFormats, lookupCreateFormatToken,
                      RequestedPatchMetadata(..),
                      FileIdDizRequest(..),
                      RequestedConstraints(..),
@@ -708,49 +709,13 @@ dizIntentParser = asum
   , pure CarryDiz
   ]
 
--- | Tagging each token in a single table lets the advertised list be derived from the same source the parser uses,
--- so "what the parser accepts" and "what we tell users to type" cannot drift apart.
-data TokenVisibility = Canonical | Alias
-
--- | Source of truth for slap's create-format tokens:
--- both 'parseCreateFormat' and 'advertisedCreateFormats' derive from this table.
-createFormatTokens :: [(String, CreateFormat, TokenVisibility)]
-createFormatTokens =
-  [ ("bps",     CreateDifferential CreateBPS,    Canonical)
-  , ("ips",     CreateDirect       CreateIPS,    Canonical)
-  , ("ips32",   CreateDirect       CreateIPS32,  Canonical)
-  , ("ebp",     CreateDirect       CreateEBP,    Canonical)
-  , ("ups",     CreateDifferential CreateUPS,    Canonical)
-  , ("ppf1",    CreateDirect       CreatePPF1,   Canonical)
-  , ("ppf2",    CreateDirect       CreatePPF2,   Canonical)
-  , ("ppf3",    CreateDirect       CreatePPF3,   Canonical)
-  , ("ppf4",    CreateDirect       CreatePPF4,   Canonical)
-  , ("ppf",     CreateDirect       CreatePPF3,   Alias)
-  , ("pmsr",    CreateDirect       CreatePMSR,   Canonical)
-  , ("ninja1",  CreateDirect       CreateNINJA1, Canonical)
-  , ("dps",     CreateDifferential CreateDPS,    Canonical)
-  , ("ninja2",  CreateDifferential CreateNINJA2, Canonical)
-  , ("aps-n64", CreateDirect       CreateAPSN64, Canonical)
-  , ("apsn64",  CreateDirect       CreateAPSN64, Alias)
-  , ("aps-gba", CreateDifferential CreateAPSGBA, Canonical)
-  , ("apsgba",  CreateDifferential CreateAPSGBA, Alias)
-  , ("gdiff",   CreateDifferential CreateGDIFF,  Canonical)
-  , ("xdelta1", CreateDifferential CreateXDelta1, Canonical)
-  , ("xdelta",  CreateDifferential CreateXDelta1, Alias)
-  , ("rfc-vcdiff", CreateDifferential CreateRFCVCDIFF, Canonical)
-  ]
-
-advertisedCreateFormats :: [String]
-advertisedCreateFormats =
-  [token | (token, _format, Canonical) <- createFormatTokens]
-
+-- | The option-reader adapter over 'lookupCreateFormatToken': the token table lives in "Slap.Convert"
+-- (shared with the test harness's spec files); what belongs here is the CLI's error message.
 parseCreateFormat :: String -> Either String CreateFormat
-parseCreateFormat input =
-  case lookup (map toLower input)
-              [(token, format) | (token, format, _visibility) <- createFormatTokens] of
-    Just format -> Right format
-    Nothing     -> Left ("unknown format: " ++ input
-                      ++ "\n  expected: " ++ intercalate ", " advertisedCreateFormats)
+parseCreateFormat input = case lookupCreateFormatToken input of
+  Just format -> Right format
+  Nothing     -> Left ("unknown format: " ++ input
+                    ++ "\n  expected: " ++ intercalate ", " advertisedCreateFormats)
 
 parseTextMode :: String -> Either String TextMode
 parseTextMode input = case map toLower input of

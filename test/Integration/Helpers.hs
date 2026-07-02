@@ -14,7 +14,7 @@ module Integration.Helpers
   , SuiteHeader(..)
   , SuiteEntry(..)
   , parseSuiteFile
-  , parseCreateFormat
+  , lookupCreateFormatToken
     -- * Patch application
   , applyPatch
   , undoPatch
@@ -52,7 +52,7 @@ import Slap.Display.Glyph (emDash)
 import Slap.FormatLabel (formatLabelName)
 import Slap.SomePatch (SomePatch(..), PatchKind(..), ApplyStrategy(..), UndoStrategy(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
-import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..), PatchContents, RequestedPatchMetadata(..), convertDirect, noConstraintsRequested, noDialectsRequested)
+import Slap.Convert (CreateFormat(..), PatchContents, RequestedPatchMetadata(..), convertDirect, lookupCreateFormatToken, noConstraintsRequested, noDialectsRequested)
 import Slap.Create (createPatch)
 
 import Control.Exception (catch, IOException)
@@ -194,29 +194,6 @@ parseSuiteFile path = do
       (formatString:patch:confidence:provenance:_) -> SuiteEntry formatString patch confidence provenance
       (formatString:patch:confidence:_)      -> SuiteEntry formatString patch confidence ""
       _                             -> SuiteEntry "" "" "" ""
-
--- | Parse a create format string (mirrors Main.hs parseCreateFormat).
-parseCreateFormat :: String -> Maybe CreateFormat
-parseCreateFormat formatString = case map toLower formatString of
-  "bps"     -> Just (CreateDifferential CreateBPS)
-  "ips"     -> Just (CreateDirect       CreateIPS)
-  "ips32"   -> Just (CreateDirect       CreateIPS32)
-  "ebp"     -> Just (CreateDirect       CreateEBP)
-  "ups"     -> Just (CreateDifferential CreateUPS)
-  "ppf3"    -> Just (CreateDirect       CreatePPF3)
-  "ppf"     -> Just (CreateDirect       CreatePPF3)
-  "pmsr"    -> Just (CreateDirect       CreatePMSR)
-  "ninja1"  -> Just (CreateDirect       CreateNINJA1)
-  "dps"     -> Just (CreateDifferential CreateDPS)
-  "ninja2"  -> Just (CreateDifferential CreateNINJA2)
-  "aps-n64" -> Just (CreateDirect       CreateAPSN64)
-  "apsn64"  -> Just (CreateDirect       CreateAPSN64)
-  "aps-gba" -> Just (CreateDifferential CreateAPSGBA)
-  "apsgba"  -> Just (CreateDifferential CreateAPSGBA)
-  "gdiff"   -> Just (CreateDifferential CreateGDIFF)
-  "xdelta1" -> Just (CreateDifferential CreateXDelta1)
-  "xdelta"  -> Just (CreateDifferential CreateXDelta1)
-  _         -> Nothing
 
 ----------------------------------------------------------------------------
 -- Patch application

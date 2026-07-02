@@ -11,7 +11,7 @@ import Integration.Helpers
   , restrictToTier
   , repoDir
   , parseSpecFile
-  , parseCreateFormat
+  , lookupCreateFormatToken
   , sha1Hex
   , applyPatch
   , mmapRomFile
@@ -57,7 +57,7 @@ createTests tier getTargets = do
 planCreateRow :: IO BootstrapTargets -> FilePath -> [String] -> IO [MaybeTest]
 planCreateRow getTargets repo fields = case fields of
   (formatString : scenario : basePath : bootstrapPath : targetSha : _)
-    | Just format <- parseCreateFormat formatString ->
+    | Just format <- lookupCreateFormatToken formatString ->
         let absoluteBase = repo </> basePath
             absoluteBoot = repo </> bootstrapPath
             label        = formatString ++ "/" ++ scenario

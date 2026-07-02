@@ -10,7 +10,7 @@ import Integration.Helpers
   , restrictToTier
   , repoDir
   , parseSpecFile
-  , parseCreateFormat
+  , lookupCreateFormatToken
   , sha1Hex
   , applyPatch
   , attemptConvert
@@ -74,7 +74,7 @@ planConvertRow :: FilePath -> [String] -> IO [MaybeTest]
 planConvertRow repo fields = case fields of
   (sourceFormat : targetFormat : patchRel : baseRel : targetSha : verdict : rest)
     | "skip:" `isPrefixOf` verdict -> pure []  -- spec-side intentional omission
-    | Just targetCreateFormat <- parseCreateFormat targetFormat ->
+    | Just targetCreateFormat <- lookupCreateFormatToken targetFormat ->
         let warningsString = case rest of (warning:_)        -> warning; _ -> ""
             flagsString    = case rest of (_:flagField:_)    -> flagField; _ -> ""
             patchPath      = repo </> patchRel

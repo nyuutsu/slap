@@ -9,7 +9,7 @@ import Integration.Helpers
   , restrictToTier
   , repoDir
   , attemptConvert
-  , parseCreateFormat
+  , lookupCreateFormatToken
   , trim
   )
 import Integration.Skip
@@ -83,7 +83,7 @@ metadataCases =
 
 planMetadataCase :: FilePath -> (String, String, [String]) -> IO [MaybeTest]
 planMetadataCase repo (formatString, relPath, fieldNames) =
-  case parseCreateFormat formatString of
+  case lookupCreateFormatToken formatString of
     Nothing     -> pure []  -- unknown @format@ in the static case list
     Just format ->
       let patchPath = repo </> relPath
