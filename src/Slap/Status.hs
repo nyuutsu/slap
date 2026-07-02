@@ -759,16 +759,9 @@ data SlapError
 
   -- Create / Encode
 
-  -- | A target format's create path refused this (source, target) pair
-  -- for the reason carried in the 'UnencodeabilityReason'. The single
-  -- carrier for every "this format cannot encode this pair, here's
-  -- why" refusal — formerly split between 'UPSUnencodeablePair' (UPS
-  -- only) and 'CannotExpressTargetShrinkage' (size-shrinkage only);
-  -- both have folded into this one. Raised by 'Slap.UPS.Create' for
-  -- the UPS-specific tail invariant, and by each format's per-format
-  -- @\<format\>RejectIncompatibleSizeChange@ smart-checker (called via
-  -- 'Slap.Convert.rejectIncompatibleSizeChange') for the cross-format
-  -- size-change refusals.
+  -- | A target format's create path refused this (source, target) pair, for the reason in the 'UnencodeabilityReason'.
+  -- The single carrier for every "this format cannot encode this pair" refusal:
+  -- raised by 'Slap.UPS.Create' for the UPS tail invariant, and by each format's @\<format\>RejectIncompatibleSizeChange@ checker (via 'Slap.Convert.rejectIncompatibleSizeChange') for size-change refusals.
   | UnencodeablePair FormatLabel UnencodeabilityReason
   | NarrowingError !NarrowingFailure
 
@@ -2052,11 +2045,9 @@ secondaryStreamGranularity DJW   = EachSectionItsOwn
 secondaryStreamGranularity LZMA  = GatheredAcrossSections
 secondaryStreamGranularity FGK   = GatheredAcrossSections
 
--- | The possessive subject of a secondary-stream message: which
--- sections own the stream being spoken of. The grammatical number
--- follows 'secondaryStreamGranularity', because it is a fact about
--- the stream's shape — a gathered stream belongs to all the kind's
--- sections, a per-section stream to just one.
+-- | The possessive subject of a secondary-stream message: which sections own the stream being spoken of.
+-- The grammatical number follows 'secondaryStreamGranularity', because it is a fact about the stream's shape:
+-- a gathered stream belongs to all sections of that kind, a per-section stream to just one.
 secondaryStreamPossessive :: VCDIFFSection -> CompressionAlgorithm -> Text
 secondaryStreamPossessive section algorithm =
   vcdiffSectionName section <> ownerSuffix <> " "
@@ -2624,26 +2615,16 @@ data VCDIFFXDelta3Feature
   | XDelta3FeatureWindowChecksum       -- ^ a per-window Adler32 (VCD_ADLER32).
   deriving (Eq, Show)
 
--- | A semantics failure in a VCDIFF patch that parsed at the byte
--- level, carried by 'MalformedVCDIFF'. These are the loud refusals
--- the core invariants demand (docs/vcdiff/core/spec.md "Core
--- invariants") — a window naming both copy sources at once, a COPY
--- that reads unwritten output or crosses the source-segment boundary,
--- a window that does not fill to its declared size, an oversize
--- section reference, an address mode the table cannot name — plus the
--- secondary-compression framing contradictions
--- (docs/vcdiff/xdelta3/questions.md "Secondary compression — the
--- framing"): a compressed section whose own declarations cannot be
--- honored, or a kind's gathered stream whose decode disagrees with
--- what its sections declared. Every arm is a claim slap understands
--- and finds invalid; a reserved indicator bit or an uncataloged
--- compressor id — claims slap cannot interpret — are the separate
--- declines 'VCDIFFReservedIndicatorBits' and
--- 'VCDIFFUnknownSecondaryCompressor'. The 'ActionIndex' an arm
--- carries counts decoded instructions, not instruction-section
--- bytes: one code byte can carry two instructions, and an inline
--- size varint widens others, so the index names what the stream
--- means rather than where it sits.
+-- | A semantics failure in a VCDIFF patch that parsed at the byte level, carried by 'MalformedVCDIFF'.
+-- These are the loud refusals the core invariants demand (docs/vcdiff/core/spec.md "Core invariants"):
+-- a window naming both copy sources at once, a COPY that reads unwritten output or crosses the source-segment boundary,
+-- a window that does not fill to its declared size, an oversize section reference, an address mode the table cannot name;
+-- plus the secondary-compression framing contradictions (docs/vcdiff/xdelta3/questions.md "Secondary compression — the framing"):
+-- a compressed section whose own declarations cannot be honored, or a gathered stream whose decode disagrees with what its sections declared.
+-- Every arm is a claim slap understands and finds invalid;
+-- a reserved indicator bit or an uncataloged compressor id (claims slap cannot interpret) are the separate declines 'VCDIFFReservedIndicatorBits' and 'VCDIFFUnknownSecondaryCompressor'.
+-- The 'ActionIndex' an arm carries counts decoded instructions, not instruction-section bytes:
+-- one code byte can carry two instructions, and an inline size varint widens others, so the index names what the stream means rather than where it sits.
 data VCDIFFMalformation
   -- | A window's indicator set both VCD_SOURCE and VCD_TARGET, which
   -- RFC 3284 §4.2 forbids.
@@ -2687,15 +2668,11 @@ data VCDIFFMalformation
   -- declarations live in the same patch and contradict each other;
   -- there is no algorithm the section could honestly be decoded by.
   | VCDIFFCompressedSectionWithoutCompressor !VCDIFFSection
-  -- | A secondary stream finished decoding with input left over —
-  -- the named 'Length' of it. Mirrors xd3's "finished with unused
-  -- input" verdict (@xd3_decode_secondary@), kept distinct from the
-  -- short-output sibling below because over-supplied input and
-  -- under-produced output are different faults. The
-  -- 'CompressionAlgorithm' names the decoder that was running, and
-  -- fixes the stream's granularity: a kind's windows-spanning
-  -- gathered stream for LZMA, one section's own self-contained
-  -- stream for DJW.
+  -- | A secondary stream finished decoding with input left over: the named 'Length' of it.
+  -- Mirrors xd3's "finished with unused input" verdict (@xd3_decode_secondary@),
+  -- kept distinct from the short-output sibling below because over-supplied input and under-produced output are different faults.
+  -- The 'CompressionAlgorithm' names the decoder that was running, and fixes the stream's granularity:
+  -- a windows-spanning gathered stream for LZMA, one section's own self-contained stream for DJW.
   | VCDIFFSecondaryStreamUnconsumedInput !VCDIFFSection !CompressionAlgorithm !Length
   -- | A secondary stream decoded to a byte count other than its
   -- framing declared. Mirrors xd3's "short output" verdict; the

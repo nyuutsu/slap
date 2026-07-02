@@ -120,13 +120,9 @@ newtype XDelta1ToName = XDelta1ToName
 -- the inherited fields of a parsed xdelta1 source patch
 -- (xdelta1@→@xdelta1 convert).
 --
--- The bare constructor is not exported; the only paths to a value
--- are 'resolveXDelta1FileNames' (create) and 'requireXDelta1FileNames'
--- (convert). The wire encoder in "Slap.XDelta1.Create" takes one of
--- these and writes the contents to the header without re-checking —
--- the type IS the proof that resolution ran and that both bytes are
--- locale-encoded and within the u16 byte cap the wire's packed
--- name-lengths header word imposes.
+-- The bare constructor is not exported; the only paths to a value are 'resolveXDelta1FileNames' (create) and 'requireXDelta1FileNames' (convert).
+-- The wire encoder in "Slap.XDelta1.Create" writes the contents to the header without re-checking:
+-- a value in hand came from one of those two resolvers, so both names are locale-encoded and within the u16 cap the wire's packed name-lengths header word imposes.
 data ResolvedXDelta1FileNames = ResolvedXDelta1FileNames
   { resolvedXDelta1FromName :: !XDelta1FromName
   , resolvedXDelta1ToName   :: !XDelta1ToName
@@ -180,16 +176,9 @@ requireXDelta1FileNames mergedFromName mergedToName sourceLabel =
       buildResolvedXDelta1FileNames fromText toText
     _ -> Left (XDelta1ConvertRequiresNames sourceLabel)
 
--- | The one place where the u16 byte-length cap is enforced. Both
--- exported resolvers funnel through here. Construction of
--- 'ResolvedXDelta1FileNames' anywhere else in slap is a type error
--- (the constructor is module-private). The cap-check runs against
--- the encoded byte count under the value's encoding tag: the value
--- re-encodes (lenient) under whatever encoding it carries to count
--- bytes; substitution events at encode time are accepted silently
--- here (the resolver returns 'Either', with no advisory channel —
--- the create-time re-encoder in 'Slap.XDelta1.Create.encodeXDelta1'
--- surfaces them through its 'CreateResult' channel).
+-- | The one place the u16 byte-length cap is enforced; both exported resolvers funnel through here.
+-- The cap-check counts the encoded bytes by re-encoding (lenient) under the value's own encoding tag.
+-- Substitution events are silent here (the resolver has no advisory channel), surfacing later through 'Slap.XDelta1.Create.encodeXDelta1''s 'CreateResult'.
 buildResolvedXDelta1FileNames
   :: EncodedText -> EncodedText
   -> Either SlapError ResolvedXDelta1FileNames

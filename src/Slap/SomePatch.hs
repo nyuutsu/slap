@@ -152,12 +152,8 @@ data Verification = Verification
   , verifySourceBlocks  :: [BlockCheck]
   , verifyTargetBlocks  :: [BlockCheck]
   , verifyPPFBlock      :: Maybe ValidationBlock
-    -- | File-size check, when the format declares an expected source
-    -- size. The 'FileSizeCheck' carries its own severity: 'AdvisorySize'
-    -- for formats with a stronger gate (a CRC32, say), where a mismatch
-    -- only warns; 'RequiredSize' for formats where the declared size is
-    -- the sole gate, where a mismatch fails the apply unless
-    -- @--no-verify@ is set.
+    -- | File-size check, present when the format declares an expected source size.
+    -- The 'FileSizeCheck' carries its own advisory-or-required severity.
   , verifyFileSize :: Maybe FileSizeCheck
   , verifyWindowAdler32 :: [WindowCheck]
   , verifySourceBytes   :: [ByteCheck]

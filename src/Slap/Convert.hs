@@ -1206,15 +1206,8 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
   , contentsUndoData    = if needs FieldUndoData
                     then Just (splitUndoHunks ppf3MaxRecordPayload source patchHunks)
                     else Nothing
-  -- Carries the truncated target size when @target < source@. Today's
-  -- live consumers: 'encodeDirect's 'CreateIPS' arm, which threads the
-  -- value into 'IPS.encodeIPSPatch' as the post-EOF truncation marker;
-  -- 'rejectNonSMCShapedTruncation', which inspects it when the user has
-  -- opted into 'RequireSMCShapedTruncation'; and 'provides' \/
-  -- 'fieldNote', which surface 'FieldTruncation' presence and drops on
-  -- the convert seam. The format-level shrinkage refusal lives
-  -- elsewhere now — see 'rejectIncompatibleSizeChange' and each
-  -- format's own '<format>RejectIncompatibleSizeChange' checker.
+  -- The truncated target size when @target < source@.
+  -- Not the shrinkage-refusal path: that is 'rejectIncompatibleSizeChange' and each format's '<format>RejectIncompatibleSizeChange' checker.
   , contentsTruncation  = if ByteString.length target < ByteString.length source
                     then Just (byteFileSize target)
                     else Nothing

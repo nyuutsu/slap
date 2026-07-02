@@ -2,45 +2,18 @@
 -- The encoding decision lives in the value itself, not in which function the call site happens to reach for.
 --
 -- An 'EncodedText' bundles an 'EncodingName' tag with a 'Text' payload.
--- The tag remembers what encoding the bytes were when they arrived (or
--- what encoding slap is asked to interpret them as); the 'Text'
--- payload is the in-memory canonical form, codepoints, encoding-
--- independent. Transcoding becomes principled: convert between
--- encodings by routing the payload through 'encodeText' or
--- 'encodeTextLenient' under a different tag, with the loss semantics
--- of the conversion surfaced via 'LossNotice'.
+-- The tag remembers what encoding the bytes were when they arrived (or what encoding slap is asked to interpret them as);
+-- the 'Text' payload is the in-memory canonical form, codepoints, encoding-independent.
+-- Transcoding becomes principled: convert between encodings by routing the payload through 'encodeText' or 'encodeTextLenient' under a different tag,
+-- with the loss semantics of the conversion surfaced via 'LossNotice'.
 --
 -- == Module surface
 --
--- Three pairs of primitives, picked by whether the call site wants a
--- strict refusal on failure ('Either') or a lenient substitution
--- with loss-reporting (tuple of bytes and notices):
+-- The primitives split three ways, by what the call site needs:
 --
---   * 'encodeText' / 'decodeText' — strict. Fails on codepoints
---     the target encoding can't represent ('encodeText'), or on
---     bytes that don't match the declared encoding ('decodeText').
---     The errors carry enough position information to construct
---     a 'Slap.Status.SlapError' at the call site.
---
---   * 'encodeTextLenient' / 'decodeTextLenient' — never fail.
---     'encodeTextLenient' substitutes 'U+FFFD' (or @\'?\'@ for
---     ASCII-only targets) for unrepresentable codepoints;
---     'decodeTextLenient' substitutes 'U+FFFD' for byte sequences
---     that don't decode. Substitutions are reported through the
---     'LossNotice' list so the caller decides whether each one
---     surfaces as a 'Slap.Status.SlapAdvisory'.
---
---   * 'encodeTextBounded' — fixed-width-field encode. Codepoint-
---     aware truncation under the target encoding: encodes codepoint
---     by codepoint, stopping when the next would overflow a byte
---     limit. Result is always valid bytes in the target encoding
---     (no split codepoints) and at most the requested byte count;
---     truncation and substitution both surface through the
---     'LossNotice' list.
---
--- Plus 'resolveEncodingName', which turns a user-supplied encoding
--- name into a 'NamedEncoding' the 'EncodingNamed' tag carries (see
--- below).
+--   * 'encodeText' / 'decodeText' — strict: for when a codepoint or byte that doesn't fit should stop the operation.
+--   * 'encodeTextLenient' / 'decodeTextLenient' — lenient: for when the operation must proceed, each loss reported as a 'LossNotice'.
+--   * 'encodeTextBounded' — bounded: for when the wire gives the field a fixed byte width.
 --
 -- == UTF-8 vs everything-else asymmetry
 --
@@ -49,28 +22,16 @@
 -- @text@ ships a fast UTF-8 codec but only UTF-8;
 -- @encoding@ ships the structured API that 'encodeTextLenient' and 'encodeTextBounded' need (per-character 'encodeable' predicate, exception-aware @Explicit@ variants, alias-table runtime lookup via 'encodingFromString').
 --
--- == The name resolver
+-- == Named-encoding resolution
 --
--- 'EncodingNamed' carries a 'NamedEncoding': a user-facing encoding
--- name paired with the @encoding@-library encoder it resolved to.
--- 'resolveEncodingName' is the only way to build one — it feeds the
--- name through the resolution engine (case- and separator-
--- normalization variants, then the curated 'documentedLocaleAliases'
--- table) and returns 'Left' 'UnresolvableEncodingName' for a name the
--- library can't place. The name slap resolves is one it was handed
--- (today, the @--metadata-encoding@ CLI value), no longer one read
--- from the environment; a resolution failure is the caller's to
--- surface, not a silent fallback.
---
--- == What the encoding tag remembers
---
--- When 'decodeText' produces an 'EncodedText', the tag is the
--- encoding the caller asked slap to decode as. For 'EncodingNamed'
--- the 'NamedEncoding' carries the resolved encoder directly, so a
--- later 'encodeText' or 'encodeTextLenient' under the same tag routes
--- through that same encoder. The name-to-encoder decision was made
--- once, at resolution time, and travels with the value rather than
--- being re-derived at each transcode site.
+-- 'resolveEncodingName' is the only way to build the 'NamedEncoding' an 'EncodingNamed' tag carries:
+-- a user-facing name paired with the encoder it resolved to.
+-- It feeds the name through case- and separator-normalization variants, then the curated 'documentedLocaleAliases' table,
+-- and refuses with 'Left' 'UnresolvableEncodingName' for a name the library can't place.
+-- The name is one slap was handed (today, the @--metadata-encoding@ CLI value),
+-- so a resolution failure is the caller's to surface, not a silent fallback.
+-- A later encode under the same tag routes through the same resolved encoder:
+-- the decision was made once, at resolution time, and travels with the value.
 module Slap.Text
   ( -- * Encoding tag
     EncodingName(..)
@@ -661,14 +622,10 @@ newtype UnresolvableEncodingName = UnresolvableEncodingName
   { unresolvableEncodingName :: Text }
   deriving (Eq, Show)
 
--- | Resolve a user-supplied encoding name into a 'NamedEncoding', or
--- refuse with the name that didn't resolve. The resolution engine
--- ('resolveEncoderByName') tries the name as given, a few case- and
--- separator-normalization variants, and the curated
--- 'documentedLocaleAliases' table; the first that the @encoding@
--- library recognizes wins. The 'Right' is the only constructor for a
--- 'NamedEncoding', so a resolved name and its encoder can never drift
--- apart.
+-- | Resolve a user-supplied encoding name into a 'NamedEncoding', or refuse with the name that didn't resolve.
+-- The resolution engine ('resolveEncoderByName') tries the name as given,
+-- a few case- and separator-normalization variants, and the curated 'documentedLocaleAliases' table;
+-- the first that the @encoding@ library recognizes wins.
 resolveEncodingName :: Text -> Either UnresolvableEncodingName NamedEncoding
 resolveEncodingName name = case resolveEncoderByName (Text.unpack name) of
   Just encoder -> Right (NamedEncoding name encoder)

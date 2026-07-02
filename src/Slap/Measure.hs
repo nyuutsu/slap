@@ -400,21 +400,13 @@ lengthToOffset (Length lengthValue) = Offset lengthValue
 offsetToFileSize :: Offset -> FileSize
 offsetToFileSize (Offset position) = FileSize position
 
--- | Widen an integer just decoded by a parser into an 'Offset'. The
--- named home for the parse-boundary 'fromIntegral': a format parser
--- reads a raw 'Data.Word.Word32' (or 'Data.Int.Int64', or a varint)
--- and wraps it here rather than inlining @Offset . fromIntegral@ at
--- each call site. Sibling to 'splitUndoHunkFromParsed' — both are the
--- one blessed way to cross from a parsed wire value into a typed
--- position.
+-- | Widen an integer just decoded by a parser into an 'Offset'.
+-- The named home for the parse-boundary 'fromIntegral': a format parser reads a raw 'Data.Word.Word32' (or 'Data.Int.Int64', or a varint) and wraps it here rather than inlining @Offset . fromIntegral@ at each call site.
+-- Sibling to 'splitUndoHunkFromParsed'; both are where a parsed wire value crosses into a typed position.
 --
--- Pure widening, no validation. A negative value is preserved as-is:
--- PPF1/PPF2/PPF3/PPF4 carry signed offsets on the wire, and an
--- out-of-range one is the apply layer's to reject (via
--- 'Slap.Status.ApplyNegativeRecordOffset'), not the parser's to
--- pre-empt. The 'Integral' constraint lets one builder serve every
--- wire width; the widening to host 'Int' is the same conversion the
--- inline form performed.
+-- Pure widening, no validation.
+-- A negative value is preserved as-is: PPF1/PPF2/PPF3/PPF4 carry signed offsets on the wire, and an out-of-range one is the apply layer's to reject (via 'Slap.Status.ApplyNegativeRecordOffset'), not the parser's to pre-empt.
+-- The 'Integral' constraint lets one builder serve every wire width; the widening to host 'Int' is the same conversion the inline form performed.
 offsetFromParsed :: Integral a => a -> Offset
 offsetFromParsed = Offset . fromIntegral
 
@@ -707,12 +699,9 @@ splitUndoHunks maxLength source = concatMap pieces
       | otherwise =
           ByteString.take chunkLength (ByteString.drop position source)
 
--- | Lift a parsed wire-format undo record to a 'SplitUndoHunk',
--- trusting the parser's payload-bound guarantee. PPF3's wire format
--- prefixes the undo payload with a single byte naming its length,
--- so any 'SplitUndoHunk' constructed here is provably ≤ 255 bytes by
--- the parser's contract. The named exit preserves the property that
--- every 'SplitUndoHunk' has a discoverable provenance.
+-- | Lift a parsed wire-format undo record to a 'SplitUndoHunk', trusting the parser's payload-bound guarantee.
+-- PPF3's wire format prefixes the undo payload with a single byte naming its length, so any 'SplitUndoHunk' constructed here is ≤ 255 bytes by the parser's contract.
+-- A named lift rather than a bare constructor keeps every parse-built 'SplitUndoHunk' coming from this one site.
 splitUndoHunkFromParsed :: Offset -> ByteString -> ByteString -> SplitUndoHunk
 splitUndoHunkFromParsed = SplitUndoHunk
 

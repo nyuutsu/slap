@@ -1,11 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Shared display-layer vocabulary used by both 'Slap.Display.Info'
--- (cheap-path) and 'Slap.Display.Analysis' (analytical-path). The
--- types and renderers here have no commitment to one or the other —
--- 'InfoLine' is a label-value display row regardless of which carrier
--- produced it; 'Tally', 'CountUnit', 'ByteCount' express counts and
--- byte-totals identically across both paths.
+-- | Display-layer vocabulary shared by 'Slap.Display.Info' (cheap-path) and 'Slap.Display.Analysis' (analytical-path):
+-- 'InfoLine' is a label-value row, 'Tally' / 'CountUnit' / 'ByteCount' the count and byte-total types both paths render.
 module Slap.Display.Common
   ( -- * Display rows
     InfoLine(..)

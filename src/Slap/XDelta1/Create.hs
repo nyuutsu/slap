@@ -100,14 +100,9 @@ import Data.Word (Word8, Word32, Word64)
 -- The 'VerificationInclusion' and 'XDelta1PatchCompression' choices gate the @FLAG_NO_VERIFY@ and @FLAG_PATCH_COMPRESSED@ wire effects; see the module header.
 createXDelta1 :: VerificationInclusion -> XDelta1PatchCompression
               -> ResolvedXDelta1FileNames
-                 -- ^ from-name and to-name, already resolved and
-                 -- cap-checked by the porcelain via
-                 -- 'Slap.XDelta1.Types.resolveXDelta1FileNames' /
-                 -- 'Slap.XDelta1.Types.requireXDelta1FileNames'. The
-                 -- type is the proof of resolution — there is no
-                 -- other way to obtain one, so this function trusts
-                 -- the invariants (both bytes locale-encoded, each ≤
-                 -- the u16 cap).
+                 -- ^ from-name and to-name, already resolved and cap-checked by the porcelain
+                 -- via 'Slap.XDelta1.Types.resolveXDelta1FileNames' / 'Slap.XDelta1.Types.requireXDelta1FileNames'.
+                 -- Those two are the only constructors, so this function writes the names without re-checking (both bytes locale-encoded, each ≤ the u16 cap).
               -> InputFileContents -> OutputFileContents
               -> Either SlapError CreateResult
 createXDelta1 inclusion compression resolvedNames inputContents outputContents = do

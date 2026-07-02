@@ -103,14 +103,8 @@ parseBinaryGet format = do
     , ninja1Records    = records
     })
 
--- | Decode an unsigned big-endian byte sequence as any 'Num'
--- result type. NINJA1's binary record format encodes offsets and
--- lengths as variable-width unsigned big-endian fields, and slap
--- consumes them at several widths — 'Word32' for the 4-byte
--- header CRC, 'Int' for record offsets and data lengths whose
--- width is given by a preceding byte. The polymorphic result
--- type lets each call site pick the width it needs without a
--- per-width helper.
+-- | Decode an unsigned big-endian byte sequence as any 'Num' result type,
+-- so each call site picks the width it needs (the 4-byte header CRC as 'Word32', a record offset or length as 'Int') without a per-width helper.
 decodeBigEndian :: Num a => ByteString -> a
 decodeBigEndian = ByteString.foldl' (\accumulated byte -> accumulated * 256 + fromIntegral byte) 0
 

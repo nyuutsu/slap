@@ -1,29 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Wire encoder for the IPS family. This module owns the
--- byte-laying side of patch creation: given a record list and a
--- variant, it produces the patch bytes. The decision side (which
--- records to emit, what shape they should take, how to merge or
--- split runs) lives in 'Slap.IPS.Optimize'.
+-- | Wire encoder for the IPS family.
+-- This module owns the byte-laying side of patch creation: given a record list and a variant, it produces the patch bytes.
+-- The decision side (which records to emit, what shape they take, how to merge or split runs) lives in 'Slap.IPS.Optimize'.
 --
--- The single 'encodeIPSPatch' wire encoder replaces the four
--- near-duplicate top-level encoders of the previous module
--- (@encodeIPS@, @encodeIPS32@, @encodeEBP@, @encodeEBPRaw@). The
--- variant differences — magic bytes, offset width, EOF marker,
--- sentinel offset — are looked up via 'variantSpec' instead of
--- duplicated by hand at four call sites. EBP encoding is a thin
--- wrapper ('encodeEBPPatch') that calls 'encodeIPSPatch' for the
--- standard-IPS body and appends the JSON metadata trailer.
+-- 'encodeIPSPatch' is the single wire emitter for all variants: the differences (magic bytes, offset width, EOF marker, sentinel offset) are looked up via 'variantSpec' rather than branched by hand.
+-- EBP is a thin wrapper ('encodeEBPPatch') that calls it for the standard-IPS body and appends the JSON metadata trailer.
 --
--- There is no @createIPS@ / @createIPS32@ / @createEBP@ porcelain
--- — neither here nor in "Slap.Create". End-to-end creation for the
--- IPS family is a coordination-layer concern: the
--- 'Slap.Convert.createPatch' pipeline threads a 'PatchContents'
--- through 'Slap.Convert.buildContents' and 'Slap.Convert.encodeDirect',
--- which is where the live creation path runs. The direct family
--- shares that pipeline, so a per-format typed front door would have
--- nothing format-level to wrap; "Slap.Create" reserves its porcelain
--- for the differential family, which has no shared pipeline.
+-- There is no @createIPS@ / @createIPS32@ / @createEBP@ porcelain, here or in "Slap.Create":
+-- end-to-end creation for the IPS family runs through the 'Slap.Convert.createPatch' pipeline (threading a 'PatchContents' through 'Slap.Convert.buildContents' and 'Slap.Convert.encodeDirect'), the shared path for the whole direct family.
+-- "Slap.Create" reserves its porcelain for the differential family, which has no such shared pipeline.
 module Slap.IPS.Create
   ( -- * Wire encoder (used by 'Slap.Convert')
     encodeIPSPatch
@@ -93,35 +79,15 @@ import qualified Data.Aeson.Encoding as AesonEncoding
 -- Parameterized wire encoder
 ----------------------------------------------------------------------------
 
--- | Encode a record list as the bytes of an IPS-family patch under
--- the given variant. This is the single wire emitter that replaces
--- the four near-duplicate functions of the previous module; each
--- of those is now either a thin wrapper around this function (the
--- two non-EBP cases) or a thin wrapper around 'encodeEBPPatch' (the
--- two EBP cases).
+-- | Encode a record list as the bytes of an IPS-family patch under the given variant.
 --
--- The @optionalTruncation@ argument is honored only for the
--- 'StandardIPS' variant. For 'IPS32', the truncation marker has
--- no defined wire shape (no community implementation supports
--- it), so this encoder drops any truncation passed for IPS32.
--- The contract layer in 'Slap.Convert.canConvert' refuses any
--- conversion whose source patch carries a truncation marker and
--- whose target is 'IPS32' or 'EBP' — so the drop branch is
--- defensive, not operational: it will not fire under well-formed
--- callers. 'Slap.Convert.buildContents' on the create path
--- populates 'contentsTruncation' for IPS32/EBP only so
--- 'rejectTruncation' can surface the shrinkage refusal to the
--- user rather than silently produce a non-truncating patch.
+-- @optionalTruncation@ is honored only for 'StandardIPS'.
+-- 'IPS32' has no defined wire shape for the truncation marker (no community implementation supports one), so this encoder drops any truncation passed for it;
+-- 'Slap.Convert.canConvert' already refuses a conversion that would need one, so the drop never fires for well-formed callers.
 --
--- This function does not validate the records and does not resolve
--- sentinel collisions: it assumes each record's offset and length
--- are already within the variant's wire-format range, and that any
--- record sitting on the variant's trailer sentinel has already been
--- shifted or rejected by 'resolveSentinelCollisions'. The optimizer
--- guarantees the range precondition, and the
--- convert-path pipeline in 'Slap.Convert.encodeDirect' runs
--- @splitHunks@, 'resolveSentinelCollisions', and 'narrowHunks'
--- before calling here.
+-- This function does not validate records or resolve sentinel collisions:
+-- it assumes each offset and length is within the variant's wire range, and that any record on the trailer sentinel has already been shifted or rejected by 'resolveSentinelCollisions'.
+-- The optimizer guarantees the range precondition; 'Slap.Convert.encodeDirect' runs @splitHunks@, 'resolveSentinelCollisions', and 'narrowHunks' before calling here.
 encodeIPSPatch
   :: IPSVariant
   -> [EncodedHunk]

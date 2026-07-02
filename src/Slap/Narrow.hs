@@ -1,26 +1,10 @@
 {-# LANGUAGE StrictData #-}
 
--- | The narrowing layer: validate 'SplitHunk's and 'SplitUndoHunk's
--- against per-format offset bounds, producing 'EncodedHunk's and
--- 'EncodedUndoHunk's respectively that downstream encoders can write
--- without silent truncation. Both pipelines compose: a write record
--- passes through 'Slap.Measure.splitHunks' → 'narrowHunks' to reach
--- 'EncodedHunk'; a PPF3 undo record passes through
--- 'Slap.Measure.splitUndoHunks' → 'narrowUndoHunks' to reach
--- 'EncodedUndoHunk'. The discipline is type-enforced — removing
--- either pass from any direct-format pipeline produces a type error.
---
--- 'EncodedHunk' and 'EncodedUndoHunk' are the post-narrow phases of 'SplitHunk' and 'SplitUndoHunk';
--- encoders consume them through the exported selectors.
--- The private-constructor invariant is stated on each type below.
---
--- 'NarrowingFailure' covers two axes: 'OffsetExceedsBound' for
--- per-record offset overflows (raised by 'narrowHunk' against
--- 'EncodingLimits') and 'FieldValueExceedsBound' for header/trailer
--- field value overflows (raised by 'narrowToWord32' / 'narrowToWord16'
--- on behalf of per-format @narrow*@ smart constructors). The
--- application wraps both as 'Slap.Status.NarrowingError' at the
--- boundary where they leave this module.
+-- | The narrowing layer: validate 'SplitHunk's and 'SplitUndoHunk's against per-format offset bounds,
+-- producing 'EncodedHunk's and 'EncodedUndoHunk's that downstream encoders can write without silent truncation.
+-- Both pipelines compose: a write record passes through 'Slap.Measure.splitHunks' → 'narrowHunks' to reach 'EncodedHunk';
+-- a PPF3 undo record passes through 'Slap.Measure.splitUndoHunks' → 'narrowUndoHunks' to reach 'EncodedUndoHunk'.
+-- The discipline is type-enforced: removing either pass from any direct-format pipeline produces a type error.
 module Slap.Narrow
   ( EncodedHunk
   , encodedOffset
