@@ -23,6 +23,7 @@ module Slap.Create
   , createGDIFF
   , createXDelta1
   , createRFCVCDIFF
+  , createXDelta3
     -- * Dynamic entry point (re-export)
   , createPatch
   ) where
@@ -36,7 +37,7 @@ import qualified Slap.NINJA2.Create as NINJA2
 import Slap.NINJA2.Types (NINJA2CreateMetadata)
 import Slap.APSGBA.Create (createAPSGBA)
 import Slap.GDIFF.Create (createGDIFF)
-import Slap.VCDIFF.Create (createRFCVCDIFF)
+import Slap.VCDIFF.Create (createRFCVCDIFF, createXDelta3)
 import qualified Slap.XDelta1.Create as XDelta1
 
 import Slap.Convert (createPatch)

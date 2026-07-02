@@ -196,6 +196,7 @@ data DirectCreate
 data DifferentialCreate
   = CreateBPS | CreateUPS | CreateDPS | CreateNINJA2
   | CreateAPSGBA | CreateGDIFF | CreateXDelta1 | CreateRFCVCDIFF
+  | CreateXDelta3
   deriving (Show, Eq)
 
 -- | Target format for patch creation or conversion.
@@ -475,6 +476,7 @@ acceptedMetadataFields (CreateDifferential format) = case format of
   CreateXDelta1 -> Set.fromList [MetadataVerificationInclusion, MetadataPatchCompression,
                                  MetadataXDelta1FromName, MetadataXDelta1ToName]
   CreateRFCVCDIFF -> Set.empty
+  CreateXDelta3   -> Set.fromList [MetadataVerificationInclusion]
 
 -- | The 'MetadataField's the user explicitly set on a
 -- 'RequestedPatchMetadata'. A 'Maybe' field counts as set when 'Just'.
@@ -568,6 +570,7 @@ acceptedConstraints (CreateDifferential format) = case format of
   CreateGDIFF   -> Set.empty
   CreateXDelta1 -> Set.empty
   CreateRFCVCDIFF -> Set.empty
+  CreateXDelta3   -> Set.empty
 
 -- | Reject any constraint the user opted into that the target format
 -- doesn't honor. Same shape as 'rejectIncompatibleMetadata'.
@@ -1179,6 +1182,9 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
   CreateAPSGBA  -> APSGBA.createAPSGBA source target
   CreateGDIFF   -> GDIFF.createGDIFF source target
   CreateRFCVCDIFF -> VCDIFF.createRFCVCDIFF source target
+  CreateXDelta3 -> VCDIFF.createXDelta3 verificationChoice source target
+    where
+      verificationChoice = fromMaybe IncludeVerification (requestedVerificationInclusion meta)
   CreateXDelta1 -> case maybeResolvedNames of
     Just resolvedNames ->
       XDelta1.createXDelta1 verificationChoice compressionChoice resolvedNames source target
@@ -1338,8 +1344,10 @@ createFormatTokens =
   , ("apsgba",  CreateDifferential CreateAPSGBA, Alias)
   , ("gdiff",   CreateDifferential CreateGDIFF,  Canonical)
   , ("xdelta1", CreateDifferential CreateXDelta1, Canonical)
-  , ("xdelta",  CreateDifferential CreateXDelta1, Alias)
   , ("rfc-vcdiff", CreateDifferential CreateRFCVCDIFF, Canonical)
+  , ("xdelta3", CreateDifferential CreateXDelta3, Canonical)
+    -- A bare .xdelta in the wild is essentially always xdelta3's, so the bare alias follows it.
+  , ("xdelta",  CreateDifferential CreateXDelta3, Alias)
   ]
 
 -- | The tokens users are told about: the 'Canonical' rows, in table order.
@@ -1397,6 +1405,7 @@ differentialFormatInfo CreateAPSGBA  = FormatInfo ".aps"     "APS (GBA)" LabelAP
 differentialFormatInfo CreateGDIFF   = FormatInfo ".gdiff"   "GDIFF"     LabelGDIFF
 differentialFormatInfo CreateXDelta1 = FormatInfo ".xdelta1" "XDelta1"   LabelXDelta1
 differentialFormatInfo CreateRFCVCDIFF = FormatInfo ".rfc-vcdiff" "VCDIFF" LabelVCDIFF
+differentialFormatInfo CreateXDelta3   = FormatInfo ".xdelta"      "xdelta3" LabelVCDIFF
 
 directExtension :: DirectCreate -> String
 directExtension = formatInfoExtension . directFormatInfo

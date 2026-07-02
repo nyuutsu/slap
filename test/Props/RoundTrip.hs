@@ -47,7 +47,8 @@ import qualified Slap.GDIFF.Types as GDIFF
 import qualified Slap.VCDIFF.Apply as VCDIFF
 import qualified Slap.VCDIFF.Parse as VCDIFF
 import Slap.VCDIFF.Types (VCDIFFPatch(..), Window(..), VCDIFFInstruction(..),
-                          RFCHeader(..), CustomCodeTable(..), patchWindows)
+                          RFCHeader(..), CustomCodeTable(..), patchWindows,
+                          xdelta3WindowAdler32)
 import Slap.VCDIFF.Create (createFromCover, createConsideringCustomTable,
                            coverToInstructions, resolveInstructionAddresses,
                            designCandidateTable)
@@ -99,7 +100,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      Hunk(..), SentinelOffset(..),
                      OriginalLength(..), TruncatedLength(..),
                      byteLength, splitHunks, splitPayload)
-import Slap.FFI (crc32)
+import Slap.FFI (adler32, crc32)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
                      RequestedPatchMetadata(..),
@@ -108,7 +109,8 @@ import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
                      VerificationInclusion(..),
                      convertDirect, emptyContents)
 import Slap.Create (createBPS, createUPS, createDPS, createNINJA2,
-                    createAPSGBA, createGDIFF, createXDelta1, createRFCVCDIFF, createPatch)
+                    createAPSGBA, createGDIFF, createXDelta1, createRFCVCDIFF,
+                    createXDelta3, createPatch)
 
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
@@ -193,6 +195,9 @@ roundTripTests = testGroup "RoundTrip"
       , testCase     "cache: the geometry is not grown past where it pays" vcdiffCacheNotInflatedWhenDefaultHolds
       , testCase     "single: a repeated odd-size ADD beats the default and round-trips" vcdiffOddSizeSingleBeatsDefault
       , testCase     "single: the repeated odd-size ADD is minted into the table" vcdiffOddSizeSingleIsMinted
+      , testProperty "xdelta3: round-trip carrying the window's Adler32" prop_xdelta3
+      , testProperty "xdelta3: verification omitted emits the core shape" prop_xdelta3OmitVerificationIsCoreShaped
+      , testCase     "xdelta3: exact wire bytes for a two-byte target" xdelta3ExactWireBytes
       ]
   , testGroup "PPF1"
       [ testProperty "round-trip" prop_ppf1
@@ -336,18 +341,62 @@ prop_ups = forAll genUPSEncodeablePair $ \(source, target) ->
             === Right (OutputFileContents target)
 
 -- | The load-bearing test: a created VCDIFF patch, parsed and applied
--- to the source, reconstructs the target exactly — now through the
--- matcher. Input size is bounded ('scale'): the 02b matcher is a naive
--- quadratic scan, and there is no input it must be fast on until the
--- suffix-array matcher (02c) replaces it and the bound can lift.
+-- to the source, reconstructs the target exactly — through the matcher.
+-- (The input-size bound the naive pre-suffix-array matcher needed is gone with it.)
 prop_vcdiff :: Property
-prop_vcdiff = forAll (scale (min 16) genPair) $ \(source, target) ->
+prop_vcdiff = forAll genPair $ \(source, target) ->
   case createRFCVCDIFF (InputFileContents source) (OutputFileContents target) of
     Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
     Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
       Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
       Right (Parsed parsed _parseWarnings) ->
         VCDIFF.applyVCDIFF parsed (InputFileContents source) === Right (OutputFileContents target)
+
+-- | The xdelta3 sibling of 'prop_vcdiff': created with verification included, the patch parses back
+-- as the xdelta3 flavor, its one window carries the target's Adler32, and apply reconstructs the target.
+prop_xdelta3 :: Property
+prop_xdelta3 = forAll genPair $ \(source, target) ->
+  case createXDelta3 IncludeVerification (InputFileContents source) (OutputFileContents target) of
+    Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
+    Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
+      Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
+      Right (Parsed parsed _parseWarnings) -> case parsed of
+        PatchXDelta3 _header windows ->
+          map xdelta3WindowAdler32 (toList windows) === [Just (adler32 target)]
+            .&&. VCDIFF.applyVCDIFF parsed (InputFileContents source) === Right (OutputFileContents target)
+        otherFlavor -> counterexample ("parsed flavor: " ++ show otherFlavor) $ property False
+
+-- | With verification omitted the patch reaches for no xdelta3 feature at all, so it honestly
+-- parses back as 'PatchCoreOnly' — the create token names the arc, the bytes earn the flavor —
+-- and still applies.
+prop_xdelta3OmitVerificationIsCoreShaped :: Property
+prop_xdelta3OmitVerificationIsCoreShaped = forAll genPair $ \(source, target) ->
+  case createXDelta3 OmitVerification (InputFileContents source) (OutputFileContents target) of
+    Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
+    Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
+      Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
+      Right (Parsed parsed _parseWarnings) -> case parsed of
+        PatchCoreOnly _windows ->
+          VCDIFF.applyVCDIFF parsed (InputFileContents source) === Right (OutputFileContents target)
+        otherFlavor -> counterexample ("parsed flavor: " ++ show otherFlavor) $ property False
+
+-- | The exact-wire twin of 'vcdiffExactWireBytes' for the xdelta3 entry: the same two-byte target,
+-- now with the VCD_ADLER32 bit in the Win_Indicator and the four checksum bytes
+-- between the section lengths and the data section.
+xdelta3ExactWireBytes :: Assertion
+xdelta3ExactWireBytes =
+  let target = ByteString.pack [0x41, 0x42]
+      expected = ByteString.pack
+        [ 0xD6, 0xC3, 0xC4, 0x00, 0x00        -- magic, version, bare header
+        , 0x04, 0x0C                          -- Win_Indicator (VCD_ADLER32), delta-encoding length
+        , 0x02, 0x00, 0x02, 0x01, 0x00        -- target size, Delta_Indicator, three section lengths
+        , 0x00, 0xC6, 0x00, 0x84              -- Adler32 of "AB", big-endian
+        , 0x41, 0x42                          -- data section
+        , 0x03 ]                              -- instruction section: ADD(2)'s opcode
+  in case createXDelta3 IncludeVerification (InputFileContents ByteString.empty) (OutputFileContents target) of
+       Left createError -> assertFailureT ("create: " <> renderSlapError createError)
+       Right (CreateResult (PatchFileContents patch) _) ->
+         assertEqual "exact wire bytes" expected patch
 
 -- prop_vcdiffIgnoresSource is gone as of 02b. In the floor it was a
 -- tripwire: source-independence held only because the encoder read

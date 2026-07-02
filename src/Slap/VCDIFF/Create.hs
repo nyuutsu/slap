@@ -1,20 +1,37 @@
 {-# LANGUAGE LambdaCase #-}
 
--- | VCDIFF patch creation: a cover of the target serialized to wire bytes, on the default code table or, when it pays, a custom one.
+-- | VCDIFF patch creation: a cover of the target serialized to wire bytes, in the arc the user named.
 --
--- Creation has two halves. A /matcher/ ('Slap.VCDIFF.FFI.vcdiffCover', Rust-backed) segments the target into copies and literals, a 'Cover'; this module is the other half, turning a cover into a patch.
--- 'createRFCVCDIFF' runs the matcher and serializes its cover; when the matcher finds nothing the cover is all-literal and the bytes are the bedrock floor's exactly. The cover-driven entries ('createFromCover', 'createConsideringCustomTable') let tests exercise the full COPY\/ADD\/RUN path on hand-built covers.
+-- Creation has two halves. A /matcher/ ('Slap.VCDIFF.FFI.vcdiffCover', Rust-backed) segments the target into copies and literals, a 'Cover';
+-- this module is the other half, turning a cover into a patch.
+-- 'createRFCVCDIFF' and 'createXDelta3' run the matcher and serialize its cover;
+-- when the matcher finds nothing the cover is all-literal and the bytes are the bedrock floor's exactly.
+-- The cover-driven entries ('createFromCover', 'createConsideringCustomTable') let tests exercise the full COPY\/ADD\/RUN path on hand-built covers.
 --
--- The path is cover to instructions to resolved instructions to wire bytes, source-free, under the active code table, in one window: each segment becomes an instruction ('coverToInstructions'), each COPY's address is resolved once against the cache ('resolveInstructionAddresses'), and the resolved stream packs into the densest opcodes the table offers ('packInstructions').
+-- The path is cover to instructions to resolved instructions to wire bytes, source-free, under the active code table, in one window:
+-- each segment becomes an instruction ('coverToInstructions'),
+-- each COPY's address is resolved once against the cache ('resolveInstructionAddresses'),
+-- and the resolved stream packs into the densest opcodes the table offers ('packInstructions').
 --
--- A patch on the default table reaches for no flavor-distinguishing feature, so it parses back as 'Slap.VCDIFF.Types.PatchCoreOnly'; a patch shipping a custom code table uses an RFC-arc feature (RFC 3284 §7's VCD_CODETABLE) and parses back as @PatchRFC@.
--- The @rfc-vcdiff@ token names the arc the user asked for; whether the bytes turn out core- or RFC-shaped is settled by whether a custom table earned its place.
+-- The create token names the arc the user asked for; the bytes earn their flavor by the features they use.
+-- A patch on the default table with no checksum reaches for no flavor-distinguishing feature, so it parses back as 'Slap.VCDIFF.Types.PatchCoreOnly';
+-- a custom code table is an RFC-arc feature (RFC 3284 §7's VCD_CODETABLE), parsing back as @PatchRFC@;
+-- a per-window Adler32 is an xdelta3 extension, parsing back as @PatchXDelta3@.
 --
--- A custom code table carries its own opcode assignments and cache geometry, tuned to this patch: combined opcodes for the ADD+COPY and COPY+ADD pairs it repeats, single-instruction opcodes for the lone ADD and COPY sizes it repeats outside the default's fixed-size rows, and an address cache grown from the default four-near\/three-same to where a larger cache stops shrinking the address section.
--- The table travels as a VCDIFF delta /inside/ the patch (the default 1536-byte image transformed by an inner delta this module emits on the default-only core), so a table close to the default costs almost nothing to ship.
--- 'createRFCVCDIFF' grows the cache a slot at a time, redesigns the table under each geometry, and ships the smallest candidate, but only when it beats the no-custom-table default patch outright. The design ('designCandidateTable') stays deliberately simple; sharpening it is later work.
+-- A custom code table carries its own opcode assignments and cache geometry, tuned to this patch:
+-- combined opcodes for the ADD+COPY and COPY+ADD pairs it repeats,
+-- single-instruction opcodes for the lone ADD and COPY sizes it repeats outside the default's fixed-size rows,
+-- and an address cache grown from the default four-near\/three-same to where a larger cache stops shrinking the address section.
+-- The table travels as a VCDIFF delta /inside/ the patch
+-- (the default 1536-byte image transformed by an inner delta this module emits on the default-only core),
+-- so a table close to the default costs almost nothing to ship.
+-- 'createRFCVCDIFF' grows the cache a slot at a time, redesigns the table under each geometry,
+-- and ships the smallest candidate, but only when it beats the no-custom-table default patch outright.
+-- The design ('designCandidateTable') stays deliberately simple; sharpening it is later work.
+-- 'createXDelta3' never considers one: xdelta3 rejects custom tables, so on that arc the default table is the only table there is.
 module Slap.VCDIFF.Create
   ( createRFCVCDIFF
+  , createXDelta3
     -- * Cover-driven emission (exported for testing)
   , createFromCover
   , createConsideringCustomTable
@@ -25,7 +42,8 @@ module Slap.VCDIFF.Create
   , designCandidateTable
   ) where
 
-import Slap.VCDIFF.Types (vcdiffMagicBytes, VCDIFFInstruction(..))
+import Slap.VCDIFF.Types (vcdiffMagicBytes, VCDIFFInstruction(..),
+                          vcdSourceBit, vcdAdler32Bit)
 import Slap.VCDIFF.Cover (Cover(..), CoverSegment(..))
 import Slap.VCDIFF.FFI (vcdiffCover)
 import Slap.VCDIFF.AddressCache
@@ -35,13 +53,17 @@ import Slap.VCDIFF.AddressCache
   , SameSlotByte(..) )
 import qualified Slap.VCDIFF.CodeTable as Table
 import Slap.Binary (putVcdiffVarint, viewBytesInRange)
+import Slap.Checksum (Adler32(..))
+import Slap.FFI (adler32)
+import Slap.MetadataInclusion (VerificationInclusion(..))
 import Slap.Status (SlapError, CreateResult(..))
 import Slap.Measure (Offset(..), Length(..), byteLength, Cursor(..), lengthToOffset)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
+import Data.Bits (bit, (.|.))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import Data.ByteString.Builder (Builder, byteString, word8, toLazyByteString)
+import Data.ByteString.Builder (Builder, byteString, word8, word32BE, toLazyByteString)
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.List (sortOn)
 import Data.Map.Strict (Map)
@@ -50,21 +72,47 @@ import Data.Maybe (fromMaybe)
 import Data.Ord (Down(..))
 import Data.Word (Word8)
 
--- | Create a VCDIFF patch reconstructing @target@. The cover comes from the matcher ('Slap.VCDIFF.FFI.vcdiffCover'), so the patch copies the runs the target shares with the source or with itself; the bytes are then weighed under the default table and a designed custom one, the smaller shipping ('createConsideringCustomTable').
--- When the matcher finds nothing (an unrelated source, a target shorter than the minimum match) the cover is all-literal and the bytes are the bedrock floor's exactly. The 'Either' is shape-symmetry with the other @create*@ entries, whose richer encoders can fail. No metadata, no advisories.
+-- | Create a VCDIFF patch reconstructing @target@.
+-- The cover comes from the matcher ('Slap.VCDIFF.FFI.vcdiffCover'), so the patch copies the runs the target shares with the source or with itself;
+-- the bytes are then weighed under the default table and a designed custom one, the smaller shipping ('createConsideringCustomTable').
+-- When the matcher finds nothing (an unrelated source, a target shorter than the minimum match)
+-- the cover is all-literal and the bytes are the bedrock floor's exactly.
+-- The 'Either' is shape-symmetry with the other @create*@ entries, whose richer encoders can fail. No metadata, no advisories.
 createRFCVCDIFF :: InputFileContents -> OutputFileContents
                 -> Either SlapError CreateResult
 createRFCVCDIFF inputContents outputContents =
   Right (createConsideringCustomTable inputContents outputContents
            (vcdiffCover inputContents outputContents))
 
+-- | Create an xdelta3 patch reconstructing @target@:
+-- the same matcher-driven cover as 'createRFCVCDIFF', emitted with the extensions the canonical tool's own output carries.
+-- Today that is the per-window Adler32, on by default and declined by @--omit-verification@.
+-- The checksum is the only integrity data the format has, so opting out leaves nothing attesting the output —
+-- the same gap 'Slap.Status.VerificationOptedOutByCreator' names at apply.
+-- Never a custom code table: xdelta3 rejects them.
+-- A patch emitted with verification omitted therefore uses no flavor-distinguishing feature at all,
+-- parsing back as 'Slap.VCDIFF.Types.PatchCoreOnly' — readable as xdelta3, which is what was asked for.
+createXDelta3 :: VerificationInclusion -> InputFileContents -> OutputFileContents
+              -> Either SlapError CreateResult
+createXDelta3 verificationChoice inputContents@(InputFileContents source) outputContents@(OutputFileContents target) =
+  Right (CreateResult (PatchFileContents patchBytes) [])
+  where
+    patchBytes = emitXDelta3Patch checksumEmission source target
+                   (vcdiffCover inputContents outputContents)
+    checksumEmission = case verificationChoice of
+      IncludeVerification -> CarryWindowAdler32
+      OmitVerification    -> OmitWindowAdler32
+
 -- | Serialize a cover of @target@ against @source@ into a VCDIFF patch on the default code table, with no custom-table consideration: the core.
--- Tests drive it with hand-built covers to pin the emitter, and the custom-table path reuses it for the inner delta. The 'CreateResult' carries no advisories.
+-- Tests drive it with hand-built covers to pin the emitter, and the custom-table path reuses it for the inner delta.
+-- The 'CreateResult' carries no advisories.
 createFromCover :: InputFileContents -> OutputFileContents -> Cover -> CreateResult
 createFromCover (InputFileContents source) (OutputFileContents target) cover =
   CreateResult (PatchFileContents (emitDefaultPatch source target cover)) []
 
--- | Serialize a cover into a VCDIFF patch, weighing a custom code table against the default and shipping the smaller: the cover-driven form of 'createRFCVCDIFF''s consideration, exposed so tests can exercise the custom-table path on a hand-built cover. Total, like 'createFromCover'.
+-- | Serialize a cover into a VCDIFF patch, weighing a custom code table against the default and shipping the smaller:
+-- the cover-driven form of 'createRFCVCDIFF''s consideration, exposed so tests can exercise the custom-table path on a hand-built cover.
+-- Total, like 'createFromCover'.
 createConsideringCustomTable :: InputFileContents -> OutputFileContents -> Cover -> CreateResult
 createConsideringCustomTable (InputFileContents source) (OutputFileContents target) cover =
   CreateResult (PatchFileContents (emitConsideringCustomTable source target cover)) []
@@ -90,7 +138,8 @@ literalToInstruction literalBytes
   | otherwise = Add literalBytes
 
 -- | Whether a literal is three or more copies of one byte.
--- From length 3 a coded 'Run' is never larger than the equivalent 'Add'; at length 2 they tie, and only an 'Add' can fold into a combined ADD+COPY, so a two-byte repeat stays an 'Add'.
+-- From length 3 a coded 'Run' is never larger than the equivalent 'Add';
+-- at length 2 they tie, and only an 'Add' can fold into a combined ADD+COPY, so a two-byte repeat stays an 'Add'.
 isSingleRepeatedByte :: ByteString -> Bool
 isSingleRepeatedByte bytes =
   byteLength bytes >= Length 3 && ByteString.all (== ByteString.head bytes) bytes
@@ -99,18 +148,25 @@ isSingleRepeatedByte bytes =
 -- Instructions -> resolved instructions (address selection)
 ----------------------------------------------------------------------------
 
--- | An instruction whose COPY address has been resolved to a concrete address mode and the operand that mode reads back; ADD and RUN, naming no address, carry through unchanged. The address cache is threaded once, here, to produce these.
--- The result is table-independent (the cache geometry, not the code table, fixes each mode), so one resolved stream serves the default-table emission, a candidate-table emission, and the candidate-table /design/, which reads the modes off it.
+-- | An instruction whose COPY address has been resolved to a concrete address mode and the operand that mode reads back;
+-- ADD and RUN, naming no address, carry through unchanged. The address cache is threaded once, here, to produce these.
+-- The result is table-independent (the cache geometry, not the code table, fixes each mode),
+-- so one resolved stream serves the default-table emission, a candidate-table emission,
+-- and the candidate-table /design/, which reads the modes off it.
 data ResolvedInstruction
   = ResolvedAdd  !ByteString
   | ResolvedRun  !Length !Word8
   | ResolvedCopy !Length !Table.CopyAddressMode !CopyAddressOperand
     -- ^ the COPY's length, its chosen address mode, and the operand the address section carries for that mode.
-    -- The fill byte of 'ResolvedRun' stays a bare 'Word8', a verbatim literal value rather than a protocol quantity, but a COPY's mode is the 'Table.CopyAddressMode' the code table speaks, lifted out of 'selectCopyAddressMode''s wire byte once here, not re-wrapped at each use.
+    -- The fill byte of 'ResolvedRun' stays a bare 'Word8', a verbatim literal value rather than a protocol quantity,
+    -- but a COPY's mode is the 'Table.CopyAddressMode' the code table speaks,
+    -- lifted out of 'selectCopyAddressMode''s wire byte once here, not re-wrapped at each use.
   deriving (Eq, Show)
 
--- | Thread the address cache over a window's instructions, resolving each COPY to its cheapest mode and operand through 'Slap.VCDIFF.AddressCache.selectCopyAddressMode', the same selection (running the same 'Slap.VCDIFF.AddressCache.recordAddress') that the decoder inverts.
--- @here@, the write head in @U@ that HERE mode measures back from, starts at @len(S)@ and advances by each instruction's output length; only a COPY consults and updates the cache.
+-- | Thread the address cache over a window's instructions, resolving each COPY to its cheapest mode and operand
+-- through 'selectCopyAddressMode' — the same selection (running the same 'Slap.VCDIFF.AddressCache.recordAddress') that the decoder inverts.
+-- @here@, the write head in @U@ that HERE mode measures back from, starts at @len(S)@ and advances by each instruction's output length;
+-- only a COPY consults and updates the cache.
 -- The result feeds both 'layoutSections' (which packs it under a table) and 'designCandidateTable' (which tallies its adjacencies).
 resolveInstructionAddresses
   :: AddressCacheConfig -> Offset -> [VCDIFFInstruction] -> [ResolvedInstruction]
@@ -143,7 +199,9 @@ data Sections = Sections
   , sectionAddresses    :: !ByteString   -- ^ each COPY's chosen-mode operand.
   }
 
--- | The three section byte-streams under construction. One value is both a single instruction's contribution and, the type being a 'Monoid' that combines the streams componentwise, a whole window's accumulation, so a window's sections are exactly the fold of its instructions' pieces in order.
+-- | The three section byte-streams under construction.
+-- One value is both a single instruction's contribution and, the type being a 'Monoid' that combines the streams componentwise,
+-- a whole window's accumulation, so a window's sections are exactly the fold of its instructions' pieces in order.
 -- A field is 'mempty' where an instruction contributes nothing there (a COPY adds no data; an ADD or RUN adds no address).
 data SectionBuilders = SectionBuilders
   { dataStream        :: !Builder
@@ -163,8 +221,11 @@ instance Monoid SectionBuilders where
   mempty = SectionBuilders mempty mempty mempty
 
 -- | Pack a window's resolved instructions into the three section streams under a table, choosing the densest opcode the table offers each step.
--- A one-step lookahead packs an adjacent ADD+COPY or COPY+ADD into one combined opcode when the table holds an entry for the pair's sizes and the COPY's already-chosen mode; otherwise each instruction packs on its own, and RUN never combines.
--- Greedy left-to-right takes a maximal set of non-overlapping pairs, each saving one opcode. No cache here: the modes and operands were fixed by 'resolveInstructionAddresses', so packing is pure opcode lookup over the resolved stream.
+-- A one-step lookahead packs an adjacent ADD+COPY or COPY+ADD into one combined opcode
+-- when the table holds an entry for the pair's sizes and the COPY's already-chosen mode;
+-- otherwise each instruction packs on its own, and RUN never combines.
+-- Greedy left-to-right takes a maximal set of non-overlapping pairs, each saving one opcode.
+-- No cache here: the modes and operands were fixed by 'resolveInstructionAddresses', so packing is pure opcode lookup over the resolved stream.
 packInstructions :: DenseOpcodes -> [ResolvedInstruction] -> SectionBuilders
 packInstructions opcodeResolver = packFrom
   where
@@ -177,8 +238,10 @@ packInstructions opcodeResolver = packFrom
           combinedSections opcode literal operand <> packFrom rest
     packFrom (instruction : rest) = packSingle opcodeResolver instruction <> packFrom rest
 
--- | The combined code-table entry an ADD(addLength) immediately followed by a COPY(copyLength, mode) packs into, when both lengths name fixed-size entries, 'Nothing' otherwise.
--- Shared by the packer's opcode lookup ('combinedAddCopyOpcode') and the candidate-table design ('combinablePairs'), so the two agree on what a combinable adjacency /is/ by constructing it the one way.
+-- | The combined code-table entry an ADD(addLength) immediately followed by a COPY(copyLength, mode) packs into,
+-- when both lengths name fixed-size entries, 'Nothing' otherwise.
+-- Shared by the packer's opcode lookup ('combinedAddCopyOpcode') and the candidate-table design ('combinablePairs'),
+-- so the two agree on what a combinable adjacency /is/ by constructing it the one way.
 addCopyEntry :: Length -> Length -> Table.CopyAddressMode -> Maybe Table.CodeTableEntry
 addCopyEntry addLength copyLength mode = do
   addSize  <- fixedSizeFor addLength
@@ -203,7 +266,9 @@ combinedCopyAddOpcode :: DenseOpcodes -> Length -> Table.CopyAddressMode -> Leng
 combinedCopyAddOpcode opcodeResolver copyLength mode addLength =
   copyAddEntry copyLength mode addLength >>= opcodeFor opcodeResolver
 
--- | The three section contributions of a combined opcode: the single instruction byte (both halves carry a fixed size, so no out-of-line size varint follows), the ADD half's literal in the data section, and the COPY half's operand in the address section.
+-- | The three section contributions of a combined opcode:
+-- the single instruction byte (both halves carry a fixed size, so no out-of-line size varint follows),
+-- the ADD half's literal in the data section, and the COPY half's operand in the address section.
 -- A combined opcode contributes exactly one of each regardless of the halves' order, so one shape serves ADD+COPY and COPY+ADD alike.
 combinedSections :: Table.Opcode -> ByteString -> CopyAddressOperand -> SectionBuilders
 combinedSections opcode literal operand = SectionBuilders
@@ -211,8 +276,11 @@ combinedSections opcode literal operand = SectionBuilders
   , instructionStream = word8 (Table.unOpcode opcode)
   , addressStream     = renderOperand operand }
 
--- | Pack one instruction on its own: a RUN, an ADD or COPY with no combinable neighbour, or a half of an adjacency the table had no combined entry for.
--- ADD and RUN touch only the data section; a COPY emits its already-chosen operand into the address section. Each takes the densest single opcode, the fixed-size entry where the table names the size (no size varint trails) and the coded-size entry otherwise; RUN has only the coded form.
+-- | Pack one instruction on its own:
+-- a RUN, an ADD or COPY with no combinable neighbour, or a half of an adjacency the table had no combined entry for.
+-- ADD and RUN touch only the data section; a COPY emits its already-chosen operand into the address section.
+-- Each takes the densest single opcode, the fixed-size entry where the table names the size (no size varint trails)
+-- and the coded-size entry otherwise; RUN has only the coded form.
 packSingle :: DenseOpcodes -> ResolvedInstruction -> SectionBuilders
 packSingle opcodeResolver = \case
   ResolvedAdd literal ->
@@ -247,7 +315,8 @@ renderOperand (AddressVarint value) = putVcdiffVarint value
 renderOperand (AddressSameByte (SameSlotByte byte)) = word8 byte
 
 -- | The densest opcode the active table offers for an exact entry shape, or 'Nothing' when the table holds no such entry.
--- Built once per table by scanning 'Table.codeTableEntries' (so a custom table feeds its own opcode set through unchanged), keyed by the whole entry so one lookup answers every query, a single instruction (a 'Table.Noop' second half) or a combined pair (two real halves).
+-- Built once per table by scanning 'Table.codeTableEntries' (so a custom table feeds its own opcode set through unchanged),
+-- keyed by the whole entry so one lookup answers every query, a single instruction (a 'Table.Noop' second half) or a combined pair (two real halves).
 -- The lowest index wins a shape that repeats; the default table holds each shape once.
 newtype DenseOpcodes = DenseOpcodes (Map Table.CodeTableEntry Table.Opcode)
 
@@ -268,14 +337,17 @@ requireOpcode opcodeResolver entry = case opcodeFor opcodeResolver entry of
   Just opcode -> opcode
   Nothing     -> error ("Slap.VCDIFF.Create: active code table lacks the entry " <> show entry)
 
--- | A fixed inline size for a length the one-byte size field can name (1–255); 'Nothing' for zero or for a length too large to sit inline, which falls back to a coded-size opcode.
+-- | A fixed inline size for a length the one-byte size field can name (1–255);
+-- 'Nothing' for zero or for a length too large to sit inline, which falls back to a coded-size opcode.
 -- The guard is load-bearing: a raw 'fromIntegral' would wrap a 260-byte run to a fixed size of 4 and emit the wrong opcode for it.
 fixedSizeFor :: Length -> Maybe Table.InstructionSize
 fixedSizeFor (Length n)
   | n >= 1 && n <= 255 = Just (Table.SizeIs (Table.FixedInstructionSize (fromIntegral n)))
   | otherwise          = Nothing
 
--- | The opcode and any trailing size bytes for one single instruction of the given output size: the table's fixed-size entry where it has one (the size rides in the opcode, nothing trails), else its coded-size entry (a size varint trails). @entryFor@ builds the lookup key from a size.
+-- | The opcode and any trailing size bytes for one single instruction of the given output size:
+-- the table's fixed-size entry where it has one (the size rides in the opcode, nothing trails), else its coded-size entry (a size varint trails).
+-- @entryFor@ builds the lookup key from a size.
 singleSize
   :: DenseOpcodes -> Length
   -> (Table.InstructionSize -> Table.CodeTableEntry)
@@ -287,7 +359,9 @@ singleSize opcodeResolver size entryFor =
       ( requireOpcode opcodeResolver (entryFor Table.SizeCodedSeparately)
       , varintOfLength size )
 
--- | Render a window's three section streams to bytes under a table. 'packInstructions' walks the resolved stream, choosing opcodes and combining adjacent pairs, and yields the three streams as one 'SectionBuilders'; this realizes them.
+-- | Render a window's three section streams to bytes under a table.
+-- 'packInstructions' walks the resolved stream, choosing opcodes and combining adjacent pairs,
+-- and yields the three streams as one 'SectionBuilders'; this realizes them.
 layoutSections :: DenseOpcodes -> [ResolvedInstruction] -> Sections
 layoutSections opcodeResolver resolved = Sections
   { sectionData         = builderBytes (dataStream combined)
@@ -301,22 +375,38 @@ layoutSections opcodeResolver resolved = Sections
 -- Cover -> patch (default table, and the custom-table consideration)
 ----------------------------------------------------------------------------
 
--- | How a window sources its copies. A window with any COPY declares the whole source as its segment ('DrawsFromSource', the VCD_SOURCE indicator and the two segment varints); an all-literal window is self-contained ('SelfContained'), with neither.
--- These are exactly the two wire branches 'encodeWindow' takes, and naming them keeps that branch exhaustive: a later sourcing (a VCD_TARGET window, once windows can reference earlier output) lands here as a third constructor and a compile error at every consumer, not a silent fall-through.
+-- | How a window sources its copies.
+-- A window with any COPY declares the whole source as its segment ('DrawsFromSource', the VCD_SOURCE indicator and the two segment varints);
+-- an all-literal window is self-contained ('SelfContained'), with neither.
+-- These are exactly the two wire branches 'encodeWindow' takes, and naming them keeps that branch exhaustive:
+-- a later sourcing (a VCD_TARGET window, once windows can reference earlier output)
+-- lands here as a third constructor and a compile error at every consumer, not a silent fall-through.
 data WindowSourcing = SelfContained | DrawsFromSource
   deriving (Eq, Show)
 
--- | The table-independent groundwork for a cover's single window: the resolved instruction stream (its COPY modes selected once, valid under any table of the same cache geometry) and how the window sources its copies.
+-- | Whether an emitted window carries the per-window Adler32 of its output (VCD_ADLER32, an xdelta3 extension).
+-- The RFC and core emissions always pass 'OmitWindowAdler32' — their windows have no slot for a checksum,
+-- the write-side mirror of 'Slap.VCDIFF.Types.XDelta3Window' being the only window type that carries one.
+data WindowChecksumEmission = CarryWindowAdler32 | OmitWindowAdler32
+  deriving (Eq, Show)
+
+-- | The table-independent groundwork for a cover's single window: how the window sources its copies,
+-- and the resolved instruction stream (its COPY modes selected once, valid under any table of the same cache geometry).
 -- Both the default and the candidate emission build on the one plan, and the design reads the resolved stream off it.
 data WindowPlan = WindowPlan
   { planResolved :: ![ResolvedInstruction]
   , planSourcing :: !WindowSourcing
   }
 
--- | Plan a cover's single window against a source under a cache geometry: select the instruction stream's COPY addresses against the given 'AddressCacheConfig', and decide how the window sources its copies.
--- The write head starts at @len(S)@ for a source-drawing window (the segment it declares) and at zero for a self-contained one, which has no COPY to measure against it anyway.
+-- | Plan a cover's single window against a source under a cache geometry:
+-- select the instruction stream's COPY addresses against the given 'AddressCacheConfig', and decide how the window sources its copies.
+-- The write head starts at @len(S)@ for a source-drawing window (the segment it declares)
+-- and at zero for a self-contained one, which has no COPY to measure against it anyway.
 --
--- The config is the one the window will declare: its addresses are resolved against the very cache the decoder rebuilds from the table data's cache sizes, so resolve and declaration cannot drift (see 'assembleCustomTablePatch'). 'emitDefaultPatch' plans under 'defaultAddressCacheConfig'; 'grownCacheCandidate' plans under each config it probes.
+-- The config is the one the window will declare:
+-- its addresses are resolved against the very cache the decoder rebuilds from the table data's cache sizes,
+-- so resolve and declaration cannot drift (see 'assembleCustomTablePatch').
+-- 'emitDefaultPatch' plans under 'defaultAddressCacheConfig'; 'grownCacheCandidate' plans under each config it probes.
 planWindow :: AddressCacheConfig -> ByteString -> ByteString -> Cover -> WindowPlan
 planWindow config source target cover = WindowPlan
   { planResolved = resolveInstructionAddresses config initialHere instructions
@@ -329,7 +419,9 @@ planWindow config source target cover = WindowPlan
       DrawsFromSource -> lengthToOffset (byteLength source)
       SelfContained   -> Offset 0
 
--- | How a window sources its copies, read off its instructions: any COPY and it draws on the source (declaring the whole source as its segment), none and it is self-contained. Total over the three instruction kinds.
+-- | How a window sources its copies, read off its instructions:
+-- any COPY and it draws on the source (declaring the whole source as its segment), none and it is self-contained.
+-- Total over the three instruction kinds.
 windowSourcing :: [VCDIFFInstruction] -> WindowSourcing
 windowSourcing instructions
   | any instructionCopies instructions = DrawsFromSource
@@ -340,28 +432,41 @@ windowSourcing instructions
       Add _    -> False
       Run _ _  -> False
 
--- | The window bytes for a plan under a table: the Win_Indicator and (when copying) the source-segment varints, then the delta encoding (target size, Delta_Indicator, the three section lengths, the three sections) behind its length varint.
--- When copying, the window declares the entire source as its segment so the COPY addresses can reach into @U@; otherwise it is self-contained, the two segment varints absent, reproducing the bedrock floor exactly.
-encodeWindow :: Table.CodeTable -> ByteString -> ByteString -> WindowPlan -> ByteString
-encodeWindow table source target plan = builderBytes windowBuilder
+-- | The window bytes for a plan under a table:
+-- the Win_Indicator and (when copying) the source-segment varints, then the delta encoding behind its length varint —
+-- target size, Delta_Indicator, the three section lengths, the checksum when carried, the three sections.
+-- When copying, the window declares the entire source as its segment so the COPY addresses can reach into @U@;
+-- otherwise it is self-contained, the two segment varints absent, reproducing the bedrock floor exactly.
+encodeWindow :: Table.CodeTable -> ByteString -> ByteString -> WindowChecksumEmission -> WindowPlan -> ByteString
+encodeWindow table source target checksumEmission plan = builderBytes windowBuilder
   where
     sections = layoutSections (denseOpcodes table) (planResolved plan)
 
     -- The Win_Indicator and (for a source-drawing window) the source-segment varints, which precede the delta-encoding-length on the wire.
-    windowIndicatorAndSegment = case planSourcing plan of
-      DrawsFromSource ->
-             word8 sourceSegmentWindow
-          <> varintOfLength (byteLength source)   -- source-segment length
-          <> putVcdiffVarint 0                    -- source-segment position
-      SelfContained -> word8 selfContainedWindow
+    windowIndicatorAndSegment =
+      word8 (windowIndicator (planSourcing plan) checksumEmission)
+        <> case planSourcing plan of
+             DrawsFromSource ->
+                  varintOfLength (byteLength source)   -- source-segment length
+               <> putVcdiffVarint 0                    -- source-segment position
+             SelfContained -> mempty
 
-    -- Everything the delta-encoding-length field measures: the target window size, the indicator, the three section lengths, then the three sections in order.
+    -- The carried checksum is the Adler32 of this window's decoded output — the whole target, the window being the only one —
+    -- computed here so the value cannot drift from the window it attests.
+    -- Four bytes big-endian between the section lengths and the data section (docs/vcdiff/xdelta3/spec.md "Per-window Adler32").
+    checksumBytes = case checksumEmission of
+      CarryWindowAdler32 -> word32BE (unAdler32 (adler32 target))
+      OmitWindowAdler32  -> mempty
+
+    -- Everything the delta-encoding-length field measures:
+    -- the target window size, the indicator, the three section lengths, the checksum when carried, then the three sections in order.
     deltaEncoding = builderBytes
       (  varintOfLength (byteLength target)
       <> word8 noSectionsCompressed
       <> varintOfLength (byteLength (sectionData sections))
       <> varintOfLength (byteLength (sectionInstructions sections))
       <> varintOfLength (byteLength (sectionAddresses sections))
+      <> checksumBytes
       <> byteString (sectionData sections)
       <> byteString (sectionInstructions sections)
       <> byteString (sectionAddresses sections) )
@@ -380,28 +485,43 @@ assemblePatch headerAfterVersion windowBytes = builderBytes
   <> byteString windowBytes )
 
 -- | Emit a cover as a patch on the default code table: the core, what ships whenever a custom table does not pay.
--- Also the encoder a custom table's inner delta runs through: being default-only, the inner delta never declares a table itself, so it decodes cleanly under the no-nesting policy the outer parse applies to it.
+-- Also the encoder a custom table's inner delta runs through: being default-only, the inner delta never declares a table itself,
+-- so it decodes cleanly under the no-nesting policy the outer parse applies to it.
 emitDefaultPatch :: ByteString -> ByteString -> Cover -> ByteString
 emitDefaultPatch source target cover =
   assemblePatch (word8 noHeaderFeatures)
-                (encodeWindow Table.defaultCodeTable source target
+                (encodeWindow Table.defaultCodeTable source target OmitWindowAdler32
                    (planWindow defaultAddressCacheConfig source target cover))
 
--- | Emit a cover as a patch, weighing custom code tables against the default and shipping whichever is smallest. The candidate is grown from the default cache geometry up to where a larger cache stops shrinking the patch ('grownCacheCandidate'), its table designed afresh under each config probed, then gated against the no-custom-table default patch.
--- The default patch ships unless a candidate beats it outright: when no table differs from the default and no larger cache pays, the grow's smallest is the default-geometry candidate, which carries the custom-table overhead for nothing and loses the gate. The gate is an explicit branch, never a wildcard, so a third disposition would have to be written down.
+-- | Emit a cover as an xdelta3 patch: the default table always (xdelta3 rejects custom ones),
+-- the window carrying its Adler32 when verification is included.
+emitXDelta3Patch :: WindowChecksumEmission -> ByteString -> ByteString -> Cover -> ByteString
+emitXDelta3Patch checksumEmission source target cover =
+  assemblePatch (word8 noHeaderFeatures)
+                (encodeWindow Table.defaultCodeTable source target checksumEmission
+                   (planWindow defaultAddressCacheConfig source target cover))
+
+-- | Emit a cover as a patch, weighing custom code tables against the default and shipping whichever is smallest.
+-- The candidate is grown from the default cache geometry up to where a larger cache stops shrinking the patch
+-- ('grownCacheCandidate'), its table designed afresh under each config probed, then gated against the no-custom-table default patch.
+-- The default patch ships unless a candidate beats it outright:
+-- when no table differs from the default and no larger cache pays, the grow's smallest is the default-geometry candidate,
+-- which carries the custom-table overhead for nothing and loses the gate.
+-- The gate is an explicit branch, never a wildcard, so a third disposition would have to be written down.
 emitConsideringCustomTable :: ByteString -> ByteString -> Cover -> ByteString
 emitConsideringCustomTable source target cover
   | ByteString.length grownCandidate < ByteString.length defaultPatch = grownCandidate
   | otherwise                                                         = defaultPatch
   where
     grownCandidate = grownCacheCandidate source target cover
-    defaultPatch   = assemblePatch (word8 noHeaderFeatures)
-                       (encodeWindow Table.defaultCodeTable source target
-                          (planWindow defaultAddressCacheConfig source target cover))
+    defaultPatch   = emitDefaultPatch source target cover
 
 -- | The custom-table patch for one cache geometry, or 'Nothing' when no sound table fits the config's modes into the donor pool.
--- Resolve the cover's window under @config@, take the donor reassignments its stream needs and repeats ('donorMints'), and assemble the custom-table patch declaring @config@.
--- The window's addresses are resolved under the very config the patch declares, so every COPY mode the stream selected (and so every mode a minted entry names) is one the declared cache defines, and the decoder's mode check accepts it. The default geometry is always feasible: it admits no mode past the default nine, all named by the default table.
+-- Resolve the cover's window under @config@, take the donor reassignments its stream needs and repeats ('donorMints'),
+-- and assemble the custom-table patch declaring @config@.
+-- The window's addresses are resolved under the very config the patch declares, so every COPY mode the stream selected
+-- (and so every mode a minted entry names) is one the declared cache defines, and the decoder's mode check accepts it.
+-- The default geometry is always feasible: it admits no mode past the default nine, all named by the default table.
 candidatePatchForConfig :: ByteString -> ByteString -> Cover -> AddressCacheConfig -> Maybe ByteString
 candidatePatchForConfig source target cover config =
   fmap assembleUnderDesignedTable (donorMints (planResolved plan))
@@ -411,7 +531,8 @@ candidatePatchForConfig source target cover config =
       assembleCustomTablePatch config source target plan
         (Table.codeTableWithEntriesReplaced Table.defaultCodeTable assignments)
 
--- | A cache geometry probed during the grow, paired with the custom-table patch bytes it produces. The grow threads this so a geometry and the patch it yields are carried as one and never drift apart.
+-- | A cache geometry probed during the grow, paired with the custom-table patch bytes it produces.
+-- The grow threads this so a geometry and the patch it yields are carried as one and never drift apart.
 data CacheProbe = CacheProbe
   { probeGeometry   :: !AddressCacheConfig
   , probePatchBytes :: !ByteString
@@ -422,8 +543,12 @@ probePatchSize :: CacheProbe -> Int
 probePatchSize = ByteString.length . probePatchBytes
 
 -- | Grow the cache geometry from the default to where a larger cache stops paying, returning the smallest custom-table candidate found.
--- A larger cache only ever shrinks the address section (the near cache holds a strict superset of recent addresses, the same cache collides less), so each dimension grows cleanly: bump it a slot while the assembled patch strictly shrinks, stop when a slot buys nothing (or the bumped config is infeasible).
--- Near is grown first, then same from there; the two interact, so the order can nudge where it lands, which is fine, more slots never hurt the address section either way. The patch's own diminishing returns are the stopping rule: no threshold, no cap beyond the one-byte wire ceiling on each cache size.
+-- A larger cache only ever shrinks the address section (the near cache holds a strict superset of recent addresses, the same cache collides less),
+-- so each dimension grows cleanly: bump it a slot while the assembled patch strictly shrinks,
+-- stop when a slot buys nothing (or the bumped config is infeasible).
+-- Near is grown first, then same from there; the two interact, so the order can nudge where it lands,
+-- which is fine, more slots never hurt the address section either way.
+-- The patch's own diminishing returns are the stopping rule: no threshold, no cap beyond the one-byte wire ceiling on each cache size.
 grownCacheCandidate :: ByteString -> ByteString -> Cover -> ByteString
 grownCacheCandidate source target cover =
     probePatchBytes (growWhilePaying growSameBlock (growWhilePaying growNearSlot defaultProbe))
@@ -464,14 +589,19 @@ growSameBlock geometry
 maxCacheDimension :: Int
 maxCacheDimension = 255
 
--- | Assemble the custom-table patch for a designed candidate under a cache geometry: the header declares VCD_CODETABLE and carries the code-table data (the two cache-size bytes @s_near@, @s_same@ from @config@, then the inner delta) behind its length varint, and the window is the cover packed under the candidate.
--- The inner delta is @default-image -> candidate-image@ through the default-only core ('emitDefaultPatch'), so the table the decoder rebuilds is exactly the one this window was packed against; and @config@ is the geometry the window's addresses were resolved under ('planWindow'), so the cache the decoder rebuilds matches the cache the encoder selected modes against.
+-- | Assemble the custom-table patch for a designed candidate under a cache geometry:
+-- the header declares VCD_CODETABLE and carries the code-table data behind its length varint
+-- (the two cache-size bytes @s_near@, @s_same@ from @config@, then the inner delta), and the window is the cover packed under the candidate.
+-- The inner delta is @default-image -> candidate-image@ through the default-only core ('emitDefaultPatch'),
+-- so the table the decoder rebuilds is exactly the one this window was packed against;
+-- and @config@ is the geometry the window's addresses were resolved under ('planWindow'),
+-- so the cache the decoder rebuilds matches the cache the encoder selected modes against.
 -- The inner delta itself stays on the default geometry, RFC 3284 §7c requiring it, which the default-only 'emitDefaultPatch' provides.
 assembleCustomTablePatch
   :: AddressCacheConfig -> ByteString -> ByteString -> WindowPlan -> Table.CodeTable -> ByteString
 assembleCustomTablePatch config source target plan candidate =
   assemblePatch (word8 customCodeTableHeader <> framedCodeTableData)
-                (encodeWindow candidate source target plan)
+                (encodeWindow candidate source target OmitWindowAdler32 plan)
   where
     framedCodeTableData = varintOfLength (byteLength codeTableData) <> byteString codeTableData
     codeTableData       = builderBytes (cacheSizeHeader <> byteString innerDelta)
@@ -488,8 +618,11 @@ assembleCustomTablePatch config source target plan candidate =
 ----------------------------------------------------------------------------
 
 -- | Design a candidate code table for a window's resolved instruction stream, or 'Nothing' when no sound table would differ from the default.
--- A thin reading of 'donorMints': the table is the default with the donor reassignments applied, present only when there are any and they are sound (every soundness-required mint placed).
--- The design stays deliberately simple, this stage being the wire, not the cleverness. Whatever it produces, the window is packed against the very table shipped, so the round-trip is correct regardless of how good the design is; the gate, not the design, decides a table pays.
+-- A thin reading of 'donorMints': the table is the default with the donor reassignments applied,
+-- present only when there are any and they are sound (every soundness-required mint placed).
+-- The design stays deliberately simple, this stage being the wire, not the cleverness.
+-- Whatever it produces, the window is packed against the very table shipped,
+-- so the round-trip is correct regardless of how good the design is; the gate, not the design, decides a table pays.
 designCandidateTable :: [ResolvedInstruction] -> Maybe Table.CodeTable
 designCandidateTable resolved = case donorMints resolved of
   Just assignments
@@ -497,13 +630,21 @@ designCandidateTable resolved = case donorMints resolved of
         Just (Table.codeTableWithEntriesReplaced Table.defaultCodeTable assignments)
   _ -> Nothing
 
--- | The donor-opcode reassignments a resolved stream wants, and whether the soundness-required ones all fit. Two kinds of shape draw a donor:
+-- | The donor-opcode reassignments a resolved stream wants, and whether the soundness-required ones all fit.
+-- Two kinds of shape draw a donor:
 --
---   * /required/: a coded-size COPY opcode for each cache mode the stream uses that the default table cannot name. A grown cache admits modes past the default nine, and 'selectCopyAddressMode' may pick one; without an opcode the packer could not emit it. Frequency-independent (one use still needs it), placed first so they win donors over the savings mints. A stream whose required mints outrun the donor pool has no sound table: 'donorMints' is 'Nothing', and the grow declines it.
---   * /savings/: the ADD+COPY and COPY+ADD adjacencies ('combinablePairs') and the lone fixed-size ADD and COPY shapes ('singleInstructionShapes') the default cannot name and this stream repeats (@count >= 2@; a shape seen once cannot repay even the leanest table edit), most frequent first. Pairs and singles pool into one tally, their entry shapes disjoint, a pair carrying two real templates, a single a trailing 'Table.Noop'.
+--   * /required/: a coded-size COPY opcode for each cache mode the stream uses that the default table cannot name.
+--     A grown cache admits modes past the default nine, and 'selectCopyAddressMode' may pick one; without an opcode the packer could not emit it.
+--     Frequency-independent (one use still needs it), placed first so they win donors over the savings mints.
+--     A stream whose required mints outrun the donor pool has no sound table: 'donorMints' is 'Nothing', and the grow declines it.
+--   * /savings/: the ADD+COPY and COPY+ADD adjacencies ('combinablePairs') and the lone fixed-size ADD and COPY shapes ('singleInstructionShapes')
+--     the default cannot name and this stream repeats (@count >= 2@; a shape seen once cannot repay even the leanest table edit), most frequent first.
+--     Pairs and singles pool into one tally, their entry shapes disjoint, a pair carrying two real templates, a single a trailing 'Table.Noop'.
 --
--- Every minted COPY mode is one the resolved stream selected, so it lies within the geometry that stream was resolved under and the decoder's mode check accepts it.
--- 'Nothing' is the infeasible verdict (the required mints outran the donor pool); 'Just []' is feasible with no mints (the default table suffices); 'Just' a non-empty list is the custom table's reassignments.
+-- Every minted COPY mode is one the resolved stream selected,
+-- so it lies within the geometry that stream was resolved under and the decoder's mode check accepts it.
+-- 'Nothing' is the infeasible verdict (the required mints outran the donor pool);
+-- 'Just []' is feasible with no mints (the default table suffices); 'Just' a non-empty list is the custom table's reassignments.
 donorMints :: [ResolvedInstruction] -> Maybe [(Table.Opcode, Table.CodeTableEntry)]
 donorMints resolved
   | length requiredCopyModeEntries <= length donorOpcodes = Just (zip donorOpcodes mintEntries)
@@ -533,17 +674,21 @@ donorMints resolved
         mintableShapes =
           [ shape | shape <- pairs ++ singles, opcodeFor defaultDense shape == Nothing ]
 
-    -- Required first (soundness), then savings (size). 'zip' against the donor pool drops the tail, so a donor shortage drops savings before it ever drops a required mint; the feasibility guard above ('Nothing' when the required mints outnumber the donors) catches a shortage of even those.
+    -- Required first (soundness), then savings (size).
+    -- 'zip' against the donor pool drops the tail, so a donor shortage drops savings before it ever drops a required mint;
+    -- the feasibility guard above ('Nothing' when the required mints outnumber the donors) catches a shortage of even those.
     mintEntries :: [Table.CodeTableEntry]
     mintEntries = requiredCopyModeEntries ++ savingsMints
 
-    -- The combined opcodes the default already uses for this patch's pairs, excluded from the donor pool so a mint never overwrites an entry the patch still needs.
+    -- The combined opcodes the default already uses for this patch's pairs,
+    -- excluded from the donor pool so a mint never overwrites an entry the patch still needs.
     -- Single mints cannot collide: a fixed-size single the default holds lives in the single-instruction region, never a two-template donor slot.
     usedCombinedOpcodes :: [Table.Opcode]
     usedCombinedOpcodes =
       [ opcode | entry <- pairs, Just opcode <- [opcodeFor defaultDense entry] ]
 
-    -- Donor opcodes: the default's combined slots (its two-template entries) the patch does not use, in index order. The supply far exceeds the handful of mints in practice.
+    -- Donor opcodes: the default's combined slots (its two-template entries) the patch does not use,
+    -- in index order. The supply far exceeds the handful of mints in practice.
     donorOpcodes :: [Table.Opcode]
     donorOpcodes =
       [ opcode
@@ -553,7 +698,10 @@ donorMints resolved
       ]
 
 -- | The fixed-size ADD+COPY and COPY+ADD pairs a greedy left-to-right walk would combine, as the code-table entries they would pack into.
--- Built by the same 'addCopyEntry' \/ 'copyAddEntry' the packer's opcode lookups use, so the design counts exactly the adjacencies the packer would combine, mirroring 'packInstructions''s preference (ADD+COPY before COPY+ADD, non-overlapping). RUN never pairs; an instruction with no fixed-size combinable neighbour is passed over.
+-- Built by the same 'addCopyEntry' \/ 'copyAddEntry' the packer's opcode lookups use,
+-- so the design counts exactly the adjacencies the packer would combine,
+-- mirroring 'packInstructions''s preference (ADD+COPY before COPY+ADD, non-overlapping).
+-- RUN never pairs; an instruction with no fixed-size combinable neighbour is passed over.
 combinablePairs :: [ResolvedInstruction] -> [Table.CodeTableEntry]
 combinablePairs (ResolvedAdd literal : ResolvedCopy copyLength mode _ : rest)
   | Just entry <- addCopyEntry (byteLength literal) copyLength mode = entry : combinablePairs rest
@@ -562,8 +710,11 @@ combinablePairs (ResolvedCopy copyLength mode _ : ResolvedAdd literal : rest)
 combinablePairs (_ : rest) = combinablePairs rest
 combinablePairs []         = []
 
--- | The lone fixed-size ADD and COPY shapes a resolved stream contains, as the single-instruction code-table entries they would pack into, the size carried in the opcode, no out-of-line size varint.
--- Built so the design can mint an opcode for a size the default table leaves to the coded form (an ADD outside 1–17, a COPY outside 4–18). A length the one-byte size field cannot name ('fixedSizeFor' = 'Nothing') has no fixed-size entry to mint and is passed over; RUN has no fixed-size form and never contributes.
+-- | The lone fixed-size ADD and COPY shapes a resolved stream contains, as the single-instruction code-table entries they would pack into,
+-- the size carried in the opcode, no out-of-line size varint.
+-- Built so the design can mint an opcode for a size the default table leaves to the coded form (an ADD outside 1–17, a COPY outside 4–18).
+-- A length the one-byte size field cannot name ('fixedSizeFor' = 'Nothing') has no fixed-size entry to mint and is passed over;
+-- RUN has no fixed-size form and never contributes.
 -- One entry per occurrence, so 'donorMints' can keep the repeated ones: the mirror, for singles, of what 'combinablePairs' is for adjacencies.
 singleInstructionShapes :: [ResolvedInstruction] -> [Table.CodeTableEntry]
 singleInstructionShapes resolved =
@@ -598,17 +749,23 @@ version0 = 0x00
 noHeaderFeatures :: Word8
 noHeaderFeatures = 0x00
 
--- | Hdr_Indicator with VCD_CODETABLE (bit 1) set: a custom code table's length varint and data follow in the header. Distinct from the window's VCD_SOURCE bit: this is the patch-level header indicator (RFC 3284 §4.1).
+-- | Hdr_Indicator with VCD_CODETABLE (bit 1) set: a custom code table's length varint and data follow in the header.
+-- Distinct from the window's VCD_SOURCE bit: this is the patch-level header indicator (RFC 3284 §4.1).
 customCodeTableHeader :: Word8
 customCodeTableHeader = 0x02
 
--- | Win_Indicator with no bits set: a self-contained window, no source segment, so its two source-segment varints are absent.
-selfContainedWindow :: Word8
-selfContainedWindow = 0x00
-
--- | Win_Indicator with the VCD_SOURCE bit set: the window's COPYs may address a segment of the source file, named by the two varints that follow.
-sourceSegmentWindow :: Word8
-sourceSegmentWindow = 0x01
+-- | A window's Win_Indicator, composed from what the window carries:
+-- VCD_SOURCE when its COPYs address the source segment the two following varints name
+-- (a self-contained window sets neither copy-source bit and omits both varints), VCD_ADLER32 when its checksum follows the section lengths.
+windowIndicator :: WindowSourcing -> WindowChecksumEmission -> Word8
+windowIndicator sourcing checksumEmission = sourcingBits .|. checksumBits
+  where
+    sourcingBits = case sourcing of
+      DrawsFromSource -> bit vcdSourceBit
+      SelfContained   -> 0x00
+    checksumBits = case checksumEmission of
+      CarryWindowAdler32 -> bit vcdAdler32Bit
+      OmitWindowAdler32  -> 0x00
 
 -- | Delta_Indicator with no bits set: none of the three sections is secondary-compressed.
 noSectionsCompressed :: Word8

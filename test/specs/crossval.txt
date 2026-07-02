@@ -47,6 +47,17 @@ ninja2 | stadium2-fair   | test/data/stadium2/base.z64 | test/data/stadium2/fair
 pmsr   | paper-mario-pmmq | test/data/paper-mario/base.z64 | test/data/paper-mario/pmmq-jr.mod        | 50e583fca0d58173a6b3dbd7ae9aa0783e281ff2 | rompatcher
 #
 # ============================================================================
+# xdelta3 (VCDIFF, xdelta3 arc)
+# ============================================================================
+#
+# --- xdelta3 ---
+# The kirby fixture, not stadium2: slap currently emits one window spanning the whole
+# target, and the installed xdelta3 build refuses to decode a window over its compiled
+# XD3_HARDMAXWINSIZE (16 MiB here; its own encoder emits 8 MiB windows). Multi-window
+# emission lifts this; until then the cross-validated pair must fit one window.
+xdelta3 | kirby-dl2-dx    | test/data/kirby-dl2/base.gb | test/data/kirby-dl2/kirby-dl2-dx.bps        | a34fb26e1066e464e55b473f0a1f87e9c764a010 | xdelta3
+#
+# ============================================================================
 # Coverage gaps
 # ============================================================================
 #
@@ -67,4 +78,5 @@ pmsr   | paper-mario-pmmq | test/data/paper-mario/base.z64 | test/data/paper-mar
 #   fairly recent discovery. I'll set it up eventually.
 #
 # External applier exists but slap cannot create the format:
-#   BSDiff (bspatch), VCDIFF (xdelta3), xdelta1 (xdelta)
+#   BSDiff (bspatch), xdelta1 (xdelta)
+#   (VCDIFF left this list when the xdelta3 create target landed; its row is above.)

@@ -1,9 +1,11 @@
 -- | The vocabulary a parsed VCDIFF patch decodes into.
 --
--- VCDIFF is two flavors over one wire format: RFC 3284 and xdelta3 run the same core and diverge only at named features (@docs\/vcdiff\/core\/spec.md@, @docs\/vcdiff\/partition.md@).
+-- VCDIFF is two flavors over one wire format: RFC 3284 and xdelta3 run the same core and diverge only at named features
+-- (@docs\/vcdiff\/core\/spec.md@, @docs\/vcdiff\/partition.md@).
 -- The types follow that shape: a flavor sum at the top, a shared 'Window' both flavors fill, per-flavor wrappers only where a flavor adds something.
 --
--- Everything here is already decoded: the code table and address cache are decode mechanism, consumed while parsing and gone from the decoded form.
+-- Everything here is already decoded:
+-- the code table and address cache are decode mechanism, consumed while parsing and gone from the decoded form.
 module Slap.VCDIFF.Types
   ( VCDIFFPatch(..)
   , XDelta3Header(..)
@@ -20,6 +22,10 @@ module Slap.VCDIFF.Types
   , SourceSegment(..)
   , SegmentOrigin(..)
   , vcdiffMagicBytes
+    -- * Indicator bits
+  , vcdDecompressBit, vcdCodeTableBit, vcdAppHeaderBit
+  , vcdSourceBit, vcdTargetBit, vcdAdler32Bit
+  , vcdDataCompBit, vcdInstCompBit, vcdAddrCompBit
   ) where
 
 import Slap.Measure (Offset, Length(..), FileSize(..))
@@ -38,8 +44,36 @@ import Data.Word (Word8)
 vcdiffMagicBytes :: ByteString
 vcdiffMagicBytes = ByteString.pack [0xD6, 0xC3, 0xC4]
 
+----------------------------------------------------------------------------
+-- Indicator bits
+----------------------------------------------------------------------------
+
+-- The bit positions of the three indicator bitmask bytes.
+-- Wire facts the two directions must place identically — 'Slap.VCDIFF.Parse' tests them, 'Slap.VCDIFF.Create' sets them —
+-- so, like the magic above, they are named once here.
+
+-- Header indicator (Hdr_Indicator)
+vcdDecompressBit, vcdCodeTableBit, vcdAppHeaderBit :: Int
+vcdDecompressBit = 0   -- VCD_DECOMPRESS: a secondary compressor is declared
+vcdCodeTableBit  = 1   -- VCD_CODETABLE:  a custom code table follows
+vcdAppHeaderBit  = 2   -- VCD_APPHEADER:  application data follows
+
+-- Window indicator (Win_Indicator)
+vcdSourceBit, vcdTargetBit, vcdAdler32Bit :: Int
+vcdSourceBit  = 0   -- VCD_SOURCE:  copies address a segment of the source file
+vcdTargetBit  = 1   -- VCD_TARGET:  copies address a segment of produced target
+vcdAdler32Bit = 2   -- VCD_ADLER32: a per-window Adler32 follows the section lengths
+
+-- Delta indicator (Delta_Indicator): one bit per section kind,
+-- marking that kind's section of this window as a compressed piece of the kind's continuous secondary stream.
+vcdDataCompBit, vcdInstCompBit, vcdAddrCompBit :: Int
+vcdDataCompBit = 0   -- VCD_DATACOMP: the data section is compressed
+vcdInstCompBit = 1   -- VCD_INSTCOMP: the instruction section is compressed
+vcdAddrCompBit = 2   -- VCD_ADDRCOMP: the address section is compressed
+
 -- | A parsed VCDIFF patch.
--- An xdelta3 patch can carry an application header and per-window checksums an RFC patch cannot; an RFC patch can carry a custom code table an xdelta3 decoder rejects.
+-- An xdelta3 patch can carry an application header and per-window checksums an RFC patch cannot;
+-- an RFC patch can carry a custom code table an xdelta3 decoder rejects.
 -- 'PatchCoreOnly' uses no flavor-distinguishing feature and decodes identically under either flavor.
 data VCDIFFPatch
   = PatchXDelta3  !XDelta3Header !(Vector XDelta3Window)
@@ -47,9 +81,11 @@ data VCDIFFPatch
   | PatchCoreOnly                !(Vector Window)
   deriving (Eq, Show)
 
--- | The xdelta3-only header fields: the optional application header (VCD_APPHEADER, carried once before the windows) and the secondary compressor it declared, if any.
+-- | The xdelta3-only header fields:
+-- the optional application header (VCD_APPHEADER, carried once before the windows) and the secondary compressor it declared, if any.
 --
--- The compressor's sections are resolved to plain bytes at parse and gone from the decoded form; which compressor was declared is kept, since 'Nothing' here is the difference between a plain xdelta3 patch and a compressed one.
+-- The compressor's sections are resolved to plain bytes at parse and gone from the decoded form;
+-- which compressor was declared is kept, since 'Nothing' here is the difference between a plain xdelta3 patch and a compressed one.
 -- The name is a declaration, not a use: a declared compressor no window draws on is a valid state, recorded here all the same.
 data XDelta3Header = XDelta3Header
   { xdelta3AppHeader           :: !(Maybe ByteString)
@@ -68,8 +104,10 @@ data RFCHeader = RFCHeader
   { rfcCustomCodeTable :: !(Maybe CustomCodeTable) }
   deriving (Eq, Show)
 
--- | A patch's custom code table (RFC 3284 §7): the 256 entries the instruction stream indexes, and the address-cache geometry it declares ahead of them, the @s_near@\/@s_same@ pair sizing the near and same caches.
--- The two travel together because the wire ties them (the geometry bytes, then the entries' inner delta) and a window resolves its COPY addresses against the very cache the geometry sizes.
+-- | A patch's custom code table (RFC 3284 §7): the 256 entries the instruction stream indexes,
+-- and the address-cache geometry it declares ahead of them, the @s_near@\/@s_same@ pair sizing the near and same caches.
+-- The two travel together because the wire ties them (the geometry bytes, then the entries' inner delta)
+-- and a window resolves its COPY addresses against the very cache the geometry sizes.
 -- A patch on the default table carries no 'CustomCodeTable'; its geometry is then the default four-near\/three-same.
 data CustomCodeTable = CustomCodeTable
   { customCodeTableEntries     :: !CodeTable
@@ -77,7 +115,8 @@ data CustomCodeTable = CustomCodeTable
   }
   deriving (Eq, Show)
 
--- | A window of an xdelta3 patch: the shared 'Window' plus the optional per-window Adler32 of its decoded output, present exactly when Win_Indicator bit 2 is set.
+-- | A window of an xdelta3 patch:
+-- the shared 'Window' plus the optional per-window Adler32 of its decoded output, present exactly when Win_Indicator bit 2 is set.
 -- Only xdelta3 windows can carry one, so the wrapper lives here, not on 'Window': an RFC or core-only window bearing a checksum is unrepresentable.
 -- The 'Slap.SomePatch' seam lifts each present checksum into @verifyWindowAdler32@.
 data XDelta3Window = XDelta3Window
@@ -86,7 +125,8 @@ data XDelta3Window = XDelta3Window
   }
   deriving (Eq, Show)
 
--- | One window: a self-contained chunk of the target. A patch is a sequence of windows, the target their decoded output concatenated in order.
+-- | One window: a self-contained chunk of the target.
+-- A patch is a sequence of windows, the target their decoded output concatenated in order.
 data Window = Window
   { windowSourceSegment :: !(Maybe SourceSegment)
   , windowTargetSize    :: !FileSize
@@ -121,9 +161,13 @@ data WindowWithChecksum = WindowWithChecksum
 patchWindows :: VCDIFFPatch -> Vector Window
 patchWindows = fmap windowWithChecksumBody . patchWindowsWithChecksums
 
--- | One decoded delta instruction. 'Add' carries its literal bytes; 'Run' a length and the byte to repeat; 'Copy' a length and one absolute 'Offset' into the superstring @U = S + T@, the window's source segment @S@ followed by the target @T@ produced so far.
+-- | One decoded delta instruction. 'Add' carries its literal bytes; 'Run' a length and the byte to repeat;
+-- 'Copy' a length and one absolute 'Offset' into the superstring @U = S + T@,
+-- the window's source segment @S@ followed by the target @T@ produced so far.
 --
--- 'Copy' has a single offset, not a source\/target split: VCDIFF addresses one flat space, where a copy reads from @S@ or from @T@ (including the self-referential overlap where the read trails the write, the run-length case) and apply walks it byte by byte through @U@.
+-- 'Copy' has a single offset, not a source\/target split:
+-- VCDIFF addresses one flat space, where a copy reads from @S@ or from @T@
+-- (including the self-referential overlap where the read trails the write, the run-length case) and apply walks it byte by byte through @U@.
 -- A copy crossing the segment boundary is malformed (core invariant 2), so the two cases never mix within one copy.
 data VCDIFFInstruction
   = Add  !ByteString
@@ -140,6 +184,7 @@ data SourceSegment = SourceSegment
   deriving (Eq, Show)
 
 -- | Which side a window's source segment is cut from: the source file (VCD_SOURCE) or the produced target (VCD_TARGET).
--- The spec forbids both bits at once, and neither set means a self-contained window with 'windowSourceSegment' 'Nothing', so this selector exists only where a segment does.
+-- The spec forbids both bits at once, and neither set means a self-contained window with 'windowSourceSegment' 'Nothing',
+-- so this selector exists only where a segment does.
 data SegmentOrigin = FromSourceFile | FromProducedTarget
   deriving (Eq, Show)

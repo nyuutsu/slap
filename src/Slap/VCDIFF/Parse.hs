@@ -24,7 +24,10 @@ module Slap.VCDIFF.Parse
 import Slap.VCDIFF.Types
   ( VCDIFFPatch(..), Window(..), VCDIFFInstruction(..)
   , XDelta3Header(..), XDelta3Window(..), RFCHeader(..), CustomCodeTable(..)
-  , SourceSegment(..), SegmentOrigin(..), vcdiffMagicBytes )
+  , SourceSegment(..), SegmentOrigin(..), vcdiffMagicBytes
+  , vcdDecompressBit, vcdCodeTableBit, vcdAppHeaderBit
+  , vcdSourceBit, vcdTargetBit, vcdAdler32Bit
+  , vcdDataCompBit, vcdInstCompBit, vcdAddrCompBit )
 -- Qualified: 'InstructionTemplate' shares the constructor names Add / Run / Copy with 'VCDIFFInstruction'.
 import qualified Slap.VCDIFF.CodeTable as Table
 import Slap.VCDIFF.SecondaryCompression
@@ -336,23 +339,7 @@ parseRawWindow = do
 -- Indicator bits
 ----------------------------------------------------------------------------
 
--- Header indicator (Hdr_Indicator)
-vcdDecompressBit, vcdCodeTableBit, vcdAppHeaderBit :: Int
-vcdDecompressBit = 0   -- VCD_DECOMPRESS: a secondary compressor is declared
-vcdCodeTableBit  = 1   -- VCD_CODETABLE:  a custom code table follows
-vcdAppHeaderBit  = 2   -- VCD_APPHEADER:  application data follows
-
--- Window indicator (Win_Indicator)
-vcdSourceBit, vcdTargetBit, vcdAdler32Bit :: Int
-vcdSourceBit  = 0   -- VCD_SOURCE:  copies address a segment of the source file
-vcdTargetBit  = 1   -- VCD_TARGET:  copies address a segment of produced target
-vcdAdler32Bit = 2   -- VCD_ADLER32: a per-window Adler32 follows the section lengths
-
--- Delta indicator (Delta_Indicator): one bit per section kind, marking that kind's section of this window as a compressed piece of the kind's continuous secondary stream.
-vcdDataCompBit, vcdInstCompBit, vcdAddrCompBit :: Int
-vcdDataCompBit = 0   -- VCD_DATACOMP: the data section is compressed
-vcdInstCompBit = 1   -- VCD_INSTCOMP: the instruction section is compressed
-vcdAddrCompBit = 2   -- VCD_ADDRCOMP: the address section is compressed
+-- The bit positions live in 'Slap.VCDIFF.Types', shared with the write side; what belongs here is what parse makes of them.
 
 -- | The three Delta_Indicator compression bits, each paired with the section kind it governs. The single place the bit-to-kind pairing lives; both the carriage builder and the compressed-kind scans below read it.
 sectionCompressionBits :: [(Int, VCDIFFSection)]
