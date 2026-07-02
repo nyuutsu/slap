@@ -10,7 +10,7 @@ module Slap.NINJA1.Parse
   , parseText
   , parseTextHeader
   , parseTextRecord
-  , hexToBS
+  , hexToBytes
   , romTypeFromName
   ) where
 
@@ -38,10 +38,11 @@ import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString8
-import Data.Char (toLower)
+import Data.Char (digitToInt, isHexDigit)
 import Data.Int (Int64)
+import Data.Text (Text)
 import qualified Data.Text as Text
-import Data.Word (Word8, Word32)
+import Data.Word (Word32)
 import Numeric (readHex)
 
 parseNINJA1 :: PatchFileContents -> Either SlapError (Parsed NINJA1Patch)
@@ -201,8 +202,8 @@ parseText format (PatchFileContents payload) = do
 parseTextHeader :: ByteString -> Either SlapError NINJA1TextHeader
 parseTextHeader line = do
   romType <- case tokens of
-    (formatName:_) -> Right (romTypeFromName formatName)
-    _              -> Left (MalformedNINJA1Content (NINJA1MalformedTextRecord (LineText (Text.pack (ByteString8.unpack line)))))
+    (formatNameToken:_) -> Right (romTypeFromName (Text.pack (ByteString8.unpack formatNameToken)))
+    _                   -> Left (MalformedNINJA1Content (NINJA1MalformedTextRecord (LineText (Text.pack (ByteString8.unpack line)))))
   Right NINJA1TextHeader
     { ninja1TextRomType    = romType
     , ninja1TextSourceCRC  = parsedCRC
@@ -210,47 +211,47 @@ parseTextHeader line = do
     , ninja1TextSourceSHA1 = parsedSHA1
     }
   where
-    tokens = map ByteString8.unpack (ByteString8.words line)
-    isUnknown text = text == "unk" || text == "unk."
+    tokens = ByteString8.words line
+    isUnknown token = token == "unk" || token == "unk."
     parsedCRC = case tokens of
-      (_:crcText:_) | not (isUnknown crcText) -> case (readHex crcText :: [(Word32, String)]) of
+      (_:crcToken:_) | not (isUnknown crcToken) -> case (readHex (ByteString8.unpack crcToken) :: [(Word32, String)]) of
         [(value, "")] -> Just (CRC32 value)
         _             -> Nothing
       _ -> Nothing
     nonEmpty bytes = if ByteString.null bytes then Nothing else Just bytes
     parsedMD5 = case tokens of
-      (_:_:md5Text:_) | not (isUnknown md5Text) -> MD5Hash <$> nonEmpty (hexToBS md5Text)
+      (_:_:md5Token:_) | not (isUnknown md5Token) -> MD5Hash <$> nonEmpty (hexToBytes md5Token)
       _ -> Nothing
     parsedSHA1 = case tokens of
-      (_:_:_:sha1Text:_) | not (isUnknown sha1Text) -> SHA1Hash <$> nonEmpty (hexToBS sha1Text)
+      (_:_:_:sha1Token:_) | not (isUnknown sha1Token) -> SHA1Hash <$> nonEmpty (hexToBytes sha1Token)
       _ -> Nothing
 
 parseTextRecord :: ByteString -> Either SlapError NINJA1Record
 parseTextRecord line = case ByteString8.words line of
-  (offsetString : dataParts@(_:_)) ->
-    case (readHex (ByteString8.unpack offsetString) :: [(Int64, String)]) of
-      [(offset, "")] -> Right (NINJA1Record (offsetFromParsed offset) (hexToBS (concatMap ByteString8.unpack dataParts)))
-      _ -> Left (MalformedNINJA1Content (NINJA1InvalidOffsetInTextRecord (OffsetTokenText (Text.pack (ByteString8.unpack offsetString)))))
+  (offsetToken : dataParts@(_:_)) ->
+    case (readHex (ByteString8.unpack offsetToken) :: [(Int64, String)]) of
+      [(offset, "")] -> Right (NINJA1Record (offsetFromParsed offset) (hexToBytes (ByteString.concat dataParts)))
+      _ -> Left (MalformedNINJA1Content (NINJA1InvalidOffsetInTextRecord (OffsetTokenText (Text.pack (ByteString8.unpack offsetToken)))))
   _ -> Left (MalformedNINJA1Content (NINJA1MalformedTextRecord (LineText (Text.pack (ByteString8.unpack line)))))
 
-hexToBS :: String -> ByteString
-hexToBS text = ByteString.pack (parseHexPairs text)
+-- | Decode a run of ASCII hex pairs into their bytes.
+-- A lone trailing nibble, or any non-hex character, ends the decode at the last whole pair before it.
+hexToBytes :: ByteString -> ByteString
+hexToBytes = ByteString.pack . pairsOf . ByteString8.unpack
   where
-    parseHexPairs [] = []
-    parseHexPairs [_] = []
-    parseHexPairs (highNibble:lowNibble:rest) = case (readHex [highNibble,lowNibble] :: [(Word8, String)]) of
-      [(value, "")] -> value : parseHexPairs rest
-      _             -> []
+    pairsOf (highDigit : lowDigit : rest)
+      | isHexDigit highDigit && isHexDigit lowDigit =
+          fromIntegral (digitToInt highDigit * 16 + digitToInt lowDigit) : pairsOf rest
+    pairsOf _ = []
 
 -- | Decode the textual NINJA1 ROM type name (the header line's first token).
--- An unrecognized name is kept as 'RomUnknownName', mirroring the binary
--- path's 'RomUnknown' byte. Matching is case-insensitive, like the PHP
--- reference's @strtolower@.
-romTypeFromName :: String -> NINJA1RomType
-romTypeFromName text = case map toLower text of
+-- An unrecognized name is kept as 'RomUnknownName', mirroring the binary path's 'RomUnknown' byte.
+-- Matching is case-insensitive, like the PHP reference's @strtolower@.
+romTypeFromName :: Text -> NINJA1RomType
+romTypeFromName name = case Text.toLower name of
   "raw"  -> RomRAW;      "nes"  -> RomNES;      "snes" -> RomSNES;        "n64"  -> RomN64
   "gb"   -> RomGB;       "gbc"  -> RomGBC;      "gba"  -> RomGBA;         "ngp"  -> RomNGP
   "ngpc" -> RomNGPC;     "sms"  -> RomSMS;      "gg"   -> RomGameGear;    "mega" -> RomGenesis
   "pce"  -> RomPCEngine; "ws"   -> RomWonderSwan; "wsc" -> RomWonderSwanColor
   "lynx" -> RomLynx;     "jag"  -> RomJaguar;   "gp32" -> RomGP32
-  _      -> RomUnknownName (Text.pack text)
+  _      -> RomUnknownName name
