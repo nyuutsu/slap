@@ -7,6 +7,7 @@ module Slap.Compression.Stream
   , bzip2Decompress
   , LzmaDecoded(..)
   , lzmaDecompress
+  , lzmaCompress
   , DjwDecoded(..)
   , djwDecompress
   , FgkDecoded(..)
@@ -68,6 +69,12 @@ foreign import ccall unsafe "rusty_lzma_decompress"
     -> Ptr CSize                        -- consumed input length
     -> Ptr (Ptr Word8) -> Ptr CSize     -- error message buffer
     -> IO CInt
+
+foreign import ccall unsafe "rusty_lzma_compress"
+  rustyLzmaCompress
+    :: Ptr Word8 -> CSize
+    -> Ptr (Ptr Word8) -> Ptr CSize
+    -> IO ()
 
 foreign import ccall unsafe "rusty_djw_decompress"
   rustyDjwDecompress
@@ -210,6 +217,20 @@ lzmaDecompress input = unsafePerformIO $
             { lzmaDecodedBytes        = decodedBytes
             , lzmaConsumedInputLength = Length (fromIntegral consumedLength)
             }
+
+-- | LZMA compression into one xdelta3-flavored stream: the xz header, then sync-flushed
+-- raw LZMA2 chunks with no closing marker — exactly the shape 'lzmaDecompress' reads back
+-- (see @rusty-slap/src/xdelta3_lzma.rs@ for why the stream must end unfinished).
+-- Round-trip partner of 'lzmaDecompress'.
+-- Pure: in-memory compression has no error to surface (allocation failure aborts).
+lzmaCompress :: ByteString -> ByteString
+lzmaCompress input = unsafePerformIO $
+  withByteString input $ \dataPointer dataLength ->
+  alloca $ \resultAddressPointer ->
+  alloca $ \resultLengthPointer -> do
+    rustyLzmaCompress dataPointer dataLength
+                      resultAddressPointer resultLengthPointer
+    readByteString    resultAddressPointer resultLengthPointer
 
 -- | What one DJW decompression reports back across the seam:
 -- the decoded bytes, and how many input bytes the decoder consumed before its output budget filled.

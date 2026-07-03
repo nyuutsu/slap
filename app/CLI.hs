@@ -43,10 +43,10 @@ import Slap.Convert (CreateFormat(..), DifferentialCreate(CreateBPS),
                      FileIdDizRequest(..),
                      RequestedConstraints(..),
                      RequestedDialects(..),
-                     UndoInclusion(..), VerificationInclusion(..), PatchStability(..),
+                     UndoInclusion(..), VerificationInclusion(..), CompressionInclusion(..),
+                     PatchStability(..),
                      TextMode(..))
-import Slap.XDelta1.Types (XDelta1FromName(..), XDelta1ToName(..),
-                           XDelta1PatchCompression(..))
+import Slap.XDelta1.Types (XDelta1FromName(..), XDelta1ToName(..))
 import Slap.Constraint (Constraint(..), constraintFlagName)
 import Slap.Dialect (Dialect(..), dialectFlagName)
 import Slap.PPF1.Types (PPF1Origin(..))
@@ -620,8 +620,8 @@ requestedMetadataParser = do
                             <> help "Omit undo data (default: included when the format supports it)"))
     includeVerification <- optional (flag' OmitVerification (long "omit-verification"
                             <> help "Omit source-integrity-checking data from the created patch (default: included when the format supports it)"))
-    patchCompression  <- optional (flag' UncompressedPatch (long "no-compress"
-                            <> help "Do not gzip-compress the output patch (xdelta1 only; default emits compressed)"))
+    patchCompression  <- optional (flag' OmitCompression (long "no-compress"
+                            <> help "Do not compress the output patch (xdelta1's gzip envelope, xdelta3's LZMA sections; default emits compressed)"))
     unstable          <- optional (flag' UnstablePatch (long "unstable"
                             <> help "Mark patch unstable (DPS)"))
     romType           <- optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"

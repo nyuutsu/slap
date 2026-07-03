@@ -43,8 +43,8 @@ import qualified Slap.XDelta1.Create as XDelta1
 import Slap.Convert (createPatch)
 import Slap.Status (SlapError, CreateResult)
 import Slap.FileContents (InputFileContents, OutputFileContents)
-import Slap.MetadataInclusion (VerificationInclusion(..))
-import Slap.XDelta1.Types (ResolvedXDelta1FileNames, XDelta1PatchCompression(..))
+import Slap.MetadataInclusion (VerificationInclusion(..), CompressionInclusion(..))
+import Slap.XDelta1.Types (ResolvedXDelta1FileNames)
 
 ----------------------------------------------------------------------------
 -- Differential-format porcelain
@@ -78,8 +78,8 @@ createNINJA2
 createNINJA2 = NINJA2.createNINJA2
 
 -- | Create an xdelta1 patch. The 'VerificationInclusion' choice
--- (set by @slap create --no-verify@) gates @FLAG_NO_VERIFY@ and the
--- per-source MD5 fields; the 'XDelta1PatchCompression' choice (set
+-- (set by @slap create --omit-verification@) gates @FLAG_NO_VERIFY@ and the
+-- per-source MD5 fields; the 'CompressionInclusion' choice (set
 -- by @slap create --no-compress@) gates @FLAG_PATCH_COMPRESSED@
 -- and whether the data and control segments are gzip-deflated
 -- before placement. Both shapes round-trip through
@@ -89,7 +89,7 @@ createNINJA2 = NINJA2.createNINJA2
 -- resolved and cap-checked by the porcelain via 'Slap.XDelta1.Types.resolveXDelta1FileNames' / 'Slap.XDelta1.Types.requireXDelta1FileNames'.
 createXDelta1
   :: VerificationInclusion
-  -> XDelta1PatchCompression
+  -> CompressionInclusion
   -> ResolvedXDelta1FileNames
   -> InputFileContents
   -> OutputFileContents

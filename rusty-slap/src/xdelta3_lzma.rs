@@ -1,4 +1,5 @@
-//! LZMA decompression for the streams xdelta3 emits.
+//! The LZMA streams xdelta3 carries: reading the shape xd3 emits, and
+//! writing that same shape back.
 //!
 //! xdelta3's LZMA secondary compressor is liblzma writing an xz/LZMA2
 //! stream (`LZMA_FILTER_LZMA2`, check=none) that it never finishes:
@@ -6,9 +7,16 @@
 //! continue as raw LZMA2 chunks, and then simply stop — no end-of-
 //! stream chunk marker, no index, no stream footer, because the
 //! encoder keeps the stream open across the patch's windows and dies
-//! with it unfinished. The caller hands this module one such stream,
-//! gathered whole; this module owns the two adaptations that shape
-//! demands:
+//! with it unfinished. The unfinished shape is load-bearing, not a
+//! habit: both framings a section decode is held to (xd3's
+//! `xd3_decode_secondary` and slap's own) demand the whole stream
+//! consumed and exactly the declared size produced, and a finished
+//! stream's closing structures would sit past that stop as unconsumed
+//! input. So [`lzma_compress`] emits exactly this shape, ending on a
+//! sync flush.
+//!
+//! For reading, the caller hands this module one such stream, gathered
+//! whole; this module owns the two adaptations the shape demands:
 //!
 //!   * the xz stream header and block header are walked past, exposing
 //!     the raw LZMA2 chunk sequence `lzma-rs` decodes (its one-shot
@@ -27,6 +35,8 @@
 //! not this module's.
 
 use std::io::{Cursor, Read};
+
+// ── Decompression ──────────────────────────────────────────────────────
 
 /// The xz stream header: the 6-byte magic, 2 bytes of stream flags,
 /// and a 4-byte CRC32 of the flags. The flags only name the block
@@ -93,6 +103,98 @@ fn xz_framing_length(input: &[u8]) -> Result<usize, String> {
         return Err("stream ends inside its xz block header".to_string());
     }
     Ok(framing_length)
+}
+
+// ── Compression ────────────────────────────────────────────────────────
+
+/// The LZMA2 preset the encoder runs at: the middle of the range and
+/// xz's own default level. Fixed here rather than exposed — no caller
+/// turns a level knob today.
+const ENCODING_PRESET: u32 = 6;
+
+/// Compress one plain buffer into the xdelta3-flavored stream
+/// [`lzma_decompress`] reads back: the xz stream and block headers,
+/// then LZMA2 chunks left sync-flushed, never finished (see the module
+/// header for why the end-of-stream marker must not be written).
+///
+/// Total: any byte buffer compresses, the empty one included (its
+/// stream is the bare framing). The writer sinks into a `Vec`, which
+/// cannot raise an I/O error, so an `Err` from the encoder would mean
+/// an encoder bug; the `expect` dies loudly on one.
+pub fn lzma_compress(plain: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+
+    let mut options = lzma_rust2::Lzma2Options::with_preset(ENCODING_PRESET);
+    // A dictionary reaching past the input buys nothing, so it shrinks
+    // to the input's length (floored at the format's minimum) and the
+    // decoder's allocation shrinks with it. The block header rounds
+    // back up to the nearest encodable size, so the decoder always
+    // allocates at least what the encoder used.
+    options.lzma_options.dict_size = (plain.len() as u64)
+        .clamp(
+            u64::from(lzma_rust2::DICT_SIZE_MIN),
+            u64::from(options.lzma_options.dict_size),
+        ) as u32;
+    let dictionary_size = options.lzma_options.dict_size;
+
+    let mut writer = lzma_rust2::Lzma2Writer::new(Vec::new(), options);
+    writer
+        .write_all(plain)
+        .expect("xdelta3_lzma: LZMA2 encoder failed on an in-memory sink");
+    writer
+        .flush()
+        .expect("xdelta3_lzma: LZMA2 encoder failed to flush on an in-memory sink");
+    let chunks = writer.into_inner();
+
+    let mut stream = xz_framing(dictionary_size);
+    stream.extend_from_slice(&chunks);
+    stream
+}
+
+/// The xz stream header and block header that open a stream: the same
+/// 24 bytes `xz_framing_length` walks past on the way in. The stream
+/// flags declare check=none — xd3's own choice, and an unfinished
+/// stream never reaches where a check would live — and the block
+/// header names the single LZMA2 filter with the dictionary's
+/// property byte.
+fn xz_framing(dictionary_size: u32) -> Vec<u8> {
+    let stream_flags = [0x00, 0x00]; // second byte 0x00: check = none
+    let block_header = [
+        0x02, // block header size: (0x02 + 1) * 4 = 12 bytes, itself included
+        0x00, // block flags: one filter, no optional size fields
+        0x21, // filter id: LZMA2
+        0x01, // filter properties length
+        dictionary_property_byte(dictionary_size),
+        0x00, // header padding
+        0x00,
+        0x00,
+    ];
+
+    let mut framing = Vec::with_capacity(XZ_STREAM_HEADER_LENGTH + block_header.len() + 4);
+    framing.extend_from_slice(&XZ_MAGIC);
+    framing.extend_from_slice(&stream_flags);
+    framing.extend_from_slice(&crate::crc32::crc32(&stream_flags).to_le_bytes());
+    framing.extend_from_slice(&block_header);
+    framing.extend_from_slice(&crate::crc32::crc32(&block_header).to_le_bytes());
+    framing
+}
+
+/// The xz one-byte dictionary-size encoding: the smallest property
+/// value whose decoded size holds at least `dictionary_size`, so a
+/// decoder sizing its dictionary from the header never allocates less
+/// than the encoder used. Property values 0–39 decode as
+/// `(2 | (v & 1)) << (v / 2 + 11)`; 40, the encoding's ceiling, names
+/// 4 GiB − 1 and is unreachable here (`lzma_compress` caps the
+/// dictionary at the preset's 8 MiB).
+fn dictionary_property_byte(dictionary_size: u32) -> u8 {
+    (0..=39)
+        .find(|&property| decoded_dictionary_size(property) >= dictionary_size)
+        .unwrap_or(40)
+}
+
+/// The dictionary size an xz property byte in 0–39 decodes to.
+fn decoded_dictionary_size(property: u8) -> u32 {
+    (2 | u32::from(property & 1)) << (property / 2 + 11)
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────
@@ -216,5 +318,102 @@ mod tests {
         let mut stream = XD3_UNCOMPRESSED_CHUNK_STREAM[..13].to_vec();
         stream[12] = 0xFF;
         assert!(lzma_decompress(&stream).is_err());
+    }
+
+    // ── The compression half ──────────────────────────────────────────
+
+    /// SplitMix64, matching the house pseudo-random helper.
+    fn pseudo_random_bytes(seed: u64, length: usize) -> Vec<u8> {
+        let mut state = seed;
+        (0..length)
+            .map(|_| {
+                state = state.wrapping_add(0x9e3779b97f4a7c15);
+                let mut mixed = state;
+                mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+                mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94d049bb133111eb);
+                mixed ^= mixed >> 31;
+                mixed as u8
+            })
+            .collect()
+    }
+
+    /// Round-trip pins the whole contract at once: the decoded bytes
+    /// match, and the decoder consumes the entire stream — the two
+    /// verdicts every section framing (xd3's and slap's) holds a
+    /// decode to. Lengths span a single chunk up to well past the
+    /// 64 KiB compressed-chunk ceiling, and alphabets span
+    /// tightly-compressible to incompressible.
+    #[test]
+    fn compressed_streams_round_trip_fully_consumed() {
+        let cases: &[(u64, usize, u8)] = &[
+            (0x01, 1, 4),            // single byte
+            (0x02, 29, 255),         // short and incompressible
+            (0x03, 4 << 10, 3),      // a few KiB, tiny alphabet
+            (0x04, 300 << 10, 16),   // hundreds of KiB: several chunks
+            (0x05, 1 << 20, 64),     // a MiB of middling entropy
+        ];
+        for &(seed, length, alphabet) in cases {
+            let plain: Vec<u8> = pseudo_random_bytes(seed, length)
+                .into_iter()
+                .map(|byte| byte % alphabet)
+                .collect();
+            let stream = lzma_compress(&plain);
+            let outcome = lzma_decompress(&stream).expect("compressed stream decodes");
+            assert_eq!(outcome.decoded_bytes, plain, "seed {seed:#x}");
+            assert_eq!(
+                outcome.consumed_input_length,
+                stream.len(),
+                "seed {seed:#x}: the stream must decode with nothing left over",
+            );
+        }
+    }
+
+    /// The chunk region must stop at a sync flush, not an end-of-stream
+    /// marker: decoding it raw — without the synthetic marker
+    /// `lzma_decompress` chains on — must therefore fail at end of
+    /// input. A finished stream would decode cleanly here, and its
+    /// marker would strand every byte after it as unconsumed input on
+    /// the reading side.
+    #[test]
+    fn compressed_chunks_end_unterminated() {
+        let plain = pseudo_random_bytes(0xF105, 2048);
+        let stream = lzma_compress(&plain);
+        let framing_length = xz_framing_length(&stream).expect("framing walks");
+        let mut chunk_reader = Cursor::new(&stream[framing_length..]);
+        let mut decoded = Vec::new();
+        assert!(
+            lzma_rs::lzma2_decompress(&mut chunk_reader, &mut decoded).is_err(),
+            "the chunk region carried an end-of-stream marker",
+        );
+    }
+
+    /// The empty buffer compresses to the bare framing and reads back
+    /// empty: the function is total, though slap never compresses an
+    /// empty section (a compressed section must declare a positive
+    /// decompressed size).
+    #[test]
+    fn empty_input_round_trips_as_bare_framing() {
+        let stream = lzma_compress(b"");
+        assert_eq!(stream.len(), XZ_STREAM_HEADER_LENGTH + 12);
+        let outcome = lzma_decompress(&stream).expect("bare framing decodes");
+        assert!(outcome.decoded_bytes.is_empty());
+        assert_eq!(outcome.consumed_input_length, stream.len());
+    }
+
+    /// The property byte always rounds up: the decoded size holds at
+    /// least the requested dictionary, and the next-smaller property
+    /// (where one exists) does not.
+    #[test]
+    fn dictionary_property_byte_rounds_up_minimally() {
+        for dict_size in [4096, 4097, 65536, 100_000, 1 << 20, 8 << 20] {
+            let property = dictionary_property_byte(dict_size);
+            assert!(decoded_dictionary_size(property) >= dict_size, "{dict_size}");
+            if property > 0 {
+                assert!(
+                    decoded_dictionary_size(property - 1) < dict_size,
+                    "{dict_size}: property {property} is not minimal",
+                );
+            }
+        }
     }
 }

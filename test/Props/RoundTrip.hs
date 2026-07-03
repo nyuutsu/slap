@@ -48,7 +48,9 @@ import qualified Slap.VCDIFF.Apply as VCDIFF
 import qualified Slap.VCDIFF.Parse as VCDIFF
 import Slap.VCDIFF.Types (VCDIFFPatch(..), Window(..), VCDIFFInstruction(..),
                           RFCHeader(..), CustomCodeTable(..), patchWindows,
-                          xdelta3WindowAdler32)
+                          XDelta3Header(..), xdelta3WindowAdler32)
+import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor(..),
+                                         secondaryCompressorCatalog, secondaryCompressorId)
 import Slap.VCDIFF.Create (createFromCover, createConsideringCustomTable,
                            coverToInstructions, resolveInstructionAddresses,
                            designCandidateTable, rejectUnaddressablePair)
@@ -107,7 +109,7 @@ import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
                      RequestedPatchMetadata(..),
                      noMetadataRequested, noConstraintsRequested, noDialectsRequested,
                      RequestedDialects(..),
-                     VerificationInclusion(..),
+                     VerificationInclusion(..), CompressionInclusion(..),
                      convertDirect, emptyContents)
 import Slap.Create (createBPS, createUPS, createDPS, createNINJA2,
                     createAPSGBA, createGDIFF, createXDelta1, createRFCVCDIFF,
@@ -197,8 +199,11 @@ roundTripTests = testGroup "RoundTrip"
       , testCase     "single: a repeated odd-size ADD beats the default and round-trips" vcdiffOddSizeSingleBeatsDefault
       , testCase     "single: the repeated odd-size ADD is minted into the table" vcdiffOddSizeSingleIsMinted
       , testProperty "xdelta3: round-trip carrying the window's Adler32" prop_xdelta3
-      , testProperty "xdelta3: verification omitted emits the core shape" prop_xdelta3OmitVerificationIsCoreShaped
+      , testProperty "xdelta3: both extensions omitted emits the core shape" prop_xdelta3OmitBothIsCoreShaped
       , testCase     "xdelta3: exact wire bytes for a two-byte target" xdelta3ExactWireBytes
+      , testCase     "xdelta3: compression pays on a repetitive cover and declares LZMA" xdelta3CompressionPaysOnARepetitiveCover
+      , testCase     "xdelta3: unpaying compression leaves the core shape" xdelta3UnpayingCompressionLeavesTheCoreShape
+      , testCase     "xdelta3: compressor ids round-trip through the catalog" xdelta3CompressorIdsRoundTripThroughTheCatalog
       , testCase     "create: the matcher's addressable-range wall holds at its exact boundary" vcdiffUnaddressablePairRefused
       ]
   , testGroup "PPF1"
@@ -354,11 +359,14 @@ prop_vcdiff = forAll genPair $ \(source, target) ->
       Right (Parsed parsed _parseWarnings) ->
         VCDIFF.applyVCDIFF parsed (InputFileContents source) === Right (OutputFileContents target)
 
--- | The xdelta3 sibling of 'prop_vcdiff': created with verification included, the patch parses back
--- as the xdelta3 flavor, its one window carries the target's Adler32, and apply reconstructs the target.
+-- | The xdelta3 sibling of 'prop_vcdiff': created with both defaults (verification and compression
+-- included), the patch parses back as the xdelta3 flavor, its one window carries the target's
+-- Adler32, and apply reconstructs the target. Random pairs are usually too small for compression
+-- to pay, so the property also exercises the plain-unless-smaller gate; the Adler32 fixes the
+-- flavor either way.
 prop_xdelta3 :: Property
 prop_xdelta3 = forAll genPair $ \(source, target) ->
-  case createXDelta3 IncludeVerification (InputFileContents source) (OutputFileContents target) of
+  case createXDelta3 IncludeVerification IncludeCompression (InputFileContents source) (OutputFileContents target) of
     Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
     Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
       Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
@@ -368,12 +376,12 @@ prop_xdelta3 = forAll genPair $ \(source, target) ->
             .&&. VCDIFF.applyVCDIFF parsed (InputFileContents source) === Right (OutputFileContents target)
         otherFlavor -> counterexample ("parsed flavor: " ++ show otherFlavor) $ property False
 
--- | With verification omitted the patch reaches for no xdelta3 feature at all, so it honestly
+-- | With both extensions omitted the patch reaches for no xdelta3 feature at all, so it honestly
 -- parses back as 'PatchCoreOnly' — the create token names the arc, the bytes earn the flavor —
 -- and still applies.
-prop_xdelta3OmitVerificationIsCoreShaped :: Property
-prop_xdelta3OmitVerificationIsCoreShaped = forAll genPair $ \(source, target) ->
-  case createXDelta3 OmitVerification (InputFileContents source) (OutputFileContents target) of
+prop_xdelta3OmitBothIsCoreShaped :: Property
+prop_xdelta3OmitBothIsCoreShaped = forAll genPair $ \(source, target) ->
+  case createXDelta3 OmitVerification OmitCompression (InputFileContents source) (OutputFileContents target) of
     Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
     Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
       Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
@@ -385,6 +393,8 @@ prop_xdelta3OmitVerificationIsCoreShaped = forAll genPair $ \(source, target) ->
 -- | The exact-wire twin of 'vcdiffExactWireBytes' for the xdelta3 entry: the same two-byte target,
 -- now with the VCD_ADLER32 bit in the Win_Indicator and the four checksum bytes
 -- between the section lengths and the data section.
+-- Compression is included but cannot pay on two bytes (the stream's framing alone is 24 bytes),
+-- so these bytes also pin the plain-unless-smaller gate: nothing shrank, nothing is declared.
 xdelta3ExactWireBytes :: Assertion
 xdelta3ExactWireBytes =
   let target = ByteString.pack [0x41, 0x42]
@@ -395,10 +405,77 @@ xdelta3ExactWireBytes =
         , 0x00, 0xC6, 0x00, 0x84              -- Adler32 of "AB", big-endian
         , 0x41, 0x42                          -- data section
         , 0x03 ]                              -- instruction section: ADD(2)'s opcode
-  in case createXDelta3 IncludeVerification (InputFileContents ByteString.empty) (OutputFileContents target) of
+  in case createXDelta3 IncludeVerification IncludeCompression (InputFileContents ByteString.empty) (OutputFileContents target) of
        Left createError -> assertFailureT ("create: " <> renderSlapError createError)
        Right (CreateResult (PatchFileContents patch) _) ->
          assertEqual "exact wire bytes" expected patch
+
+-- | A pair engineered so compression pays: the target is a patterned source with every 256th
+-- byte disturbed, so the cover is a thousand alternating COPY/ADD pairs and all three
+-- sections are highly repetitive. The compressed emission must undercut the plain one,
+-- declare LZMA in the header (the declaration is earned only by use), parse back as the
+-- xdelta3 flavor carrying that compressor, and still reconstruct the target through
+-- the secondary-decompression path.
+xdelta3CompressionPaysOnARepetitiveCover :: Assertion
+xdelta3CompressionPaysOnARepetitiveCover = do
+  let source = ByteString.pack
+        [ fromIntegral ((position * 7 + position `div` 251) `mod` 256)
+        | position <- [0 :: Int .. (1 `shiftL` 18) - 1] ]
+      target = ByteString.pack
+        [ if position `mod` 256 == 0 then byte `Bits.xor` 0x5A else byte
+        | (position, byte) <- zip [0 :: Int ..] (ByteString.unpack source) ]
+      createWith compressionChoice =
+        createXDelta3 IncludeVerification compressionChoice
+                      (InputFileContents source) (OutputFileContents target)
+  case (createWith IncludeCompression, createWith OmitCompression) of
+    (Right (CreateResult compressedPatch _), Right (CreateResult (PatchFileContents plainBytes) _)) -> do
+      let PatchFileContents compressedBytes = compressedPatch
+      assertBool "the compressed emission undercuts the plain one"
+        (ByteString.length compressedBytes < ByteString.length plainBytes)
+      case VCDIFF.parseVCDIFF compressedPatch of
+        Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
+        Right (Parsed parsed _parseWarnings) -> case parsed of
+          PatchXDelta3 header _windows -> do
+            assertEqual "declared compressor"
+              (Just SecondaryLZMA) (xdelta3SecondaryCompressor header)
+            assertEqual "apply reconstructs the target"
+              (Right (OutputFileContents target))
+              (VCDIFF.applyVCDIFF parsed (InputFileContents source))
+          otherFlavor -> assertFailure ("parsed flavor: " ++ show otherFlavor)
+    (Left createError, _) -> assertFailureT ("compressed create: " <> renderSlapError createError)
+    (_, Left createError) -> assertFailureT ("plain create: " <> renderSlapError createError)
+
+-- | Compression that never pays leaves no trace: with verification also omitted, the
+-- requested-but-unpaying compression ships bytes identical to the uncompressed emission,
+-- which parse back as the core shape — the other road to 'PatchCoreOnly' that
+-- 'Slap.VCDIFF.Create.createXDelta3' documents beside the both-omitted one.
+xdelta3UnpayingCompressionLeavesTheCoreShape :: Assertion
+xdelta3UnpayingCompressionLeavesTheCoreShape =
+  let target = ByteString.pack [0x41, 0x42]
+      createWith compressionChoice =
+        createXDelta3 OmitVerification compressionChoice
+                      (InputFileContents ByteString.empty) (OutputFileContents target)
+  in case (createWith IncludeCompression, createWith OmitCompression) of
+       (Right (CreateResult requestedPatch _), Right (CreateResult declinedPatch _)) -> do
+         assertEqual "unpaying compression is byte-identical to the plain emission"
+           declinedPatch requestedPatch
+         case VCDIFF.parseVCDIFF requestedPatch of
+           Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
+           Right (Parsed parsed _parseWarnings) -> case parsed of
+             PatchCoreOnly _windows -> pure ()
+             otherFlavor -> assertFailure ("parsed flavor: " ++ show otherFlavor)
+       (Left createError, _) -> assertFailureT ("compression-requested create: " <> renderSlapError createError)
+       (_, Left createError) -> assertFailureT ("compression-omitted create: " <> renderSlapError createError)
+
+-- | The compressor-id catalog and its inverse agree: every compressor's declared id
+-- resolves back to the compressor itself.
+xdelta3CompressorIdsRoundTripThroughTheCatalog :: Assertion
+xdelta3CompressorIdsRoundTripThroughTheCatalog =
+  mapM_ (\compressor ->
+          assertEqual (show compressor)
+            (Just compressor)
+            (secondaryCompressorCatalog (secondaryCompressorId compressor)))
+        [SecondaryDJW, SecondaryLZMA, SecondaryFGK]
 
 -- | The matcher's addressable-range wall, held at its exact boundary with no bytes allocated:
 -- 'rejectUnaddressablePair' judges sizes, so files at 'maxBound' fit in two 'Int's here.
@@ -2507,8 +2584,8 @@ prop_xdelta1RoundTrips =
         Left applyError    -> counterexample ("apply: " ++ Text.unpack (renderSlapError applyError)) (property False)
         Right outputBytes  -> outputBytes === OutputFileContents targetBytes
 
--- | The compression posture round-trips: parsing a created patch back
--- recovers the 'XDelta1PatchCompression' it was emitted under.
+-- | The compression posture round-trips: a patch created under each 'CompressionInclusion'
+-- parses back to the matching wire-level 'XDelta1PatchCompression'.
 prop_xdelta1CompressionPostureRoundTrips :: Property
 prop_xdelta1CompressionPostureRoundTrips =
   forAll genPair $ \(sourceBytes, targetBytes) ->
@@ -2517,7 +2594,11 @@ prop_xdelta1CompressionPostureRoundTrips =
     Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) (property False)
     Right (CreateResult patch _) -> case XDelta1.parseXDelta1 SlapText.EncodingUtf8 patch of
       Left parseError -> counterexample ("parse: " ++ Text.unpack (renderSlapError parseError)) (property False)
-      Right (Parsed parsed _) -> XDelta1.xdelta1PatchCompression parsed === compression
+      Right (Parsed parsed _) ->
+        let expectedPosture = case compression of
+              IncludeCompression -> CompressedPatch
+              OmitCompression    -> UncompressedPatch
+        in XDelta1.xdelta1PatchCompression parsed === expectedPosture
 
 prop_xdelta1CreateProducesVerifyPosture :: Property
 prop_xdelta1CreateProducesVerifyPosture =
@@ -2558,8 +2639,8 @@ prop_xdelta1NoVerifyRoundTrip =
       VerificationOptedOutByCreator _ -> True
       _ -> False
 
-genCompression :: Gen XDelta1PatchCompression
-genCompression = elements [CompressedPatch, UncompressedPatch]
+genCompression :: Gen CompressionInclusion
+genCompression = elements [IncludeCompression, OmitCompression]
 
 xdelta1EmptyTarget :: Assertion
 xdelta1EmptyTarget = xdelta1RoundTripCase "hello world" ByteString.empty
@@ -2573,7 +2654,7 @@ xdelta1TargetEqualsSource = xdelta1RoundTripCase payload payload
 
 xdelta1RoundTripCase :: ByteString.ByteString -> ByteString.ByteString -> Assertion
 xdelta1RoundTripCase sourceBytes targetBytes =
-  case createXDelta1 IncludeVerification CompressedPatch xdelta1FixtureNames (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
+  case createXDelta1 IncludeVerification IncludeCompression xdelta1FixtureNames (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
     Left createError -> assertFailureT ("create: " <> renderSlapError createError)
     Right (CreateResult patch _) -> case XDelta1.parseXDelta1 SlapText.EncodingUtf8 patch of
       Left parseError -> assertFailureT ("parse: " <> renderSlapError parseError)
@@ -2586,7 +2667,7 @@ xdelta1RoundTripCase sourceBytes targetBytes =
 -- magic). Big-endian: bit 0 is the lowest-order bit of byte 11.
 xdelta1NoVerifySetsFlagBit :: Assertion
 xdelta1NoVerifySetsFlagBit =
-  case createXDelta1 OmitVerification CompressedPatch xdelta1FixtureNames (InputFileContents "abcdef") (OutputFileContents "ghijkl") of
+  case createXDelta1 OmitVerification IncludeCompression xdelta1FixtureNames (InputFileContents "abcdef") (OutputFileContents "ghijkl") of
     Left createError -> assertFailureT ("create: " <> renderSlapError createError)
     Right (CreateResult (PatchFileContents patchBytes) _) -> do
       assertBool ("patch must be at least 12 bytes, got " ++ show (ByteString.length patchBytes))
@@ -2597,7 +2678,7 @@ xdelta1NoVerifySetsFlagBit =
 
 xdelta1IncludeVerifyClearsFlagBit :: Assertion
 xdelta1IncludeVerifyClearsFlagBit =
-  case createXDelta1 IncludeVerification CompressedPatch xdelta1FixtureNames (InputFileContents "abcdef") (OutputFileContents "ghijkl") of
+  case createXDelta1 IncludeVerification IncludeCompression xdelta1FixtureNames (InputFileContents "abcdef") (OutputFileContents "ghijkl") of
     Left createError -> assertFailureT ("create: " <> renderSlapError createError)
     Right (CreateResult (PatchFileContents patchBytes) _) -> do
       assertBool "patch must be at least 12 bytes"
@@ -2619,7 +2700,7 @@ xdelta1IncludeVerifyClearsFlagBit =
 -- error message that names what went wrong.
 xdelta1RejectsWrongControlTypeTag :: Assertion
 xdelta1RejectsWrongControlTypeTag =
-  case createXDelta1 IncludeVerification UncompressedPatch
+  case createXDelta1 IncludeVerification OmitCompression
                      xdelta1FixtureNames
                      (InputFileContents "abcdef")
                      (OutputFileContents "ghijkl") of

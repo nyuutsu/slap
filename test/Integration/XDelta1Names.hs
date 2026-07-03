@@ -28,10 +28,10 @@ import Slap.FieldName (FieldName(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..),
                           PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.MetadataInclusion (VerificationInclusion(..))
+import Slap.MetadataInclusion (VerificationInclusion(..), CompressionInclusion(..))
 import Slap.Text (EncodedText(..), EncodingName(..))
 import Slap.XDelta1.Parse (parseXDelta1)
-import Slap.XDelta1.Types (XDelta1Patch(..), XDelta1PatchCompression(..),
+import Slap.XDelta1.Types (XDelta1Patch(..),
                            XDelta1FromName(..), XDelta1ToName(..),
                            ResolvedXDelta1FileNames,
                            resolveXDelta1FileNames,
@@ -155,7 +155,7 @@ createXDelta1WithNames fromText toText = do
   resolved <- case resolveExplicit fromText toText of
     Right res -> pure res
     Left err  -> assertFailureT ("resolveXDelta1FileNames: " <> renderSlapError err)
-  case createXDelta1 IncludeVerification CompressedPatch resolved
+  case createXDelta1 IncludeVerification IncludeCompression resolved
          (InputFileContents sampleSource) (OutputFileContents sampleTarget) of
     Left err -> assertFailureT ("createXDelta1: " <> renderSlapError err)
     Right (CreateResult (PatchFileContents wireBytes) _warnings) ->
@@ -195,7 +195,7 @@ defaultBasenamesCarry = do
                      "/some/where/source.gba" "/elsewhere/target.gba" of
     Right res -> pure res
     Left err  -> assertFailureT ("resolveXDelta1FileNames: " <> renderSlapError err)
-  case createXDelta1 IncludeVerification CompressedPatch resolved
+  case createXDelta1 IncludeVerification IncludeCompression resolved
          (InputFileContents sampleSource) (OutputFileContents sampleTarget) of
     Left err -> assertFailureT ("createXDelta1: " <> renderSlapError err)
     Right (CreateResult (PatchFileContents wireBytes) _warnings) -> do

@@ -13,6 +13,10 @@ bzip2-rs = "0.1"
 # Store + Deflate only; default features off to keep the C-backed codecs out.
 zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 lzma-rs = { version = "0.3", default-features = false }
+# The LZMA2 encoder (lzma-rs decodes only). Skipping its xz feature keeps its one
+# dependency out, leaving the crate dependency-free; rusty-slap frames the xz
+# container itself in xdelta3_lzma.rs.
+lzma-rust2 = { version = "0.16.4", default-features = false, features = ["std", "encoder", "optimization"] }
 
 [profile.release]
 lto = "fat"

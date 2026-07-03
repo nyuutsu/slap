@@ -14,9 +14,10 @@
 -- and the resolved stream packs into the densest opcodes the table offers ('packInstructions').
 --
 -- The create token names the arc the user asked for; the bytes earn their flavor by the features they use.
--- A patch on the default table with no checksum reaches for no flavor-distinguishing feature, so it parses back as 'Slap.VCDIFF.Types.PatchCoreOnly';
+-- A patch on the default table with no checksum and no compressed section reaches for no flavor-distinguishing feature,
+-- so it parses back as 'Slap.VCDIFF.Types.PatchCoreOnly';
 -- a custom code table is an RFC-arc feature (RFC 3284 §7's VCD_CODETABLE), parsing back as @PatchRFC@;
--- a per-window Adler32 is an xdelta3 extension, parsing back as @PatchXDelta3@.
+-- a per-window Adler32 and a declared secondary compressor are xdelta3 extensions, parsing back as @PatchXDelta3@.
 --
 -- A custom code table carries its own opcode assignments and cache geometry, tuned to this patch:
 -- combined opcodes for the ADD+COPY and COPY+ADD pairs it repeats,
@@ -44,7 +45,11 @@ module Slap.VCDIFF.Create
   ) where
 
 import Slap.VCDIFF.Types (vcdiffMagicBytes, VCDIFFInstruction(..),
-                          vcdSourceBit, vcdAdler32Bit)
+                          vcdDecompressBit, vcdSourceBit, vcdAdler32Bit,
+                          vcdDataCompBit, vcdInstCompBit, vcdAddrCompBit)
+import Slap.VCDIFF.SecondaryCompression
+  ( XDelta3SecondaryCompressor(..), secondaryCompressorId
+  , SectionCarriage(..), carriageBytes, lzmaSectionCarriage )
 import Slap.VCDIFF.Cover (Cover(..), CoverSegment(..))
 import Slap.VCDIFF.FFI (vcdiffCover)
 import Slap.VCDIFF.AddressCache
@@ -56,7 +61,7 @@ import qualified Slap.VCDIFF.CodeTable as Table
 import Slap.Binary (putVcdiffVarint, viewBytesInRange)
 import Slap.Checksum (Adler32(..))
 import Slap.FFI (adler32)
-import Slap.MetadataInclusion (VerificationInclusion(..))
+import Slap.MetadataInclusion (VerificationInclusion(..), CompressionInclusion(..))
 import Slap.Status (SlapError(..), CreateResult(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..), byteLength, byteFileSize,
                      Cursor(..), lengthToOffset,
@@ -91,23 +96,30 @@ createRFCVCDIFF inputContents@(InputFileContents source) outputContents@(OutputF
 
 -- | Create an xdelta3 patch reconstructing @target@:
 -- the same matcher-driven cover as 'createRFCVCDIFF', emitted with the extensions the canonical tool's own output carries.
--- Today that is the per-window Adler32, on by default and declined by @--omit-verification@.
--- The checksum is the only integrity data the format has, so opting out leaves nothing attesting the output —
--- the same gap 'Slap.Status.VerificationOptedOutByCreator' names at apply.
+-- Today those are the per-window Adler32
+-- (on by default, declined by @--omit-verification@; the only integrity data the format has,
+-- so opting out leaves nothing attesting the output — the same gap 'Slap.Status.VerificationOptedOutByCreator' names at apply)
+-- and LZMA secondary compression
+-- (on by default, declined by @--no-compress@; kept per section only where it shrinks,
+-- and shipped only when the compressed patch beats the plain one outright — see 'emitXDelta3Patch').
 -- Never a custom code table: xdelta3 rejects them.
--- A patch emitted with verification omitted therefore uses no flavor-distinguishing feature at all,
+-- A patch emitted with both extensions declined — or with verification declined and compression never paying —
+-- uses no flavor-distinguishing feature at all,
 -- parsing back as 'Slap.VCDIFF.Types.PatchCoreOnly' — readable as xdelta3, which is what was asked for.
-createXDelta3 :: VerificationInclusion -> InputFileContents -> OutputFileContents
+createXDelta3 :: VerificationInclusion -> CompressionInclusion -> InputFileContents -> OutputFileContents
               -> Either SlapError CreateResult
-createXDelta3 verificationChoice inputContents@(InputFileContents source) outputContents@(OutputFileContents target) = do
+createXDelta3 verificationChoice compressionChoice inputContents@(InputFileContents source) outputContents@(OutputFileContents target) = do
   rejectUnaddressablePair (SourceFileSize (byteFileSize source)) (TargetFileSize (byteFileSize target))
   Right (CreateResult (PatchFileContents patchBytes) [])
   where
-    patchBytes = emitXDelta3Patch checksumEmission source target
+    patchBytes = emitXDelta3Patch checksumEmission compressionEmission source target
                    (vcdiffCover inputContents outputContents)
     checksumEmission = case verificationChoice of
       IncludeVerification -> CarryWindowAdler32
       OmitVerification    -> OmitWindowAdler32
+    compressionEmission = case compressionChoice of
+      IncludeCompression -> CompressSectionsWithLZMA
+      OmitCompression    -> EmitSectionsPlain
 
 -- | Refuse a pair whose superstring slap could not address: a COPY names an absolute offset into
 -- @U = source ++ target@, so the pair's combined size (plus the matcher's two sentinels) must fit
@@ -412,6 +424,26 @@ data WindowSourcing = SelfContained | DrawsFromSource
 data WindowChecksumEmission = CarryWindowAdler32 | OmitWindowAdler32
   deriving (Eq, Show)
 
+-- | Whether an emitted window's sections ride through the LZMA secondary compressor where that
+-- shrinks them, or all ride plain. The compression sibling of 'WindowChecksumEmission'.
+-- The RFC and core emissions always pass 'EmitSectionsPlain': the RFC defines secondary
+-- compression's framing but no compressor, so the RFC arc's catalog is empty and there is
+-- nothing such a patch could honestly declare (docs/vcdiff/questions.md, "secondary compressor declared").
+data WindowCompressionEmission = CompressSectionsWithLZMA | EmitSectionsPlain
+  deriving (Eq, Show)
+
+-- | A window rendered to wire bytes, paired with how its sections went out.
+-- The patch header must declare the secondary compressor exactly when some window's
+-- section leans on it, so the fact rides up beside the bytes.
+data EncodedWindow = EncodedWindow
+  { encodedWindowBytes              :: !ByteString
+  , encodedWindowSectionCompression :: !WindowSectionCompression
+  }
+
+-- | Whether any of an emitted window's three sections rides secondary-compressed.
+data WindowSectionCompression = SomeSectionsCompressed | AllSectionsPlain
+  deriving (Eq, Show)
+
 -- | The table-independent groundwork for a cover's single window: how the window sources its copies,
 -- and the resolved instruction stream (its COPY modes selected once, valid under any table of the same cache geometry).
 -- Both the default and the candidate emission build on the one plan, and the design reads the resolved stream off it.
@@ -454,15 +486,36 @@ windowSourcing instructions
       Add _    -> False
       Run _ _  -> False
 
--- | The window bytes for a plan under a table:
+-- | The window for a plan under a table:
 -- the Win_Indicator and (when copying) the source-segment varints, then the delta encoding behind its length varint —
 -- target size, Delta_Indicator, the three section lengths, the checksum when carried, the three sections.
 -- When copying, the window declares the entire source as its segment so the COPY addresses can reach into @U@;
 -- otherwise it is self-contained, the two segment varints absent, reproducing the bedrock floor exactly.
-encodeWindow :: Table.CodeTable -> ByteString -> ByteString -> WindowChecksumEmission -> WindowPlan -> ByteString
-encodeWindow table source target checksumEmission plan = builderBytes windowBuilder
+-- Under 'CompressSectionsWithLZMA' each section rides the carriage 'lzmaSectionCarriage' chooses for it,
+-- the Delta_Indicator bits composed from the choices; one window means each kind's stream is exactly its one section.
+encodeWindow :: Table.CodeTable -> ByteString -> ByteString
+             -> WindowChecksumEmission -> WindowCompressionEmission -> WindowPlan -> EncodedWindow
+encodeWindow table source target checksumEmission compressionEmission plan =
+  EncodedWindow (builderBytes windowBuilder) sectionCompression
   where
     sections = layoutSections (denseOpcodes table) (planResolved plan)
+
+    chooseCarriage = case compressionEmission of
+      CompressSectionsWithLZMA -> lzmaSectionCarriage
+      EmitSectionsPlain        -> CarriedPlain
+    dataCarriage        = chooseCarriage (sectionData sections)
+    instructionCarriage = chooseCarriage (sectionInstructions sections)
+    addressCarriage     = chooseCarriage (sectionAddresses sections)
+
+    sectionCompression = case (dataCarriage, instructionCarriage, addressCarriage) of
+      (CarriedPlain _, CarriedPlain _, CarriedPlain _) -> AllSectionsPlain
+      _                                                -> SomeSectionsCompressed
+
+    deltaIndicator :: Word8
+    deltaIndicator =
+      carriageCompressionBit vcdDataCompBit dataCarriage
+        .|. carriageCompressionBit vcdInstCompBit instructionCarriage
+        .|. carriageCompressionBit vcdAddrCompBit addressCarriage
 
     -- The Win_Indicator and (for a source-drawing window) the source-segment varints, which precede the delta-encoding-length on the wire.
     windowIndicatorAndSegment =
@@ -484,19 +537,24 @@ encodeWindow table source target checksumEmission plan = builderBytes windowBuil
     -- the target window size, the indicator, the three section lengths, the checksum when carried, then the three sections in order.
     deltaEncoding = builderBytes
       (  varintOfLength (byteLength target)
-      <> word8 noSectionsCompressed
-      <> varintOfLength (byteLength (sectionData sections))
-      <> varintOfLength (byteLength (sectionInstructions sections))
-      <> varintOfLength (byteLength (sectionAddresses sections))
+      <> word8 deltaIndicator
+      <> varintOfLength (byteLength (carriageBytes dataCarriage))
+      <> varintOfLength (byteLength (carriageBytes instructionCarriage))
+      <> varintOfLength (byteLength (carriageBytes addressCarriage))
       <> checksumBytes
-      <> byteString (sectionData sections)
-      <> byteString (sectionInstructions sections)
-      <> byteString (sectionAddresses sections) )
+      <> byteString (carriageBytes dataCarriage)
+      <> byteString (carriageBytes instructionCarriage)
+      <> byteString (carriageBytes addressCarriage) )
 
     windowBuilder =
          windowIndicatorAndSegment
       <> varintOfLength (byteLength deltaEncoding)
       <> byteString deltaEncoding
+
+-- | A kind's Delta_Indicator contribution: its compression bit when its section rides compressed, no bit when plain.
+carriageCompressionBit :: Int -> SectionCarriage -> Word8
+carriageCompressionBit _           (CarriedPlain _)      = 0x00
+carriageCompressionBit bitPosition (CarriedCompressed _) = bit bitPosition
 
 -- | A patch: the magic, the version, then the header (the indicator byte and, when a custom table ships, its framed data), and the window.
 assemblePatch :: Builder -> ByteString -> ByteString
@@ -512,16 +570,43 @@ assemblePatch headerAfterVersion windowBytes = builderBytes
 emitDefaultPatch :: ByteString -> ByteString -> Cover -> ByteString
 emitDefaultPatch source target cover =
   assemblePatch (word8 noHeaderFeatures)
-                (encodeWindow Table.defaultCodeTable source target OmitWindowAdler32
-                   (planWindow defaultAddressCacheConfig source target cover))
+                (encodedWindowBytes
+                   (encodeWindow Table.defaultCodeTable source target OmitWindowAdler32 EmitSectionsPlain
+                      (planWindow defaultAddressCacheConfig source target cover)))
 
 -- | Emit a cover as an xdelta3 patch: the default table always (xdelta3 rejects custom ones),
--- the window carrying its Adler32 when verification is included.
-emitXDelta3Patch :: WindowChecksumEmission -> ByteString -> ByteString -> Cover -> ByteString
-emitXDelta3Patch checksumEmission source target cover =
-  assemblePatch (word8 noHeaderFeatures)
-                (encodeWindow Table.defaultCodeTable source target checksumEmission
-                   (planWindow defaultAddressCacheConfig source target cover))
+-- the window carrying its Adler32 when verification is included,
+-- its sections riding the LZMA secondary compressor where that shrinks them when compression is included.
+-- The header declares the compressor exactly when some section leans on it
+-- ('xdelta3HeaderFor'), so a window whose sections all stayed plain declares nothing
+-- and its patch comes out byte-identical to the plain emission.
+-- The compressed emission ships only when it beats the plain one outright —
+-- the same explicit gate 'emitConsideringCustomTable' holds its candidate to,
+-- catching the edge where a section shrinks by no more than the one extra header byte
+-- (the compressor id) its declaration costs.
+emitXDelta3Patch :: WindowChecksumEmission -> WindowCompressionEmission -> ByteString -> ByteString -> Cover -> ByteString
+emitXDelta3Patch checksumEmission compressionEmission source target cover =
+  case compressionEmission of
+    EmitSectionsPlain -> plainPatch
+    CompressSectionsWithLZMA
+      | ByteString.length compressedPatch < ByteString.length plainPatch -> compressedPatch
+      | otherwise                                                        -> plainPatch
+  where
+    plan            = planWindow defaultAddressCacheConfig source target cover
+    plainPatch      = assembledUnder EmitSectionsPlain
+    compressedPatch = assembledUnder CompressSectionsWithLZMA
+    assembledUnder emission =
+      let encodedWindow = encodeWindow Table.defaultCodeTable source target checksumEmission emission plan
+      in assemblePatch (xdelta3HeaderFor (encodedWindowSectionCompression encodedWindow))
+                       (encodedWindowBytes encodedWindow)
+
+-- | The xdelta3 patch header for what the window actually did: VCD_DECOMPRESS and LZMA's
+-- catalog id when some section rides compressed, the bare header when none does —
+-- the declaration exists exactly where it is used.
+xdelta3HeaderFor :: WindowSectionCompression -> Builder
+xdelta3HeaderFor SomeSectionsCompressed =
+  word8 (bit vcdDecompressBit) <> word8 (secondaryCompressorId SecondaryLZMA)
+xdelta3HeaderFor AllSectionsPlain = word8 noHeaderFeatures
 
 -- | Emit a cover as a patch, weighing custom code tables against the default and shipping whichever is smallest.
 -- The candidate is grown from the default cache geometry up to where a larger cache stops shrinking the patch
@@ -623,7 +708,8 @@ assembleCustomTablePatch
   :: AddressCacheConfig -> ByteString -> ByteString -> WindowPlan -> Table.CodeTable -> ByteString
 assembleCustomTablePatch config source target plan candidate =
   assemblePatch (word8 customCodeTableHeader <> framedCodeTableData)
-                (encodeWindow candidate source target OmitWindowAdler32 plan)
+                (encodedWindowBytes
+                   (encodeWindow candidate source target OmitWindowAdler32 EmitSectionsPlain plan))
   where
     framedCodeTableData = varintOfLength (byteLength codeTableData) <> byteString codeTableData
     codeTableData       = builderBytes (cacheSizeHeader <> byteString innerDelta)
@@ -788,10 +874,6 @@ windowIndicator sourcing checksumEmission = sourcingBits .|. checksumBits
     checksumBits = case checksumEmission of
       CarryWindowAdler32 -> bit vcdAdler32Bit
       OmitWindowAdler32  -> 0x00
-
--- | Delta_Indicator with no bits set: none of the three sections is secondary-compressed.
-noSectionsCompressed :: Word8
-noSectionsCompressed = 0x00
 
 -- | Render a 'Builder' to a strict 'ByteString'.
 builderBytes :: Builder -> ByteString

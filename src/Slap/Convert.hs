@@ -10,6 +10,7 @@ module Slap.Convert
   , FileIdDizRequest(..)
   , UndoInclusion(..)
   , VerificationInclusion(..)
+  , CompressionInclusion(..)
   , PatchStability(..)
   , noMetadataRequested
   , RequestedConstraints(..)
@@ -84,8 +85,7 @@ import qualified Slap.GDIFF.Create as GDIFF
 import qualified Slap.VCDIFF.Create as VCDIFF
 import qualified Slap.XDelta1.Create as XDelta1
 import Slap.XDelta1.Types (ResolvedXDelta1FileNames,
-                           XDelta1FromName(..), XDelta1ToName(..),
-                           XDelta1PatchCompression(..))
+                           XDelta1FromName(..), XDelta1ToName(..))
 import qualified Slap.PMSR.Types as PMSR
 import Slap.PMSR.Types (narrowPMSRRecordCount, pmsrMaxRecordPayload,
                        pmsrRejectIncompatibleSizeChange)
@@ -115,7 +115,7 @@ import Slap.Status (SlapError(..), SlapAdvisory(..), UndoRecordCount(..), Droppe
                     DroppedDescriptionText(..), CreateResult(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.MetadataField (MetadataField(..))
-import Slap.MetadataInclusion (UndoInclusion(..), VerificationInclusion(..))
+import Slap.MetadataInclusion (UndoInclusion(..), VerificationInclusion(..), CompressionInclusion(..))
 import Slap.PatchField (PatchField(..), affectsApplyOutput)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
@@ -223,10 +223,11 @@ data RequestedPatchMetadata = RequestedPatchMetadata
   , requestedVersion              :: Maybe EncodedText
   , requestedUndoInclusion        :: Maybe UndoInclusion
   , requestedVerificationInclusion :: Maybe VerificationInclusion
-  , requestedPatchCompression     :: Maybe XDelta1PatchCompression
-    -- ^ xdelta1 only: 'Just' 'UncompressedPatch' means the user
-    -- asked for @--no-compress@; absent means "let the format pick
-    -- its default," which for xdelta1 is 'CompressedPatch'.
+  , requestedPatchCompression     :: Maybe CompressionInclusion
+    -- ^ 'Just' 'OmitCompression' means the user asked for @--no-compress@;
+    -- absent means "let the format pick its default," which is compressed
+    -- for both consumers: xdelta1 (the gzip patch envelope) and
+    -- xdelta3 (LZMA secondary compression of the window sections).
   , requestedStability            :: Maybe PatchStability
   , requestedRomType              :: Maybe PlatformType
     -- ^ NINJA1 and NINJA2 define different ROM type enumerations (18 vs 10 values, diverging at byte 2);
@@ -476,7 +477,7 @@ acceptedMetadataFields (CreateDifferential format) = case format of
   CreateXDelta1 -> Set.fromList [MetadataVerificationInclusion, MetadataPatchCompression,
                                  MetadataXDelta1FromName, MetadataXDelta1ToName]
   CreateRFCVCDIFF -> Set.empty
-  CreateXDelta3   -> Set.fromList [MetadataVerificationInclusion]
+  CreateXDelta3   -> Set.fromList [MetadataVerificationInclusion, MetadataPatchCompression]
 
 -- | The 'MetadataField's the user explicitly set on a
 -- 'RequestedPatchMetadata'. A 'Maybe' field counts as set when 'Just'.
@@ -1182,9 +1183,10 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
   CreateAPSGBA  -> APSGBA.createAPSGBA source target
   CreateGDIFF   -> GDIFF.createGDIFF source target
   CreateRFCVCDIFF -> VCDIFF.createRFCVCDIFF source target
-  CreateXDelta3 -> VCDIFF.createXDelta3 verificationChoice source target
+  CreateXDelta3 -> VCDIFF.createXDelta3 verificationChoice compressionChoice source target
     where
       verificationChoice = fromMaybe IncludeVerification (requestedVerificationInclusion meta)
+      compressionChoice  = fromMaybe IncludeCompression  (requestedPatchCompression      meta)
   CreateXDelta1 -> case maybeResolvedNames of
     Just resolvedNames ->
       XDelta1.createXDelta1 verificationChoice compressionChoice resolvedNames source target
@@ -1194,7 +1196,7 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
     Nothing -> Left (XDelta1ConvertRequiresNames LabelXDelta1)
     where
       verificationChoice = fromMaybe IncludeVerification (requestedVerificationInclusion meta)
-      compressionChoice  = fromMaybe CompressedPatch     (requestedPatchCompression     meta)
+      compressionChoice  = fromMaybe IncludeCompression  (requestedPatchCompression     meta)
 
 buildContents :: DirectCreate -> InputFileContents -> OutputFileContents
               -> RequestedPatchMetadata -> Maybe PatchContents -> PatchContents

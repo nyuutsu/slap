@@ -16,13 +16,14 @@
 --
 -- == @FLAG_PATCH_COMPRESSED@
 --
--- Gated by 'Slap.XDelta1.Types.XDelta1PatchCompression', threaded
--- in from the porcelain. Under 'CompressedPatch' (default) the bit
--- is set and the data and control segments are gzip-deflated
--- independently before placement. Under 'UncompressedPatch' (set
--- by @slap create --no-compress@) the bit stays clear and the
--- segments are emitted raw. Both shapes are spec-conformant;
--- canonical xdelta-1.x emits compressed by default.
+-- Gated by the porcelain's 'Slap.MetadataInclusion.CompressionInclusion',
+-- mapped at the front door onto the wire-level posture
+-- 'Slap.XDelta1.Types.XDelta1PatchCompression'. Under 'CompressedPatch'
+-- (default) the bit is set and the data and control segments are
+-- gzip-deflated independently before placement. Under
+-- 'UncompressedPatch' (set by @slap create --no-compress@) the bit
+-- stays clear and the segments are emitted raw. Both shapes are
+-- spec-conformant; canonical xdelta-1.x emits compressed by default.
 --
 -- == @FLAG_NO_VERIFY@
 --
@@ -30,7 +31,7 @@
 -- in from the porcelain. Under 'IncludeVerification' (default) the
 -- bit stays clear, real MD5s are computed and written for the
 -- target, the data source, and the file source. Under
--- 'OmitVerification' (set by @slap create --no-verify@) the bit is
+-- 'OmitVerification' (set by @slap create --omit-verification@) the bit is
 -- set, the patch's verification posture is
 -- 'CreatorOptedOutOfVerification', and the sentinel
 -- ('xdelta1EmptyInputMD5Sentinel') is written into every MD5 slot
@@ -41,7 +42,7 @@ module Slap.XDelta1.Create
   ) where
 
 import Slap.Compression.Stream (gzipDeflate)
-import Slap.MetadataInclusion (VerificationInclusion(..))
+import Slap.MetadataInclusion (VerificationInclusion(..), CompressionInclusion(..))
 import Slap.XDelta1.FFI
     ( XDelta1DiffOutput(..)
     , xdelta1Diff
@@ -97,19 +98,22 @@ import Data.Word (Word8, Word32, Word64)
 -- 'XDelta1Patch' value (computing MD5s and choosing the offset mode
 -- per source) and runs the wire encoder.
 --
--- The 'VerificationInclusion' and 'XDelta1PatchCompression' choices gate the @FLAG_NO_VERIFY@ and @FLAG_PATCH_COMPRESSED@ wire effects; see the module header.
-createXDelta1 :: VerificationInclusion -> XDelta1PatchCompression
+-- The 'VerificationInclusion' and 'CompressionInclusion' choices gate the @FLAG_NO_VERIFY@ and @FLAG_PATCH_COMPRESSED@ wire effects; see the module header.
+createXDelta1 :: VerificationInclusion -> CompressionInclusion
               -> ResolvedXDelta1FileNames
                  -- ^ from-name and to-name, already resolved and cap-checked by the porcelain
                  -- via 'Slap.XDelta1.Types.resolveXDelta1FileNames' / 'Slap.XDelta1.Types.requireXDelta1FileNames'.
                  -- Those two are the only constructors, so this function writes the names without re-checking (both bytes locale-encoded, each ≤ the u16 cap).
               -> InputFileContents -> OutputFileContents
               -> Either SlapError CreateResult
-createXDelta1 inclusion compression resolvedNames inputContents outputContents = do
+createXDelta1 verificationChoice compressionChoice resolvedNames inputContents outputContents = do
   diff <- xdelta1Diff inputContents outputContents
   let sourceBytes = unInputFileContents inputContents
       targetBytes = unOutputFileContents outputContents
-      patch = assemblePatch inclusion compression resolvedNames
+      patchCompression = case compressionChoice of
+        IncludeCompression -> CompressedPatch
+        OmitCompression    -> UncompressedPatch
+      patch = assemblePatch verificationChoice patchCompression resolvedNames
                             sourceBytes targetBytes diff
   (wireBytes, nameAdvisories) <- encodeXDelta1 patch
   Right (CreateResult (PatchFileContents wireBytes) nameAdvisories)

@@ -1,4 +1,4 @@
--- | The two "should the output patch carry this optional channel?"
+-- | The "should the output patch carry this optional channel?"
 -- choices the porcelain threads through 'Slap.Convert.RequestedPatchMetadata'.
 -- Lives in its own module so format-level encoders ("Slap.XDelta1.Create"
 -- and friends) can consume the type without depending on the
@@ -6,6 +6,7 @@
 module Slap.MetadataInclusion
   ( UndoInclusion(..)
   , VerificationInclusion(..)
+  , CompressionInclusion(..)
   ) where
 
 -- | Whether the output patch should carry undo data, when the format supports it.
@@ -37,4 +38,20 @@ data UndoInclusion
 data VerificationInclusion
   = IncludeVerification
   | OmitVerification
+  deriving (Show, Eq)
+
+-- | Whether the output patch's payload should be compressed, when the
+-- format has a compressed form. Set by @--no-compress@ on 'slap create'
+-- (and convert).
+--
+-- Format-specific wire mechanisms vary — xdelta1 gzip-deflates its data
+-- and control segments inside the patch envelope
+-- ('Slap.XDelta1.Types.XDelta1PatchCompression' is the wire-level fact
+-- this choice gates); xdelta3 runs its window sections through the
+-- declared secondary compressor, LZMA on slap's emission
+-- ('Slap.VCDIFF.Create'). Both answer the same user-facing question:
+-- "should the patch spend CPU to be smaller on disk?"
+data CompressionInclusion
+  = IncludeCompression
+  | OmitCompression
   deriving (Show, Eq)

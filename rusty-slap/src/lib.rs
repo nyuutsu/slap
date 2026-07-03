@@ -520,6 +520,32 @@ pub unsafe extern "C" fn rusty_lzma_decompress(
     }
 }
 
+/// LZMA compression of one buffer into one xdelta3-flavored stream
+/// (xz header, sync-flushed LZMA2 chunks, no closing marker — see
+/// [`xdelta3_lzma`]): the write-side partner of
+/// [`rusty_lzma_decompress`]. Rust allocates the output; caller frees
+/// with [`rusty_free`]. No error channel: compression of in-memory
+/// bytes is total at the algorithm level (mirror of
+/// [`rusty_gzip_deflate`]), and allocation failure aborts the process
+/// before any value reaches the caller.
+///
+/// # Safety
+/// - `input_address` must point to `input_length` readable bytes (or
+///   may be null when `input_length == 0`).
+/// - `output_address_pointer` and `output_length_pointer` must be
+///   valid, aligned, and writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rusty_lzma_compress(
+    input_address:          *const u8,
+    input_length:           usize,
+    output_address_pointer: *mut *mut u8,
+    output_length_pointer:  *mut usize,
+) {
+    let input = unsafe { view_caller_buffer(input_address, input_length) };
+    let compressed = xdelta3_lzma::lzma_compress(input);
+    unsafe { surface_buffer_to_caller(compressed, output_address_pointer, output_length_pointer) };
+}
+
 /// DJW decompression of one xdelta3 secondary-compressed section
 /// (xdelta3's own static multi-table Huffman — see [`xdelta3_djw`]). The
 /// expected output length crosses as an argument: it is the decode

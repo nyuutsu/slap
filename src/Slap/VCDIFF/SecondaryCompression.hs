@@ -1,5 +1,6 @@
--- | xdelta3's secondary compression: the compressor-id catalog and the per-compressor
--- decode paths that turn compressed sections back into plain bytes
+-- | xdelta3's secondary compression: the compressor-id catalog, the per-compressor
+-- decode paths that turn compressed sections back into plain bytes, and the LZMA
+-- emission path that produces such sections
 -- (the RFC leaves this undefined in §6; the shapes follow docs/vcdiff/xdelta3/secondary-compression.md).
 --
 -- A section is one of a window's three — data, instructions, addresses. Each compressor
@@ -9,15 +10,19 @@ module Slap.VCDIFF.SecondaryCompression
   ( -- * The catalog
     XDelta3SecondaryCompressor(..)
   , secondaryCompressorCatalog
+  , secondaryCompressorId
     -- * The decode paths
   , SectionCarriage(..)
+  , carriageBytes
   , decodeLZMACompressedKind
   , decodeDJWCompressedKind
   , decodeFGKCompressedKind
+    -- * The LZMA emission path
+  , lzmaSectionCarriage
   ) where
 
-import Slap.Binary (getVcdiffVarint, VarintResult(..))
-import Slap.Compression.Stream (LzmaDecoded(..), lzmaDecompress,
+import Slap.Binary (getVcdiffVarint, VarintResult(..), putVcdiffVarint)
+import Slap.Compression.Stream (LzmaDecoded(..), lzmaDecompress, lzmaCompress,
                                 DjwDecoded(..), djwDecompress,
                                 FgkDecoded(..), fgkDecompress)
 import Slap.Measure (Length(..), byteLength, lengthToFileSize, subtractLength,
@@ -29,6 +34,8 @@ import Slap.Status
 import Control.Monad (when)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import Data.ByteString.Builder (toLazyByteString)
+import qualified Data.ByteString.Lazy as LazyByteString
 import Data.List (mapAccumL)
 import Data.Word (Word8)
 
@@ -53,16 +60,31 @@ secondaryCompressorCatalog 2  = Just SecondaryLZMA
 secondaryCompressorCatalog 16 = Just SecondaryFGK
 secondaryCompressorCatalog _  = Nothing
 
+-- | The id a compressor declares itself by on the wire: the catalog's inverse,
+-- kept beside it; the @xdelta3: compressor ids round-trip through the catalog@ case
+-- in "Props.RoundTrip" holds the two readings of the registry to agreement.
+secondaryCompressorId :: XDelta3SecondaryCompressor -> Word8
+secondaryCompressorId SecondaryDJW  = 1
+secondaryCompressorId SecondaryLZMA = 2
+secondaryCompressorId SecondaryFGK  = 16
+
 ----------------------------------------------------------------------------
 -- The gather-decode-split machine
 ----------------------------------------------------------------------------
 
 -- | How one window carries a section on the wire: plain bytes, or a compressed piece
 -- of the section's stream, still prefixed with its decompressed size.
--- The caller builds one carriage per window (in window order) from each window's Delta_Indicator bit.
+-- The read side builds one carriage per window (in window order) from each window's
+-- Delta_Indicator bit; the write side chooses one through 'lzmaSectionCarriage'
+-- and composes the bit from the choice.
 data SectionCarriage
   = CarriedPlain !ByteString
   | CarriedCompressed !ByteString
+
+-- | The bytes a carriage puts on (or found on) the wire, whichever form they ride in.
+carriageBytes :: SectionCarriage -> ByteString
+carriageBytes (CarriedPlain sectionBytes)      = sectionBytes
+carriageBytes (CarriedCompressed sectionBytes) = sectionBytes
 
 -- | One window's contribution to a section, after its framing has been read: the plain bytes,
 -- or a compressed piece with its declared output size and stream slice split apart.
@@ -238,3 +260,28 @@ handOutDecodedSlices decodedStream contributions =
       let (slice, restDecoded) =
             ByteString.splitAt (unLength (pieceDeclaredOutputSize piece)) remainingDecoded
       in (restDecoded, slice)
+
+----------------------------------------------------------------------------
+-- The LZMA emission path
+----------------------------------------------------------------------------
+
+-- | The carriage one kind's section rides out under LZMA: the compressed piece —
+-- its decompressed-size varint, then the xdelta3-flavored stream
+-- 'Slap.Compression.Stream.lzmaCompress' emits — when that is smaller than the plain bytes,
+-- the plain bytes otherwise (docs/vcdiff/xdelta3/questions.md: a section is kept compressed only where it shrinks).
+-- The write-side partner of 'readContribution', producing exactly the framing it peels;
+-- the caller composes the window's Delta_Indicator bit from the choice.
+-- An empty section always rides plain: nothing honest compresses to nothing,
+-- and the read side refuses a compressed section declaring zero output
+-- ('VCDIFFCompressedSectionDeclaresEmptyOutput').
+lzmaSectionCarriage :: ByteString -> SectionCarriage
+lzmaSectionCarriage plainSection
+  | ByteString.null plainSection = CarriedPlain plainSection
+  | ByteString.length compressedSection < ByteString.length plainSection =
+      CarriedCompressed compressedSection
+  | otherwise = CarriedPlain plainSection
+  where
+    compressedSection = declaredOutputSizeVarint <> lzmaCompress plainSection
+    declaredOutputSizeVarint =
+      LazyByteString.toStrict
+        (toLazyByteString (putVcdiffVarint (fromIntegral (unLength (byteLength plainSection)))))
