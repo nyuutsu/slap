@@ -218,7 +218,7 @@ parseRawPatch = do
     else pure (RawPatch version headerIndicator Nothing Nothing Nothing [] Nothing [])
 
 -- | Whether the header indicator is built only from bits slap recognizes: the three bits VCD_DECOMPRESS, VCD_CODETABLE, and VCD_APPHEADER (0–2), exactly the complement of 'reservedIndicatorMask'.
--- A set reserved bit (3–7) names a feature beyond what slap reads, belonging to neither dialect; the framer cannot trust the byte-shape that follows, so it declines to frame and 'classifyAndDecode' surfaces the honest 'VCDIFFReservedIndicatorBits' reason rather than failing as framing garbage.
+-- A set reserved bit (3–7) names a feature beyond what slap reads, belonging to neither dialect; the framer cannot trust the byte-shape that follows, so it declines to frame and 'classifyAndDecode' surfaces the 'VCDIFFReservedIndicatorBits' reason rather than failing as framing garbage.
 headerUsesOnlyRecognizedBits :: Word8 -> Bool
 headerUsesOnlyRecognizedBits headerIndicator =
   headerIndicator .&. reservedIndicatorMask == 0
@@ -505,7 +505,7 @@ data DecodedWindow = DecodedWindow
   }
 
 -- | Name the decoded patch for what it is, from two independent readings of its windows: whether it carries an xdelta3 extension, and whether it carries an RFC-exclusive feature.
--- The four combinations are exhaustive and each has one honest answer:
+-- The four combinations are exhaustive, each mapping to exactly one flavor:
 --
 --   * xdelta3 extension, no RFC-exclusive feature: 'PatchXDelta3'. A declared secondary compressor (an xdelta3 signal even when no window exercises it, xdelta3's catalog being the only registry of compressor ids there is), an application header, or any window's Adler32 is enough.
 --   * RFC-exclusive feature, no xdelta3 extension: 'PatchRFC', carrying the custom code table when there was one ('Nothing' for a VCD_TARGET-only patch). A produced-target window or a custom code table is that signal.

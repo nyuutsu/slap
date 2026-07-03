@@ -187,12 +187,10 @@ data LzmaDecoded = LzmaDecoded
 
 -- | LZMA decompression of one xdelta3-flavored stream (xz header,
 -- raw LZMA2 chunks, no closing footer — see @rusty-slap/src/xdelta3_lzma.rs@
--- for the stream shape). Written longhand rather than through
--- 'callDecompressor': the consumed-input length is a third output
--- channel the helper's shape has no slot for, and the helper's
--- empty-input short-circuit would be wrong here — an empty input is
--- not an empty output, it is a stream with no xz header, and the
--- decoder's complaint to that effect is the honest answer.
+-- for the stream shape). Written longhand rather than through 'callDecompressor':
+-- the consumed-input length is a third output channel the helper's shape has no slot for,
+-- and the helper's empty-input short-circuit would be wrong here: an empty input is not an empty output,
+-- it is a stream with no xz header, and the decoder's complaint to that effect is the right answer.
 lzmaDecompress :: ByteString -> Either DecompressionCause LzmaDecoded
 lzmaDecompress input = unsafePerformIO $
   withByteString input $ \dataPointer dataLength ->
@@ -249,7 +247,7 @@ data DjwDecoded = DjwDecoded
 -- (LZMA's chunk headers do), so the declaration must travel beside
 -- the bytes; the asymmetry with 'lzmaDecompress' is real and stays
 -- visible. Written longhand for the same reasons as 'lzmaDecompress':
--- the consumed-length channel, and an honest answer on empty input.
+-- the consumed-length channel, and the right answer on empty input.
 djwDecompress :: Length -> ByteString -> Either DecompressionCause DjwDecoded
 djwDecompress expectedOutputLength input = unsafePerformIO $
   withByteString input $ \dataPointer dataLength ->
@@ -296,8 +294,7 @@ data FgkDecoded = FgkDecoded
 -- bounds its own decode and realigns the reader between sections — so
 -- the sizes travel beside the bytes, the way 'djwDecompress' carries
 -- its one section's size. Written longhand for the same reasons as
--- 'lzmaDecompress': the consumed-length channel, and an honest answer
--- on empty input.
+-- 'lzmaDecompress': the consumed-length channel, and the right answer on empty input.
 fgkDecompress :: [Length] -> ByteString -> Either DecompressionCause FgkDecoded
 fgkDecompress sectionOutputLengths input = unsafePerformIO $
   withByteString input $ \dataPointer dataLength ->

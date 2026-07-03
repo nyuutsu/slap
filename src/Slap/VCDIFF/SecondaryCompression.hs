@@ -271,9 +271,8 @@ handOutDecodedSlices decodedStream contributions =
 -- the plain bytes otherwise (docs/vcdiff/xdelta3/questions.md: a section is kept compressed only where it shrinks).
 -- The write-side partner of 'readContribution', producing exactly the framing it peels;
 -- the caller composes the window's Delta_Indicator bit from the choice.
--- An empty section always rides plain: nothing honest compresses to nothing,
--- and the read side refuses a compressed section declaring zero output
--- ('VCDIFFCompressedSectionDeclaresEmptyOutput').
+-- An empty section always rides plain: nothing compresses to nothing,
+-- and the read side refuses a compressed section declaring zero output ('VCDIFFCompressedSectionDeclaresEmptyOutput').
 lzmaSectionCarriage :: ByteString -> SectionCarriage
 lzmaSectionCarriage plainSection
   | ByteString.null plainSection = CarriedPlain plainSection

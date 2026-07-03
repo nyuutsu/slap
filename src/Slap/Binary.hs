@@ -155,10 +155,8 @@ getByuuVarint offset input = decode offset 0 1
   where
     inputLength    = ByteString.length input
     largestSigned  = fromIntegral (maxBound :: Int64) :: Word64
-    -- A value needing a tenth byte already exceeds the nine-byte
-    -- maximum, which itself sits above 'Int64'; the bound also keeps
-    -- 'multiplier' below the point where the 'Word64' arithmetic
-    -- could wrap, so the value test below stays honest.
+    -- A value needing a tenth byte already exceeds the nine-byte maximum, which itself sits above 'Int64';
+    -- the bound also keeps 'multiplier' below the point where the 'Word64' arithmetic could wrap, so the value test below stays valid.
     decode position accumulated multiplier
       | position - offset >= 9  = Left VarintTooManyContinuationBytes
       | position >= inputLength  = Left VarintRanPastEndOfInput

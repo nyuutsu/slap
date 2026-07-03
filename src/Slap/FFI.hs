@@ -56,14 +56,11 @@ adler32 input = Adler32 $ unsafePerformIO $
   withByteString input $ \dataPointer dataLength ->
     pure $! rustyAdler32 dataPointer dataLength
 
--- | Use a 'ByteString''s bytes as an FFI-compatible
--- ('Ptr' 'Word8', 'CSize') pair for the duration of a synchronous
--- FFI call. Bundles the 'UnsafeByteString.unsafeUseAsCStringLen'
--- bracket, the 'Ptr CChar' → 'Ptr Word8' relabel (ByteString stores
--- 'Ptr CChar' for historical reasons; the rusty-slap signatures want
--- 'Ptr Word8' to match Rust's @*const u8@ honestly), and the 'Int' →
--- 'CSize' conversion in one place. Input-side mirror of
--- 'readByteString'.
+-- | Use a 'ByteString''s bytes as an FFI-compatible ('Ptr' 'Word8', 'CSize') pair for the duration of a synchronous FFI call.
+-- Bundles the 'UnsafeByteString.unsafeUseAsCStringLen' bracket,
+-- the 'Ptr CChar' → 'Ptr Word8' relabel (ByteString stores 'Ptr CChar'; the rusty-slap signatures want 'Ptr Word8' to match Rust's @*const u8@),
+-- and the 'Int' → 'CSize' conversion in one place.
+-- Input-side mirror of 'readByteString'.
 --
 -- The unsafe (no-copy) variant of 'unsafeUseAsCStringLen' is
 -- correct here because the FFI call is synchronous: it consumes the

@@ -284,10 +284,8 @@ stabilityToDPS :: PatchStability -> DPS.DPSStability
 stabilityToDPS UnstablePatch = DPS.DPSUnstable
 stabilityToDPS StablePatch   = DPS.DPSStable
 
--- | Empty 'EncodedText' tagged 'EncodingUtf8', for fallbacks when a
--- 'Maybe EncodedText' slot in 'RequestedPatchMetadata' is 'Nothing'.
--- Empty text is zero bytes under any encoding, so UTF-8 is the honest
--- tag for "no content."
+-- | Empty 'EncodedText' tagged 'EncodingUtf8', for fallbacks when a 'Maybe EncodedText' slot in 'RequestedPatchMetadata' is 'Nothing'.
+-- Empty text is zero bytes under any encoding, so UTF-8 is the natural tag for "no content."
 emptyEncodedText :: EncodedText
 emptyEncodedText = EncodedText EncodingUtf8 Text.empty
 
@@ -1162,10 +1160,8 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
                       })
                     (maybe DPS.DPSStable stabilityToDPS (requestedStability meta))
   CreateNINJA2 -> do
-    -- Pick the wire @PATCH_ENC@ byte for the output patch. The CLI
-    -- flag wins outright; otherwise UTF-8, the portable default (the
-    -- field bytes are written UTF-8 regardless, so a UTF-8 declaration
-    -- is the honest one).
+    -- Pick the wire @PATCH_ENC@ byte for the output patch.
+    -- The CLI flag wins outright; otherwise UTF-8, the portable default (the field bytes are written UTF-8 regardless, so a UTF-8 declaration matches the bytes).
     let detectedTextMode = fromMaybe TextModeUTF8 (requestedTextMode meta)
         ninja2Meta = NINJA2.NINJA2CreateMetadata
           { NINJA2.ninja2CreateMetadataAuthor      = requestedAuthor      meta

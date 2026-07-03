@@ -89,16 +89,12 @@ fromOverflowMode :: OverflowMode -> Word8
 fromOverflowMode OverflowAppend   = 0x41  -- 'A'
 fromOverflowMode OverflowTruncate = 0x4D  -- 'M'
 
--- | PATCH_ENC: whether the patch declares its fixed-header text as
--- UTF-8. Byte 1 means UTF-8 (portable); byte 0 is what the NINJA2 spec
--- nominally calls "system codepage," but that only instructs a reader
--- to decode with its own codepage and keeps no portable record of the
--- encoding the bytes are actually in — so slap names it
--- 'TextModeUndeclared': from a portable standpoint the format simply
--- declined to say. The spec defines no other values; an unrecognized
--- byte is rejected at parse time rather than represented in this type,
--- so every 'TextMode' value we ever hold has a well-defined meaning for
--- downstream text decoding.
+-- | PATCH_ENC: whether the patch declares its fixed-header text as UTF-8.
+-- Byte 1 means UTF-8 (portable); byte 0 is what the NINJA2 spec nominally calls "system codepage,"
+-- but that only instructs a reader to decode with its own codepage and keeps no portable record of the encoding the bytes are actually in,
+-- so slap names it 'TextModeUndeclared': the byte records no portable encoding.
+-- The spec defines no other values; an unrecognized byte is rejected at parse time rather than represented in this type,
+-- so every 'TextMode' value we ever hold has a well-defined meaning for downstream text decoding.
 data TextMode
   = TextModeUTF8
   | TextModeUndeclared
@@ -214,16 +210,10 @@ data NINJA2OpenNewFile = NINJA2OpenNewFile
   , openNewFileRomType    :: !NINJA2RomType
   } deriving (Show)
 
--- | The parsed fixed-header fields from a NINJA2 patch, decoded under
--- the patch's declared 'TextMode'. Each field carries its
--- encoding tag on the value, so downstream conversion and display
--- sites read the encoding directly off the value rather than
--- consulting a side-channel. Because NINJA2 declares a single
--- @PATCH_ENC@ byte for the whole patch, every field of any given
--- parsed 'NINJA2Info' shares the same tag — but the type stays
--- honest about that being a per-field property, which keeps the
--- seam clean when the fields flow into formats whose encoding model
--- is per-field rather than per-patch.
+-- | The parsed fixed-header fields from a NINJA2 patch, decoded under the patch's declared 'TextMode'.
+-- Each field carries its encoding tag on the value, so downstream conversion and display sites read the encoding directly off the value rather than consulting a side-channel.
+-- Because NINJA2 declares a single @PATCH_ENC@ byte for the whole patch, every field of any given parsed 'NINJA2Info' shares the same tag,
+-- but the type still models it per-field, which keeps the seam clean when the fields flow into formats whose encoding model is per-field rather than per-patch.
 data NINJA2Info = NINJA2Info
   { ninja2Author      :: Maybe EncodedText
   , ninja2Version     :: Maybe EncodedText

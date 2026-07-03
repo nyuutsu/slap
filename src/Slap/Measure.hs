@@ -483,11 +483,10 @@ remainingFromOffset (Offset position) (FileSize totalSize)
       error ("remainingFromOffset: position " ++ show position
               ++ " past size " ++ show totalSize)
 
--- | The number of bytes remaining in a 'ByteString' from a given parse
--- 'Position'. The 'Position'-aware analogue of 'remainingFromOffset',
--- with the same honest contract: assumes @cursorPosition '<=' length@
--- and raises 'error' otherwise. Used by 'Slap.ByteParser.remaining',
--- whose primitives maintain @Position '<=' length@ as an invariant.
+-- | The number of bytes remaining in a 'ByteString' from a given parse 'Position'.
+-- The 'Position'-aware analogue of 'remainingFromOffset', with the same contract:
+-- assumes @cursorPosition '<=' length@ and raises 'error' otherwise.
+-- Used by 'Slap.ByteParser.remaining', whose primitives maintain @Position '<=' length@ as an invariant.
 remainingFromPosition :: Position -> ByteString -> Length
 remainingFromPosition (Position cursorPosition) input
   | cursorPosition <= inputLength = Length (inputLength - cursorPosition)

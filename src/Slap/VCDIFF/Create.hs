@@ -426,9 +426,8 @@ data WindowChecksumEmission = CarryWindowAdler32 | OmitWindowAdler32
 
 -- | Whether an emitted window's sections ride through the LZMA secondary compressor where that
 -- shrinks them, or all ride plain. The compression sibling of 'WindowChecksumEmission'.
--- The RFC and core emissions always pass 'EmitSectionsPlain': the RFC defines secondary
--- compression's framing but no compressor, so the RFC arc's catalog is empty and there is
--- nothing such a patch could honestly declare (docs/vcdiff/questions.md, "secondary compressor declared").
+-- The RFC and core emissions always pass 'EmitSectionsPlain': the RFC defines secondary compression's framing but no compressor,
+-- so the RFC arc's catalog is empty and there is nothing such a patch could declare (docs/vcdiff/questions.md, "secondary compressor declared").
 data WindowCompressionEmission = CompressSectionsWithLZMA | EmitSectionsPlain
   deriving (Eq, Show)
 

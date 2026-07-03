@@ -224,11 +224,9 @@ emptyEBPMetadata = EBPMetadata
   }
 
 -- | An EBP patch. Structurally, EBP is a 'StandardIPS' patch with a
--- trailing JSON metadata blob, so the type is a wrapper: an
--- 'IPSPatch' plus an 'EBPMetadata'. Threading a @'Maybe'
--- 'EBPMetadata'@ field through 'IPSPatch' instead would leave the
--- nonsense state (@'IPS32' + 'Just' metadata@) representable; the
--- separate wrapper keeps the IPS-plus-metadata shape honest.
+-- trailing JSON metadata blob, so the type is a wrapper: an 'IPSPatch' plus an 'EBPMetadata'.
+-- Threading a @'Maybe' 'EBPMetadata'@ field through 'IPSPatch' instead would leave the nonsense state (@'IPS32' + 'Just' metadata@) representable;
+-- the separate wrapper keeps that state unrepresentable.
 --
 -- Invariant: the underlying 'ipsVariant' is expected to be
 -- 'StandardIPS'. EBP has no defined 'IPS32' analogue. The parser

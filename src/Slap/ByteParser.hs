@@ -12,10 +12,8 @@
 -- StateT Position (ReaderT ByteString (Either ByteParserError))
 -- @
 --
--- wrapped in a newtype so that 'MonadFail' (which the 'Either' base
--- does not provide) can be defined honestly. State is the outer
--- layer because 'get'\/'put' are the dominant operations across the
--- primitive set and benefit from not needing 'lift'.
+-- wrapped in a newtype so that 'MonadFail' (which the 'Either' base does not provide) can be defined at all.
+-- State is the outer layer because 'get' and 'put' are the dominant operations across the primitive set and benefit from not needing 'lift'.
 module Slap.ByteParser
   ( ByteParser
   , runByteParser

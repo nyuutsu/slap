@@ -60,9 +60,8 @@ parseFixedHeader metadataEncoding textMode input =
                 ++ websiteAdvisories ++ descriptionAdvisories
   in (info, advisories)
   where
-    -- The wire's PATCH_ENC byte either declares UTF-8 outright or
-    -- declines to say; an undeclared patch defers to the user's
-    -- metadata-encoding choice.
+    -- The wire's PATCH_ENC byte either declares UTF-8 or leaves the encoding undeclared;
+    -- an undeclared patch defers to the user's metadata-encoding choice.
     effectiveEncoding = case textMode of
       TextModeUTF8       -> EncodingUtf8
       TextModeUndeclared -> metadataEncoding

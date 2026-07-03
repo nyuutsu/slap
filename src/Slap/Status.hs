@@ -549,11 +549,9 @@ data SlapError
   | UnknownFlag FormatLabel FieldName RawFlagByte
   | UnsupportedEncodingMethod FormatLabel EncodingMethodByte
 
-  -- | A NINJA2 patch's PATCH_ENC byte (offset 6 of the fixed header)
-  -- is not 0 (undeclared) or 1 (UTF-8). The NINJA2 spec defines no other
-  -- values; slap refuses rather than fabricate a fallback encoding,
-  -- because PATCH_ENC governs how every text field in the patch is
-  -- decoded and slap has no honest answer for an undefined value.
+  -- | A NINJA2 patch's PATCH_ENC byte (offset 6 of the fixed header) is not 0 (undeclared) or 1 (UTF-8).
+  -- The NINJA2 spec defines no other values;
+  -- slap refuses rather than fabricate a fallback encoding, because PATCH_ENC governs how every text field in the patch is decoded, and slap has no defined answer for an undefined value.
   | NINJA2UnrecognizedTextMode !Word8
 
   -- | A structurally malformed text field in a NINJA1 textual patch —
@@ -767,8 +765,7 @@ data SlapError
   | NarrowingError !NarrowingFailure
 
   -- | A create-path input (source or target) names more bytes than slap can address.
-  -- slap threads every size and offset through a signed 'Int', so its honest ceiling is 'maxBound' :: 'Int' —
-  -- about 9 EB on a 64-bit host.
+  -- slap threads every size and offset through a signed 'Int', so its true ceiling is 'maxBound' :: 'Int', about 9 EB on a 64-bit host.
   -- A wire size field wider than the carrier (a full 64-bit length) can name a file past that ceiling;
   -- rather than wrap or truncate it through 'fromIntegral', slap declines here.
   -- The 'ActualSize' is the offending file;
@@ -2408,11 +2405,10 @@ renderSlapAdvisory (VerificationOptedOutByCreator label) =
 plural :: Int -> Text -> Text -> Text
 plural n singular pluralForm = if n == 1 then singular else pluralForm
 
--- | Render the reason a (source, target) pair was refused. Takes the
--- 'FormatLabel' so an arm can vary its wording per format where the
--- honest explanation differs; arms that don't need to differentiate
--- ignore the label. Wording is deliberately plain here and refined
--- per case as the need arises.
+-- | Render the reason a (source, target) pair was refused.
+-- Takes the 'FormatLabel' so an arm can vary its wording per format where the real explanation differs;
+-- arms that don't need to differentiate ignore the label.
+-- Wording is deliberately plain here and refined per case as the need arises.
 renderUnencodeabilityReason :: FormatLabel -> UnencodeabilityReason -> Text
 renderUnencodeabilityReason _label UPSSourceTailNonZero =
   "the input has non-zero bytes past the end of the output;"
@@ -2677,16 +2673,12 @@ data VCDIFFMalformation
   -- (nothing to read a varint from). Rejected per
   -- docs/vcdiff/xdelta3/questions.md, "compressed-but-empty section".
   | VCDIFFCompressedSectionWithoutDeclaredSize !VCDIFFSection
-  -- | A section flagged secondary-compressed whose decompressed-size
-  -- varint is zero. A category error rather than a no-op: compressing
-  -- nothing yields framing bytes, never zero bytes, so a section
-  -- cannot honestly decompress to empty. xd3 rejects it as "invalid
-  -- output size"; slap does too.
+  -- | A section flagged secondary-compressed whose decompressed-size varint is zero.
+  -- A category error rather than a no-op: compressing nothing yields framing bytes, never zero bytes, so a section cannot decompress to empty.
+  -- xd3 rejects it as "invalid output size"; slap does too.
   | VCDIFFCompressedSectionDeclaresEmptyOutput !VCDIFFSection
-  -- | A window's Delta_Indicator flags a section as compressed, but
-  -- the patch's header declares no secondary compressor. The two
-  -- declarations live in the same patch and contradict each other;
-  -- there is no algorithm the section could honestly be decoded by.
+  -- | A window's Delta_Indicator flags a section as compressed, but the patch's header declares no secondary compressor.
+  -- The two declarations live in the same patch and contradict each other; there is no algorithm the section could be decoded by.
   | VCDIFFCompressedSectionWithoutCompressor !VCDIFFSection
   -- | A secondary stream finished decoding with input left over: the named 'Length' of it.
   -- Mirrors xd3's "finished with unused input" verdict (@xd3_decode_secondary@),

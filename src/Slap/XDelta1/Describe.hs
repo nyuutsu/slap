@@ -110,11 +110,9 @@ analyzeXDelta1 patch = PatchAnalysis
 -- 'makeXDelta1FileSourceText' so explain output reads as two
 -- comparable rows.
 --
--- 'xdelta1DataRecordName' is a fixed ASCII wire constant
--- (@"(patch data)"@); decoding it under UTF-8 is byte-identical
--- to its codepoint reading, so wrapping it as 'EncodedText' tagged
--- 'EncodingUtf8' is honest and lets the data-record row participate
--- in the same 'EncodedText' rendering path the file-source row uses.
+-- 'xdelta1DataRecordName' is a fixed ASCII wire constant (@"(patch data)"@);
+-- decoding it under UTF-8 is byte-identical to its codepoint reading,
+-- so wrapping it as 'EncodedText' tagged 'EncodingUtf8' is accurate and lets the data-record row participate in the same 'EncodedText' rendering path the file-source row uses.
 makeXDelta1DataRecordText :: XDelta1Patch -> AnalysisSection
 makeXDelta1DataRecordText patch =
   renderSourceLine 0 "data" dataRecordNameText

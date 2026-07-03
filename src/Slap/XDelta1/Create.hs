@@ -220,13 +220,10 @@ encodeXDelta1 patch = do
     fromNameLength = ByteString.length fromNameBytes
     toNameLength   = ByteString.length toNameBytes
 
-    -- Flags word: @FLAG_NO_VERIFY@ (bit 0) tracks the patch's
-    -- verification posture; @FLAG_FROM_COMPRESSED@ (bit 1) and
-    -- @FLAG_TO_COMPRESSED@ (bit 2) track whether the from- or
-    -- to-file was a gzip stream at delta time (round-trip honest —
-    -- slap doesn't emit these bits from create, but preserves
-    -- them from parsed patches under convert); @FLAG_PATCH_COMPRESSED@
-    -- (bit 3) tracks the patch's compression posture.
+    -- Flags word: @FLAG_NO_VERIFY@ (bit 0) tracks the patch's verification posture;
+    -- @FLAG_FROM_COMPRESSED@ (bit 1) and @FLAG_TO_COMPRESSED@ (bit 2) track whether the from- or to-file was a gzip stream at delta time
+    -- (slap never sets these two at create, but carries them through from parsed patches under convert, so a round-trip preserves them);
+    -- @FLAG_PATCH_COMPRESSED@ (bit 3) tracks the patch's compression posture.
     flagsWord = noVerifyBit .|. fromCompressedBit .|. toCompressedBit .|. compressionBit
       where
         noVerifyBit = case xdelta1Verification patch of
