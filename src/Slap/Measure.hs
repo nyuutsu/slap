@@ -101,13 +101,8 @@ import System.IO (Handle, SeekMode(AbsoluteSeek), hSeek)
 -- Newtypes
 ----------------------------------------------------------------------------
 
--- | A byte position in a zero-indexed buffer. Slap's apply paths
--- operate on output buffers, source/target ByteStrings, and region
--- payloads — all zero-indexed — and parsed wire
--- offsets name positions within those buffers. There is no place in
--- slap where 'Offset' means a position in a non-zero-indexed buffer;
--- 'SignedOffset' exists separately to carry the may-be-negative
--- temporary state across BPS's displace-then-examine pattern.
+-- | A byte position in a zero-indexed buffer: an output buffer, a source or target 'ByteString', a region payload, or a parsed wire offset naming a position within one.
+-- 'SignedOffset' exists separately to carry the may-be-negative temporary state across BPS's displace-then-examine pattern.
 newtype Offset = Offset { unOffset :: Int } deriving (Eq, Ord, Show)
 newtype Length   = Length   { unLength   :: Int } deriving (Eq, Ord, Show)
 newtype FileSize = FileSize { unFileSize :: Int } deriving (Eq, Ord, Show)
@@ -311,17 +306,9 @@ data Hunk = Hunk
   , hunkPayload :: !ByteString
   } deriving (Eq, Show)
 
--- | A 'Hunk' whose payload has been validated against a format's
--- per-record payload bound, or had that validation explicitly waived
--- for a format whose wire encoding has no per-record cap (see
--- 'splitHunksUnbounded'). The constructor is intentionally not
--- exported: every 'SplitHunk' that exists in slap came from one of
--- the @split*@ functions in this module. Encoders that would
--- otherwise risk a silent @fromIntegral length :: Word8/Word32@
--- truncation receive their input through the typed pipeline
--- @[Hunk] -> [SplitHunk] -> [EncodedHunk]@; the only way to obtain
--- an 'EncodedHunk' is for both passes to have completed
--- successfully.
+-- | A 'Hunk' whose payload has been validated against a format's per-record payload bound,
+-- or had that validation explicitly waived for a format whose wire encoding has no per-record cap (see 'splitHunksUnbounded').
+-- The constructor is not exported: every 'SplitHunk' comes from one of this module's @split*@ functions, so an encoder's @fromIntegral length :: Word8/Word32@ can't silently truncate.
 data SplitHunk = SplitHunk
   { splitOffset  :: !Offset
   , splitPayload :: !ByteString
@@ -338,11 +325,6 @@ data SplitHunk = SplitHunk
 --                               wire-format record (the parser's
 --                               1-byte length field guarantees the
 --                               bound).
---
--- Every encoder that emits a PPF3 undo record consumes 'EncodedUndoHunk'
--- (in 'Slap.Narrow'), which can only be produced by narrowing a
--- 'SplitUndoHunk'. The pipeline is type-enforced; the only way to
--- emit a record is through both passes.
 data SplitUndoHunk = SplitUndoHunk
   { splitUndoOffset   :: !Offset
   , splitUndoPayload  :: !ByteString
@@ -402,12 +384,8 @@ lengthToFileSize (Length lengthValue) = FileSize lengthValue
 lengthToOffset :: Length -> Offset
 lengthToOffset (Length lengthValue) = Offset lengthValue
 
--- | An 'Offset' as a 'FileSize': the byte count of a buffer whose
--- last written byte sits one position before this 'Offset', when the
--- buffer is indexed from 'Offset' @0@. Useful at end-of-apply
--- diagnostics where the cursor's position from the start equals the
--- number of bytes written. The conversion is meaningful only for
--- buffers indexed from zero with no gaps.
+-- | An 'Offset' as a 'FileSize': for a zero-indexed buffer with no gaps, the byte count is the cursor's position from the start (its last written byte sits one position before this 'Offset').
+-- Useful at end-of-apply diagnostics, where the position equals the number of bytes written.
 offsetToFileSize :: Offset -> FileSize
 offsetToFileSize (Offset position) = FileSize position
 
@@ -470,12 +448,8 @@ instance Cursor WritePosition where
 -- Cursor helpers
 ----------------------------------------------------------------------------
 
--- | The number of bytes remaining in a file from a given offset, as a
--- non-negative 'Length'. The helper assumes @position '<=' totalSize@;
--- violating that precondition is a programming error and raises
--- 'error' rather than returning a clamped zero. Callers whose
--- algorithm genuinely needs the past-end case to read as zero must
--- detect it explicitly upstream and not invoke this helper.
+-- | The number of bytes remaining in a file from a given offset, as a non-negative 'Length'.
+-- Assumes @position '<=' totalSize@; violating that precondition is a programming error and raises 'error' rather than returning a clamped zero.
 remainingFromOffset :: Offset -> FileSize -> Length
 remainingFromOffset (Offset position) (FileSize totalSize)
   | position <= totalSize = Length (totalSize - position)

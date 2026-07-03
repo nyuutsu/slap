@@ -1,13 +1,10 @@
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | slap's command surface: the parsed shape of every subcommand, and the
--- optparse-applicative parsing that turns argv into a 'Command'.
+-- | slap's command surface: the command, option, and policy types that say what the user asked for,
+-- and the optparse-applicative parsers that turn argv into a 'Command'.
 --
--- This is the native frontend's vocabulary — the command, option, and policy
--- types that say what the user asked for, and the parsers that build them from
--- argv. It depends on @Slap.*@ for the engine-level types its commands carry
--- (formats, metadata, constraints, dialects); the engine does not depend on it.
+-- It depends on @Slap.*@ for the engine-level types its commands carry (formats, metadata, constraints, dialects); the engine does not depend on it.
 module CLI
   ( -- The top-level command and its six per-verb payloads
     Command(..)
@@ -211,8 +208,7 @@ data Verbosity
   deriving (Show, Eq)
 
 -- | The top-level CLI command.
--- The per-record verb prefix (@apply*@, @undo*@, ...) isn't dodging cross-constructor field collisions — there are none —
--- but it makes per-record field accesses self-describing at use sites.
+-- The per-record verb prefix (@apply*@, @undo*@, ...) makes per-record field accesses self-describing at use sites.
 data Command
   = Apply   ApplyCommand
   | Undo    UndoCommand

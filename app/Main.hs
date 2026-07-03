@@ -548,8 +548,7 @@ verifySource :: VerificationPolicy -> Verification -> InputFileContents -> IO ()
 verifySource verificationPolicy verification (InputFileContents sourceBytes) = do
   let preprocessed = applySourcePreHash (verifySourcePreHash verification) sourceBytes
   -- Advisory-class checks first: per-spec non-fatal diagnostics that the format chose to populate.
-  -- These fire regardless of policy because they're structurally non-fatal;
-  -- --no-verify operates only on the fatal-class checks below.
+  -- --no-verify doesn't gate these; it operates only on the fatal-class checks below.
   forM_ (verifySourceBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
     noteBlockCRC SourceSide blockOffset expectedCRC (crc16 (viewBytesInRange blockOffset (Length 0x10000) sourceBytes))
   forM_ (verifyPPFBlock verification) $ \(ValidationBlock blockOffset expectedData) ->
@@ -670,11 +669,8 @@ emitVerboseAnalysis Verbose parsed =
   TextIO.hPutStr stderr (renderAnalysisFull (patchInfo parsed) (patchAnalysis parsed) Nothing)
 emitVerboseAnalysis Quiet _ = pure ()
 
--- | Read a patch file, parse it, return the parsed 'SomePatch'.
--- Emits no advisories itself; the caller invokes 'emitAdvisories'.
--- 'doInfo' and 'doExplain' defer warnings until after their stdout renders,
--- while 'doApply', 'doUndo', and 'doConvert' emit immediately —
--- staying parse-only leaves that ordering to each caller.
+-- | Emits no advisories itself, leaving warning-ordering to each caller:
+-- 'doInfo' and 'doExplain' defer until after their stdout renders, while 'doApply', 'doUndo', and 'doConvert' emit immediately (each via 'emitAdvisories').
 readAndParsePatch :: RequestedDialects -> EncodingName -> FilePath -> IO SomePatch
 readAndParsePatch dialects metadataEncoding path = do
   patchBytes <- readUnwrap path
@@ -684,14 +680,9 @@ readAndParsePatch dialects metadataEncoding path = do
 -- Stdout and stderr encoding setup
 ----------------------------------------------------------------------------
 
--- | Bind 'stdout' and 'stderr' to UTF-8 with transliteration on failure.
--- A codepoint the encoder can't represent then substitutes a placeholder rather than crashing with an @hPutChar@ invalid-argument error.
--- UTF-8 encodes every scalar value, so the only thing it can fail on is a lone surrogate.
--- None is expected to reach output, for two reasons:
--- 'main' pins the filesystem encoding to UTF-8, so GHC's argv and filepath decoders reject malformed bytes instead of surrogate-escaping them;
--- and slap's lenient decode substitutes U+FFFD, a scalar.
--- Transliteration is cheap defensive cover for a stray one.
--- Called once at startup, before any I\/O
+-- | Bind 'stdout' and 'stderr' to UTF-8, transliterating on failure so a codepoint the encoder can't represent substitutes a placeholder rather than crashing with an @hPutChar@ invalid-argument error.
+-- UTF-8 can only fail on a lone surrogate, which slap's UTF-8 filesystem encoding and lenient-decode-to-U+FFFD make unlikely to reach output; transliteration is cheap cover for a stray one.
+-- Called once at startup, before any I/O.
 setStdoutAndStderrToLenientUtf8 :: IO ()
 setStdoutAndStderrToLenientUtf8 = do
   hSetEncoding stdout lenientUtf8

@@ -113,17 +113,11 @@ data EncodingName
   | EncodingNamed NamedEncoding
   deriving (Eq, Show)
 
--- | A resolved encoding: the user-facing name slap was handed paired
--- with the @encoding@-library encoder it resolved to. Constructable
--- only through 'resolveEncodingName', so a 'NamedEncoding' in hand is
--- always a name that resolved — there is no way to hold one whose
--- name and encoder disagree.
+-- | A resolved encoding: the user-facing name slap was handed, paired with the @encoding@-library encoder it resolved to.
+-- Constructable only through 'resolveEncodingName', so name and encoder can never disagree.
 --
--- The type is identified by its name. The smart constructor makes the
--- encoder a function of the name (equal names resolve to equal
--- encoders), so the hand-written 'Eq' over the name alone is exactly
--- a derived 'Eq', and 'Show' reads as the encoding's name rather than
--- dumping the library's internal 'Encoding.DynEncoding'.
+-- The type is identified by its name: the smart constructor makes the encoder a function of the name (equal names resolve to equal encoders),
+-- so the hand-written 'Eq' over the name alone is exactly a derived 'Eq', and 'Show' reads as the encoding's name rather than dumping the library's internal 'Encoding.DynEncoding'.
 data NamedEncoding = NamedEncoding
   { namedEncodingDisplay  :: !Text
   , namedEncodingResolved :: !Encoding.DynEncoding
@@ -341,22 +335,11 @@ chooseSubstitute encoder
   | Encoding.encodeable encoder '\xFFFD' = '\xFFFD'
   | otherwise                            = '?'
 
--- | Decode 'ByteString' under the declared encoding, substituting
--- U+FFFD for any byte sequence that the encoding can't decode.
--- Always succeeds. Returns the decoded 'EncodedText' paired with one
--- 'SubstitutedByteSequence' notice per substitution event (each one
--- carrying the byte offset where the offending sequence began); a
--- clean decode yields an empty notice list.
+-- | Decode 'ByteString' under the declared encoding, substituting U+FFFD for any byte sequence that the encoding can't decode.
+-- Always succeeds. Returns the decoded 'EncodedText' paired with one 'SubstitutedByteSequence' notice per substitution event (each carrying the byte offset where the offending sequence began); a clean decode yields an empty notice list.
 --
--- Each encoding plugs its own strict-decode primitive into the
--- shared 'recoveringDecode' walk: 'EncodingUtf8' uses
--- 'TextEncoding.decodeUtf8'', 'EncodingNamed' uses the resolved
--- encoder's 'Encoding.decodeStrictByteStringExplicit'. The
--- recovery shape — strict-decode first, prefix-recover on failure,
--- emit a single 'SubstitutedByteSequence' per substituted byte,
--- recurse on the rest — is identical across both. The walk is O(n)
--- on the clean path (one strict decode); the recovery path is O(n²),
--- one extra decode per undecodable byte.
+-- Each encoding plugs its own strict-decode primitive into the shared 'recoveringDecode' walk: 'EncodingUtf8' uses 'TextEncoding.decodeUtf8'', 'EncodingNamed' uses the resolved encoder's 'Encoding.decodeStrictByteStringExplicit'.
+-- The walk is O(n) on the clean path (one strict decode); the recovery path is O(n²), one extra decode per undecodable byte.
 decodeTextLenient :: EncodingName -> ByteString -> (EncodedText, [LossNotice])
 decodeTextLenient EncodingUtf8 bytes =
   let (text, notices) = recoveringDecode TextEncoding.decodeUtf8' bytes
@@ -380,10 +363,7 @@ data OpaqueFieldReading
   | OpaqueNotText
   deriving (Eq, Show)
 
--- | Read opaque bytes under an encoding. Lossless iff
--- 'decodeTextLenient' substituted nothing; that all-or-nothing reading
--- is the same one each opaque field made when its lens was hardcoded to
--- UTF-8, now answerable under whatever encoding the caller names.
+-- | Read opaque bytes under an encoding: lossless iff 'decodeTextLenient' substituted nothing, answerable under whatever encoding the caller names.
 readOpaqueField :: EncodingName -> ByteString -> OpaqueFieldReading
 readOpaqueField encoding bytes = case decodeTextLenient encoding bytes of
   (EncodedText _encoding text, []) -> OpaqueReadsAsText text
@@ -670,29 +650,17 @@ localeNameVariants name =
 stripDashesUnderscores :: String -> String
 stripDashesUnderscores = filter (\c -> c /= '-' && c /= '_')
 
--- | Curated alias table mapping the locale-style names a user might
--- supply (the names a Windows host or non-UTF-8 Unix locale spells)
--- to a list of names to try against the @encoding@ library. Three
--- categories of entry:
+-- | Curated alias table mapping the locale-style names a user might supply (the names a Windows host or non-UTF-8 Unix locale spells) to a list of names to try against the @encoding@ library.
+-- Three categories of entry:
 --
---   * /Direct/ — the @encoding@ library ships an encoder under the
---     mapped name. The Windows codepage family, the DOS\/OEM
---     codepages, Cyrillic KOI8-R\/U, the Japanese standards
---     (Shift-JIS, ISO-2022-JP), and the Chinese GB18030 standard
---     are in this category. Uses the library's own name, so the
---     decode goes through the @encoding@ library's table for that
---     codepage rather than a near-miss substitute.
+--   * /Direct/ — the @encoding@ library ships an encoder under the mapped name.
+--     The Windows codepage family, the DOS\/OEM codepages, Cyrillic KOI8-R\/U, the Japanese standards (Shift-JIS, ISO-2022-JP), and the Chinese GB18030 standard are in this category.
+--     Uses the library's own name, so the decode goes through the @encoding@ library's table for that codepage rather than a near-miss substitute.
 --
---   * /Compatible superset/ — the @encoding@ library doesn't ship
---     the exact codepage but does ship a strictly compatible
---     superset. The library doesn't ship CP936 (Simplified
---     Chinese), so it maps to GB18030, the standardized successor
---     that extends GBK and GB2312. Microsoft's CP1250-1257
---     fall back to the matching ISO-8859 variant where the
---     codepage entry isn't recognized; the ISO cousins are
---     ASCII-clean and differ only in upper-half glyphs (e.g.
---     CP1252's @\\x80@ Euro sign vs ISO-8859-1's @\\x80@ control
---     character).
+--   * /Compatible superset/ — the @encoding@ library doesn't ship the exact codepage but does ship a strictly compatible superset.
+--     The library doesn't ship CP936 (Simplified Chinese), so it maps to GB18030, the standardized successor that extends GBK and GB2312.
+--     Microsoft's CP1250-1257 fall back to the matching ISO-8859 variant where the codepage entry isn't recognized;
+--     the ISO cousins are ASCII-clean and differ only in upper-half glyphs (e.g. CP1252's @\\x80@ Euro sign vs ISO-8859-1's @\\x80@ control character).
 --
 --   * /Documented gap/ — the @encoding@ library doesn't ship an encoder and there's no compatible superset in the library.
 --     The entry has an empty list, so the lookup fails and 'resolveEncodingName' returns 'Left' rather than mojibake from a near-miss decoder.
@@ -700,17 +668,10 @@ stripDashesUnderscores = filter (\c -> c /= '-' && c /= '_')
 --     Korean Wansung (CP949), Big5 (CP950 and the bare-name variants), the EUC-* family, TIS-620 (Thai), VISCII and TCVN (Vietnamese), ARMSCII-8 (Armenian), and TSCII (Tamil) all sit here.
 --     Closing any of them needs either a backend swap (@text-icu@ against ICU4C covers all of these) or a hand-rolled decoder.
 --
--- Mappings follow Microsoft codepage conventions and IANA charset names.
--- They have not been exercised under each target locale on a real host, so the documented-but-untested caveat applies. Drift in the upper-half byte ranges
--- between a Microsoft codepage and its ISO cousin is the failure
--- mode to watch for; ASCII text and text whose upper-half
--- characters are well-defined in the cousin will round-trip
--- correctly.
+-- Mappings follow Microsoft codepage conventions and IANA charset names, and have not been exercised under each target locale on a real host: the documented-but-untested caveat.
+-- The upper-half MS-vs-ISO drift noted under /Compatible superset/ is the failure mode to watch; ASCII and text whose upper-half characters are well-defined in the cousin round-trip.
 --
--- The table is keyed on the @uppercase + dashes-and-underscores-
--- stripped@ form of the locale name, so @cp1252@, @CP-1252@,
--- @CP_1252@, @Shift_JIS@, @shift-jis@, and @SHIFTJIS@ all reach
--- the same arm.
+-- The table is keyed on the @uppercase + dashes-and-underscores-stripped@ form of the locale name, so @cp1252@, @CP-1252@, @CP_1252@, @Shift_JIS@, @shift-jis@, and @SHIFTJIS@ all reach the same arm.
 documentedLocaleAliases :: String -> [String]
 documentedLocaleAliases name = case normalizeForLookup name of
 
@@ -777,10 +738,7 @@ documentedLocaleAliases name = case normalizeForLookup name of
   "GBK"       -> ["GB18030"]                   -- GBK ⊂ GB18030
   "GB2312"    -> ["GB18030"]                   -- GB2312 ⊂ GBK ⊂ GB18030
 
-  -- Documented gaps — the encoding library doesn't ship an encoder
-  -- and there's no compatible superset. Empty list; the lookup fails
-  -- and resolveEncodingName returns Left. Closing any of these needs
-  -- a different encoding backend (text-icu) or a hand-rolled decoder.
+  -- Documented gaps (see the header): no encoder, no compatible superset, so an empty list; the lookup fails and 'resolveEncodingName' returns 'Left'.
   "CP949"     -> []                            -- CP949 (Windows Korean Wansung)
   "CP950"     -> []                            -- CP950 (Windows Big5)
   "EUCJP"     -> []                            -- EUC-JP (Japanese)

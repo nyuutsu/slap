@@ -183,7 +183,11 @@ data ValidationBlock = ValidationBlock !Offset !ByteString
   deriving (Show)
 
 -- | Per-window Adler32 check (VCDIFF).
-data WindowCheck = WindowCheck !Offset !Length !Adler32
+data WindowCheck = WindowCheck
+  { windowCheckTargetBase    :: !Offset
+  , windowCheckOutputLength  :: !Length
+  , windowCheckStoredAdler32 :: !Adler32
+  }
   deriving (Show)
 
 -- | Advisory byte-range comparison (APS-N64 cart ID, country, CRC).
@@ -191,21 +195,14 @@ data WindowCheck = WindowCheck !Offset !Length !Adler32
 data ByteCheck = ByteCheck !Offset !AdvisoryExpectedBytes !Text
   deriving (Show)
 
--- | The bytes an advisory 'ByteCheck' expects to find at its offset in
--- the source file.  Advisory, not required: a mismatch emits a warning
--- and the apply proceeds.  The newtype distinguishes these bytes from
--- every other 'ByteString' that flows through verification (block CRCs,
--- validation blocks, hash digests) at the byte boundary.
+-- | The bytes an advisory 'ByteCheck' expects to find at its offset in the source file.
+-- Advisory, not required: a mismatch emits a warning and the apply proceeds.
 newtype AdvisoryExpectedBytes = AdvisoryExpectedBytes
   { unAdvisoryExpectedBytes :: ByteString }
   deriving (Show, Eq)
 
--- | A declared file-size expectation paired with how a mismatch is
--- treated. File size is the one verification check whose severity
--- varies by format, so the severity rides on the value here rather than
--- on which field carries it: the apply-time verifier matches the
--- constructor to route 'AdvisorySize' to a warning and 'RequiredSize'
--- to a policy-gated failure.
+-- | A declared file-size expectation paired with how a mismatch is treated.
+-- File size is the one verification check whose severity varies by format, so the severity rides on the value here rather than on which field carries it.
 data FileSizeCheck
   = AdvisorySize !FileSize
     -- ^ The format has a stronger integrity gate (e.g. a CRC32), so a
@@ -253,13 +250,8 @@ data PatchKind
 data SomePatch = SomePatch
   { patchFormat         :: FormatLabel
   , patchAnalysis       :: PatchAnalysis
-    -- ^ The analytical-pass carrier consumed by @slap explain@. The
-    -- field is non-strict on purpose: @slap info@ and @slap apply@
-    -- never force it, so the per-record analytical work each
-    -- 'analyze\<Format\>' producer encodes is paid only when
-    -- 'renderAnalysisFull' or 'renderAnalysisSummary' actually walks the
-    -- 'analysisSections' / 'analysisSummary'. Code that runs on
-    -- every parse must not force this field.
+    -- ^ The analytical-pass carrier consumed by @slap explain@.
+    -- Non-strict on purpose: @slap info@ and @slap apply@ never force it, so the per-record work each 'analyze\<Format\>' producer encodes is paid only when 'renderAnalysisFull' or 'renderAnalysisSummary' walks the 'analysisSections' / 'analysisSummary'.
   , patchKind           :: PatchKind
   , patchApply          :: ApplyStrategy
   , patchUndo           :: Maybe UndoStrategy
@@ -743,13 +735,8 @@ vcdiffFlavorQualifier vcdiffPatch = case vcdiffPatch of
   VCDIFF.PatchRFC      _ _ -> Just " (RFC 3284)"
   VCDIFF.PatchXDelta3  _ _ -> Just " (xdelta3)"
 
--- | The per-window Adler32 checks a patch carries, lifted to the shared
--- verification boundary: each present checksum covers its window's slice
--- of the final target — the window's base offset, its output length, and
--- the stored sum. Reads the flavor-flattened window list
--- ('VCDIFF.patchWindowsWithChecksums'), so it is itself flavor-blind: a
--- core-only or RFC window pairs with no checksum and 'catMaybes' drops
--- it, exactly as the absence of an xdelta3 window's checksum does.
+-- | The per-window Adler32 checks a patch carries, lifted to the shared verification boundary; each present checksum covers its window's slice of the final target.
+-- Reads the flavor-flattened window list ('VCDIFF.patchWindowsWithChecksums'), so it is itself flavor-blind: a core-only or RFC window pairs with no checksum and 'catMaybes' drops it.
 vcdiffWindowChecks :: VCDIFF.VCDIFFPatch -> [WindowCheck]
 vcdiffWindowChecks vcdiffPatch =
     catMaybes (zipWith windowCheckAt windowBases pairedWindows)
@@ -1031,13 +1018,9 @@ parseSomePatchFromXDelta1 metadataEncoding patchContents = do
     , patchSourceAdvisories    = dataNameNotices
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
-        -- An xdelta1 source patch carries both display labels in its
-        -- header; threading them through 'requestedXDelta1*Name' lets
-        -- 'mergeRequestedMetadata' inherit them across an
-        -- xdelta1@→@xdelta1 convert without round-tripping through
-        -- the locale-decode layer (the bytes are opaque on the wire
-        -- and we keep them opaque here, typed as 'XDelta1FromName' /
-        -- 'XDelta1ToName' so the merge can't transpose).
+        -- An xdelta1 source patch carries both display labels in its header;
+        -- threading them through 'requestedXDelta1*Name' lets 'mergeRequestedMetadata' inherit them across an xdelta1@→@xdelta1 convert without round-tripping through the locale-decode layer.
+        -- The bytes stay opaque, typed as 'XDelta1FromName' / 'XDelta1ToName' so the merge can't transpose them.
         { requestedXDelta1FromName = Just (XDelta1.xdelta1FromName patch)
         , requestedXDelta1ToName   = Just (XDelta1.xdelta1ToName   patch)
         }

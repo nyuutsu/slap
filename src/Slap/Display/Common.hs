@@ -40,14 +40,9 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
 -- InfoLine
 ----------------------------------------------------------------------------
 
--- | A label-value display row. Rendered by 'renderInfoLine' with
--- column-13 alignment ("source size:  1024"). Both fields are 'Text'
--- by convention — the label set across formats is open and proliferates,
--- so a closed sum or newtype wouldn't pay for the constructor surface
--- or wrapping ceremony, and the value has been
--- rendered to display form by the time it lands here. Labels are
--- lowercase with no trailing colon — 'renderInfoLine' adds the colon
--- and the alignment padding.
+-- | A label-value display row, rendered by 'renderInfoLine' with column-13 alignment ("source size:  1024").
+-- Both fields are 'Text': the label set across formats is open and proliferates, and the value has been rendered to display form by the time it lands here.
+-- Labels are lowercase with no trailing colon; 'renderInfoLine' adds the colon and the alignment padding.
 data InfoLine = InfoLine
   { infoLineLabel :: !Text
   , infoLineValue :: !Text
@@ -69,12 +64,8 @@ renderInfoLine (InfoLine label value) =
 newtype Tally = Tally { unTally :: Int }
   deriving (Eq, Show)
 
--- | The closed set of unit labels used in display-layer counts. Each
--- format's helper picks the unit that matches what the format counts
--- ('Records' for IPS, 'Actions' for BPS, 'Windows' for VCDIFF, etc.).
--- New formats add a constructor here and 'renderCountUnit' /
--- 'pluralCountUnit' grow exhaustive arms; @-Wincomplete-patterns@
--- fires if a constructor is forgotten.
+-- | The closed set of unit labels used in display-layer counts.
+-- Each format's helper picks the unit that matches what the format counts ('Records' for IPS, 'Actions' for BPS, 'Windows' for VCDIFF, etc.).
 data CountUnit
   = Records
   | Actions
@@ -137,9 +128,7 @@ pluralCountUnit EnabledEntries = "enabled entries"
 --   replacement bytes; the sum tells the user how much data the
 --   patch is /carrying/, not how big the output will be.
 --
--- The two are different facts even when their numerical values
--- happen to coincide, and 'renderByteCount' distinguishes them with
--- different display text.
+-- The two are different facts even when their numerical values coincide.
 data ByteCount
   = TotalOutputBytes  !FileSize
   | TotalPayloadBytes !Length
@@ -194,18 +183,13 @@ renderFormatHeader (FormatHeader label extra) =
 -- Show-to-Text
 ----------------------------------------------------------------------------
 
--- | The @'show' :: Show a => a -> 'String'@ to 'Text' bridge. Used
--- wherever an 'Int' or other 'Show' value is interpolated into
--- display text; inlining @'Text.pack' . 'show'@ everywhere would
--- be noise.
+-- | The @'show' :: Show a => a -> 'String'@ to 'Text' bridge,
+-- used wherever an 'Int' or other 'Show' value is interpolated into display text.
 renderAsText :: Show a => a -> Text
 renderAsText = Text.pack . show
 
--- | Render an unsigned hex value as 'Text' without prefix or padding —
--- the unpadded peer of 'Slap.Display.Primitives.padHex'. Use when a
--- @0x@ literal needs the natural width of the underlying value rather
--- than a fixed column. Wraps 'Numeric.showHex' so call sites stop
--- restating the @Text.pack (showHex value "")@ shape.
+-- | Render an unsigned hex value as 'Text' without prefix or padding, the unpadded peer of 'Slap.Display.Primitives.padHex'.
+-- Use when a @0x@ literal needs the natural width of the underlying value rather than a fixed column.
 renderHexAsText :: Integral a => a -> Text
 renderHexAsText value = Text.pack (showHex value "")
 
@@ -213,10 +197,7 @@ renderHexAsText value = Text.pack (showHex value "")
 -- FilePath ↔ Text boundary
 ----------------------------------------------------------------------------
 
--- | Lift a 'FilePath' (slap honours it as 'String') into 'Text' for
--- interpolation into a 'Text' diagnostic. The lift is named so the
--- 'FilePath' → 'Text' boundary is visible at every site it crosses,
--- rather than hidden behind an 'OverloadedStrings'-style implicit
--- conversion.
+-- | Lift a 'FilePath' (slap honours it as 'String') into 'Text' for interpolation into a 'Text' diagnostic.
+-- The lift is named so the 'FilePath' → 'Text' boundary is visible at every site it crosses.
 pathText :: FilePath -> Text
 pathText = Text.pack

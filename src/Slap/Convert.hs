@@ -518,14 +518,9 @@ rejectIncompatibleMetadata format meta =
 -- Constraints (CLI rejection / encoder gates)
 ----------------------------------------------------------------------------
 
--- | The constraint bag the user assembled from CLI flags, parallel
--- to 'RequestedPatchMetadata' but for refuse-gates rather than
--- embedded properties. 'requestedSMCShape' is the only field today;
--- future constraints land here.
---
--- Unlike 'RequestedPatchMetadata', constraints carry no source-patch
--- inheritance step — they're entirely CLI-set and are not read from a
--- parsed source patch during convert.
+-- | The constraint bag the user assembled from CLI flags, parallel to 'RequestedPatchMetadata' but for refuse-gates rather than embedded properties.
+-- 'requestedSMCShape' is the only field today; future constraints land here.
+-- Unlike 'RequestedPatchMetadata', constraints are entirely CLI-set, never inherited from a parsed source patch.
 data RequestedConstraints = RequestedConstraints
   { requestedSMCShape :: SMCShapeRequirement
   }
@@ -638,15 +633,9 @@ acceptsAnySizeChange _sourceSize _targetSize = Right ()
 -- Dialects (parser/encoder wire-format configuration)
 ----------------------------------------------------------------------------
 
--- | The dialect bag the user assembled from CLI flags, parallel to
--- 'RequestedConstraints' but for parser/encoder wire-format configuration
--- rather than refuse-gates. 'requestedPPF1Origin' is the only field
--- today; future dialect axes land here.
---
--- Like 'RequestedConstraints' and unlike 'RequestedPatchMetadata',
--- dialects carry no source-patch inheritance step — they're an
--- entirely CLI-set concept. A source patch can't tell us how to
--- decode itself: if it could, the dialect axis wouldn't exist.
+-- | The dialect bag the user assembled from CLI flags, parallel to 'RequestedConstraints' but for parser/encoder wire-format configuration rather than refuse-gates.
+-- 'requestedPPF1Origin' is the only field today; future dialect axes land here.
+-- Like 'RequestedConstraints', dialects are entirely CLI-set: a source patch can't tell us how to decode itself; if it could, the dialect axis wouldn't exist.
 data RequestedDialects = RequestedDialects
   { requestedPPF1Origin :: PPF1Origin
   }
@@ -1205,10 +1194,8 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
   , contentsDestinationSize    = if needs FieldDestinationSize
                     then Just (byteFileSize target)
                     else Nothing
-  -- The block occupies [validationOffset, validationOffset + 1024),
-  -- so a source ending exactly at validationOffset + 1024 supplies it whole: the bound is '>=', not '>'.
-  -- The same sum is the minimum enforced by 'SourceTooSmallForPPF2Validation' in encodeDirect,
-  -- so '>' here would reject an exact-fit source that the encoder accepts.
+  -- The block occupies [validationOffset, validationOffset + 1024), so a source ending exactly at validationOffset + 1024 supplies it whole: the bound is '>=', not '>'.
+  -- The same sum is the minimum 'SourceTooSmallForPPF2Validation' enforces in 'encodeDirect', so '>=' keeps this in step with what that encoder accepts.
   , contentsValidation  = if needs FieldValidation && ByteString.length source >= validationOffset + 1024
                     then Just (ByteString.take 1024 (ByteString.drop validationOffset source))
                     else Nothing
@@ -1288,24 +1275,16 @@ resolveDescription sources
   | Just typed <- descriptionSourceTypedText sources = typed
   | otherwise = descriptionSourceFallback sources
 
--- | Resolve a single EBP field: CLI flag wins, then fall back to the
--- value extracted from the EBP metadata view, then to the empty
--- string. The two callers feed in the title and author fields
--- respectively. Both sides are 'EncodedText': CLI-origin values are
--- tagged 'EncodingUtf8', as are JSON-origin values. The empty-value
--- fallback is tagged 'EncodingUtf8' because the consumer
--- ('IPS.buildEBPMetadataJSON') emits JSON, which is UTF-8 by spec.
+-- | Resolve a single EBP field: the CLI flag wins, then the value from the EBP metadata view, then the empty string.
+-- The two callers feed in the title and author fields.
+-- Every arm is 'EncodedText' tagged 'EncodingUtf8', matching the JSON the consumer ('IPS.buildEBPMetadataJSON') emits (JSON is UTF-8 by spec).
 resolveEBPField :: Maybe EncodedText -> Maybe EncodedText -> EncodedText
 resolveEBPField cliValue ebpValue
   | Just provided <- cliValue  = provided
   | Just value    <- ebpValue  = value
   | otherwise                  = EncodedText EncodingUtf8 Text.empty
 
--- | The @patcher@ field slap writes into every EBP metadata blob it
--- emits — the project's name, tagged 'EncodingUtf8' because EBP
--- metadata is JSON and JSON is UTF-8 by RFC 8259. Constant rather
--- than inlined at the one call site so the bytes that identify a
--- slap-emitted EBP have a single named home.
+-- | The @patcher@ field slap writes into every EBP metadata blob it emits: the project's name, tagged 'EncodingUtf8'.
 slapPatcherIdentity :: EncodedText
 slapPatcherIdentity = EncodedText EncodingUtf8 (Text.pack "slap")
 

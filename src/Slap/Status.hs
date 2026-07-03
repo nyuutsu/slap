@@ -312,14 +312,9 @@ data ApplyError
   -- the target buffer.
   | ApplyWritesPastTarget ActionIndex RequestedLength RemainingLength
 
-  -- | The action stream was exhausted but the target buffer is not
-  -- fully written. No 'ActionIndex' because this error fires after
-  -- the stream ends and no specific action is responsible — the
-  -- whole patch is short. (There is no corresponding
-  -- @ApplyTargetOverfilled@ because 'ApplyWritesPastTarget' catches
-  -- over-writes per-action before they can happen; writing past
-  -- target is impossible if every action's length is validated
-  -- against remaining space before the copy runs.)
+  -- | The action stream was exhausted but the target buffer is not fully written.
+  -- No 'ActionIndex': this fires after the stream ends, with no specific action responsible — the whole patch is short.
+  -- (No corresponding @ApplyTargetOverfilled@: 'ApplyWritesPastTarget' catches over-writes per-action before they can happen.)
   | ApplyTargetUnderfilled WritePosition ExpectedSize
 
   -- | A record's offset is negative. Possible for any format whose
@@ -455,11 +450,8 @@ data CompressionAlgorithm
 data SlapError
 
   -- IO boundary
-  -- | The user pointed slap at a file that doesn't exist on the
-  -- filesystem. Pre-parse, pre-detection — we never made it to the
-  -- bytes. The 'FilePath' is the path the user typed and renders
-  -- verbatim, so the message matches what their tab key (or fingers)
-  -- produced.
+  -- | The user pointed slap at a file that doesn't exist on the filesystem, before any parse or detection.
+  -- The 'FilePath' is the path the user typed and renders verbatim, so the message matches what their tab key (or fingers) produced.
   = MissingInputFile FilePath
   -- | The file is present but slap couldn't open it: wrong
   -- permissions, the path resolves to a directory, an underlying
@@ -590,26 +582,14 @@ data SlapError
   -- The 'XDelta1SourceFlag' names which flag; the 'Word8' is the byte as read.
   | XDelta1NonBooleanSourceFlag XDelta1SourceFlag Word8
 
-  -- | A VCDIFF patch's wire shape disagreed with the per-format
-  -- structural rules slap enforces. The 'VCDIFFShapeViolation' names
-  -- the specific failure: a nested custom code table (forbidden by
-  -- RFC 3284 inside an already-custom-table payload), a window
-  -- target-size varint that decoded as negative, or a secondary-
-  -- compression flag set on a data section slap doesn't implement.
-  -- These are validated after the byte-parser has produced the raw
-  -- window list, so the parser stays focused on byte-level reading.
+  -- | A VCDIFF patch's wire shape disagreed with the per-format structural rules slap enforces; the 'VCDIFFShapeViolation' names which.
+  -- These are validated after the byte parser has produced the raw window list, so the parser stays focused on byte-level reading.
   | UnsupportedVCDIFFShape VCDIFFShapeViolation
 
-  -- | A VCDIFF custom code table failed structural validation. The
-  -- 'VCDIFFCodeTableMalformation' names the specific failure: the
-  -- decoded table bytes were not exactly 1536 bytes long, contained
-  -- a byte that did not decode to a valid instruction type, were
-  -- too short to even contain the 2-byte near\/same-cache-size
-  -- header, or named a COPY address mode the declared caches do not
-  -- reach. The image-decidable failures are surfaced from
-  -- 'Slap.VCDIFF.CodeTable.deserializeCodeTable'; the cache-dependent
-  -- mode bound is checked at table-build in 'Slap.VCDIFF.Parse', which
-  -- knows the declared cache sizes. Both run outside the byte parser.
+  -- | A VCDIFF custom code table failed structural validation; the 'VCDIFFCodeTableMalformation' names which.
+  -- The image-decidable failures are surfaced from 'Slap.VCDIFF.CodeTable.deserializeCodeTable';
+  -- the cache-dependent mode bound is checked at table-build in 'Slap.VCDIFF.Parse', which knows the declared cache sizes.
+  -- Both run outside the byte parser.
   | MalformedVCDIFFCodeTable VCDIFFCodeTableMalformation
 
   -- | Decoding a patch's custom code table failed, and this names the
@@ -1336,20 +1316,10 @@ newtype OOBOvershootBytes = OOBOvershootBytes { unOOBOvershootBytes :: Length }
 -- ApplyDirection — which direction an apply/undo operation ran in
 ----------------------------------------------------------------------------
 
--- | Which direction an apply/undo operation ran in. Tagged onto
--- advisories that describe direction-dependent observations about
--- an operation (such as 'ApplyOOBBlocksSkipped', whose count and
--- overshoot are measured against the output the operation actually
--- wrote — target_size for forward, source_size for reverse).
+-- | Which direction an apply/undo operation ran in. Tagged onto advisories that describe direction-dependent observations
+-- (such as 'ApplyOOBBlocksSkipped', whose count and overshoot are measured against the output the operation actually wrote: target_size forward, source_size reverse).
 --
--- Not related to the CLI subcommand the user typed. Two distinct
--- subcommands (@slap apply@, @slap undo@) happen to drive the two
--- directions one-to-one, but the direction concept lives at the
--- Format layer (each format's apply/undo functions know which
--- direction they implement), while subcommand selection lives at
--- the Entry-point layer ('app/Main.hs'). Naming an operation by
--- direction rather than by subcommand keeps the Foundation layer's
--- vocabulary independent of the CLI surface.
+-- Not the CLI subcommand the user typed: @slap apply@ and @slap undo@ drive the two directions one-to-one, but direction lives at the Format layer (each format's apply/undo functions know which they implement), while subcommand selection lives at the Entry-point layer ('app/Main.hs').
 data ApplyDirection
   = Forward  -- ^ The natural-direction operation: 'applyUPS', 'applyBPS', etc.
   | Reverse  -- ^ The inverse operation: 'undoUPS', 'undoBPS', etc.
@@ -1737,8 +1707,6 @@ renderSlapError (UnsupportedVCDIFFShape violation) =
       "nested custom code tables are not allowed (RFC 3284 §4.1)"
     VCDIFFNegativeWindowTargetSize rawValue ->
       "negative window target size (decoded as " <> renderAsText rawValue <> ")"
-    VCDIFFSecondaryCompressionUnsupportedInDataSections ->
-      "secondary compression in data sections is not supported"
 
 renderSlapError (VCDIFFCustomCodeTableDecodeFailed innerError) =
   -- No format-label prefix of its own: the inner error already carries
@@ -2547,12 +2515,6 @@ data VCDIFFShapeViolation
   -- value is non-negative; the field carries the offending raw
   -- value verbatim.
   | VCDIFFNegativeWindowTargetSize !Int64
-  -- | A window's delta indicator set at least one of the three
-  -- secondary-compression bits ('VCD_DATACOMP', 'VCD_INSTCOMP',
-  -- 'VCD_ADDRCOMP'). Slap does not implement the secondary
-  -- compressor; the renderer names the rule without naming
-  -- which bit fired (any subset is equally refused).
-  | VCDIFFSecondaryCompressionUnsupportedInDataSections
   deriving (Eq, Show)
 
 -- | The structural failures slap raises when decoding a VCDIFF
@@ -2892,11 +2854,7 @@ data ByteParserError
 -- Severity assignment
 ----------------------------------------------------------------------------
 
--- | Map each 'SlapAdvisory' constructor to its severity. Severity is
--- a property of the value, not a call-site decision; this is the
--- single source of truth for which prefix the user sees when an
--- advisory is emitted. The 'emitToStderr' pipeline reads this
--- value and looks the prefix up via 'severityLabel'.
+-- | Map each 'SlapAdvisory' constructor to its severity: the single source of truth 'Severity' names as the per-advisory projection.
 slapAdvisorySeverity :: SlapAdvisory -> Severity
 slapAdvisorySeverity advisory = case advisory of
 
