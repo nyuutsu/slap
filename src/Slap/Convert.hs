@@ -44,6 +44,8 @@ module Slap.Convert
   , acceptedMetadataFields
   , requestedMetadataFields
   , rejectIncompatibleMetadata
+  , xdelta3CompressionEmission
+  , rejectUnencodableSecondaryCompressor
   , TextMode(..)
   ) where
 
@@ -83,6 +85,9 @@ import qualified Slap.NINJA2.Types as NINJA2
 import qualified Slap.NINJA2.Create as NINJA2
 import qualified Slap.GDIFF.Create as GDIFF
 import qualified Slap.VCDIFF.Create as VCDIFF
+import Slap.VCDIFF.Create (WindowCompressionEmission(..))
+import Slap.VCDIFF.SecondaryCompression
+  (XDelta3SecondaryCompressor(..), encodableSectionCompressor, compressionAlgorithmOf)
 import qualified Slap.XDelta1.Create as XDelta1
 import Slap.XDelta1.Types (ResolvedXDelta1FileNames,
                            XDelta1FromName(..), XDelta1ToName(..))
@@ -227,7 +232,13 @@ data RequestedPatchMetadata = RequestedPatchMetadata
     -- ^ 'Just' 'OmitCompression' means the user asked for @--no-compress@;
     -- absent means "let the format pick its default," which is compressed
     -- for both consumers: xdelta1 (the gzip patch envelope) and
-    -- xdelta3 (LZMA secondary compression of the window sections).
+    -- xdelta3 (secondary compression of the window sections).
+  , requestedSecondaryCompressor  :: Maybe XDelta3SecondaryCompressor
+    -- ^ xdelta3 only: the secondary compressor to encode with — the user's @--compress-with ALGORITHM@,
+    -- or, on convert, the source patch's own declaration, inherited like any other metadata.
+    -- Absent means LZMA, the canonical tool's own default. A source's FGK never lands here:
+    -- the xdelta3 extraction in "Slap.SomePatch" carries a declaration only where slap can encode with it,
+    -- so inheritance cannot steer into the refusal reserved for an explicit request.
   , requestedStability            :: Maybe PatchStability
   , requestedRomType              :: Maybe PlatformType
     -- ^ NINJA1 and NINJA2 define different ROM type enumerations (18 vs 10 values, diverging at byte 2);
@@ -298,6 +309,7 @@ noMetadataRequested = RequestedPatchMetadata
   , requestedUndoInclusion        = Nothing
   , requestedVerificationInclusion = Nothing
   , requestedPatchCompression     = Nothing
+  , requestedSecondaryCompressor  = Nothing
   , requestedStability           = Nothing
   , requestedRomType             = Nothing
   , requestedImageType           = Nothing
@@ -323,6 +335,7 @@ mergeRequestedMetadata cli source = RequestedPatchMetadata
   , requestedUndoInclusion        = requestedUndoInclusion cli        <|> requestedUndoInclusion source
   , requestedVerificationInclusion = requestedVerificationInclusion cli <|> requestedVerificationInclusion source
   , requestedPatchCompression     = requestedPatchCompression cli     <|> requestedPatchCompression source
+  , requestedSecondaryCompressor  = requestedSecondaryCompressor cli  <|> requestedSecondaryCompressor source
   , requestedStability           = requestedStability cli           <|> requestedStability source
   , requestedRomType             = requestedRomType cli             <|> requestedRomType source
   , requestedImageType           = requestedImageType cli           <|> requestedImageType source
@@ -475,7 +488,8 @@ acceptedMetadataFields (CreateDifferential format) = case format of
   CreateXDelta1 -> Set.fromList [MetadataVerificationInclusion, MetadataPatchCompression,
                                  MetadataXDelta1FromName, MetadataXDelta1ToName]
   CreateRFCVCDIFF -> Set.empty
-  CreateXDelta3   -> Set.fromList [MetadataVerificationInclusion, MetadataPatchCompression]
+  CreateXDelta3   -> Set.fromList [MetadataVerificationInclusion, MetadataPatchCompression,
+                                   MetadataSecondaryCompressor]
 
 -- | The 'MetadataField's the user explicitly set on a
 -- 'RequestedPatchMetadata'. A 'Maybe' field counts as set when 'Just'.
@@ -488,6 +502,7 @@ requestedMetadataFields meta = Set.fromList $ concat
   , [MetadataUndoInclusion        | isJust (requestedUndoInclusion        meta)]
   , [MetadataVerificationInclusion | isJust (requestedVerificationInclusion meta)]
   , [MetadataPatchCompression     | isJust (requestedPatchCompression     meta)]
+  , [MetadataSecondaryCompressor  | isJust (requestedSecondaryCompressor  meta)]
   , [MetadataStability           | isJust (requestedStability           meta)]
   , [MetadataRomType             | isJust (requestedRomType             meta)]
   , [MetadataImageType           | isJust (requestedImageType           meta)]
@@ -513,6 +528,29 @@ rejectIncompatibleMetadata format meta =
   case NonEmpty.nonEmpty (Set.toList (requestedMetadataFields meta `Set.difference` acceptedMetadataFields format)) of
     Nothing      -> Right ()
     Just rejects -> Left (MetadataFieldRejected rejects (createFormatLabel format))
+
+-- | Fold the two compression requests into xdelta3's emission choice:
+-- @--no-compress@ wins, a selected compressor is honored when slap can encode with it,
+-- and the default is LZMA — the canonical tool's own default.
+-- The one refusal is a compressor slap decodes but does not yet encode
+-- ('Slap.VCDIFF.SecondaryCompression.encodableSectionCompressor' knows which).
+xdelta3CompressionEmission :: RequestedPatchMetadata -> Either SlapError WindowCompressionEmission
+xdelta3CompressionEmission meta =
+  case fromMaybe IncludeCompression (requestedPatchCompression meta) of
+    OmitCompression    -> Right EmitSectionsPlain
+    IncludeCompression ->
+      let algorithm = fromMaybe SecondaryLZMA (requestedSecondaryCompressor meta)
+      in case encodableSectionCompressor algorithm of
+           Just compressor -> Right (CompressSectionsWith compressor)
+           Nothing         -> Left (XDelta3CompressorEncodingUnsupported (compressionAlgorithmOf algorithm))
+
+-- | The value-level half of the @--compress-with@ gate, beside the concept-level 'rejectIncompatibleMetadata':
+-- for an xdelta3 target, refuse a selected compressor slap cannot encode with, before any file is read.
+-- Other targets pass through — a selection they can't consume is already the concept-level rejection's to make.
+rejectUnencodableSecondaryCompressor :: CreateFormat -> RequestedPatchMetadata -> Either SlapError ()
+rejectUnencodableSecondaryCompressor (CreateDifferential CreateXDelta3) meta =
+  () <$ xdelta3CompressionEmission meta
+rejectUnencodableSecondaryCompressor _ _ = Right ()
 
 ----------------------------------------------------------------------------
 -- Constraints (CLI rejection / encoder gates)
@@ -1168,10 +1206,11 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
   CreateAPSGBA  -> APSGBA.createAPSGBA source target
   CreateGDIFF   -> GDIFF.createGDIFF source target
   CreateRFCVCDIFF -> VCDIFF.createRFCVCDIFF source target
-  CreateXDelta3 -> VCDIFF.createXDelta3 verificationChoice compressionChoice source target
+  CreateXDelta3 -> do
+    compressionEmission <- xdelta3CompressionEmission meta
+    VCDIFF.createXDelta3 verificationChoice compressionEmission source target
     where
       verificationChoice = fromMaybe IncludeVerification (requestedVerificationInclusion meta)
-      compressionChoice  = fromMaybe IncludeCompression  (requestedPatchCompression      meta)
   CreateXDelta1 -> case maybeResolvedNames of
     Just resolvedNames ->
       XDelta1.createXDelta1 verificationChoice compressionChoice resolvedNames source target

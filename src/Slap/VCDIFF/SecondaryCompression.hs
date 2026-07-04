@@ -1,6 +1,6 @@
 -- | xdelta3's secondary compression: the compressor-id catalog, the per-compressor
--- decode paths that turn compressed sections back into plain bytes, and the LZMA
--- emission path that produces such sections
+-- decode paths that turn compressed sections back into plain bytes, and the emission
+-- paths that produce such sections
 -- (the RFC leaves this undefined in §6; the shapes follow docs/vcdiff/xdelta3/secondary-compression.md).
 --
 -- A section is one of a window's three — data, instructions, addresses. Each compressor
@@ -11,19 +11,26 @@ module Slap.VCDIFF.SecondaryCompression
     XDelta3SecondaryCompressor(..)
   , secondaryCompressorCatalog
   , secondaryCompressorId
+  , secondaryCompressorTokens
+  , compressionAlgorithmOf
     -- * The decode paths
   , SectionCarriage(..)
   , carriageBytes
   , decodeLZMACompressedKind
   , decodeDJWCompressedKind
   , decodeFGKCompressedKind
-    -- * The LZMA emission path
-  , lzmaSectionCarriage
+    -- * The emission paths
+  , SectionCompressor
+  , sectionCompressorAlgorithm
+  , sectionCompressorCarriage
+  , encodableSectionCompressor
+  , lzmaSectionCompressor
+  , djwSectionCompressor
   ) where
 
 import Slap.Binary (getVcdiffVarint, VarintResult(..), putVcdiffVarint)
 import Slap.Compression.Stream (LzmaDecoded(..), lzmaDecompress, lzmaCompress,
-                                DjwDecoded(..), djwDecompress,
+                                DjwDecoded(..), djwDecompress, djwCompress,
                                 FgkDecoded(..), fgkDecompress)
 import Slap.Measure (Length(..), byteLength, lengthToFileSize, subtractLength,
                      ExpectedSize(..), ActualSize(..))
@@ -68,6 +75,23 @@ secondaryCompressorId SecondaryDJW  = 1
 secondaryCompressorId SecondaryLZMA = 2
 secondaryCompressorId SecondaryFGK  = 16
 
+-- | The @--compress-with@ token for each catalog entry, beside the wire-id registry it
+-- parallels. fgk is a real token: selecting it is a request slap understands and declines
+-- by name ('encodableSectionCompressor' is what the decline consults), never an unknown word.
+secondaryCompressorTokens :: [(String, XDelta3SecondaryCompressor)]
+secondaryCompressorTokens =
+  [ ("lzma", SecondaryLZMA)
+  , ("djw",  SecondaryDJW)
+  , ("fgk",  SecondaryFGK)
+  ]
+
+-- | Each catalog entry under 'Slap.Status''s broader compression vocabulary, for the
+-- error arms that carry an algorithm name across module layers.
+compressionAlgorithmOf :: XDelta3SecondaryCompressor -> CompressionAlgorithm
+compressionAlgorithmOf SecondaryDJW  = DJW
+compressionAlgorithmOf SecondaryLZMA = LZMA
+compressionAlgorithmOf SecondaryFGK  = FGK
+
 ----------------------------------------------------------------------------
 -- The gather-decode-split machine
 ----------------------------------------------------------------------------
@@ -75,8 +99,8 @@ secondaryCompressorId SecondaryFGK  = 16
 -- | How one window carries a section on the wire: plain bytes, or a compressed piece
 -- of the section's stream, still prefixed with its decompressed size.
 -- The read side builds one carriage per window (in window order) from each window's
--- Delta_Indicator bit; the write side chooses one through 'lzmaSectionCarriage'
--- and composes the bit from the choice.
+-- Delta_Indicator bit; the write side chooses one through its compressor's
+-- 'sectionCompressorCarriage' and composes the bit from the choice.
 data SectionCarriage
   = CarriedPlain !ByteString
   | CarriedCompressed !ByteString
@@ -262,25 +286,48 @@ handOutDecodedSlices decodedStream contributions =
       in (restDecoded, slice)
 
 ----------------------------------------------------------------------------
--- The LZMA emission path
+-- The emission paths
 ----------------------------------------------------------------------------
 
--- | The carriage one kind's section rides out under LZMA: the compressed piece —
--- its decompressed-size varint, then the xdelta3-flavored stream
--- 'Slap.Compression.Stream.lzmaCompress' emits — when that is smaller than the plain bytes,
--- the plain bytes otherwise (docs/vcdiff/xdelta3/questions.md: a section is kept compressed only where it shrinks).
+-- | A compressor the create path can encode with: the algorithm the patch header declares,
+-- and the carriage its sections ride out on. The two travel together because the header's
+-- declaration and the sections' encoding must name the same algorithm.
+-- The constructor stays private and only 'encodableSectionCompressor' mints values,
+-- so an emission compressing with FGK is unrepresentable, not merely refused.
+data SectionCompressor = SectionCompressor
+  { sectionCompressorAlgorithm :: !XDelta3SecondaryCompressor
+  , sectionCompressorCarriage  :: ByteString -> SectionCarriage
+  }
+
+-- | The compressors slap can encode with today: LZMA and DJW.
+-- FGK slap decodes but does not yet encode;
+-- its 'Nothing' is the fact 'Slap.Status.XDelta3CompressorEncodingUnsupported' reports at the create door.
+encodableSectionCompressor :: XDelta3SecondaryCompressor -> Maybe SectionCompressor
+encodableSectionCompressor SecondaryLZMA = Just lzmaSectionCompressor
+encodableSectionCompressor SecondaryDJW  = Just djwSectionCompressor
+encodableSectionCompressor SecondaryFGK  = Nothing
+
+lzmaSectionCompressor :: SectionCompressor
+lzmaSectionCompressor = SectionCompressor SecondaryLZMA (carriageKeepingSmaller lzmaCompress)
+
+djwSectionCompressor :: SectionCompressor
+djwSectionCompressor = SectionCompressor SecondaryDJW (carriageKeepingSmaller djwCompress)
+
+-- | The carriage one section rides out under a compressor: the compressed piece — its
+-- decompressed-size varint, then the compressor's stream — when that is smaller than the
+-- plain bytes, the plain bytes otherwise (docs/vcdiff/xdelta3/questions.md: a section is kept compressed only where it shrinks).
 -- The write-side partner of 'readContribution', producing exactly the framing it peels;
 -- the caller composes the window's Delta_Indicator bit from the choice.
 -- An empty section always rides plain: nothing compresses to nothing,
 -- and the read side refuses a compressed section declaring zero output ('VCDIFFCompressedSectionDeclaresEmptyOutput').
-lzmaSectionCarriage :: ByteString -> SectionCarriage
-lzmaSectionCarriage plainSection
+carriageKeepingSmaller :: (ByteString -> ByteString) -> ByteString -> SectionCarriage
+carriageKeepingSmaller compress plainSection
   | ByteString.null plainSection = CarriedPlain plainSection
   | ByteString.length compressedSection < ByteString.length plainSection =
       CarriedCompressed compressedSection
   | otherwise = CarriedPlain plainSection
   where
-    compressedSection = declaredOutputSizeVarint <> lzmaCompress plainSection
+    compressedSection = declaredOutputSizeVarint <> compress plainSection
     declaredOutputSizeVarint =
       LazyByteString.toStrict
         (toLazyByteString (putVcdiffVarint (fromIntegral (unLength (byteLength plainSection)))))

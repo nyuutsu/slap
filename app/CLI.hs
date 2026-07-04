@@ -44,6 +44,7 @@ import Slap.Convert (CreateFormat(..), DifferentialCreate(CreateBPS),
                      PatchStability(..),
                      TextMode(..))
 import Slap.XDelta1.Types (XDelta1FromName(..), XDelta1ToName(..))
+import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor, secondaryCompressorTokens)
 import Slap.Constraint (Constraint(..), constraintFlagName)
 import Slap.Dialect (Dialect(..), dialectFlagName)
 import Slap.PPF1.Types (PPF1Origin(..))
@@ -598,6 +599,28 @@ convertToParser = option (eitherReader parseCreateFormat)
   (long "to" <> short 't' <> metavar "FMT"
     <> help ("Target format: " ++ intercalate ", " advertisedCreateFormats))
 
+-- | The one compression request a command line can make: decline compression, or name the xdelta3 secondary compressor.
+-- One optional alternative group in 'requestedMetadataParser',
+-- so @--no-compress@ and @--compress-with@ exclude each other the way the blob intents do:
+-- passing both leaves one unconsumed and the top-level parser rejects the command.
+-- Each arm projects onto its own metadata field — declining sets 'requestedPatchCompression',
+-- a selection sets 'requestedSecondaryCompressor', compression-on being the default a selection rides —
+-- so a rejection names back exactly the flag the user typed.
+data CompressionIntent
+  = DeclineCompression
+  | CompressWith XDelta3SecondaryCompressor
+
+-- | Resolve a @--compress-with@ token against the catalog's token table.
+-- fgk resolves — slap knows the name; whether it can encode with it is judged later,
+-- with a fuller answer ('Slap.Convert.rejectUnencodableSecondaryCompressor') —
+-- while an unknown word is refused here, with the list of real ones.
+parseSecondaryCompressor :: String -> Either String XDelta3SecondaryCompressor
+parseSecondaryCompressor input =
+  case lookup (map toLower input) secondaryCompressorTokens of
+    Just compressor -> Right compressor
+    Nothing         -> Left ("unknown compressor: " ++ input
+                          ++ "\n  expected: " ++ intercalate ", " (map fst secondaryCompressorTokens))
+
 -- | Parse the metadata flags shared between @slap create@ and @slap convert@.
 -- Produces a 'RequestedPatchMetadata' with 'requestedEmbeddedBlob' set to 'Nothing';
 -- the resolvers @resolveCreateMetadata@ and @resolveConvertMetadata@ (in @Main@) fill that field from each command's blob source:
@@ -616,8 +639,14 @@ requestedMetadataParser = do
                             <> help "Omit undo data (default: included when the format supports it)"))
     includeVerification <- optional (flag' OmitVerification (long "omit-verification"
                             <> help "Omit source-integrity-checking data from the created patch (default: included when the format supports it)"))
-    patchCompression  <- optional (flag' OmitCompression (long "no-compress"
-                            <> help "Do not compress the output patch (xdelta1's gzip envelope, xdelta3's LZMA sections; default emits compressed)"))
+    compressionIntent <- optional
+                           (   DeclineCompression <$ flag' () (long "no-compress"
+                                 <> help "Do not compress the output patch (xdelta1's gzip envelope, xdelta3's secondary compression; default emits compressed)")
+                           <|> CompressWith <$> option (eitherReader parseSecondaryCompressor)
+                                 (long "compress-with" <> metavar "ALGORITHM"
+                                  <> completeWith (map fst secondaryCompressorTokens)
+                                  <> help ("Secondary compressor for xdelta3 (default lzma): "
+                                        ++ intercalate ", " (map fst secondaryCompressorTokens))))
     unstable          <- optional (flag' UnstablePatch (long "unstable"
                             <> help "Mark patch unstable (DPS)"))
     romType           <- optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
@@ -650,7 +679,8 @@ requestedMetadataParser = do
       , requestedVersion             = fmap wrapUtf8 version
       , requestedUndoInclusion        = includeUndo
       , requestedVerificationInclusion = includeVerification
-      , requestedPatchCompression    = patchCompression
+      , requestedPatchCompression    = compressionInclusionOf =<< compressionIntent
+      , requestedSecondaryCompressor = selectedCompressorOf   =<< compressionIntent
       , requestedStability           = unstable
       , requestedRomType             = romType
       , requestedImageType           = imageType
@@ -667,6 +697,14 @@ requestedMetadataParser = do
   where
     wrapUtf8 :: String -> EncodedText
     wrapUtf8 = EncodedText EncodingUtf8 . Text.pack
+
+    compressionInclusionOf :: CompressionIntent -> Maybe CompressionInclusion
+    compressionInclusionOf DeclineCompression = Just OmitCompression
+    compressionInclusionOf (CompressWith _)   = Nothing
+
+    selectedCompressorOf :: CompressionIntent -> Maybe XDelta3SecondaryCompressor
+    selectedCompressorOf (CompressWith compressor) = Just compressor
+    selectedCompressorOf DeclineCompression        = Nothing
 
 createMetadataInputsParser :: Parser CreateMetadataInputs
 createMetadataInputsParser = CreateMetadataInputs

@@ -63,6 +63,7 @@ import qualified Slap.VCDIFF.Parse as VCDIFF
 import qualified Slap.VCDIFF.Apply as VCDIFF
 import qualified Slap.VCDIFF.Types as VCDIFF
 import qualified Slap.VCDIFF.Describe as VCDIFFDescribe
+import Slap.VCDIFF.SecondaryCompression (encodableSectionCompressor)
 import qualified Slap.APSN64.Types as APSN64
 import qualified Slap.APSN64.Parse as APSN64
 import qualified Slap.APSN64.Apply as APSN64
@@ -699,6 +700,11 @@ parseSomePatchFromVCDIFF metadataEncoding patchContents = do
       appHeaderBlob   = case VCDIFF.vcdiffAppHeader patch of
                           Just bytes | not (ByteString.null bytes) -> Just bytes
                           _                                        -> Nothing
+      -- Offered for inheritance only where slap can encode with it;
+      -- 'Slap.Convert.requestedSecondaryCompressor' has the why.
+      inheritedCompressor = do
+        declared <- VCDIFF.vcdiffDeclaredCompressor patch
+        declared <$ encodableSectionCompressor declared
   Right SomePatch
     { patchFormat       = LabelVCDIFF
     , patchAnalysis     = VCDIFFDescribe.analyzeVCDIFF patch
@@ -721,7 +727,10 @@ parseSomePatchFromVCDIFF metadataEncoding patchContents = do
         }
     , patchSourceAdvisories = []
     , patchMetadata     = appHeaderBlob
-    , patchExtractedMeta = noMetadataRequested { requestedEmbeddedBlob = appHeaderBlob }
+    , patchExtractedMeta = noMetadataRequested
+        { requestedEmbeddedBlob        = appHeaderBlob
+        , requestedSecondaryCompressor = inheritedCompressor
+        }
     }
 
 -- | The flavor verdict as a format-header qualifier, in the

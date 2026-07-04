@@ -169,7 +169,7 @@ test_nonStringSiblings :: Assertion
 test_nonStringSiblings =
   -- Numbers, booleans, nulls sitting at the top level alongside the
   -- four EBP fields. The previous scanner skipped them quietly;
-  -- aeson parses them honestly and we then drop them at extraction
+  -- aeson parses them and we then drop them at extraction
   -- because they aren't strings. The four EBP fields still land.
   let blob :: ByteString
       blob = "{\"version\":2,\"verified\":true,\"checksum\":null,\

@@ -30,7 +30,9 @@ import Integration.Skip
   , requireFixture
   )
 import Slap.Convert
-  (CreateFormat(..), DifferentialCreate(..), noMetadataRequested, noConstraintsRequested, noDialectsRequested)
+  (CreateFormat(..), DifferentialCreate(..), RequestedPatchMetadata(..),
+   noMetadataRequested, noConstraintsRequested, noDialectsRequested)
+import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor(..))
 import Slap.Create (createPatch)
 import Slap.Status (CreateResult(..), renderSlapError)
 import Slap.FileContents
@@ -53,7 +55,8 @@ crossValTests AllTests getTargets = do
   repo <- repoDir
   rows <- parseSpecFile (repo </> "test" </> "specs" </> "crossval.txt")
   rowMaybes <- concat <$> mapM (planCrossValRow getTargets repo) rows
-  pure (namedGroup "crossval" rowMaybes)
+  djwRow    <- planDJWCompressedRow getTargets repo
+  pure (namedGroup "crossval" (rowMaybes ++ djwRow))
 
 -- | Map a single crossval-spec row to its planned outcome: a runnable
 -- test, or a typed skip. Malformed rows and rows whose @format@ field
@@ -67,8 +70,8 @@ planCrossValRow getTargets repo fields = case fields of
         let basePath = repo </> baseRelative
             bootPath = repo </> bootRelative
             label    = formatString ++ "/" ++ scenario
-            runnable = mkCrossValTest getTargets label format tool
-                         basePath bootPath targetSha
+            runnable = buildCrossValTest getTargets label format tool
+                         basePath bootPath targetSha noMetadataRequested
             constructor
               | format == CreateDifferential CreateBPS
               , bpsCreateIsExpensive (FixtureName scenario) = WillRunHeavy
@@ -80,7 +83,25 @@ planCrossValRow getTargets repo fields = case fields of
     | otherwise -> pure []  -- spec row references unknown format/tool wire name
   _ -> pure []              -- malformed spec row
 
-mkCrossValTest
+-- | The DJW-compressed xdelta3 row. The crossval spec's grammar has no flag column —
+-- every spec row creates with default metadata — and this is the one row that needs a
+-- requested field, so it is planned here by hand against the same kirby fixtures as the
+-- spec's xdelta3 row: slap creates with the DJW secondary compressor selected, and the
+-- installed xdelta3 must decode our DJW streams to the same target.
+planDJWCompressedRow :: IO BootstrapTargets -> FilePath -> IO [MaybeTest]
+planDJWCompressedRow getTargets repo =
+  let basePath = repo </> "test/data/kirby-dl2/base.gb"
+      bootPath = repo </> "test/data/kirby-dl2/kirby-dl2-dx.bps"
+      djwMeta  = noMetadataRequested { requestedSecondaryCompressor = Just SecondaryDJW }
+      runnable = buildCrossValTest getTargets "xdelta3/kirby-dl2-dx compress-with-djw"
+                   (CreateDifferential CreateXDelta3) Xdelta3
+                   basePath bootPath "a34fb26e1066e464e55b473f0a1f87e9c764a010" djwMeta
+  in requireFixture basePath $ \_ ->
+     requireFixture bootPath $ \_ ->
+       requireExternalTool Xdelta3 $ \_ ->
+         pure [WillRun runnable]
+
+buildCrossValTest
   :: IO BootstrapTargets
   -> String        -- ^ test label
   -> CreateFormat
@@ -88,8 +109,9 @@ mkCrossValTest
   -> FilePath      -- ^ base ROM path
   -> FilePath      -- ^ bootstrap-patch path (key into the bootstrap map)
   -> String        -- ^ expected SHA1 of the target produced by the external tool
+  -> RequestedPatchMetadata
   -> TestTree
-mkCrossValTest getTargets label format tool basePath bootPath expectedTargetSha =
+buildCrossValTest getTargets label format tool basePath bootPath expectedTargetSha meta =
   testCase label $ do
     bootstrapTargets <- getTargets
     baseBytes        <- mmapRomFile basePath
@@ -97,7 +119,7 @@ mkCrossValTest getTargets label format tool basePath bootPath expectedTargetSha 
     case createPatch format Nothing
            (InputFileContents baseBytes)
            (OutputFileContents targetBytes)
-           noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
+           meta Nothing noConstraintsRequested noDialectsRequested of
       Left slapError ->
         assertFailureT ("create failed: " <> renderSlapError slapError)
       Right (CreateResult patchBytes _) ->

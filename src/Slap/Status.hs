@@ -581,8 +581,8 @@ data SlapError
   -- The 'XDelta1SourceFlag' names which flag; the 'Word8' is the byte as read.
   | XDelta1NonBooleanSourceFlag XDelta1SourceFlag Word8
 
-  -- | A VCDIFF patch's wire shape disagreed with the per-format structural rules slap enforces; the 'VCDIFFShapeViolation' names which.
-  -- These are validated after the byte parser has produced the raw window list, so the parser stays focused on byte-level reading.
+  -- | A VCDIFF wire shape slap refuses outright; 'VCDIFFShapeViolation' names it and has the story
+  -- (one arm today, raised while 'Slap.VCDIFF.Parse' settles the header's code table).
   | UnsupportedVCDIFFShape VCDIFFShapeViolation
 
   -- | A VCDIFF custom code table failed structural validation; 'VCDIFFCodeTableMalformation' names which failure it was and where each is checked.
@@ -839,6 +839,12 @@ data SlapError
   -- than fabricate placeholders. The 'FormatLabel' names the source
   -- format the conversion came from.
   | XDelta1ConvertRequiresNames FormatLabel
+
+  -- | The user selected a secondary compressor slap decodes but cannot yet encode — FGK today.
+  -- 'Slap.VCDIFF.SecondaryCompression.encodableSectionCompressor' is the registry this refusal reads.
+  -- Distinct from 'MetadataFieldRejected': the flag and the name are both understood, and what is missing is slap's own encoder.
+  -- Surfaced before any IO, like the metadata and constraint rejections.
+  | XDelta3CompressorEncodingUnsupported !CompressionAlgorithm
 
   -- | The IPS create gate refused a truncation marker whose declared
   -- target size doesn't satisfy SNESTool's
@@ -1971,6 +1977,11 @@ renderSlapError (XDelta1ConvertRequiresNames sourceLabel) =
   <> ": xdelta1 patches carry a from-name and a to-name in the header,"
   <> " and " <> formatLabelName sourceLabel <> " has no equivalent fields to inherit from."
   <> "\n  pass --from-name TEXT and --to-name TEXT to supply them explicitly"
+
+renderSlapError (XDelta3CompressorEncodingUnsupported algorithm) =
+  "xdelta3: slap reads " <> compressionAlgorithmName algorithm
+  <> "-compressed patches but cannot yet write them"
+  <> "\n  available: --compress-with lzma, --compress-with djw, or --no-compress"
 
 renderSlapError (TruncationViolatesSMCShape size) =
   "--" <> constraintFlagName SMCShapeConstraint

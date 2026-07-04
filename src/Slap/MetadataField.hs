@@ -23,6 +23,7 @@ data MetadataField
   | MetadataUndoInclusion
   | MetadataVerificationInclusion
   | MetadataPatchCompression
+  | MetadataSecondaryCompressor
   | MetadataStability
   | MetadataRomType
   | MetadataImageType
@@ -46,6 +47,7 @@ metadataFieldName MetadataVersion             = "version"
 metadataFieldName MetadataUndoInclusion       = "undo data"
 metadataFieldName MetadataVerificationInclusion = "verification data"
 metadataFieldName MetadataPatchCompression    = "patch compression"
+metadataFieldName MetadataSecondaryCompressor = "secondary compressor"
 metadataFieldName MetadataStability           = "stability flag"
 metadataFieldName MetadataRomType             = "ROM type"
 metadataFieldName MetadataImageType           = "image type"
@@ -70,6 +72,7 @@ metadataFieldFlagName MetadataVersion             = "version"
 metadataFieldFlagName MetadataUndoInclusion       = "no-undo"
 metadataFieldFlagName MetadataVerificationInclusion = "no-verify"
 metadataFieldFlagName MetadataPatchCompression    = "no-compress"
+metadataFieldFlagName MetadataSecondaryCompressor = "compress-with"
 metadataFieldFlagName MetadataStability           = "unstable"
 metadataFieldFlagName MetadataRomType             = "rom-type"
 metadataFieldFlagName MetadataImageType           = "image-type"

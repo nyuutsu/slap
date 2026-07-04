@@ -31,6 +31,7 @@ import Slap.Convert (CreateFormat(..), DifferentialCreate(..),
                      FileIdDizRequest(..),
                      RequestedDialects,
                      rejectIncompatibleConstraints,
+                     rejectUnencodableSecondaryCompressor,
                      noDialectsRequested,
                      acceptedDialects,
                      rejectIncompatibleDialects,
@@ -353,6 +354,7 @@ doCreate :: CreateCommand -> IO ()
 doCreate parsedCommand = do
   createMeta    <- resolveCreateMetadata (createMetadata parsedCommand)
   orBail (rejectIncompatibleMetadata    (createFormat parsedCommand) createMeta)
+  orBail (rejectUnencodableSecondaryCompressor (createFormat parsedCommand) createMeta)
   orBail (rejectIncompatibleConstraints (createFormat parsedCommand) (createConstraints parsedCommand))
   resolvedXDelta1Names <- orBail (resolveCreateXDelta1Names parsedCommand createMeta)
   originalBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createOriginal parsedCommand)
@@ -422,6 +424,7 @@ doConvert :: ConvertCommand -> IO ()
 doConvert parsedCommand = do
   cliMeta <- resolveConvertMetadata (convertMetadataEncoding parsedCommand) (convertMetadata parsedCommand)
   orBail (rejectIncompatibleMetadata    (convertTo parsedCommand) cliMeta)
+  orBail (rejectUnencodableSecondaryCompressor (convertTo parsedCommand) cliMeta)
   orBail (rejectIncompatibleConstraints (convertTo parsedCommand) (convertConstraints parsedCommand))
   parsed <- readAndParsePatch (convertDialects parsedCommand) (convertMetadataEncoding parsedCommand) (convertPatch parsedCommand)
   orBail (rejectIncompatibleDialects

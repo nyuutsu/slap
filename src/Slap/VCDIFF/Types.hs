@@ -10,6 +10,7 @@ module Slap.VCDIFF.Types
   ( VCDIFFPatch(..)
   , XDelta3Header(..)
   , vcdiffAppHeader
+  , vcdiffDeclaredCompressor
   , RFCHeader(..)
   , CustomCodeTable(..)
   , XDelta3Window(..)
@@ -97,6 +98,11 @@ data XDelta3Header = XDelta3Header
 vcdiffAppHeader :: VCDIFFPatch -> Maybe ByteString
 vcdiffAppHeader (PatchXDelta3 header _) = xdelta3AppHeader header
 vcdiffAppHeader _                       = Nothing
+
+-- | The patch's declared secondary compressor, present only on an xdelta3 patch.
+vcdiffDeclaredCompressor :: VCDIFFPatch -> Maybe XDelta3SecondaryCompressor
+vcdiffDeclaredCompressor (PatchXDelta3 header _) = xdelta3SecondaryCompressor header
+vcdiffDeclaredCompressor _                       = Nothing
 
 -- | The RFC-only header fields: the optional custom code table (RFC 3284 §7's VCD_CODETABLE) that replaces the default table for this patch.
 -- 'Nothing' means the default table is in force.

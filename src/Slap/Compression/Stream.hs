@@ -10,6 +10,7 @@ module Slap.Compression.Stream
   , lzmaCompress
   , DjwDecoded(..)
   , djwDecompress
+  , djwCompress
   , FgkDecoded(..)
   , fgkDecompress
   , yay0Decompress
@@ -85,6 +86,12 @@ foreign import ccall unsafe "rusty_djw_decompress"
     -> Ptr (Ptr Word8) -> Ptr CSize     -- error message buffer
     -> IO CInt
 
+foreign import ccall unsafe "rusty_djw_compress"
+  rustyDjwCompress
+    :: Ptr Word8 -> CSize
+    -> Ptr (Ptr Word8) -> Ptr CSize
+    -> IO ()
+
 foreign import ccall unsafe "rusty_fgk_decompress"
   rustyFgkDecompress
     :: Ptr Word8 -> CSize
@@ -132,6 +139,23 @@ callDecompressor decompress input = unsafePerformIO $
         else
           Right <$> readByteString resultAddressPointer resultLengthPointer
 
+-- | Call a Rust compression function that allocates its own output buffer.
+-- Pure: in-memory compression has no error to surface (allocation failure aborts).
+-- No empty-input shortcut, unlike 'callDecompressor': a compressor may owe framing bytes
+-- even for empty input ('lzmaCompress' does).
+{-# INLINE callCompressor #-}
+callCompressor
+  :: ( Ptr Word8 -> CSize
+    -> Ptr (Ptr Word8) -> Ptr CSize
+    -> IO () )
+  -> ByteString -> ByteString
+callCompressor compress input = unsafePerformIO $
+  withByteString input $ \dataPointer dataLength ->
+    alloca $ \resultAddressPointer ->
+    alloca $ \resultLengthPointer -> do
+      compress dataPointer dataLength resultAddressPointer resultLengthPointer
+      readByteString resultAddressPointer resultLengthPointer
+
 ----------------------------------------------------------------------------
 -- Public API
 ----------------------------------------------------------------------------
@@ -144,15 +168,8 @@ zlibInflate = callDecompressor rustyZlibInflate
 -- The NINJA1 spec is mute on level — any zlib-deflate output round-trips
 -- through any decoder regardless — so the rusty side pins the default
 -- rather than exposing a knob no caller currently turns.
--- Pure: in-memory deflate has no error to surface (allocation failure aborts).
 zlibDeflate :: ByteString -> ByteString
-zlibDeflate input = unsafePerformIO $
-  withByteString input $ \dataPointer dataLength ->
-  alloca $ \resultAddressPointer ->
-  alloca $ \resultLengthPointer -> do
-    rustyZlibDeflate dataPointer dataLength
-                     resultAddressPointer resultLengthPointer
-    readByteString   resultAddressPointer resultLengthPointer
+zlibDeflate = callCompressor rustyZlibDeflate
 
 -- | Gzip (RFC 1952) inflate.
 gzipInflate :: ByteString -> Either DecompressionCause ByteString
@@ -162,13 +179,7 @@ gzipInflate = callDecompressor rustyGzipInflate
 -- compression level, @mtime = 0@ pinned for deterministic output).
 -- Round-trip partner of 'gzipInflate'.
 gzipDeflate :: ByteString -> ByteString
-gzipDeflate input = unsafePerformIO $
-  withByteString input $ \dataPointer dataLength ->
-  alloca $ \resultAddressPointer ->
-  alloca $ \resultLengthPointer -> do
-    rustyGzipDeflate dataPointer dataLength
-                     resultAddressPointer resultLengthPointer
-    readByteString   resultAddressPointer resultLengthPointer
+gzipDeflate = callCompressor rustyGzipDeflate
 
 -- | Bzip2 decompress.
 bzip2Decompress :: ByteString -> Either DecompressionCause ByteString
@@ -220,15 +231,8 @@ lzmaDecompress input = unsafePerformIO $
 -- raw LZMA2 chunks with no closing marker — exactly the shape 'lzmaDecompress' reads back
 -- (see @rusty-slap/src/xdelta3_lzma.rs@ for why the stream must end unfinished).
 -- Round-trip partner of 'lzmaDecompress'.
--- Pure: in-memory compression has no error to surface (allocation failure aborts).
 lzmaCompress :: ByteString -> ByteString
-lzmaCompress input = unsafePerformIO $
-  withByteString input $ \dataPointer dataLength ->
-  alloca $ \resultAddressPointer ->
-  alloca $ \resultLengthPointer -> do
-    rustyLzmaCompress dataPointer dataLength
-                      resultAddressPointer resultLengthPointer
-    readByteString    resultAddressPointer resultLengthPointer
+lzmaCompress = callCompressor rustyLzmaCompress
 
 -- | What one DJW decompression reports back across the seam:
 -- the decoded bytes, and how many input bytes the decoder consumed before its output budget filled.
@@ -273,6 +277,12 @@ djwDecompress expectedOutputLength input = unsafePerformIO $
             { djwDecodedBytes        = decodedBytes
             , djwConsumedInputLength = Length (fromIntegral consumedLength)
             }
+
+-- | DJW compression of one section: the bit stream 'djwDecompress' reads back
+-- (see @rusty-slap/src/xdelta3_djw.rs@ for the table and grouping choices).
+-- Round-trip partner of 'djwDecompress'.
+djwCompress :: ByteString -> ByteString
+djwCompress = callCompressor rustyDjwCompress
 
 -- | What one FGK kind-decode reports back across the seam:
 -- every section's decoded bytes concatenated, and how many input bytes the decoder consumed across all of them.
