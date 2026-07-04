@@ -23,7 +23,7 @@ import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFi
 import Slap.PatchFormat (PatchFormat(..), DirectFormat(..), DifferentialFormat(..))
 import Slap.Detect (detectFormat)
 import Slap.Convert (PatchContents(..), emptyContents, RequestedPatchMetadata(..),
-                     UndoInclusion(..), VerificationInclusion(..), PatchStability(..),
+                     UndoInclusion(..), VerificationInclusion(..), CompressionInclusion(..), PatchStability(..),
                      RequestedDialects(..), NINJA1Compression(..),
                      noMetadataRequested)
 import Slap.Text (EncodedText, EncodingName, encodedTextContent)
@@ -1032,6 +1032,14 @@ parseSomePatchFromXDelta1 metadataEncoding patchContents = do
         -- The bytes stay opaque, typed as 'XDelta1FromName' / 'XDelta1ToName' so the merge can't transpose them.
         { requestedXDelta1FromName = Just (XDelta1.xdelta1FromName patch)
         , requestedXDelta1ToName   = Just (XDelta1.xdelta1ToName   patch)
+        -- Verification and compression are explicit wire postures (a flag bit each),
+        -- so both states inherit, the opted-out ones included.
+        , requestedVerificationInclusion = Just $ case XDelta1.xdelta1Verification patch of
+            XDelta1.VerifyAgainstStoredMD5s _     -> IncludeVerification
+            XDelta1.CreatorOptedOutOfVerification -> OmitVerification
+        , requestedPatchCompression = Just $ case XDelta1.xdelta1PatchCompression patch of
+            XDelta1.CompressedPatch   -> IncludeCompression
+            XDelta1.UncompressedPatch -> OmitCompression
         }
     }
   where

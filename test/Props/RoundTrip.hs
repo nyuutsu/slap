@@ -311,6 +311,8 @@ roundTripTests = testGroup "RoundTrip"
       [ testProperty "round-trip"                       prop_xdelta1RoundTrips
       , testProperty "compression posture round-trips"  prop_xdelta1CompressionPostureRoundTrips
       , testProperty "create produces Verify"           prop_xdelta1CreateProducesVerifyPosture
+      , testCase     "wire postures offered for inheritance on convert"
+          xdelta1PosturesInheritOnConvert
       , testProperty "no-verify round-trips and warns"  prop_xdelta1NoVerifyRoundTrip
       , testCase     "empty target round-trips"         xdelta1EmptyTarget
       , testCase     "single-byte target round-trips"   xdelta1SingleByteTarget
@@ -2643,6 +2645,24 @@ prop_xdelta1CompressionPostureRoundTrips =
               IncludeCompression -> CompressedPatch
               OmitCompression    -> UncompressedPatch
         in XDelta1.xdelta1PatchCompression parsed === expectedPosture
+
+-- | A parsed xdelta1 patch offers its wire postures for inheritance: verification and
+-- compression are explicit flag bits, so both states carry — an opted-out, uncompressed
+-- source converts to an opted-out, uncompressed patch unless the user says otherwise.
+xdelta1PosturesInheritOnConvert :: Assertion
+xdelta1PosturesInheritOnConvert =
+  case createXDelta1 OmitVerification OmitCompression xdelta1FixtureNames
+         (InputFileContents (ByteString.replicate 64 0x11))
+         (OutputFileContents (ByteString.replicate 64 0x22)) of
+    Left createError -> assertFailureT ("create: " <> renderSlapError createError)
+    Right (CreateResult patchBytes _) ->
+      case parseSome noDialectsRequested SlapText.EncodingUtf8 patchBytes of
+        Left slapError -> assertFailureT ("parseSome: " <> renderSlapError slapError)
+        Right somePatch -> do
+          assertEqual "verification posture offered"
+            (Just OmitVerification) (requestedVerificationInclusion (patchExtractedMeta somePatch))
+          assertEqual "compression posture offered"
+            (Just OmitCompression) (requestedPatchCompression (patchExtractedMeta somePatch))
 
 prop_xdelta1CreateProducesVerifyPosture :: Property
 prop_xdelta1CreateProducesVerifyPosture =
