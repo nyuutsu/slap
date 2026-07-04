@@ -553,7 +553,7 @@ pub unsafe extern "C" fn rusty_lzma_compress(
 /// caller frees with [`rusty_free`]. Returns 0 on success (output and
 /// consumed-input-length populated; error channel empty), -1 on
 /// decoder fault (output empty, consumed 0, cause message in the
-/// error channel). Named for its future sibling `rusty_djw_compress`.
+/// error channel).
 ///
 /// # Safety
 /// - `input_address` must point to `input_length` readable bytes (or
@@ -590,6 +590,31 @@ pub unsafe extern "C" fn rusty_djw_decompress(
             -1
         }
     }
+}
+
+/// DJW compression of one section (xdelta3's static multi-table
+/// Huffman — see [`xdelta3_djw`]): the write-side partner of
+/// [`rusty_djw_decompress`]. Rust allocates the output; caller frees
+/// with [`rusty_free`]. No error channel: compression of in-memory
+/// bytes is total at the algorithm level (mirror of
+/// [`rusty_lzma_compress`]), and allocation failure aborts the process
+/// before any value reaches the caller.
+///
+/// # Safety
+/// - `input_address` must point to `input_length` readable bytes (or
+///   may be null when `input_length == 0`).
+/// - `output_address_pointer` and `output_length_pointer` must be
+///   valid, aligned, and writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rusty_djw_compress(
+    input_address:          *const u8,
+    input_length:           usize,
+    output_address_pointer: *mut *mut u8,
+    output_length_pointer:  *mut usize,
+) {
+    let input = unsafe { view_caller_buffer(input_address, input_length) };
+    let compressed = xdelta3_djw::djw_compress(input);
+    unsafe { surface_buffer_to_caller(compressed, output_address_pointer, output_length_pointer) };
 }
 
 /// FGK decompression of one kind's gathered secondary-compressed

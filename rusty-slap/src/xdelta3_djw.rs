@@ -1,11 +1,12 @@
-//! DJW secondary decompression: xdelta3's own static multi-table
-//! Huffman coder (catalog id 1), defined nowhere but its source —
-//! `xdelta3-djw.h`, whose header credits the techniques at work:
-//! bzip2's multi-table strategy (Seward), RFC 1951's code-length
+//! DJW secondary compression and decompression: xdelta3's own static
+//! multi-table Huffman coder (catalog id 1), defined nowhere but its
+//! source — `xdelta3-djw.h`, whose header credits the techniques at
+//! work: bzip2's multi-table strategy (Seward), RFC 1951's code-length
 //! coding (Gailly/Adler/Deutsch), Hirschberg–LeLewer prefix decoding,
 //! and Wheeler's 1-2 run coding. That source is the specification;
-//! the only hard requirement here is that decoded output match
-//! xdelta3's byte for byte.
+//! the decode half owes output matching xdelta3's byte for byte, and
+//! the encode half owes streams that decode — its table and grouping
+//! choices are its own.
 //!
 //! Unlike LZMA, DJW is fresh per section: xd3's per-section driver
 //! (`xd3_decode_secondary`) holds every section to its own consume-all
@@ -13,8 +14,8 @@
 //! `struct _djw_stream { int unused; }`, and `xd3_decode_huff`
 //! initializes a fresh bit reader on every call. Each section is
 //! self-contained — its own table headers, its own bit stream, decoded
-//! to exactly its declared size — so this module decodes one section
-//! per call and carries nothing between calls.
+//! to exactly its declared size — so this module encodes or decodes
+//! one section per call and carries nothing between calls.
 //!
 //! The wire, as the decoder walks it: a group count (and a sector
 //! size, when there is more than one group); a code-length-code table,
@@ -68,6 +69,16 @@ const SECTOR_SIZE_MULTIPLIER: usize = 5;
 /// Each group-selector code length is a 3-bit field, ceiling 7.
 /// (`DJW_GBCLEN_BITS`, `DJW_MAX_GBCLEN`)
 const SELECTOR_CODE_LENGTH_BITS: usize = 3;
+
+/// The ceilings those field widths impose, named for the encoder's
+/// table design: the largest group count the 3-bit field can carry
+/// (`DJW_MAX_GROUPS`), and the deepest code the 4-bit and 3-bit
+/// length fields can spell (`DJW_MAX_CLCLEN`, `DJW_MAX_GBCLEN`).
+/// The decoder needs no names for them — the widths bound what it
+/// can read.
+const MAX_GROUP_COUNT: usize = 1 << GROUP_COUNT_BITS;
+const MAX_CODE_LENGTH_CODE_LENGTH: usize = (1 << CODE_LENGTH_CODE_LENGTH_BITS) - 1;
+const MAX_SELECTOR_CODE_LENGTH: usize = (1 << SELECTOR_CODE_LENGTH_BITS) - 1;
 
 /// The two run codes of Wheeler's 1-2 coding, always the first two
 /// symbols of a run-coded alphabet. (`RUN_0`, `RUN_1`)
@@ -580,49 +591,551 @@ fn decode_sector_selectors(
     decode_run_coded_values(reader, &selector_decoder, &mut selector_queue, sector_count, 0)
 }
 
-// ── Tests ──────────────────────────────────────────────────────────────
+// ── Bit writing ──────────────────────────────────────────────────────
+
+/// The write-side mirror of `BitReader` (`xd3_encode_bits`): bits land
+/// LSB-first within each byte, multi-bit values and prefix codes most
+/// significant bit first. `finish` pushes the final partial byte, its
+/// unused high bits zero — the decoder never reads them, its output
+/// budget filling first.
+struct BitWriter {
+    bytes: Vec<u8>,
+    current_byte: u8,
+    current_mask: u8,
+}
+
+impl BitWriter {
+    fn new() -> BitWriter {
+        BitWriter { bytes: Vec::new(), current_byte: 0, current_mask: 0x01 }
+    }
+
+    fn write_bit(&mut self, bit: bool) {
+        if bit {
+            self.current_byte |= self.current_mask;
+        }
+        if self.current_mask == 0x80 {
+            self.bytes.push(self.current_byte);
+            self.current_byte = 0;
+            self.current_mask = 0x01;
+        } else {
+            self.current_mask <<= 1;
+        }
+    }
+
+    /// Write a fixed-width value, most significant bit first.
+    fn write_value(&mut self, bit_count: usize, value: usize) {
+        for position in (0..bit_count).rev() {
+            self.write_bit(value >> position & 1 != 0);
+        }
+    }
+
+    /// Write one symbol's canonical code, most significant bit first —
+    /// the order `decode_symbol` grows its code in.
+    fn write_prefix_code(&mut self, code: PrefixCode) {
+        for position in (0..code.bit_length).rev() {
+            self.write_bit(code.bits >> position & 1 != 0);
+        }
+    }
+
+    fn finish(mut self) -> Vec<u8> {
+        if self.current_mask != 0x01 {
+            self.bytes.push(self.current_byte);
+        }
+        self.bytes
+    }
+}
+
+// ── Canonical code assignment (the encode half) ──────────────────────
+
+/// One symbol's canonical prefix code: the code value in the low
+/// `bit_length` bits of `bits`.
+#[derive(Copy, Clone)]
+struct PrefixCode {
+    bits: u32,
+    bit_length: u8,
+}
+
+/// Assign canonical codes from one code length per symbol (zero =
+/// symbol not coded): the inverse of
+/// `CanonicalPrefixDecoder::from_code_lengths`, advancing the same
+/// doubled code-space floor per length with symbols ascending within
+/// one, so every assigned code decodes to the symbol it was assigned
+/// to. Slot `s` of the result is `None` where `code_lengths[s]` is
+/// zero.
+fn assign_canonical_codes(code_lengths: &[u8]) -> Vec<Option<PrefixCode>> {
+    let mut count_at_length = [0u32; MAX_CODE_LENGTH + 1];
+    for &length in code_lengths {
+        count_at_length[length as usize] += 1;
+    }
+    count_at_length[0] = 0;
+
+    let mut next_code_at_length = [0u32; MAX_CODE_LENGTH + 1];
+    let mut code_space_floor = 0u32;
+    for length in 1..=MAX_CODE_LENGTH {
+        code_space_floor = (code_space_floor + count_at_length[length - 1]) << 1;
+        next_code_at_length[length] = code_space_floor;
+    }
+
+    code_lengths
+        .iter()
+        .map(|&length| {
+            if length == 0 {
+                return None;
+            }
+            let assigned = next_code_at_length[length as usize];
+            next_code_at_length[length as usize] += 1;
+            Some(PrefixCode { bits: assigned, bit_length: length })
+        })
+        .collect()
+}
+
+// ── Length-limited code lengths (package-merge) ──────────────────────
+
+/// Optimal code lengths under a maximum length, by package-merge:
+/// starting from the leaves sorted by weight, each of the remaining
+/// `length_limit - 1` rounds pairs the previous round's items into
+/// packages and merges the leaves back in; the cheapest `2n - 2` items
+/// of the last round are the solution, and a symbol's code length is
+/// how many of them its leaf appears in. Zero-frequency symbols get no
+/// code; a single coded symbol gets the one-bit code directly, the
+/// `2n - 2 = 0` case the round structure cannot express.
+fn length_limited_code_lengths(frequencies: &[u64], length_limit: usize) -> Vec<u8> {
+    let mut lengths = vec![0u8; frequencies.len()];
+    let mut leaves: Vec<Package> = frequencies
+        .iter()
+        .enumerate()
+        .filter(|&(_, &frequency)| frequency > 0)
+        .map(|(symbol, &frequency)| Package { weight: frequency, leaves: vec![symbol as u16] })
+        .collect();
+    match leaves.len() {
+        0 => return lengths,
+        1 => {
+            lengths[leaves[0].leaves[0] as usize] = 1;
+            return lengths;
+        }
+        coded_symbol_count => debug_assert!(
+            coded_symbol_count <= 1 << length_limit,
+            "{coded_symbol_count} symbols cannot fit codes of at most {length_limit} bits"
+        ),
+    }
+    leaves.sort_by_key(|package| package.weight);
+
+    let mut round = leaves.clone();
+    for _ in 1..length_limit {
+        let paired = round
+            .chunks_exact(2)
+            .map(|pair| Package {
+                weight: pair[0].weight + pair[1].weight,
+                leaves: [pair[0].leaves.as_slice(), pair[1].leaves.as_slice()].concat(),
+            })
+            .collect::<Vec<Package>>();
+        round = merge_by_weight(leaves.clone(), paired);
+    }
+
+    for package in round.iter().take(2 * leaves.len() - 2) {
+        for &leaf in &package.leaves {
+            lengths[leaf as usize] += 1;
+        }
+    }
+    lengths
+}
+
+/// A package-merge item: its weight, and the leaf symbols inside it,
+/// multiplicity and all.
+#[derive(Clone)]
+struct Package {
+    weight: u64,
+    leaves: Vec<u16>,
+}
+
+/// Merge two weight-sorted package lists, keeping the sort.
+fn merge_by_weight(left: Vec<Package>, right: Vec<Package>) -> Vec<Package> {
+    let mut merged = Vec::with_capacity(left.len() + right.len());
+    let mut left_items = left.into_iter().peekable();
+    let mut right_items = right.into_iter().peekable();
+    loop {
+        let left_is_lighter = match (left_items.peek(), right_items.peek()) {
+            (Some(from_left), Some(from_right)) => from_left.weight <= from_right.weight,
+            (Some(_), None) => true,
+            (None, Some(_)) => false,
+            (None, None) => return merged,
+        };
+        let next = if left_is_lighter { left_items.next() } else { right_items.next() };
+        merged.push(next.expect("the peeked side has an item"));
+    }
+}
+
+// ── Move-to-front + 1-2 run encoding ─────────────────────────────────
+
+impl MoveToFrontQueue {
+    /// Where a value currently sits in the recency order: the index
+    /// the decoder will pull. The tiny queue makes the scan the whole
+    /// cost.
+    fn recency_index_of(&self, value: u8) -> usize {
+        self.recency_order
+            .iter()
+            .position(|&held| held == value)
+            .expect("every encodable value is in its queue")
+    }
+}
+
+/// Run-code one value sequence into wire symbols: a maximal run of the
+/// queue's front value becomes its 1-2 digits (least significant
+/// first, RUN_0 carrying 1 and RUN_1 carrying 2 at each binary
+/// position), any other value the pull of its recency index. The
+/// inverse of `decode_run_coded_values`, with the zero-skip already
+/// applied by the caller: these are wire slots only.
+fn run_code_values(values: &[u8], queue: &mut MoveToFrontQueue) -> Vec<u8> {
+    let mut wire_symbols = Vec::new();
+    let mut position = 0;
+    while position < values.len() {
+        if values[position] == queue.front() {
+            let run_start = position;
+            while position < values.len() && values[position] == queue.front() {
+                position += 1;
+            }
+            let mut remaining = position - run_start;
+            while remaining > 0 {
+                // remaining = digit + 2·rest with digit in {1, 2}:
+                // bijective base 2, the unique digit string
+                // `decode_run_coded_values` resums.
+                let digit = 2 - (remaining & 1);
+                wire_symbols.push((digit - 1) as u8);
+                remaining = (remaining - digit) / 2;
+            }
+        } else {
+            let recency_index = queue.recency_index_of(values[position]);
+            wire_symbols.push((recency_index + 1) as u8);
+            queue
+                .pull_to_front(recency_index)
+                .expect("the scanned index is within the queue");
+            position += 1;
+        }
+    }
+    wire_symbols
+}
+
+/// Tally one run-coded sequence's wire symbols, the frequencies its
+/// prefix table is designed from.
+fn wire_symbol_frequencies(wire_symbols: &[u8], alphabet_size: usize) -> Vec<u64> {
+    let mut frequencies = vec![0u64; alphabet_size];
+    for &symbol in wire_symbols {
+        frequencies[symbol as usize] += 1;
+    }
+    frequencies
+}
+
+/// Emit one run-coded sequence under its assigned codes.
+fn write_wire_symbols(
+    writer: &mut BitWriter,
+    codes: &[Option<PrefixCode>],
+    wire_symbols: &[u8],
+) {
+    for &symbol in wire_symbols {
+        let code = codes[symbol as usize].expect("every emitted wire symbol was given a code");
+        writer.write_prefix_code(code);
+    }
+}
+
+// ── The section encode ───────────────────────────────────────────────
+
+/// slap's sector size. Any multiple of 5 in [5, 160] is legal wire;
+/// 20 balances the per-sector selector cost against how locally the
+/// tables can specialize. xd3 keys its choice on section kind and
+/// size; ours is one number until measurement says otherwise.
+const SECTOR_SIZE: usize = 20;
+
+/// Below this many sectors the table overhead outweighs anything the
+/// clustering could specialize, so the multi-table candidate is not
+/// built at all.
+const FEWEST_SECTORS_WORTH_CLUSTERING: usize = 32;
+
+/// One candidate group per this many sectors — half the clustering
+/// gate, so the smallest clustered section starts at the two-group
+/// floor.
+const SECTORS_PER_CANDIDATE_GROUP: usize = FEWEST_SECTORS_WORTH_CLUSTERING / 2;
+
+/// The refinement's round cap, xd3's own (`DJW_MAX_ITER`); the loop
+/// usually settles earlier, the moment an assignment repeats.
+const MAX_CLUSTERING_ROUNDS: usize = 6;
+
+/// One emission plan: each group's 256 code lengths (zero = symbol
+/// absent) and which group codes each sector. Every group carries the
+/// same zero set — the code-length transmission's skip rule makes
+/// that a wire obligation, not a preference ('write_group_code_lengths').
+struct EmissionPlan {
+    sector_size: usize,
+    sector_groups: Vec<u8>,
+    group_code_lengths: Vec<Vec<u8>>,
+}
+
+/// Compress one section into a DJW bit stream. Total, and the inverse
+/// of `djw_decompress`: any non-empty input yields a stream that
+/// decodes back byte-identically, consuming the whole stream. Two
+/// candidates are built — one table for the whole section, and where
+/// the section is big enough, sectors clustered over several — and the
+/// smaller emission wins. The caller holds the winner against the
+/// plain bytes; an empty input comes back as an empty stream, though
+/// no caller compresses one.
+pub fn djw_compress(plain_section: &[u8]) -> Vec<u8> {
+    if plain_section.is_empty() {
+        return Vec::new();
+    }
+    let single_table_emission = emit_plan(plain_section, &single_table_plan(plain_section));
+    match clustered_plan(plain_section) {
+        None => single_table_emission,
+        Some(plan) => {
+            let clustered_emission = emit_plan(plain_section, &plan);
+            if clustered_emission.len() < single_table_emission.len() {
+                clustered_emission
+            } else {
+                single_table_emission
+            }
+        }
+    }
+}
+
+fn byte_frequencies(bytes: &[u8]) -> Vec<u64> {
+    let mut frequencies = vec![0u64; ALPHABET_SIZE];
+    for &byte in bytes {
+        frequencies[byte as usize] += 1;
+    }
+    frequencies
+}
+
+/// Code lengths for one wire table: package-merge under the table's
+/// length limit, with xd3's lone-symbol convention mirrored — a table
+/// that would code exactly one symbol gets a phantom second at
+/// frequency 1 (symbol 0, or the top symbol when 0 is the real one),
+/// so no wire table ever holds a lone code (`djw_build_prefix` does
+/// the same faking).
+fn code_lengths_for_table(frequencies: &[u64], length_limit: usize) -> Vec<u8> {
+    let coded_symbol_count = frequencies.iter().filter(|&&frequency| frequency > 0).count();
+    if coded_symbol_count != 1 {
+        return length_limited_code_lengths(frequencies, length_limit);
+    }
+    let mut faked_frequencies = frequencies.to_vec();
+    let phantom_symbol = if frequencies[0] > 0 { frequencies.len() - 1 } else { 0 };
+    faked_frequencies[phantom_symbol] = 1;
+    length_limited_code_lengths(&faked_frequencies, length_limit)
+}
+
+/// The one-table plan: the whole output is a single sector under a
+/// table designed from the section's own byte frequencies.
+fn single_table_plan(plain_section: &[u8]) -> EmissionPlan {
+    EmissionPlan {
+        sector_size: plain_section.len(),
+        sector_groups: vec![0],
+        group_code_lengths: vec![code_lengths_for_table(
+            &byte_frequencies(plain_section),
+            MAX_CODE_LENGTH,
+        )],
+    }
+}
+
+/// The multi-table plan: sectors clustered onto up to eight tables by
+/// iterative refinement. Groups seed on equal runs of consecutive
+/// sectors; each round reassigns every sector to the group whose
+/// table codes it cheapest and redesigns each group's table from its
+/// sectors, until the assignment repeats or the round cap. Groups no
+/// sector chose are dropped and the rest renumbered. `None` when the
+/// section has too few sectors to specialize over, or when the
+/// refinement settles on one group anyway — the single-table plan
+/// already is that emission.
+fn clustered_plan(plain_section: &[u8]) -> Option<EmissionPlan> {
+    let sectors: Vec<&[u8]> = plain_section.chunks(SECTOR_SIZE).collect();
+    if sectors.len() < FEWEST_SECTORS_WORTH_CLUSTERING {
+        return None;
+    }
+    let group_count = (sectors.len() / SECTORS_PER_CANDIDATE_GROUP).clamp(2, MAX_GROUP_COUNT);
+    let global_frequencies = byte_frequencies(plain_section);
+
+    let mut sector_groups: Vec<u8> = (0..sectors.len())
+        .map(|sector_index| (sector_index * group_count / sectors.len()) as u8)
+        .collect();
+    let mut group_tables =
+        design_group_tables(&sectors, &sector_groups, group_count, &global_frequencies);
+    for _ in 0..MAX_CLUSTERING_ROUNDS {
+        let reassigned: Vec<u8> = sectors
+            .iter()
+            .map(|sector| cheapest_group(sector, &group_tables))
+            .collect();
+        if reassigned == sector_groups {
+            break;
+        }
+        sector_groups = reassigned;
+        group_tables =
+            design_group_tables(&sectors, &sector_groups, group_count, &global_frequencies);
+    }
+
+    // Drop the groups no sector chose, renumbering the survivors in
+    // their original order: group numbers stay dense, which is all the
+    // wire asks of them.
+    let mut renumbering: Vec<Option<u8>> = vec![None; group_count];
+    let mut surviving_tables: Vec<Vec<u8>> = Vec::new();
+    for group in 0..group_count {
+        if sector_groups.iter().any(|&chosen| chosen as usize == group) {
+            renumbering[group] = Some(surviving_tables.len() as u8);
+            surviving_tables.push(group_tables[group].clone());
+        }
+    }
+    if surviving_tables.len() < 2 {
+        return None;
+    }
+    for chosen in sector_groups.iter_mut() {
+        *chosen = renumbering[*chosen as usize].expect("a chosen group survives the drop");
+    }
+    Some(EmissionPlan {
+        sector_size: SECTOR_SIZE,
+        sector_groups,
+        group_code_lengths: surviving_tables,
+    })
+}
+
+/// Design each group's table from the sectors currently assigned to it.
+/// A symbol the group's own sectors never use, but the section does,
+/// rides at frequency one — xd3's own concession (`evolve_freq`) —
+/// keeping the zero set identical across groups, the wire obligation
+/// `EmissionPlan` records.
+fn design_group_tables(
+    sectors: &[&[u8]],
+    sector_groups: &[u8],
+    group_count: usize,
+    global_frequencies: &[u64],
+) -> Vec<Vec<u8>> {
+    let mut per_group_frequencies = vec![vec![0u64; ALPHABET_SIZE]; group_count];
+    for (sector, &group) in sectors.iter().zip(sector_groups) {
+        for &byte in *sector {
+            per_group_frequencies[group as usize][byte as usize] += 1;
+        }
+    }
+    per_group_frequencies
+        .iter_mut()
+        .map(|frequencies| {
+            for (symbol, frequency) in frequencies.iter_mut().enumerate() {
+                if *frequency == 0 && global_frequencies[symbol] > 0 {
+                    *frequency = 1;
+                }
+            }
+            code_lengths_for_table(frequencies, MAX_CODE_LENGTH)
+        })
+        .collect()
+}
+
+/// The group whose current table codes a sector in the fewest bits,
+/// ties to the lower group number.
+fn cheapest_group(sector: &[u8], group_tables: &[Vec<u8>]) -> u8 {
+    let cost_under = |table: &Vec<u8>| -> u64 {
+        sector.iter().map(|&byte| table[byte as usize] as u64).sum()
+    };
+    group_tables
+        .iter()
+        .enumerate()
+        .min_by_key(|&(group, table)| (cost_under(table), group))
+        .map(|(group, _table)| group as u8)
+        .expect("a plan holds at least one group")
+}
+
+/// Serialize one plan to the wire, in the decoder's reading order: the
+/// group count; the sector size and, later, the selector sequence when
+/// there is more than one group; the groups' code-length transmission;
+/// then every sector's bytes as prefix codes under its group's table.
+fn emit_plan(plain_section: &[u8], plan: &EmissionPlan) -> Vec<u8> {
+    let group_count = plan.group_code_lengths.len();
+    let mut writer = BitWriter::new();
+
+    writer.write_value(GROUP_COUNT_BITS, group_count - 1);
+    if group_count > 1 {
+        writer.write_value(SECTOR_SIZE_BITS, plan.sector_size / SECTOR_SIZE_MULTIPLIER - 1);
+    }
+    write_group_code_lengths(&mut writer, &plan.group_code_lengths);
+    if group_count > 1 {
+        write_sector_selectors(&mut writer, group_count, &plan.sector_groups);
+    }
+
+    let group_codes: Vec<Vec<Option<PrefixCode>>> = plan
+        .group_code_lengths
+        .iter()
+        .map(|code_lengths| assign_canonical_codes(code_lengths))
+        .collect();
+    for (sector, &group) in plain_section.chunks(plan.sector_size).zip(&plan.sector_groups) {
+        let codes = &group_codes[group as usize];
+        for &byte in sector {
+            writer.write_prefix_code(
+                codes[byte as usize].expect("every section byte is coded in every group"),
+            );
+        }
+    }
+    writer.finish()
+}
+
+/// The groups' code lengths as one run-coded sequence — group 0 whole,
+/// each later group only at the symbols the previous group coded, the
+/// decoder reconstructing the skipped zeros by its own rule — behind
+/// the 22-symbol code-length code, itself transmitted as a
+/// trailing-zero-trimmed row of 4-bit lengths after a 4-bit count of
+/// how many past the always-transmitted seven follow.
+fn write_group_code_lengths(writer: &mut BitWriter, group_code_lengths: &[Vec<u8>]) {
+    let mut wire_values: Vec<u8> = Vec::new();
+    for (group_index, code_lengths) in group_code_lengths.iter().enumerate() {
+        for (symbol, &length) in code_lengths.iter().enumerate() {
+            let skipped = group_index > 0 && group_code_lengths[group_index - 1][symbol] == 0;
+            if !skipped {
+                wire_values.push(length);
+            }
+        }
+    }
+    let mut queue = MoveToFrontQueue::of_code_lengths();
+    let wire_symbols = run_code_values(&wire_values, &mut queue);
+    let frequencies = wire_symbol_frequencies(&wire_symbols, CODE_LENGTH_CODE_ALPHABET_SIZE);
+    let code_length_code_lengths =
+        code_lengths_for_table(&frequencies, MAX_CODE_LENGTH_CODE_LENGTH);
+
+    let mut transmitted_count = CODE_LENGTH_CODE_ALPHABET_SIZE;
+    while transmitted_count > ALWAYS_CODED_CODE_LENGTH_CODES
+        && code_length_code_lengths[transmitted_count - 1] == 0
+    {
+        transmitted_count -= 1;
+    }
+    writer.write_value(
+        EXTRA_CODE_COUNT_BITS,
+        transmitted_count - ALWAYS_CODED_CODE_LENGTH_CODES,
+    );
+    for &length in &code_length_code_lengths[..transmitted_count] {
+        writer.write_value(CODE_LENGTH_CODE_LENGTH_BITS, length as usize);
+    }
+    write_wire_symbols(
+        writer,
+        &assign_canonical_codes(&code_length_code_lengths),
+        &wire_symbols,
+    );
+}
+
+/// The per-sector group numbers, run-coded like the tables but over
+/// the identity queue, behind a raw untrimmed row of 3-bit code
+/// lengths — one per selector-alphabet symbol.
+fn write_sector_selectors(writer: &mut BitWriter, group_count: usize, sector_groups: &[u8]) {
+    let selector_alphabet_size = group_count + 1;
+    let mut queue = MoveToFrontQueue::of_group_numbers(selector_alphabet_size);
+    let wire_symbols = run_code_values(sector_groups, &mut queue);
+    let frequencies = wire_symbol_frequencies(&wire_symbols, selector_alphabet_size);
+    let selector_code_lengths =
+        code_lengths_for_table(&frequencies, MAX_SELECTOR_CODE_LENGTH);
+    for &length in &selector_code_lengths {
+        writer.write_value(SELECTOR_CODE_LENGTH_BITS, length as usize);
+    }
+    write_wire_symbols(
+        writer,
+        &assign_canonical_codes(&selector_code_lengths),
+        &wire_symbols,
+    );
+}
+
+// ── Tests ────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Write bits in the encoder's convention (test-side mirror of
-    /// `xd3_encode_bits`): bits land LSB-first within each byte,
-    /// multi-bit values most significant bit first.
-    struct BitWriter {
-        bytes: Vec<u8>,
-        current_byte: u8,
-        current_mask: u8,
-    }
-
-    impl BitWriter {
-        fn new() -> Self {
-            BitWriter { bytes: Vec::new(), current_byte: 0, current_mask: 1 }
-        }
-        fn write_bit(&mut self, bit: bool) {
-            if bit {
-                self.current_byte |= self.current_mask;
-            }
-            if self.current_mask == 0x80 {
-                self.bytes.push(self.current_byte);
-                self.current_byte = 0;
-                self.current_mask = 1;
-            } else {
-                self.current_mask <<= 1;
-            }
-        }
-        fn write_value(&mut self, bit_count: usize, value: usize) {
-            for position in (0..bit_count).rev() {
-                self.write_bit(value >> position & 1 != 0);
-            }
-        }
-        fn finish(mut self) -> Vec<u8> {
-            if self.current_mask != 1 {
-                self.bytes.push(self.current_byte);
-            }
-            self.bytes
-        }
-    }
 
     // Both fixture pairs are unmodified xdelta3 output, produced by
     // the in-tree source (tools/xdelta, built standalone) via the
@@ -1073,4 +1586,109 @@ mod tests {
     // indices stay within them. The verdict exists as the typed landing
     // for xd3's assertion (XD3_ASSERT (gp < groups)), should the
     // structural argument ever be wrong.
+
+    // ── Encoder round-trips ──────────────────────────────────────────
+
+    /// SplitMix64, matching the house pseudo-random helper in the
+    /// sibling modules.
+    fn pseudo_random_bytes(seed: u64, length: usize) -> Vec<u8> {
+        let mut state = seed;
+        (0..length)
+            .map(|_| {
+                state = state.wrapping_add(0x9e3779b97f4a7c15);
+                let mut mixed = state;
+                mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+                mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94d049bb133111eb);
+                mixed ^= mixed >> 31;
+                mixed as u8
+            })
+            .collect()
+    }
+
+    /// The encoder's whole contract at once: the stream decodes back
+    /// to the input, and the decode consumes every stream byte — the
+    /// consume-all framing check both slap and xd3 hold sections to.
+    fn assert_round_trips(plain: &[u8]) {
+        let stream = djw_compress(plain);
+        let outcome = djw_decompress(&stream, plain.len()).expect("the emitted stream decodes");
+        assert_eq!(outcome.decoded_bytes, plain, "decode differs from the encoded input");
+        assert_eq!(
+            outcome.consumed_input_length,
+            stream.len(),
+            "the decode must consume the whole stream"
+        );
+    }
+
+    #[test]
+    fn encoded_fixture_material_round_trips_and_shrinks() {
+        for plain in [XD3_SINGLE_GROUP_PLAIN.as_slice(), XD3_MULTI_GROUP_PLAIN.as_slice()] {
+            assert_round_trips(plain);
+            assert!(
+                djw_compress(plain).len() < plain.len(),
+                "compressible material must shrink"
+            );
+        }
+    }
+
+    /// Uniform input exercises the lone-symbol phantom in both its
+    /// arms: a nonzero byte puts the phantom at symbol 0, byte zero
+    /// puts it at symbol 255.
+    #[test]
+    fn uniform_input_round_trips_through_the_phantom_code() {
+        assert_round_trips(&[0x41; 1000]);
+        assert_round_trips(&[0x00; 37]);
+        assert!(djw_compress(&[0x41; 1000]).len() < 250, "one bit per byte plus tables");
+    }
+
+    #[test]
+    fn tiny_inputs_round_trip() {
+        assert_round_trips(&[0x7F]);
+        for length in 1..=12 {
+            assert_round_trips(&pseudo_random_bytes(0xd1ce + length as u64, length));
+        }
+    }
+
+    #[test]
+    fn full_alphabet_round_trips() {
+        let plain: Vec<u8> = (0..=255u8).cycle().take(2048).collect();
+        assert_round_trips(&plain);
+    }
+
+    #[test]
+    fn random_low_alphabet_inputs_round_trip() {
+        let cases: &[(u64, usize, u8)] =
+            &[(0x01, 50, 3), (0x02, 700, 5), (0x03, 4096, 2), (0x04, 20000, 16)];
+        for &(seed, length, alphabet) in cases {
+            let plain: Vec<u8> = pseudo_random_bytes(seed, length)
+                .into_iter()
+                .map(|byte| byte % alphabet)
+                .collect();
+            assert_round_trips(&plain);
+        }
+    }
+
+    /// A section stitched from two statistically different kinds of
+    /// stretch, alternating — the shape the clustering exists for. The
+    /// multi-table plan must round-trip on its own, not only when the
+    /// size gate happens to choose it.
+    #[test]
+    fn clustered_emission_round_trips() {
+        let mut plain = Vec::new();
+        for stretch in 0..64u64 {
+            let bytes = pseudo_random_bytes(stretch, 160).into_iter();
+            if stretch % 2 == 0 {
+                plain.extend(bytes.map(|byte| byte % 4));
+            } else {
+                plain.extend(bytes.map(|byte| 0xF0 | (byte % 8)));
+            }
+        }
+        let plan = clustered_plan(&plain).expect("heterogeneous stretches cluster");
+        assert!(plan.group_code_lengths.len() > 1, "the refinement must keep several tables");
+        let stream = emit_plan(&plain, &plan);
+        let outcome =
+            djw_decompress(&stream, plain.len()).expect("the multi-table stream decodes");
+        assert_eq!(outcome.decoded_bytes, plain);
+        assert_eq!(outcome.consumed_input_length, stream.len());
+        assert_round_trips(&plain);
+    }
 }
