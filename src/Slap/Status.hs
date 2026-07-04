@@ -1700,9 +1700,7 @@ renderSlapError (XDelta1NonBooleanSourceFlag flag byteValue) =
 renderSlapError (UnsupportedVCDIFFShape violation) =
   formatLabelName LabelVCDIFF <> ": " <> case violation of
     VCDIFFNestedCustomCodeTable ->
-      "nested custom code tables are not allowed (RFC 3284 §4.1)"
-    VCDIFFNegativeWindowTargetSize rawValue ->
-      "negative window target size (decoded as " <> renderAsText rawValue <> ")"
+      "nested custom code tables are not allowed (RFC 3284 §7c)"
 
 renderSlapError (VCDIFFCustomCodeTableDecodeFailed innerError) =
   -- No format-label prefix of its own: the inner error already carries
@@ -1759,6 +1757,10 @@ renderSlapError (MalformedVCDIFF malformation) =
       "window declares a delta-encoding length of "
       <> renderAsText (unFileSize declared) <> " bytes but its fields span "
       <> renderAsText (unFileSize measured)
+    VCDIFFSectionUnconsumedBytes section (Length leftover) ->
+      "window's instructions finished with " <> renderAsText leftover
+      <> plural leftover " byte" " bytes"
+      <> " of its " <> vcdiffSectionName section <> " section unconsumed"
     VCDIFFCompressedSectionWithoutDeclaredSize section ->
       "a compressed " <> vcdiffSectionName section
       <> " section has no readable decompressed-size varint"
@@ -2495,22 +2497,11 @@ data XDelta1SourceFlag
   | XDelta1SourceOffsetModeFlag  -- ^ the @sequential@ byte
   deriving (Show, Eq)
 
--- | The off-spec wire shapes a VCDIFF (RFC 3284) parser refuses. The
--- byte-parser produces raw windows without enforcing these rules;
--- 'Slap.VCDIFF.Parse.parseVCDIFFWith' validates each one against
--- this sum after the wire-level walk and lifts the failure into
--- 'UnsupportedVCDIFFShape'.
+-- | The one off-spec wire shape 'UnsupportedVCDIFFShape' carries: a custom code table's inner delta declaring a custom table of its own.
+-- RFC 3284 §7c requires the inner delta to use the default table; 'Slap.VCDIFF.Parse' decodes it with custom tables forbidden,
+-- so the refusal points at the header's table declaration, not the inner body.
 data VCDIFFShapeViolation
-  -- | The patch had its @VCD_CODETABLE@ header flag set inside a
-  -- payload that was itself a custom code table delta. RFC 3284
-  -- §4.1 forbids nesting; the inner-delta parse is invoked with
-  -- @allowCustom = False@ and rejects anything that tries.
   = VCDIFFNestedCustomCodeTable
-  -- | A window's target-size varint decoded as a negative
-  -- 'Int64'. VCDIFF varints are signed but every spec-allowed
-  -- value is non-negative; the field carries the offending raw
-  -- value verbatim.
-  | VCDIFFNegativeWindowTargetSize !Int64
   deriving (Eq, Show)
 
 -- | The structural failures slap raises when decoding a VCDIFF
@@ -2593,6 +2584,7 @@ data VCDIFFXDelta3Feature
 -- These are the loud refusals the core invariants demand (docs/vcdiff/core/spec.md "Core invariants"):
 -- a window naming both copy sources at once, a COPY that reads unwritten output or crosses the source-segment boundary,
 -- a window that does not fill to its declared size, an oversize section reference, an address mode the table cannot name;
+-- the self-consistency refusals, where a window's own declarations disagree with its contents (the delta-encoding length, section bytes never consumed);
 -- plus the secondary-compression framing contradictions (docs/vcdiff/xdelta3/questions.md "Secondary compression — the framing"):
 -- a compressed section whose own declarations cannot be honored, or a gathered stream whose decode disagrees with what its sections declared.
 -- Every arm is a claim slap understands and finds invalid;
@@ -2625,6 +2617,11 @@ data VCDIFFMalformation
   -- A self-consistency check the core ruling demands, not a boundary slap navigates by: a mismatch catches corruption (docs/vcdiff/core/questions.md, "delta-encoding-length").
   -- The 'ExpectedSize' is the wire declaration; the 'ActualSize' is the span the framer measured.
   | VCDIFFDeltaEncodingLengthMismatch !ExpectedSize !ActualSize
+  -- | A window's instructions finished with bytes still unconsumed in its data or address section: the named 'Length' of them.
+  -- The decode is complete and the output correct; what fails is self-consistency — the window declared section lengths its own instructions contradict —
+  -- the sibling of 'VCDIFFDeltaEncodingLengthMismatch' (docs/vcdiff/core/questions.md, "leftover bytes").
+  -- The instruction section cannot be named here: it drives the walk, which ends exactly when it is spent.
+  | VCDIFFSectionUnconsumedBytes !VCDIFFSection !Length
   -- | A section flagged secondary-compressed whose bytes cannot
   -- supply the decompressed-size varint every compressed section
   -- begins with — the zero-length section is the canonical case

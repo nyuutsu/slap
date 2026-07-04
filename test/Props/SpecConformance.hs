@@ -27,7 +27,7 @@ import Slap.Checksum (CRC32(..), Adler32(..))
 import Slap.Status (SlapError(..), SlapAdvisory(..), ApplyError(..), CursorKind(..), Parsed(..), Outcome(..),
                    ClippedRecordCount(..), MarkerOvershootBytes(..), renderSlapError,
                    renderByteParserError, VCDIFFMalformation(..), VCDIFFIndicatorKind(..),
-                   VCDIFFCodeTableMalformation(..), VCDIFFCodeTableField(..))
+                   VCDIFFSection(..), VCDIFFCodeTableMalformation(..), VCDIFFCodeTableField(..))
 import Slap.FFI (crc32, adler32)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -210,6 +210,10 @@ specConformanceTests = testGroup "SpecConformance"
               test_vcdiffSourceSegmentExceedsSource
           , testCase "lying-delta-encoding-length-rejected"
               test_vcdiffEncodingLengthMismatch
+          , testCase "unconsumed-data-section-bytes-rejected"
+              test_vcdiffDataSectionUnconsumedBytes
+          , testCase "unconsumed-address-section-bytes-rejected"
+              test_vcdiffAddressSectionUnconsumedBytes
           ]
       , testGroup "address-cache"
           [ testCase "near-cache-round-robin-overwrites-oldest"
@@ -1854,6 +1858,36 @@ test_vcdiffEncodingLengthMismatch =
     -- The valid self-referential window declares 0x09; 0x0A lies.
     patch = vcdiffPatch
       [0x00, 0x0A, 0x05, 0x00, 0x01, 0x02, 0x01, 0x41, 0x02, 0x14, 0x00]
+
+-- | A window whose one ADD consumes a single data byte while its data section declares two:
+-- the surplus contradicts the window's own declared length, and the window is refused after the walk
+-- (docs/vcdiff/core/questions.md, "leftover bytes").
+test_vcdiffDataSectionUnconsumedBytes :: Assertion
+test_vcdiffDataSectionUnconsumedBytes =
+  case parseVCDIFF patch of
+    Left (MalformedVCDIFF (VCDIFFSectionUnconsumedBytes VCDIFFDataSection _)) -> pure ()
+    Left otherError -> assertFailureT
+      ("expected VCDIFFSectionUnconsumedBytes, got: " <> renderSlapError otherError)
+    Right _ -> assertFailure "expected the unconsumed data byte to be refused"
+  where
+    -- win 0x00 | deltaEncLen 08 | target 01 | deltaInd 00 | A 02 I 01 C 00
+    --   | data "AB" | inst [ADD1]
+    patch = vcdiffPatch
+      [0x00, 0x08, 0x01, 0x00, 0x02, 0x01, 0x00, 0x41, 0x42, 0x02]
+
+-- | The same window with a one-byte address section no COPY ever reads: the address twin of the data-leftover refusal.
+test_vcdiffAddressSectionUnconsumedBytes :: Assertion
+test_vcdiffAddressSectionUnconsumedBytes =
+  case parseVCDIFF patch of
+    Left (MalformedVCDIFF (VCDIFFSectionUnconsumedBytes VCDIFFAddressSection _)) -> pure ()
+    Left otherError -> assertFailureT
+      ("expected VCDIFFSectionUnconsumedBytes, got: " <> renderSlapError otherError)
+    Right _ -> assertFailure "expected the unconsumed address byte to be refused"
+  where
+    -- win 0x00 | deltaEncLen 08 | target 01 | deltaInd 00 | A 01 I 01 C 01
+    --   | data "A" | inst [ADD1] | addr [0]
+    patch = vcdiffPatch
+      [0x00, 0x08, 0x01, 0x00, 0x01, 0x01, 0x01, 0x41, 0x02, 0x00]
 
 -- | A patch using no xdelta3 feature keeps the first-class CoreOnly
 -- verdict: it decodes identically under either flavor and is named as

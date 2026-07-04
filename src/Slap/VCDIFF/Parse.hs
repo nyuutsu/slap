@@ -776,9 +776,10 @@ decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection 
 
     -- | The sections measured as the whole spaces their cursors address.
     -- 'FileSize' is the role 'fitsWithin' and 'remainingFromOffset' read their last argument in, the total extent a region is checked against, and within this walk each section is exactly that whole, even though one layer up it is a region of the patch file.
-    instructionSectionSize, dataSectionSize :: FileSize
+    instructionSectionSize, dataSectionSize, addressSectionSize :: FileSize
     instructionSectionSize = byteFileSize instSection
     dataSectionSize        = byteFileSize dataSection
+    addressSectionSize     = byteFileSize addrSection
 
     -- | @len(S)@ as the position where the source segment ends in @U@: a COPY address below it reads the segment, at or above it the produced target.
     segmentEnd :: Offset
@@ -801,7 +802,8 @@ decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection 
     instructionSectionSpent (InstructionSectionCursor position) =
       remainingFromOffset position instructionSectionSize == Length 0
 
-    -- | Core invariant 3, the instructions must produce exactly the declared target size, then the reversed accumulator materialises as the decoded stream.
+    -- | Core invariant 3 — the instructions must produce exactly the declared target size —
+    -- then the section leftover check ('VCDIFFSectionUnconsumedBytes'), then the reversed accumulator materialises as the decoded stream.
     finishWindow :: WindowDecode (Vector VCDIFFInstruction, [SlapAdvisory])
     finishWindow = do
       producedSize <- gets (lengthToFileSize . producedBytes)
@@ -809,9 +811,21 @@ decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection 
         failDecode (VCDIFFWindowSizeMismatch
                       (ExpectedSize targetWindowSize)
                       (ActualSize producedSize))
+      DataSectionCursor dataPosition <- gets dataCursor
+      requireSectionConsumed VCDIFFDataSection dataPosition dataSectionSize
+      AddressSectionCursor addressPosition <- gets addrCursor
+      requireSectionConsumed VCDIFFAddressSection addressPosition addressSectionSize
       gets (\decodeState ->
               ( Vector.fromList (reverse (emittedReversed decodeState))
               , reverse (notesReversed decodeState) ))
+
+    -- | Refuse a section whose cursor stopped short of its declared end; data and address only —
+    -- 'VCDIFFSectionUnconsumedBytes' has the why, including why the instruction section goes unnamed.
+    requireSectionConsumed :: VCDIFFSection -> Offset -> FileSize -> WindowDecode ()
+    requireSectionConsumed section cursorPosition sectionSize =
+      let leftoverLength = remainingFromOffset cursorPosition sectionSize
+      in when (leftoverLength /= Length 0) $
+           failDecode (VCDIFFSectionUnconsumedBytes section leftoverLength)
 
     -- | Read one code byte and apply both of its templates ('Noop'
     -- fills the unused slot of a single-instruction entry).
