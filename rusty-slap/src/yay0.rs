@@ -62,7 +62,7 @@ pub fn yay0_decompress(input: &[u8]) -> Result<Vec<u8>, String> {
 
 // ── Header ─────────────────────────────────────────────────────────────
 
-/// Decoded and validated Yay0 header. The four wire fields are all the
+/// Decoded and validated Yay0 header. Its three fields are all the
 /// caller of [`yay0_decompress`] needs to drive the main loop; parsing
 /// is split out so header errors are produced by a single function
 /// with a single concern.

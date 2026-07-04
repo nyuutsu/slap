@@ -45,7 +45,7 @@ use std::io::{Cursor, Read};
 /// its magic and walked past whole.
 const XZ_STREAM_HEADER_LENGTH: usize = 12;
 
-/// The xz magic: `0xFD` followed by ASCII `7zXZ` and a zero byte.
+/// The xz stream magic.
 const XZ_MAGIC: [u8; 6] = [0xFD, b'7', b'z', b'X', b'Z', 0x00];
 
 /// The LZMA2 end-of-stream chunk marker this module chains after the

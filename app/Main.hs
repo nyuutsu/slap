@@ -681,7 +681,9 @@ readAndParsePatch dialects metadataEncoding path = do
 ----------------------------------------------------------------------------
 
 -- | Bind 'stdout' and 'stderr' to UTF-8, transliterating on failure so a codepoint the encoder can't represent substitutes a placeholder rather than crashing with an @hPutChar@ invalid-argument error.
--- UTF-8 can only fail on a lone surrogate, which slap's UTF-8 filesystem encoding and lenient-decode-to-U+FFFD make unlikely to reach output; transliteration is cheap cover for a stray one.
+-- UTF-8 can only fail on a lone surrogate, and one is unlikely to reach output:
+-- 'main' pins the filesystem encoding to UTF-8, so GHC's argv and filepath decoders reject malformed bytes rather than surrogate-escaping them, and slap's lenient decode substitutes U+FFFD.
+-- Transliteration is cheap cover for a stray one.
 -- Called once at startup, before any I/O.
 setStdoutAndStderrToLenientUtf8 :: IO ()
 setStdoutAndStderrToLenientUtf8 = do

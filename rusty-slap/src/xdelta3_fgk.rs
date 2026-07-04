@@ -324,7 +324,7 @@ impl AdaptiveTree {
         // The zero-weight escape field, assembled most significant bit
         // first as each bit arrives (the order `fgk_decode_data`
         // reconstructs it in): an index into the unseen list, at most
-        // `exp + 1` bits — nine over the 256-byte alphabet — wide. The
+        // `exp + 1` bits — eight over the 256-byte alphabet — wide. The
         // lone-remaining-symbol path reads no escape bits and so names
         // index zero, which is the accumulator's starting value.
         let mut escape_index = 0usize;
@@ -528,7 +528,6 @@ impl AdaptiveTree {
         }
     }
 
-    /// Set a node's two sibling-sequence links.
     fn set_siblings(&mut self, node: NodeId, left: Option<NodeId>, right: Option<NodeId>) {
         self.node_mut(node).siblings = SiblingLinks { left, right };
     }

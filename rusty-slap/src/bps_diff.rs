@@ -13,19 +13,6 @@
 //! accumulating a literal byte ([`LoopStep`]), then apply the decision.
 //! Mutation lives entirely on the [`EncoderState`] struct and the output
 //! buffer; no implicit state machine in parallel locals.
-//!
-//! The four BPS actions and what they encode:
-//!
-//! * [`BpsAction::SourceRead`] — copy `length` bytes from source at the
-//!   current output offset (no offset payload).
-//! * [`BpsAction::TargetRead`] — embed `length` literal bytes (payload
-//!   is the bytes themselves).
-//! * [`BpsAction::SourceCopy`] — copy `length` bytes from source at an
-//!   arbitrary offset (payload is a signed delta from the previous
-//!   `SourceCopy`'s end).
-//! * [`BpsAction::TargetCopy`] — copy `length` bytes from already-written
-//!   target at an arbitrary offset (payload is a signed delta from the
-//!   previous `TargetCopy`'s end).
 
 use crate::bps_suffix_sort::{self, SuffixArray};
 
@@ -89,12 +76,7 @@ impl BpsAction {
     }
 }
 
-/// Encoder state threaded through the main loop. The two `_end` fields
-/// track the previous `SourceCopy`/`TargetCopy` end-positions so the
-/// next copy's offset can be encoded as a signed delta from the previous;
-/// `pending_target_read_start` tracks the start of an in-progress
-/// `TargetRead` so consecutive non-emitted positions accumulate into one
-/// `TargetRead` rather than one per byte.
+/// Encoder state threaded through the main loop.
 struct EncoderState {
     /// Position into the target buffer where the next action will be
     /// written. Advances by `length` on emit, by 1 on no-match.
@@ -107,8 +89,8 @@ struct EncoderState {
     /// target. Starts at 0; the next `TargetCopy`'s offset is encoded as
     /// a signed delta from this.
     last_target_copy_end: usize,
-    /// Start of an in-progress `TargetRead` (literal byte sequence), if
-    /// any. None when no literal accumulation is in progress.
+    /// Start of an in-progress `TargetRead` (literal byte sequence), or `None`.
+    /// Consecutive non-emitted positions accumulate into one `TargetRead` rather than one per byte.
     pending_target_read_start: Option<usize>,
 }
 

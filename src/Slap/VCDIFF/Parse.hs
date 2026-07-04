@@ -341,7 +341,7 @@ parseRawWindow = do
 
 -- The bit positions live in 'Slap.VCDIFF.Types', shared with the write side; what belongs here is what parse makes of them.
 
--- | The three Delta_Indicator compression bits, each paired with the section kind it governs. The single place the bit-to-kind pairing lives; both the carriage builder and the compressed-kind scans below read it.
+-- | The three Delta_Indicator compression bits, each paired with the section kind it governs, read by 'compressedKindsOf'.
 sectionCompressionBits :: [(Int, VCDIFFSection)]
 sectionCompressionBits =
   [ (vcdDataCompBit, VCDIFFDataSection)

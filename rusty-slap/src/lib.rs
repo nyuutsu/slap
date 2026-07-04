@@ -553,8 +553,7 @@ pub unsafe extern "C" fn rusty_lzma_compress(
 /// caller frees with [`rusty_free`]. Returns 0 on success (output and
 /// consumed-input-length populated; error channel empty), -1 on
 /// decoder fault (output empty, consumed 0, cause message in the
-/// error channel). Named for its future sibling `rusty_djw_compress`,
-/// the way [`rusty_lzma_decompress`] was.
+/// error channel). Named for its future sibling `rusty_djw_compress`.
 ///
 /// # Safety
 /// - `input_address` must point to `input_length` readable bytes (or
@@ -604,8 +603,7 @@ pub unsafe extern "C" fn rusty_djw_decompress(
 /// [`rusty_free`]. Returns 0 on success (output and consumed-input-
 /// length populated; error channel empty), -1 on decoder fault (output
 /// empty, consumed 0, cause message in the error channel). Named for
-/// its possible sibling `rusty_fgk_compress`, the way
-/// [`rusty_djw_decompress`] was.
+/// its possible sibling `rusty_fgk_compress`.
 ///
 /// # Safety
 /// - `input_address` must point to `input_length` readable bytes (or

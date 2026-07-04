@@ -153,8 +153,7 @@ impl SourceSuffixArrayIndex {
     /// least `plateau_length` is exactly the set of source suffixes
     /// whose first `plateau_length` bytes agree — i.e., they all
     /// match the target suffix's first `plateau_length` bytes
-    /// equally well. Picking the smallest offset among them is what
-    /// keeps the absolute-mode wire offset varint small.
+    /// equally well.
     fn smallest_offset_across_lcp_plateau(
         &self,
         starting_rank:    usize,

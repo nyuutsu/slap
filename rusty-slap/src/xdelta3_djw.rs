@@ -626,7 +626,7 @@ mod tests {
 
     // Both fixture pairs are unmodified xdelta3 output, produced by
     // the in-tree source (tools/xdelta, built standalone) via the
-    // -S djw / -S none twin trick lzma.rs documents: the DJW patch's
+    // -S djw / -S none twin trick xdelta3_lzma.rs documents: the DJW patch's
     // data section with its dec_size varint stripped, paired with the
     // same window's plain data section from the -S none twin. The
     // twin's plain section is the expected decode, checked by the

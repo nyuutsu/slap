@@ -41,7 +41,8 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
 ----------------------------------------------------------------------------
 
 -- | A label-value display row, rendered by 'renderInfoLine' with column-13 alignment ("source size:  1024").
--- Both fields are 'Text': the label set across formats is open and proliferates, and the value has been rendered to display form by the time it lands here.
+-- Both fields are 'Text': the label set across formats is open and proliferates, so a closed sum or newtype wouldn't pay for the constructor surface or wrapping ceremony;
+-- the value has been rendered to display form by the time it lands here.
 -- Labels are lowercase with no trailing colon; 'renderInfoLine' adds the colon and the alignment padding.
 data InfoLine = InfoLine
   { infoLineLabel :: !Text

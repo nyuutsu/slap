@@ -11,12 +11,8 @@
 /// position in the original buffer where the `r`-th lexicographically
 /// smallest suffix begins.
 ///
-/// Storage width matches what was sufficient for the input: a narrow
-/// `Vec<u32>` for any input up to 4 GB, a
-/// wide `Vec<u64>` only when the input crosses that threshold.
-/// Consumers see `usize` positions through the accessors; the variant
-/// is an implementation detail that earns the narrow-storage memory
-/// savings on the dominant induction passes.
+/// Stored at `u32` or `u64` width (the variants say which), an implementation detail that earns narrow-storage memory savings on the dominant induction passes.
+/// Consumers see `usize` positions through the accessors.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum SuffixArray {
     /// Suffix array stored at `u32` width. Used when the input length
@@ -86,11 +82,7 @@ impl<'a> Iterator for SuffixPositionIter<'a> {
 /// Build the suffix array of `data` in linear time. The empty input
 /// produces an empty [`SuffixArray::Narrow`].
 ///
-/// Dispatches on input size: inputs that fit in a `u32`-indexed scratch
-/// space (≤ 4 GB) are built in
-/// `Vec<u32>` to halve memory bandwidth on the induction passes; larger
-/// inputs build in `Vec<u64>`. The returned variant reflects the
-/// choice; consumers see `usize` positions either way.
+/// Dispatches on input size to the storage width [`SuffixArray`] documents.
 #[must_use]
 pub fn suffix_sort(data: &[u8]) -> SuffixArray {
     if data.is_empty() {

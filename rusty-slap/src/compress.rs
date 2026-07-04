@@ -3,7 +3,7 @@
 //! Each public function takes input bytes and returns either the
 //! produced bytes or the underlying library's diagnostic verbatim. The
 //! cause string is intentionally unprefixed: the Haskell side wraps
-//! every failure as a typed 'Slap.Error.DecompressionFailure' that
+//! every failure as a typed 'Slap.Status.DecompressionFailure' that
 //! already names the site (NINJA1 zlib payload, BSDiff diff bzip2
 //! section, etc.), so a Rust-side prefix would only double-label the
 //! rendered message.

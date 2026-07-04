@@ -144,7 +144,7 @@ fn observe_file_source_offset_mode(instructions: &[Instruction]) -> FileSourceOf
 /// Mutable state threaded through the target walk.
 /// `literal_run_start` tracks an in-progress run of bytes destined
 /// for the data segment so consecutive non-match positions accumulate
-/// into one `FromDataSource` instruction rather than one per byte.
+/// into one `DataSource` instruction rather than one per byte.
 /// File-source sequential-mode tracking lives in the post-pass
 /// (`observe_file_source_offset_mode`) rather than in this state —
 /// the differ records absolute source offsets unconditionally and
@@ -187,7 +187,7 @@ impl EncoderState {
     }
 
     /// Append `literal_bytes` to the data segment and emit one
-    /// `FromDataSource` instruction covering it. The source offset
+    /// `DataSource` instruction covering it. The source offset
     /// is the current data-segment end position; the call site has
     /// already extracted the byte slice from target.
     fn flush_literal_run(&mut self, literal_bytes: &[u8]) {
@@ -197,7 +197,7 @@ impl EncoderState {
         self.record_emit(InstructionTarget::DataSource, data_segment_start, literal_length);
     }
 
-    /// Emit any pending literal as one trailing `FromDataSource` —
+    /// Emit any pending literal as one trailing `DataSource` —
     /// called once at end of walk for the tail flush.
     fn flush_pending_literal(&mut self, target: &[u8]) {
         if let Some(literal_run_start) = self.literal_run_start.take() {

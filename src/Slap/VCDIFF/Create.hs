@@ -349,7 +349,7 @@ renderOperand (AddressVarint value) = putVcdiffVarint value
 renderOperand (AddressSameByte (SameSlotByte byte)) = word8 byte
 
 -- | The densest opcode the active table offers for an exact entry shape, or 'Nothing' when the table holds no such entry.
--- Built once per table by scanning 'Table.codeTableEntries' (so a custom table feeds its own opcode set through unchanged),
+-- Built once per table by scanning 'Table.codeTableAssocs' (so a custom table feeds its own opcode set through unchanged),
 -- keyed by the whole entry so one lookup answers every query, a single instruction (a 'Table.Noop' second half) or a combined pair (two real halves).
 -- The lowest index wins a shape that repeats; the default table holds each shape once.
 newtype DenseOpcodes = DenseOpcodes (Map Table.CodeTableEntry Table.Opcode)
@@ -836,7 +836,6 @@ singleInstructionShapes resolved =
              (fixedSizeFor copyLength)
       ResolvedRun _ _ -> Nothing
 
--- | Count occurrences of each element.
 frequencies :: Ord a => [a] -> Map a Int
 frequencies items = Map.fromListWith (+) [ (item, 1) | item <- items ]
 
@@ -874,6 +873,5 @@ windowIndicator sourcing checksumEmission = sourcingBits .|. checksumBits
       CarryWindowAdler32 -> bit vcdAdler32Bit
       OmitWindowAdler32  -> 0x00
 
--- | Render a 'Builder' to a strict 'ByteString'.
 builderBytes :: Builder -> ByteString
 builderBytes = LazyByteString.toStrict . toLazyByteString

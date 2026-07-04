@@ -1285,6 +1285,7 @@ resolveEBPField cliValue ebpValue
   | otherwise                  = EncodedText EncodingUtf8 Text.empty
 
 -- | The @patcher@ field slap writes into every EBP metadata blob it emits: the project's name, tagged 'EncodingUtf8'.
+-- A named constant rather than inlined at the one call site, so the bytes that identify a slap-emitted EBP have a single home.
 slapPatcherIdentity :: EncodedText
 slapPatcherIdentity = EncodedText EncodingUtf8 (Text.pack "slap")
 

@@ -389,8 +389,7 @@ data ApplyError
 -- site.  'VCDIFFSectionFailed' is the one site whose algorithm
 -- genuinely varies: a secondary stream is decoded by whichever
 -- compressor the patch declared, so the 'CompressionAlgorithm' rides
--- in the value — LZMA and DJW today, FGK through the same
--- constructor when its decoder lands.
+-- in the value: LZMA, DJW, and FGK all through the same constructor.
 data DecompressionFailure
   = Yay0WrapperFailed                       DecompressionCause
   | NINJA1Failed                            DecompressionCause
@@ -586,10 +585,7 @@ data SlapError
   -- These are validated after the byte parser has produced the raw window list, so the parser stays focused on byte-level reading.
   | UnsupportedVCDIFFShape VCDIFFShapeViolation
 
-  -- | A VCDIFF custom code table failed structural validation; the 'VCDIFFCodeTableMalformation' names which.
-  -- The image-decidable failures are surfaced from 'Slap.VCDIFF.CodeTable.deserializeCodeTable';
-  -- the cache-dependent mode bound is checked at table-build in 'Slap.VCDIFF.Parse', which knows the declared cache sizes.
-  -- Both run outside the byte parser.
+  -- | A VCDIFF custom code table failed structural validation; 'VCDIFFCodeTableMalformation' names which failure it was and where each is checked.
   | MalformedVCDIFFCodeTable VCDIFFCodeTableMalformation
 
   -- | Decoding a patch's custom code table failed, and this names the
