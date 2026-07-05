@@ -39,11 +39,13 @@ import Slap.FileContents
   (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
 import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Char8 as ByteString8
+import Data.List (isInfixOf)
 import System.Directory (copyFile, listDirectory)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>), takeExtension)
 import Test.Tasty (TestTree)
-import Test.Tasty.HUnit (testCase, assertFailure, assertEqual)
+import Test.Tasty.HUnit (testCase, assertFailure, assertBool, assertEqual)
 
 -- | The crossval group depends on third-party tools (Flips,
 -- RomPatcher.js, bspatch, xdelta3) and ROM bytes flowing across a
@@ -54,9 +56,10 @@ crossValTests :: Tier -> IO BootstrapTargets -> IO GroupPlan
 crossValTests AllTests getTargets = do
   repo <- repoDir
   rows <- parseSpecFile (repo </> "test" </> "specs" </> "crossval.txt")
-  rowMaybes <- concat <$> mapM (planCrossValRow getTargets repo) rows
-  djwRow    <- planDJWCompressedRow getTargets repo
-  pure (namedGroup "crossval" (rowMaybes ++ djwRow))
+  rowMaybes    <- concat <$> mapM (planCrossValRow getTargets repo) rows
+  djwRow       <- planDJWCompressedRow getTargets repo
+  appHeaderRow <- planAppHeaderRow getTargets repo
+  pure (namedGroup "crossval" (rowMaybes ++ djwRow ++ appHeaderRow))
 
 -- | Map a single crossval-spec row to its planned outcome: a runnable
 -- test, or a typed skip. Malformed rows and rows whose @format@ field
@@ -100,6 +103,52 @@ planDJWCompressedRow getTargets repo =
      requireFixture bootPath $ \_ ->
        requireExternalTool Xdelta3 $ \_ ->
          pure [WillRun runnable]
+
+-- | The application-header row, planned by hand like the DJW row above:
+-- slap creates with a header requested, and the installed xdelta3 must both show it under @printhdr@ and still decode to the same target.
+planAppHeaderRow :: IO BootstrapTargets -> FilePath -> IO [MaybeTest]
+planAppHeaderRow getTargets repo =
+  let basePath = repo </> "test/data/kirby-dl2/base.gb"
+      bootPath = repo </> "test/data/kirby-dl2/kirby-dl2-dx.bps"
+  in requireFixture basePath $ \_ ->
+     requireFixture bootPath $ \_ ->
+       requireExternalTool Xdelta3 $ \_ ->
+         pure [WillRun (appHeaderRowTest getTargets basePath bootPath)]
+
+appHeaderRowTest :: IO BootstrapTargets -> FilePath -> FilePath -> TestTree
+appHeaderRowTest getTargets basePath bootPath =
+  testCase "xdelta3/kirby-dl2-dx application header" $ do
+    bootstrapTargets <- getTargets
+    baseBytes        <- mmapRomFile basePath
+    let targetBytes = lookupBootstrapTarget bootstrapTargets basePath bootPath
+        headerText  = "made with slap"
+        headerMeta  = noMetadataRequested
+          { requestedEmbeddedBlob = Just (ByteString8.pack headerText) }
+    case createPatch (CreateDifferential CreateXDelta3) Nothing
+           (InputFileContents baseBytes)
+           (OutputFileContents targetBytes)
+           headerMeta Nothing noConstraintsRequested noDialectsRequested of
+      Left slapError ->
+        assertFailureT ("create failed: " <> renderSlapError slapError)
+      Right (CreateResult patchBytes _) ->
+        withTempFile "slap-xv-patch" $ \patchFile ->
+        withTempFile "slap-xv-base"  $ \baseFile ->
+        withTempFile "slap-xv-out"   $ \outFile -> do
+          ByteString.writeFile patchFile (unPatchFileContents patchBytes)
+          ByteString.writeFile baseFile  baseBytes
+          headerRun <- runExternal Xdelta3 ["printhdr", patchFile] Nothing ""
+          case externalRunExitCode headerRun of
+            ExitFailure _ ->
+              assertFailure ("xdelta3 printhdr failed: " ++ externalRunStderr headerRun)
+            ExitSuccess -> do
+              assertBool "printhdr names VCD_APPHEADER"
+                ("VCD_APPHEADER" `isInfixOf` externalRunStdout headerRun)
+              assertBool "printhdr shows the header bytes"
+                (headerText `isInfixOf` externalRunStdout headerRun)
+          applyExternal Xdelta3 baseFile patchFile outFile
+          resultBytes <- ByteString.readFile outFile
+          assertEqual "SHA1 mismatch"
+            "a34fb26e1066e464e55b473f0a1f87e9c764a010" (sha1Hex resultBytes)
 
 buildCrossValTest
   :: IO BootstrapTargets

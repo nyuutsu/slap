@@ -54,7 +54,7 @@ Direct formats carry literal replacement bytes; differential formats carry instr
 | NINJA2  | Differential | Yes                    |
 | APSGBA  | Differential | Yes                    |
 | GDIFF   | Differential | Yes                    |
-| VCDIFF  | Differential | No                     |
+| VCDIFF  | Differential | Yes (RFC, xdelta3)     |
 | BSDiff  | Differential | No                     |
 | XDelta1 | Differential | Yes                    |
 

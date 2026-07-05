@@ -697,6 +697,7 @@ parseSomePatchFromVCDIFF metadataEncoding patchContents = do
       windowCount     = Vector.length windows
       totalOutputSize = FileSize
         (Vector.sum (Vector.map (unFileSize . VCDIFF.windowTargetSize) windows))
+      -- An empty application header reads as no metadata; Describe still shows the wire distinction.
       appHeaderBlob   = case VCDIFF.vcdiffAppHeader patch of
                           Just bytes | not (ByteString.null bytes) -> Just bytes
                           _                                        -> Nothing

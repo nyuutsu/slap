@@ -48,7 +48,7 @@ import qualified Slap.VCDIFF.Apply as VCDIFF
 import qualified Slap.VCDIFF.Parse as VCDIFF
 import Slap.VCDIFF.Types (VCDIFFPatch(..), Window(..), VCDIFFInstruction(..),
                           RFCHeader(..), CustomCodeTable(..), patchWindows,
-                          XDelta3Header(..), xdelta3WindowAdler32)
+                          XDelta3Header(..), xdelta3WindowAdler32, vcdiffAppHeader)
 import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor(..),
                                          secondaryCompressorCatalog, secondaryCompressorId,
                                          SectionCompressor, sectionCompressorAlgorithm,
@@ -112,13 +112,14 @@ import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
                      noMetadataRequested, noConstraintsRequested, noDialectsRequested,
                      RequestedDialects(..),
                      VerificationInclusion(..), CompressionInclusion(..),
-                     xdelta3CompressionEmission,
+                     xdelta3CompressionEmission, mergeRequestedMetadata,
                      convertDirect, emptyContents)
 import Slap.Create (createBPS, createUPS, createDPS, createNINJA2,
                     createAPSGBA, createGDIFF, createXDelta1, createRFCVCDIFF,
                     createXDelta3, WindowCompressionEmission(..), createPatch)
 
 import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Char8 as ByteString8
 import qualified Data.ByteString.Lazy as LazyByteString
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
@@ -211,6 +212,12 @@ roundTripTests = testGroup "RoundTrip"
       , testCase     "xdelta3: unpaying compression leaves the core shape" xdelta3UnpayingCompressionLeavesTheCoreShape
       , testCase     "xdelta3: a source patch's compressor inherits on convert"
           xdelta3DeclaredCompressorInheritsOnConvert
+      , testCase     "xdelta3: application header round-trips" xdelta3AppHeaderRoundTrips
+      , testCase     "xdelta3: app header offered for inheritance on convert"
+          xdelta3AppHeaderOfferedForInheritance
+      , testCase     "xdelta3: app header carries across convert" xdelta3AppHeaderCarriesAcrossConvert
+      , testCase     "xdelta3: empty app header emits the bit and reads as no metadata"
+          xdelta3EmptyAppHeader
       , testCase     "xdelta3: selecting fgk is declined by name" xdelta3FGKSelectionDeclinedByName
       , testCase     "xdelta3: compressor ids round-trip through the catalog" xdelta3CompressorIdsRoundTripThroughTheCatalog
       , testCase     "create: the matcher's addressable-range wall holds at its exact boundary" vcdiffUnaddressablePairRefused
@@ -377,7 +384,7 @@ prop_vcdiff = forAll genPair $ \(source, target) ->
 -- fixes the flavor either way.
 prop_xdelta3 :: Property
 prop_xdelta3 = forAll genPair $ \(source, target) ->
-  case createXDelta3 IncludeVerification (CompressSectionsWith lzmaSectionCompressor) (InputFileContents source) (OutputFileContents target) of
+  case createXDelta3 IncludeVerification (CompressSectionsWith lzmaSectionCompressor) Nothing (InputFileContents source) (OutputFileContents target) of
     Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
     Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
       Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
@@ -392,7 +399,7 @@ prop_xdelta3 = forAll genPair $ \(source, target) ->
 -- and still applies.
 prop_xdelta3OmitBothIsCoreShaped :: Property
 prop_xdelta3OmitBothIsCoreShaped = forAll genPair $ \(source, target) ->
-  case createXDelta3 OmitVerification EmitSectionsPlain (InputFileContents source) (OutputFileContents target) of
+  case createXDelta3 OmitVerification EmitSectionsPlain Nothing (InputFileContents source) (OutputFileContents target) of
     Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
     Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
       Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
@@ -416,7 +423,7 @@ xdelta3ExactWireBytes =
         , 0x00, 0xC6, 0x00, 0x84              -- Adler32 of "AB", big-endian
         , 0x41, 0x42                          -- data section
         , 0x03 ]                              -- instruction section: ADD(2)'s opcode
-  in case createXDelta3 IncludeVerification (CompressSectionsWith lzmaSectionCompressor) (InputFileContents ByteString.empty) (OutputFileContents target) of
+  in case createXDelta3 IncludeVerification (CompressSectionsWith lzmaSectionCompressor) Nothing (InputFileContents ByteString.empty) (OutputFileContents target) of
        Left createError -> assertFailureT ("create: " <> renderSlapError createError)
        Right (CreateResult (PatchFileContents patch) _) ->
          assertEqual "exact wire bytes" expected patch
@@ -443,7 +450,7 @@ xdelta3CompressionPaysOnARepetitiveCover :: SectionCompressor -> Assertion
 xdelta3CompressionPaysOnARepetitiveCover compressor = do
   let (source, target) = repetitiveCoverPair
       createWith compressionEmission =
-        createXDelta3 IncludeVerification compressionEmission
+        createXDelta3 IncludeVerification compressionEmission Nothing
                       (InputFileContents source) (OutputFileContents target)
   case (createWith (CompressSectionsWith compressor), createWith EmitSectionsPlain) of
     (Right (CreateResult compressedPatch _), Right (CreateResult (PatchFileContents plainBytes) _)) -> do
@@ -471,7 +478,7 @@ xdelta3UnpayingCompressionLeavesTheCoreShape :: Assertion
 xdelta3UnpayingCompressionLeavesTheCoreShape =
   let target = ByteString.pack [0x41, 0x42]
       createWith compressionEmission =
-        createXDelta3 OmitVerification compressionEmission
+        createXDelta3 OmitVerification compressionEmission Nothing
                       (InputFileContents ByteString.empty) (OutputFileContents target)
   in case (createWith (CompressSectionsWith lzmaSectionCompressor), createWith EmitSectionsPlain) of
        (Right (CreateResult requestedPatch _), Right (CreateResult declinedPatch _)) -> do
@@ -491,7 +498,7 @@ xdelta3UnpayingCompressionLeavesTheCoreShape =
 xdelta3DeclaredCompressorInheritsOnConvert :: Assertion
 xdelta3DeclaredCompressorInheritsOnConvert = do
   let (source, target) = repetitiveCoverPair
-  case createXDelta3 IncludeVerification (CompressSectionsWith djwSectionCompressor)
+  case createXDelta3 IncludeVerification (CompressSectionsWith djwSectionCompressor) Nothing
          (InputFileContents source) (OutputFileContents target) of
     Left createError -> assertFailureT ("create: " <> renderSlapError createError)
     Right (CreateResult patchBytes _) ->
@@ -501,6 +508,112 @@ xdelta3DeclaredCompressorInheritsOnConvert = do
           assertEqual "compressor offered for inheritance"
             (Just SecondaryDJW)
             (requestedSecondaryCompressor (patchExtractedMeta somePatch))
+
+-- | An application header created with the patch comes back byte-identical,
+-- and is enough by itself to make the patch parse as xdelta3.
+xdelta3AppHeaderRoundTrips :: Assertion
+xdelta3AppHeaderRoundTrips =
+  let headerBytes = ByteString8.pack "made with slap"
+  in case createXDelta3 OmitVerification EmitSectionsPlain (Just headerBytes)
+            (InputFileContents (ByteString.replicate 64 0x11))
+            (OutputFileContents (ByteString.replicate 64 0x22)) of
+       Left createError -> assertFailureT ("create: " <> renderSlapError createError)
+       Right (CreateResult patchBytes _) -> case VCDIFF.parseVCDIFF patchBytes of
+         Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
+         Right (Parsed parsed _parseWarnings) -> case parsed of
+           PatchXDelta3 header _windows ->
+             assertEqual "application header" (Just headerBytes) (xdelta3AppHeader header)
+           otherFlavor -> assertFailure ("parsed flavor: " ++ show otherFlavor)
+
+-- | A parsed xdelta3 patch offers its application header for inheritance,
+-- and surfaces it as the metadata @info --extract-metadata@ writes.
+xdelta3AppHeaderOfferedForInheritance :: Assertion
+xdelta3AppHeaderOfferedForInheritance =
+  let headerBytes = ByteString8.pack "dm4y-output.gbc//dm4y-input.gbc/"
+  in case createXDelta3 OmitVerification EmitSectionsPlain (Just headerBytes)
+            (InputFileContents (ByteString.replicate 64 0x11))
+            (OutputFileContents (ByteString.replicate 64 0x22)) of
+       Left createError -> assertFailureT ("create: " <> renderSlapError createError)
+       Right (CreateResult patchBytes _) ->
+         case parseSome noDialectsRequested SlapText.EncodingUtf8 patchBytes of
+           Left slapError -> assertFailureT ("parseSome: " <> renderSlapError slapError)
+           Right somePatch -> do
+             assertEqual "offered for inheritance"
+               (Just headerBytes) (requestedEmbeddedBlob (patchExtractedMeta somePatch))
+             assertEqual "surfaced as metadata"
+               (Just headerBytes) (patchMetadata somePatch)
+
+-- | The application header survives the convert merge, in all three directions: xdelta3 to itself, BPS to xdelta3, xdelta3 to BPS.
+xdelta3AppHeaderCarriesAcrossConvert :: Assertion
+xdelta3AppHeaderCarriesAcrossConvert = do
+    xdelta3Patch <- patchBytesFrom (createXDelta3 OmitVerification EmitSectionsPlain (Just blob) source target)
+    bpsPatch     <- patchBytesFrom (createBPS source target (BPSMetadata blob))
+    assertCarries "xdelta3 to xdelta3" xdelta3Patch (CreateDifferential CreateXDelta3)
+    assertCarries "BPS to xdelta3"     bpsPatch     (CreateDifferential CreateXDelta3)
+    assertCarries "xdelta3 to BPS"     xdelta3Patch (CreateDifferential CreateBPS)
+  where
+    blob   = ByteString8.pack "<crossing-metadata/>"
+    source = InputFileContents  (ByteString.replicate 64 0x11)
+    target = OutputFileContents (ByteString.replicate 64 0x22)
+
+    patchBytesFrom (Left createError)                  = assertFailureT ("create: " <> renderSlapError createError)
+    patchBytesFrom (Right (CreateResult patchBytes _)) = pure patchBytes
+
+    -- Parse the source patch, merge its extracted metadata under an empty CLI request
+    -- (the merge @slap convert@ runs), re-create in the target format, and read the bytes back out.
+    assertCarries direction patchBytes targetFormat =
+      case parseSome noDialectsRequested SlapText.EncodingUtf8 patchBytes of
+        Left slapError -> assertFailureT (Text.pack direction <> ": parseSome: " <> renderSlapError slapError)
+        Right somePatch ->
+          case createPatch targetFormat Nothing source target
+                 (mergeRequestedMetadata noMetadataRequested (patchExtractedMeta somePatch))
+                 Nothing noConstraintsRequested noDialectsRequested of
+            Left slapError -> assertFailureT (Text.pack direction <> ": create: " <> renderSlapError slapError)
+            Right (CreateResult convertedBytes _) ->
+              case parseSome noDialectsRequested SlapText.EncodingUtf8 convertedBytes of
+                Left slapError -> assertFailureT (Text.pack direction <> ": reparse: " <> renderSlapError slapError)
+                Right converted -> assertEqual direction (Just blob) (patchMetadata converted)
+
+-- | The empty application header, end to end.
+-- Creating with a present-but-empty header emits the bit and a varint 0; the exact wire is pinned, since the bit is the whole difference.
+-- Parsing back raises the note. The metadata seam reads it as no metadata, so a convert emits no bit.
+xdelta3EmptyAppHeader :: Assertion
+xdelta3EmptyAppHeader =
+  let target = ByteString.pack [0x41, 0x42]
+      expected = ByteString.pack
+        [ 0xD6, 0xC3, 0xC4, 0x00              -- magic, version
+        , 0x04, 0x00                          -- header indicator (VCD_APPHEADER), header length 0
+        , 0x00, 0x08                          -- Win_Indicator (none), delta-encoding length
+        , 0x02, 0x00, 0x02, 0x01, 0x00        -- target size, Delta_Indicator, three section lengths
+        , 0x41, 0x42                          -- data section
+        , 0x03 ]                              -- instruction section: ADD(2)'s opcode
+  in case createXDelta3 OmitVerification EmitSectionsPlain (Just ByteString.empty)
+            (InputFileContents ByteString.empty) (OutputFileContents target) of
+       Left createError -> assertFailureT ("create: " <> renderSlapError createError)
+       Right (CreateResult patchBytes@(PatchFileContents wireBytes) _) -> do
+         assertEqual "exact wire bytes" expected wireBytes
+         case VCDIFF.parseVCDIFF patchBytes of
+           Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
+           Right (Parsed parsed parseWarnings) -> do
+             assertBool "the empty declaration is noted"
+               (VCDIFFEmptyApplicationHeader `elem` parseWarnings)
+             assertEqual "declared-but-empty survives the parse"
+               (Just ByteString.empty) (vcdiffAppHeader parsed)
+         case parseSome noDialectsRequested SlapText.EncodingUtf8 patchBytes of
+           Left slapError -> assertFailureT ("parseSome: " <> renderSlapError slapError)
+           Right somePatch -> do
+             assertEqual "read as no metadata"
+               Nothing (requestedEmbeddedBlob (patchExtractedMeta somePatch))
+             case createPatch (CreateDifferential CreateXDelta3) Nothing
+                    (InputFileContents ByteString.empty) (OutputFileContents target)
+                    (mergeRequestedMetadata noMetadataRequested (patchExtractedMeta somePatch))
+                    Nothing noConstraintsRequested noDialectsRequested of
+               Left slapError -> assertFailureT ("convert create: " <> renderSlapError slapError)
+               Right (CreateResult convertedBytes _) -> case VCDIFF.parseVCDIFF convertedBytes of
+                 Left slapError -> assertFailureT ("parse converted: " <> renderSlapError slapError)
+                 Right (Parsed converted _parseWarnings) ->
+                   assertEqual "no header bit after convert"
+                     Nothing (vcdiffAppHeader converted)
 
 -- | Selecting FGK is a real request slap understands — the token names a catalog entry —
 -- and declines by name: slap decodes FGK-compressed patches and does not yet write them.

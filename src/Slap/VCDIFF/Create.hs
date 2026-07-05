@@ -14,10 +14,10 @@
 -- and the resolved stream packs into the densest opcodes the table offers ('packInstructions').
 --
 -- The create token names the arc the user asked for; the bytes earn their flavor by the features they use.
--- A patch on the default table with no checksum and no compressed section reaches for no flavor-distinguishing feature,
+-- A patch on the default table with no checksum, no compressed section, and no application header reaches for no flavor-distinguishing feature,
 -- so it parses back as 'Slap.VCDIFF.Types.PatchCoreOnly';
 -- a custom code table is an RFC-arc feature (RFC 3284 §7's VCD_CODETABLE), parsing back as @PatchRFC@;
--- a per-window Adler32 and a declared secondary compressor are xdelta3 extensions, parsing back as @PatchXDelta3@.
+-- a per-window Adler32, a declared secondary compressor, and an application header are xdelta3 extensions, parsing back as @PatchXDelta3@.
 --
 -- A custom code table carries its own opcode assignments and cache geometry, tuned to this patch:
 -- combined opcodes for the ADD+COPY and COPY+ADD pairs it repeats,
@@ -46,7 +46,7 @@ module Slap.VCDIFF.Create
   ) where
 
 import Slap.VCDIFF.Types (vcdiffMagicBytes, VCDIFFInstruction(..),
-                          vcdDecompressBit, vcdSourceBit, vcdAdler32Bit,
+                          vcdDecompressBit, vcdAppHeaderBit, vcdSourceBit, vcdAdler32Bit,
                           vcdDataCompBit, vcdInstCompBit, vcdAddrCompBit)
 import Slap.VCDIFF.SecondaryCompression
   ( secondaryCompressorId
@@ -100,21 +100,22 @@ createRFCVCDIFF inputContents@(InputFileContents source) outputContents@(OutputF
 -- the same matcher-driven cover as 'createRFCVCDIFF', emitted with the extensions the canonical tool's own output carries.
 -- Today those are the per-window Adler32
 -- (on by default, declined by @--omit-verification@; the only integrity data the format has,
--- so opting out leaves nothing attesting the output — the same gap 'Slap.Status.VerificationOptedOutByCreator' names at apply)
--- and secondary compression
+-- so opting out leaves nothing attesting the output — the same gap 'Slap.Status.VerificationOptedOutByCreator' names at apply),
+-- secondary compression
 -- (on by default with LZMA, redirected by @--compress-with@, declined by @--no-compress@ — 'Slap.Convert.xdelta3CompressionEmission' folds those flags into the 'WindowCompressionEmission' arriving here;
--- kept per section only where it shrinks, and shipped only when the compressed patch beats the plain one outright — see 'emitXDelta3Patch').
+-- kept per section only where it shrinks, and shipped only when the compressed patch beats the plain one outright — see 'emitXDelta3Patch'),
+-- and the application header, when one arrives (@--metadata FILE@, or a source patch's header inheriting on convert).
 -- Never a custom code table: xdelta3 rejects them.
--- A patch emitted with both extensions declined — or with verification declined and compression never paying —
+-- A patch carrying none of these — or with verification declined and compression never paying —
 -- uses no flavor-distinguishing feature at all,
 -- parsing back as 'Slap.VCDIFF.Types.PatchCoreOnly' — readable as xdelta3, which is what was asked for.
-createXDelta3 :: VerificationInclusion -> WindowCompressionEmission -> InputFileContents -> OutputFileContents
+createXDelta3 :: VerificationInclusion -> WindowCompressionEmission -> Maybe ByteString -> InputFileContents -> OutputFileContents
               -> Either SlapError CreateResult
-createXDelta3 verificationChoice compressionEmission inputContents@(InputFileContents source) outputContents@(OutputFileContents target) = do
+createXDelta3 verificationChoice compressionEmission maybeAppHeader inputContents@(InputFileContents source) outputContents@(OutputFileContents target) = do
   rejectUnaddressablePair (SourceFileSize (byteFileSize source)) (TargetFileSize (byteFileSize target))
   Right (CreateResult (PatchFileContents patchBytes) [])
   where
-    patchBytes = emitXDelta3Patch checksumEmission compressionEmission source target
+    patchBytes = emitXDelta3Patch checksumEmission compressionEmission maybeAppHeader source target
                    (vcdiffCover inputContents outputContents)
     checksumEmission = case verificationChoice of
       IncludeVerification -> CarryWindowAdler32
@@ -589,8 +590,8 @@ emitDefaultPatch source target cover =
 -- the same explicit gate 'emitConsideringCustomTable' holds its candidate to,
 -- catching the edge where a section shrinks by no more than the one extra header byte
 -- (the compressor id) its declaration costs.
-emitXDelta3Patch :: WindowChecksumEmission -> WindowCompressionEmission -> ByteString -> ByteString -> Cover -> ByteString
-emitXDelta3Patch checksumEmission compressionEmission source target cover =
+emitXDelta3Patch :: WindowChecksumEmission -> WindowCompressionEmission -> Maybe ByteString -> ByteString -> ByteString -> Cover -> ByteString
+emitXDelta3Patch checksumEmission compressionEmission maybeAppHeader source target cover =
   case compressionEmission of
     EmitSectionsPlain -> plainPatch
     CompressSectionsWith _compressor
@@ -602,16 +603,25 @@ emitXDelta3Patch checksumEmission compressionEmission source target cover =
     compressedPatch = assembledUnder compressionEmission
     assembledUnder emission =
       let encodedWindow = encodeWindow Table.defaultCodeTable source target checksumEmission emission plan
-      in assemblePatch (xdelta3HeaderFor (encodedWindowSectionCompression encodedWindow))
+      in assemblePatch (xdelta3HeaderFor maybeAppHeader (encodedWindowSectionCompression encodedWindow))
                        (encodedWindowBytes encodedWindow)
 
--- | The xdelta3 patch header for what the window actually did:
+-- | The xdelta3 patch header for what the patch actually carries:
 -- VCD_DECOMPRESS and the compressor's catalog id when some section rides compressed,
--- the bare header when none does — the declaration exists exactly where it is used.
-xdelta3HeaderFor :: WindowSectionCompression -> Builder
-xdelta3HeaderFor (SomeSectionsCompressed compressor) =
-  word8 (bit vcdDecompressBit) <> word8 (secondaryCompressorId (sectionCompressorAlgorithm compressor))
-xdelta3HeaderFor AllSectionsPlain = word8 noHeaderFeatures
+-- VCD_APPHEADER and its length-prefixed bytes when there is an application header —
+-- each declaration exists exactly where it is used, and the fields follow their bits in wire order.
+xdelta3HeaderFor :: Maybe ByteString -> WindowSectionCompression -> Builder
+xdelta3HeaderFor maybeAppHeader sectionCompression =
+  word8 (compressorBit .|. appHeaderBit) <> compressorField <> appHeaderField
+  where
+    (compressorBit, compressorField) = case sectionCompression of
+      SomeSectionsCompressed compressor ->
+        (bit vcdDecompressBit, word8 (secondaryCompressorId (sectionCompressorAlgorithm compressor)))
+      AllSectionsPlain -> (0x00, mempty)
+    (appHeaderBit, appHeaderField) = case maybeAppHeader of
+      Just headerBytes ->
+        (bit vcdAppHeaderBit, varintOfLength (byteLength headerBytes) <> byteString headerBytes)
+      Nothing -> (0x00, mempty)
 
 -- | Emit a cover as a patch, weighing custom code tables against the default and shipping whichever is smallest.
 -- The candidate is grown from the default cache geometry up to where a larger cache stops shrinking the patch

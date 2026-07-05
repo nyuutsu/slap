@@ -993,6 +993,10 @@ data SlapAdvisory
   -- patch's window stream.
   | VCDIFFEmptyTargetWindowSegment ActionIndex
 
+  -- | An xdelta3 patch declares an application header of zero bytes: the VCD_APPHEADER bit set over a length varint of zero.
+  -- Legal, just quiet; slap parses on and remarks.
+  | VCDIFFEmptyApplicationHeader
+
   -- | A patch's custom code table holds one or more entries that are
   -- NOOP followed by NOOP — an entry that does nothing at all. The
   -- shape breaks no rule (RFC 3284 §5.4 lets a NOOP fill either half
@@ -2159,6 +2163,10 @@ renderSlapAdvisory (VCDIFFEmptyTargetWindowSegment windowIndex) =
   <> " declares an empty source segment; it draws nothing from the"
   <> " produced target"
 
+renderSlapAdvisory VCDIFFEmptyApplicationHeader =
+  formatLabelName LabelVCDIFF
+  <> ": the patch declares an application header and then says nothing (zero bytes)"
+
 renderSlapAdvisory (VCDIFFCustomTableNoopNoopEntries entryCount) =
   formatLabelName LabelVCDIFF
   <> ": custom code table has " <> renderAsText entryCount
@@ -2900,6 +2908,7 @@ slapAdvisorySeverity advisory = case advisory of
   IPS32TrailingBytes{}                 -> SeverityNote
   VCDIFFTrailingRemnant{}              -> SeverityNote
   VCDIFFEmptyTargetWindowSegment{}     -> SeverityNote
+  VCDIFFEmptyApplicationHeader         -> SeverityNote
   VCDIFFCustomTableNoopNoopEntries{}   -> SeverityNote
   APSN64TrailingFragment{}             -> SeverityNote
   EBPMetadataMalformed{}               -> SeverityNote

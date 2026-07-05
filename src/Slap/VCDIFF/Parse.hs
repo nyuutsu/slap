@@ -115,6 +115,7 @@ parseVCDIFFWith tablePolicy (PatchFileContents input)
 parseNotes :: RawPatch -> [SlapAdvisory]
 parseNotes rawPatch =
   framingVarintNotes rawPatch
+    ++ emptyApplicationHeaderNotes rawPatch
     ++ trailingRemnantNotes rawPatch
     ++ emptyTargetSegmentNotes rawPatch
 
@@ -123,6 +124,11 @@ framingVarintNotes :: RawPatch -> [SlapAdvisory]
 framingVarintNotes rawPatch =
   rawHeaderVarintNotes rawPatch
     ++ concatMap rawVarintNotes (rawWindows rawPatch)
+
+-- | The note for a declared-but-empty application header: the VCD_APPHEADER bit set over a length varint of zero.
+emptyApplicationHeaderNotes :: RawPatch -> [SlapAdvisory]
+emptyApplicationHeaderNotes rawPatch =
+  [VCDIFFEmptyApplicationHeader | rawAppHeader rawPatch == Just ByteString.empty]
 
 -- | The advisory the framer's trailing-remnant recognition surfaces, when it consumed one (see 'isTrailingRemnant'). The remnant's bytes are not patch semantics and go no further than this note.
 trailingRemnantNotes :: RawPatch -> [SlapAdvisory]

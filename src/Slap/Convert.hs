@@ -489,7 +489,7 @@ acceptedMetadataFields (CreateDifferential format) = case format of
                                  MetadataXDelta1FromName, MetadataXDelta1ToName]
   CreateRFCVCDIFF -> Set.empty
   CreateXDelta3   -> Set.fromList [MetadataVerificationInclusion, MetadataPatchCompression,
-                                   MetadataSecondaryCompressor]
+                                   MetadataSecondaryCompressor, MetadataEmbeddedBlob]
 
 -- | The 'MetadataField's the user explicitly set on a
 -- 'RequestedPatchMetadata'. A 'Maybe' field counts as set when 'Just'.
@@ -1208,7 +1208,7 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
   CreateRFCVCDIFF -> VCDIFF.createRFCVCDIFF source target
   CreateXDelta3 -> do
     compressionEmission <- xdelta3CompressionEmission meta
-    VCDIFF.createXDelta3 verificationChoice compressionEmission source target
+    VCDIFF.createXDelta3 verificationChoice compressionEmission (requestedEmbeddedBlob meta) source target
     where
       verificationChoice = fromMaybe IncludeVerification (requestedVerificationInclusion meta)
   CreateXDelta1 -> case maybeResolvedNames of
