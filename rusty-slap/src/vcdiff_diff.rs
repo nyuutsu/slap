@@ -16,8 +16,9 @@
 //! ([`vcdiff_windowed_covers`]): the matcher indexes the source once
 //! and runs one session per window, so every copy stays inside
 //! `source ++ that window's slice` — the engine's Windows note has the
-//! why. [`vcdiff_cover`] is the one-window reading the RFC arc and the
-//! custom-table inner delta use.
+//! why. Every caller goes through the windowed entry, the RFC arc and
+//! the custom-table inner delta slicing at the target's own length for
+//! their one whole-target window.
 
 use crate::vcdiff_hash_chain::HashChainMatcher;
 
@@ -52,11 +53,14 @@ pub struct CoverSegment {
     pub length: u64,
 }
 
-/// Segment a target into a single-window cover against a source.
-/// Total: every input yields a cover, the empty target included (the
-/// empty cover). When nothing is worth copying, the whole target comes
-/// back as a single literal.
-pub fn vcdiff_cover(source: &[u8], target: &[u8]) -> Vec<CoverSegment> {
+/// Segment a target into a single-window cover against a source: the
+/// whole-target reading of [`vcdiff_windowed_covers`]. A test
+/// convenience — production covers a patch's windows and always goes
+/// through the windowed entry, even the RFC arc's one whole-target
+/// window and the custom-table inner delta (both slice at the target's
+/// length on the Haskell side).
+#[cfg(test)]
+fn vcdiff_cover(source: &[u8], target: &[u8]) -> Vec<CoverSegment> {
     vcdiff_windowed_covers(source, target, target.len().max(1))
         .into_iter()
         .next()

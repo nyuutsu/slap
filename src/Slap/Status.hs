@@ -998,10 +998,12 @@ data SlapAdvisory
   | VCDIFFEmptyApplicationHeader
 
   -- | A multi-window patch's window sizes are not a run of one size and then a remainder — the shape every encoder slap knows of emits.
-  -- Window sizing is the encoder's own affair (RFC 3284 asks a decoder for no knowledge of the window selection algorithm), so the patch is valid; slap applies it and remarks.
+  -- Window sizing is the encoder's own affair (RFC 3284 asks a decoder for no knowledge of the window selection algorithm),
+  -- so the patch is valid; slap applies it and remarks.
   | VCDIFFUnevenWindowSizes
 
-  -- | An xdelta3 create was asked (@--window-size@) for windows larger than the widespread xdelta3 3.0.11 build's compiled ceiling, which that build refuses to decode past.
+  -- | An xdelta3 create was asked (@--window-size@) for windows larger than the widespread xdelta3 3.0.11 build's compiled ceiling,
+  -- which that build refuses to decode past.
   -- The patch is conformant, and slap and later xdelta3 builds read it fine; the note names the one decoder that will decline it.
   -- The 'Length' is the requested window size; the 'MaxLength' is that build's ceiling.
   | XDelta3WindowSizePastReferenceDecoder Length MaxLength

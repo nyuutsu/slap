@@ -49,7 +49,7 @@ module Slap.VCDIFF.Create
   ) where
 
 import Slap.VCDIFF.Types (vcdiffMagicBytes, VCDIFFInstruction(..),
-                          XDelta3WindowSize, unXDelta3WindowSize,
+                          XDelta3WindowSize,
                           vcdDecompressBit, vcdAppHeaderBit, vcdSourceBit, vcdAdler32Bit,
                           vcdDataCompBit, vcdInstCompBit, vcdAddrCompBit)
 import Slap.VCDIFF.SecondaryCompression
@@ -80,6 +80,7 @@ import qualified Data.ByteString as ByteString
 import Data.ByteString.Builder (Builder, byteString, word8, word32BE, toLazyByteString)
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.List (sortOn)
+import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -107,15 +108,18 @@ createRFCVCDIFF inputContents@(InputFileContents source) outputContents@(OutputF
 -- (on by default, declined by @--omit-verification@; the only integrity data the format has,
 -- so opting out leaves nothing attesting the output — the same gap 'Slap.Status.VerificationOptedOutByCreator' names at apply),
 -- secondary compression
--- (on by default with LZMA, redirected by @--compress-with@, declined by @--no-compress@ — 'Slap.Convert.xdelta3CompressionEmission' folds those flags into the 'WindowCompressionEmission' arriving here;
+-- (on by default with LZMA, redirected by @--compress-with@, declined by @--no-compress@ —
+-- 'Slap.Convert.xdelta3CompressionEmission' folds those flags into the 'WindowCompressionEmission' arriving here;
 -- kept per section only where it shrinks, and shipped only when the compressed patch beats the plain one outright — see 'emitXDelta3Patch'),
 -- and the application header, when one arrives (@--metadata FILE@, or a source patch's header inheriting on convert).
 -- Never a custom code table: xdelta3 rejects them.
 -- A patch carrying none of these — or with verification declined and compression never paying —
 -- uses no flavor-distinguishing feature at all,
 -- parsing back as 'Slap.VCDIFF.Types.PatchCoreOnly' — readable as xdelta3, which is what was asked for.
-createXDelta3 :: VerificationInclusion -> WindowCompressionEmission -> XDelta3WindowSize -> Maybe ByteString -> InputFileContents -> OutputFileContents
-              -> Either SlapError CreateResult
+createXDelta3
+  :: VerificationInclusion -> WindowCompressionEmission -> XDelta3WindowSize
+  -> Maybe ByteString -> InputFileContents -> OutputFileContents
+  -> Either SlapError CreateResult
 createXDelta3 verificationChoice compressionEmission windowSize maybeAppHeader (InputFileContents source) (OutputFileContents target) = do
   rejectUnaddressablePair (SourceFileSize (byteFileSize source)) (TargetFileSize (byteFileSize target))
   Right (CreateResult (PatchFileContents patchBytes) [])
@@ -539,7 +543,8 @@ tightenToUsedSourceSpan (Length sourceLength) instructions = case sourceReadBoun
       instruction -> instruction
 
 -- | The groundwork of one emitted window: its slice of the target, how it sources its copies, and its three sections, laid out but not yet carried.
--- Both emissions build on the same planned window — the plain patch and the secondary-compressed one differ only in the carriages dressed on at 'encodeWindowBytes'.
+-- Both emissions build on the same planned window —
+-- the plain patch and the secondary-compressed one differ only in the carriages dressed on at 'encodeWindowBytes'.
 data PlannedWindow = PlannedWindow
   { plannedSlice    :: !ByteString
   , plannedSourcing :: !WindowSourcing
@@ -570,7 +575,8 @@ plainCarriages sections = WindowCarriages
   , addressCarriage     = CarriedPlain (sectionAddresses sections)
   }
 
--- | Whether any of a window's sections rides compressed: the fact the Delta_Indicator spells per window and the patch header's declaration folds over.
+-- | Whether any of a window's sections rides compressed:
+-- the fact the Delta_Indicator spells per window and the patch header's declaration folds over.
 anyCarriageCompressed :: WindowCarriages -> Bool
 anyCarriageCompressed carriages =
   any carriageIsCompressed [dataCarriage carriages, instructionCarriage carriages, addressCarriage carriages]
@@ -579,9 +585,11 @@ carriageIsCompressed :: SectionCarriage -> Bool
 carriageIsCompressed CarriedCompressed{} = True
 carriageIsCompressed CarriedPlain{}      = False
 
--- | One window's wire bytes: the Win_Indicator and (when a segment is declared) its two varints, then the delta encoding behind its length varint —
--- target window size, Delta_Indicator (composed from the carriages), the three section lengths, the checksum when carried, the three sections as carried.
--- The carried checksum is the Adler32 of this window's decoded output — its slice of the target — computed here so the value cannot drift from the window it attests;
+-- | One window's wire bytes: the Win_Indicator and (when a segment is declared) its two varints,
+-- then the delta encoding behind its length varint — the target window size, the Delta_Indicator composed from the carriages,
+-- the three section lengths, the checksum when carried, and the three sections as carried.
+-- The carried checksum is the Adler32 of this window's decoded output — its slice of the target —
+-- computed here so the value cannot drift from the window it attests;
 -- four bytes big-endian between the section lengths and the data section (docs/vcdiff/xdelta3/spec.md "Per-window Adler32").
 encodeWindowBytes :: WindowChecksumEmission -> PlannedWindow -> WindowCarriages -> ByteString
 encodeWindowBytes checksumEmission plannedWindow carriages = builderBytes windowBuilder
@@ -663,7 +671,9 @@ emitDefaultPatch source target cover =
 -- The compressed emission ships only when it beats the plain one outright —
 -- the same explicit gate 'emitConsideringCustomTable' holds its candidate to,
 -- catching the edge where the sections shrink by no more than the one extra header byte (the compressor id) the declaration costs.
-emitXDelta3Patch :: WindowChecksumEmission -> WindowCompressionEmission -> Maybe ByteString -> XDelta3WindowSize -> ByteString -> ByteString -> ByteString
+emitXDelta3Patch
+  :: WindowChecksumEmission -> WindowCompressionEmission -> Maybe ByteString -> XDelta3WindowSize
+  -> ByteString -> ByteString -> ByteString
 emitXDelta3Patch checksumEmission compressionEmission maybeAppHeader windowSize source target =
   case compressionEmission of
     EmitSectionsPlain -> plainPatch
@@ -673,13 +683,11 @@ emitXDelta3Patch checksumEmission compressionEmission maybeAppHeader windowSize 
       | otherwise -> plainPatch
   where
     plannedWindows =
-      zipWith planOne
-        (windowSlices windowSize target)
-        (NonEmpty.toList (vcdiffWindowedCovers windowSize (InputFileContents source) (OutputFileContents target)))
-      where
-        planOne windowSlice cover =
-          layoutPlannedWindow (denseOpcodes Table.defaultCodeTable) windowSlice
-            (planTightenedWindow defaultAddressCacheConfig (byteLength source) windowSlice cover)
+      [ layoutPlannedWindow (denseOpcodes Table.defaultCodeTable) windowSlice
+          (planTightenedWindow defaultAddressCacheConfig (byteLength source) windowSlice cover)
+      | (windowSlice, cover) <-
+          windowSlicesForCovers target
+            (vcdiffWindowedCovers windowSize (InputFileContents source) (OutputFileContents target)) ]
 
     plainPatch =
       assemblePatch (xdelta3HeaderFor maybeAppHeader AllSectionsPlain)
@@ -712,19 +720,25 @@ carriagedUnder compressor plannedWindows =
       sectionCompressorKindCarriages compressor
         (map (sectionOf . plannedSections) plannedWindows)
 
--- | The target cut into the windows an xdelta3 create emits: full-size slices in order, then the remainder,
--- the empty target one empty window — matching the matcher's own slicing, and the emission the reference tool itself writes for an empty target.
-windowSlices :: XDelta3WindowSize -> ByteString -> [ByteString]
-windowSlices windowSize target
-  | ByteString.null target = [ByteString.empty]
-  | otherwise              = slicesOf target
+-- | Pair each window's cover with the slice of the target it reconstructs.
+-- The covers are the partition's one source of truth: the matcher already cut the target into windows,
+-- and each cover spans its whole window with no gaps, so its segments sum to that window's byte count.
+-- Splitting by those lengths keeps this side from re-deriving a window size that could drift from the matcher's.
+windowSlicesForCovers :: ByteString -> NonEmpty Cover -> [(ByteString, Cover)]
+windowSlicesForCovers target covers = pairFrom target (NonEmpty.toList covers)
   where
-    sliceLength = unXDelta3WindowSize windowSize
-    slicesOf remaining
-      | ByteString.length remaining <= sliceLength = [remaining]
-      | otherwise =
-          let (slice, rest) = ByteString.splitAt sliceLength remaining
-          in slice : slicesOf rest
+    pairFrom _ [] = []
+    pairFrom remaining (cover : laterCovers) =
+      let (windowSlice, restOfTarget) = ByteString.splitAt (unLength (coverOutputLength cover)) remaining
+      in (windowSlice, cover) : pairFrom restOfTarget laterCovers
+
+-- | The byte length a cover reconstructs. A cover spans its whole window with no gaps or overlaps,
+-- so summing its segments' output lengths gives exactly that window's byte count.
+coverOutputLength :: Cover -> Length
+coverOutputLength (Cover segments) = foldMap segmentOutputLength segments
+  where
+    segmentOutputLength (CoverCopy    copyLength _)      = copyLength
+    segmentOutputLength (CoverLiteral _ literalLength)   = literalLength
 
 -- | The xdelta3 patch header for what the patch actually carries:
 -- VCD_DECOMPRESS and the compressor's catalog id when some section rides compressed,
@@ -882,7 +896,8 @@ designCandidateTable resolved = case donorMints resolved of
 --     Frequency-independent (one use still needs it), placed first so they win donors over the savings mints.
 --     A stream whose required mints outrun the donor pool has no sound table: 'donorMints' is 'Nothing', and the grow declines it.
 --   * /savings/: the ADD+COPY and COPY+ADD adjacencies ('combinablePairs') and the lone fixed-size ADD and COPY shapes ('singleInstructionShapes')
---     the default cannot name and this stream repeats (@count >= 2@; a shape seen once cannot repay even the leanest table edit), most frequent first.
+--     the default cannot name and this stream repeats, most frequent first
+--     (@count >= 2@; a shape seen once cannot repay even the leanest table edit).
 --     Pairs and singles pool into one tally, their entry shapes disjoint, a pair carrying two real templates, a single a trailing 'Table.Noop'.
 --
 -- Every minted COPY mode is one the resolved stream selected,

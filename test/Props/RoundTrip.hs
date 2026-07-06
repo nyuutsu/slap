@@ -389,7 +389,8 @@ prop_vcdiff = forAll genPair $ \(source, target) ->
 -- fixes the flavor either way.
 prop_xdelta3 :: Property
 prop_xdelta3 = forAll genPair $ \(source, target) ->
-  case createXDelta3 IncludeVerification (CompressSectionsWith lzmaSectionCompressor) defaultXDelta3WindowSize Nothing (InputFileContents source) (OutputFileContents target) of
+  case createXDelta3 IncludeVerification (CompressSectionsWith lzmaSectionCompressor)
+                     defaultXDelta3WindowSize Nothing (InputFileContents source) (OutputFileContents target) of
     Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
     Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
       Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
@@ -419,7 +420,8 @@ prop_xdelta3OmitBothIsCoreShaped = forAll genPair $ \(source, target) ->
 -- and still apply back to the target through slap's own decode.
 prop_xdelta3ManyWindows :: Property
 prop_xdelta3ManyWindows = forAll genPair $ \(source, target) ->
-  case createXDelta3 IncludeVerification (CompressSectionsWith lzmaSectionCompressor) sixtyFourByteWindows Nothing (InputFileContents source) (OutputFileContents target) of
+  case createXDelta3 IncludeVerification (CompressSectionsWith lzmaSectionCompressor)
+                     sixtyFourByteWindows Nothing (InputFileContents source) (OutputFileContents target) of
     Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
     Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
       Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
@@ -509,7 +511,8 @@ xdelta3ExactWireBytes =
         , 0x00, 0xC6, 0x00, 0x84              -- Adler32 of "AB", big-endian
         , 0x41, 0x42                          -- data section
         , 0x03 ]                              -- instruction section: ADD(2)'s opcode
-  in case createXDelta3 IncludeVerification (CompressSectionsWith lzmaSectionCompressor) defaultXDelta3WindowSize Nothing (InputFileContents ByteString.empty) (OutputFileContents target) of
+  in case createXDelta3 IncludeVerification (CompressSectionsWith lzmaSectionCompressor)
+                        defaultXDelta3WindowSize Nothing (InputFileContents ByteString.empty) (OutputFileContents target) of
        Left createError -> assertFailureT ("create: " <> renderSlapError createError)
        Right (CreateResult (PatchFileContents patch) _) ->
          assertEqual "exact wire bytes" expected patch

@@ -1,6 +1,7 @@
 -- | VCDIFF cover-matcher binding to rusty-slap.
 --
--- The Rust side owns the match search over the superstring @U@: a greedy cover walk (@rusty-slap/src/vcdiff_diff.rs@) driven by a cost-aware matcher (@rusty-slap/src/vcdiff_hash_chain.rs@),
+-- The Rust side owns the match search over the superstring @U@: a greedy cover walk (@rusty-slap/src/vcdiff_diff.rs@)
+-- driven by a cost-aware matcher (@rusty-slap/src/vcdiff_hash_chain.rs@),
 -- which offers a copy only where it beats writing the bytes as literals.
 -- The windowed entry covers each window of the target against @source ++ that window's slice@:
 -- the matcher indexes the source once and forgets each window's output as the next begins,

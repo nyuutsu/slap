@@ -45,6 +45,8 @@ import qualified Data.ByteString as ByteString
 import Data.ByteString.Builder (toLazyByteString)
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.List (mapAccumL)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Word (Word8)
 
 ----------------------------------------------------------------------------
@@ -321,7 +323,8 @@ djwSectionCompressor = SectionCompressor SecondaryDJW (map (carriageKeepingSmall
 -- A section participates only while its framed piece is smaller than its plain bytes;
 -- when one stops paying it drops to plain and the remaining participants re-encode,
 -- because a later piece leaned on the dropped section's dictionary and the stream must be rebuilt without it.
--- Each drop shrinks the participant run, so the settling terminates — and a section that does not pay is rare enough that the first pass is normally the only pass.
+-- Each drop shrinks the participant run, so the settling terminates —
+-- and a section that does not pay is rare enough that the first pass is normally the only pass.
 -- An empty section never participates: nothing compresses to nothing, and the read side refuses a compressed section declaring zero output.
 lzmaKindCarriages :: [ByteString] -> [SectionCarriage]
 lzmaKindCarriages plainSections =
@@ -337,22 +340,23 @@ lzmaKindCarriages plainSections =
       let framedByWindow = framedPiecesFor participants
           stillPaying    = [ numbered
                            | numbered@(windowIndex, plainBytes) <- participants
-                           , Just framed <- [lookup windowIndex framedByWindow]
+                           , Just framed <- [Map.lookup windowIndex framedByWindow]
                            , ByteString.length framed < ByteString.length plainBytes ]
       in if map fst stillPaying == map fst participants
-           then [ maybe (CarriedPlain plainBytes) CarriedCompressed (lookup windowIndex framedByWindow)
+           then [ maybe (CarriedPlain plainBytes) CarriedCompressed (Map.lookup windowIndex framedByWindow)
                 | (windowIndex, plainBytes) <- numberedSections ]
            else settleParticipants stillPaying
 
-    framedPiecesFor :: [(Int, ByteString)] -> [(Int, ByteString)]
+    framedPiecesFor :: [(Int, ByteString)] -> Map Int ByteString
     framedPiecesFor participants =
       let sectionStream = lzmaCompressSections (map snd participants)
           pieceBounds   = zip (0 : lzmaPieceEndOffsets sectionStream) (lzmaPieceEndOffsets sectionStream)
           pieceAt (pieceStart, pieceEnd) =
             ByteString.take (pieceEnd - pieceStart)
                             (ByteString.drop pieceStart (lzmaStreamBytes sectionStream))
-      in [ (windowIndex, framedCompressedSection (byteLength plainBytes) (pieceAt bounds))
-         | ((windowIndex, plainBytes), bounds) <- zip participants pieceBounds ]
+      in Map.fromList
+           [ (windowIndex, framedCompressedSection (byteLength plainBytes) (pieceAt bounds))
+           | ((windowIndex, plainBytes), bounds) <- zip participants pieceBounds ]
 
 -- | The carriage one section rides out under a per-section compressor: the compressed piece — its
 -- decompressed-size varint, then the compressor's stream — when that is smaller than the
@@ -370,7 +374,8 @@ carriageKeepingSmaller compress plainSection
   where
     compressedSection = framedCompressedSection (byteLength plainSection) (compress plainSection)
 
--- | A compressed section's wire bytes: the decompressed-size varint, then the compressor's stream piece — exactly the framing 'readContribution' peels.
+-- | A compressed section's wire bytes: the decompressed-size varint, then the compressor's stream piece —
+-- exactly the framing 'readContribution' peels.
 framedCompressedSection :: Length -> ByteString -> ByteString
 framedCompressedSection declaredOutputLength streamPiece =
   LazyByteString.toStrict

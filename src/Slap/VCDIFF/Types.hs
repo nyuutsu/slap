@@ -223,6 +223,7 @@ defaultXDelta3WindowSize = XDelta3WindowSize (8 * 1024 * 1024)
 
 -- | 16 MiB: the compiled window ceiling (@XD3_HARDMAXWINSIZE@) of the widespread xdelta3 3.0.11 builds, which refuse to decode a window past it.
 -- Later xdelta3 sources raise the ceiling, and other decoders (slap included) have none;
--- a create asked for windows above this is emitting a valid patch that one important decoder will decline, and 'Slap.Convert.createDefaultAdvisories' says so.
+-- a create asked for windows above this is emitting a valid patch that one important decoder will decline,
+-- and 'Slap.Convert.createDefaultAdvisories' says so.
 xdelta3ReferenceDecoderWindowCap :: XDelta3WindowSize
 xdelta3ReferenceDecoderWindowCap = XDelta3WindowSize (16 * 1024 * 1024)
