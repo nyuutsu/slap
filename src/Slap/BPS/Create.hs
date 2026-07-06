@@ -1,8 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | BPS patch creation. The diff itself is computed by the Rust
--- suffix-array engine; this module assembles the wire format around
--- the action stream.
+-- differ; this module assembles the wire format around the action
+-- stream.
 --
 -- Wire-format integer safety: the 'fromIntegral' calls in this
 -- module convert 'Int' to 'Int64' as required by 'putByuuVarint'.
@@ -37,7 +37,7 @@ import qualified Data.ByteString as ByteString
 import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as LazyByteString
 
--- | Create a BPS patch using the Rust suffix-array diff engine.
+-- | Create a BPS patch using the Rust diff engine.
 -- Rejects inputs larger than the host platform's addressable range,
 -- which matters only on 32-bit where 'Int' is 31-bit; on 64-bit the
 -- guard is effectively dead (cap is ~9 EB).

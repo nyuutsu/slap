@@ -6,7 +6,7 @@
 //! decompression seam so each FFI body reads as one sentence.
 
 mod bps_diff;
-mod bps_suffix_sort;
+mod bps_hash_chain;
 mod compress;
 mod crc32;
 mod vcdiff_diff;

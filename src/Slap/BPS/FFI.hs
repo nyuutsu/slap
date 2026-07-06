@@ -18,7 +18,7 @@ foreign import ccall unsafe "rusty_bps_diff"
   rustyBpsDiff :: Ptr Word8 -> CSize -> Ptr Word8 -> CSize
                -> Ptr (Ptr Word8) -> Ptr CSize -> IO ()
 
--- | BPS diff via rusty-slap (suffix-array algorithm, after Alcaro's Flips).
+-- | BPS diff via rusty-slap (@rusty-slap/src/bps_diff.rs@, its emit gate after Alcaro's Flips).
 -- Returns the raw encoded action byte stream.
 bpsDiff :: InputFileContents -> OutputFileContents -> ByteString
 bpsDiff (InputFileContents source) (OutputFileContents target) = unsafePerformIO $

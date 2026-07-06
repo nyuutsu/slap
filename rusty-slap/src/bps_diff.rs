@@ -1,41 +1,19 @@
 //! BPS diff engine. Walks the target buffer left-to-right, choosing the
-//! cheapest BPS action at each output position from a suffix-sorted
-//! concatenation of `target[..sorted_window_size]` and `source`.
+//! cheapest BPS action at each output position from the candidates the
+//! hash-chain finder surfaces (`bps_hash_chain.rs`).
 //!
-//! Algorithm provenance: Alcaro's `libbps-suf.cpp` from Flips. The
-//! cost-vs-literal heuristic and the progressive-sorting growth strategy
-//! follow that implementation; the typed surface, decision-as-data
-//! shape, and the split between deciding what to emit and executing the
-//! emit are slap's.
+//! Algorithm provenance: the cost-vs-literal heuristic is Alcaro's,
+//! from `libbps-suf.cpp` in Flips. The typed surface, the
+//! decision-as-data shape, and the split between finding, pricing, and
+//! emitting are slap's.
 //!
-//! The loop body reads as: ask the SA for the best match candidate,
-//! classify it into a [`BpsAction`] and decide whether emitting beats
-//! accumulating a literal byte ([`LoopStep`]), then apply the decision.
-//! Mutation lives entirely on the [`EncoderState`] struct and the output
-//! buffer; no implicit state machine in parallel locals.
+//! The loop body reads as: ask the finder for the best candidate at the
+//! output position, classify it into a [`BpsAction`] and decide whether
+//! emitting beats accumulating a literal byte ([`LoopStep`]), then apply
+//! the decision. Mutation lives entirely on the [`EncoderState`] struct
+//! and the output buffer; no implicit state machine in parallel locals.
 
-use crate::bps_suffix_sort::{self, SuffixArray};
-
-// ── Tuning constants ───────────────────────────────────────────────────
-
-/// How far ahead of the current output position the sorted window must
-/// extend. Match-finding compares the suffix at `output_position` against
-/// neighbors in the SA; without runway past `output_position`, every
-/// match would be capped by the not-yet-sorted boundary.
-const REQUIRED_LOOKAHEAD: usize = 256;
-
-/// Multiplier applied to the sorted window when growth is required. The
-/// same factor governs the initial-window shrink loop, so initial-shrink
-/// and grow-back stay geometrically in lockstep — a window shrunk by k
-/// halvings is rebuilt by at most k regrowths over the encoding walk.
-const WINDOW_GROWTH_MULTIPLIER: usize = 4;
-
-/// Floor on the sorted window during initial shrink. The progressive
-/// strategy shrinks the initial window so the first sort is cheap on
-/// patches where source is much smaller than target; the floor prevents
-/// over-shrinking on tiny inputs where the per-grow rebuild cost would
-/// dominate the savings.
-const MINIMUM_INITIAL_WINDOW: usize = 1024;
+use crate::bps_hash_chain::{FoundMatch, HashChainMatcher, MatchSide};
 
 /// Number of low bits in a BPS action header reserved for the action
 /// tag. The remaining bits carry `length - 1`. Two bits because BPS
@@ -114,35 +92,9 @@ impl EncoderState {
     }
 }
 
-/// Suffix-sorted concatenation of a target window and the source buffer,
-/// with a reverse rank index for O(1) rank lookup at any position.
-struct SortedConcat {
-    /// The bytes that were sorted: `target[..sorted_window_size] ++ source`.
-    bytes: Vec<u8>,
-    /// The suffix array of `bytes`.
-    suffix_array: SuffixArray,
-    /// Inverse of `suffix_array`: `rank_at_position[position]` is the
-    /// rank in the SA at which `position` appears.
-    rank_at_position: Vec<usize>,
-    /// How many bytes of target are included in `bytes`. Source occupies
-    /// indices `[sorted_window_size, sorted_window_size + source_len)`.
-    sorted_window_size: usize,
-}
-
-/// A match found by walking the SA from the current output position's
-/// rank. `position_in_concat` indexes into the [`SortedConcat`]'s bytes;
-/// `length` is how many bytes match the target starting at the current
-/// output position.
-#[derive(Copy, Clone)]
-struct MatchCandidate {
-    position_in_concat: usize,
-    length: usize,
-}
-
-/// A match candidate that has been classified into a concrete BPS
-/// action and resolved to a file-relative position. Carrying the
-/// resolved file position (rather than the raw position-in-concat) lets
-/// the emit step run without re-classifying.
+/// A finder candidate classified into a concrete BPS action and carried
+/// with the file-relative position the finder resolved, so the emit
+/// step runs without re-classifying.
 #[derive(Copy, Clone)]
 struct MatchEmission {
     action: BpsAction,
@@ -178,24 +130,16 @@ pub fn bps_diff(source: &[u8], target: &[u8]) -> Vec<u8> {
         return out;
     }
 
-    let initial_window_size = compute_initial_window_size(target.len(), source.len());
-    let mut sorted_concat = build_sorted_concat(target, source, initial_window_size);
+    let mut matcher = HashChainMatcher::build(source, target);
     let mut state = EncoderState::initial();
 
     while state.output_position < target.len() {
-        if needs_window_growth(&state, &sorted_concat, target.len()) {
-            sorted_concat = grow_sorted_concat(
-                target,
-                source,
-                sorted_concat.sorted_window_size,
-                state.output_position,
-            );
-        }
-
-        let step = match find_match_candidate(&sorted_concat, target, &state) {
-            Some(candidate) => {
-                classify_and_decide(candidate, &state, sorted_concat.sorted_window_size)
-            }
+        let step = match matcher.match_at(
+            state.output_position,
+            state.last_source_copy_end,
+            state.last_target_copy_end,
+        ) {
+            Some(found) => classify_and_decide(found, &state),
             None => LoopStep::AccumulateLiteralByte,
         };
 
@@ -209,222 +153,12 @@ pub fn bps_diff(source: &[u8], target: &[u8]) -> Vec<u8> {
     out
 }
 
-// ── Initial sort and progressive growth ────────────────────────────────
-
-/// Pick the initial window size for the very first sort. The strategy
-/// shrinks geometrically while the source is small relative to a
-/// quarter of the target — every shrink halves the first-sort cost
-/// without losing reachability, since the window will grow back at the
-/// matching geometric rate as the encoder walks forward.
-fn compute_initial_window_size(target_len: usize, source_len: usize) -> usize {
-    let mut window_size = target_len;
-    while window_size / WINDOW_GROWTH_MULTIPLIER > source_len
-        && window_size > MINIMUM_INITIAL_WINDOW
-    {
-        window_size /= WINDOW_GROWTH_MULTIPLIER;
-    }
-    window_size
-}
-
-/// Build a [`SortedConcat`] over the first `sorted_window_size` bytes of
-/// target followed by the entire source.
-fn build_sorted_concat(target: &[u8], source: &[u8], sorted_window_size: usize) -> SortedConcat {
-    let mut bytes = Vec::with_capacity(sorted_window_size + source.len());
-    bytes.extend_from_slice(&target[..sorted_window_size]);
-    bytes.extend_from_slice(source);
-    let suffix_array = bps_suffix_sort::suffix_sort(&bytes);
-    let mut rank_at_position = vec![0usize; bytes.len()];
-    for (rank, position) in suffix_array.iter_positions().enumerate() {
-        rank_at_position[position] = rank;
-    }
-    SortedConcat {
-        bytes,
-        suffix_array,
-        rank_at_position,
-        sorted_window_size,
-    }
-}
-
-/// Whether the encoder has walked close enough to the sorted boundary
-/// that the next iteration would lack the required lookahead.
-fn needs_window_growth(
-    state: &EncoderState,
-    sorted_concat: &SortedConcat,
-    target_len: usize,
-) -> bool {
-    state.output_position + REQUIRED_LOOKAHEAD >= sorted_concat.sorted_window_size
-        && sorted_concat.sorted_window_size < target_len
-}
-
-/// Build a fresh [`SortedConcat`] with a window grown to give the
-/// encoder room to keep walking. Multiple growth steps may compound
-/// inside a single call when one round of geometric expansion is not
-/// enough to clear the lookahead requirement.
-fn grow_sorted_concat(
-    target: &[u8],
-    source: &[u8],
-    current_window_size: usize,
-    output_position: usize,
-) -> SortedConcat {
-    let target_len = target.len();
-    let mut grown_window_size = current_window_size;
-    while output_position + REQUIRED_LOOKAHEAD >= grown_window_size
-        && grown_window_size < target_len
-    {
-        grown_window_size = (grown_window_size * WINDOW_GROWTH_MULTIPLIER).min(target_len);
-    }
-    build_sorted_concat(target, source, grown_window_size)
-}
-
-// ── Match search ───────────────────────────────────────────────────────
-
-/// Find the best match at the current output position by walking the SA
-/// outward from that position's rank. Returns `None` when no neighbor
-/// outside the not-yet-written zone exists or when the best neighbor's
-/// match length is zero.
-fn find_match_candidate(
-    sorted_concat: &SortedConcat,
-    target: &[u8],
-    state: &EncoderState,
-) -> Option<MatchCandidate> {
-    let search_string = &target[state.output_position..sorted_concat.sorted_window_size];
-    let starting_rank = sorted_concat.rank_at_position[state.output_position];
-
-    let upward_neighbor =
-        walk_up_for_valid_neighbor(sorted_concat, starting_rank, state.output_position);
-    let downward_neighbor =
-        walk_down_for_valid_neighbor(sorted_concat, starting_rank, state.output_position);
-
-    let candidate = match (upward_neighbor, downward_neighbor) {
-        (None, None) => return None,
-        (Some(only), None) | (None, Some(only)) => MatchCandidate {
-            position_in_concat: only,
-            length: match_len(&sorted_concat.bytes[only..], search_string),
-        },
-        (Some(upward), Some(downward)) => {
-            pick_longer_match(&sorted_concat.bytes, search_string, upward, downward)
-        }
-    };
-
-    if candidate.length == 0 {
-        None
-    } else {
-        Some(candidate)
-    }
-}
-
-/// Walk the SA upward from `starting_rank` for the first neighbor whose
-/// concat position lies outside the not-yet-written zone.
-fn walk_up_for_valid_neighbor(
-    sorted_concat: &SortedConcat,
-    starting_rank: usize,
-    output_position: usize,
-) -> Option<usize> {
-    let mut current_rank = starting_rank;
-    while current_rank > 0 {
-        current_rank -= 1;
-        let candidate_position = sorted_concat.suffix_array.position_at_rank(current_rank);
-        if is_outside_not_yet_written_zone(
-            candidate_position,
-            output_position,
-            sorted_concat.sorted_window_size,
-        ) {
-            return Some(candidate_position);
-        }
-    }
-    None
-}
-
-/// Walk the SA downward from `starting_rank + 1` for the first neighbor
-/// whose concat position lies outside the not-yet-written zone.
-fn walk_down_for_valid_neighbor(
-    sorted_concat: &SortedConcat,
-    starting_rank: usize,
-    output_position: usize,
-) -> Option<usize> {
-    let sa_len = sorted_concat.suffix_array.len();
-    let mut current_rank = starting_rank + 1;
-    while current_rank < sa_len {
-        let candidate_position = sorted_concat.suffix_array.position_at_rank(current_rank);
-        if is_outside_not_yet_written_zone(
-            candidate_position,
-            output_position,
-            sorted_concat.sorted_window_size,
-        ) {
-            return Some(candidate_position);
-        }
-        current_rank += 1;
-    }
-    None
-}
-
-/// True iff `position` lies outside the not-yet-written zone
-/// `[output_position, sorted_window_size)`. The not-yet-written zone is
-/// the range of target bytes the encoder has not emitted yet — matching
-/// against them would mean copying from where we have not finished yet,
-/// which the wire format cannot promise.
-fn is_outside_not_yet_written_zone(
-    position: usize,
-    output_position: usize,
-    sorted_window_size: usize,
-) -> bool {
-    position < output_position || position >= sorted_window_size
-}
-
-/// Given two SA neighbors of the search string, pick the one whose
-/// match against `search_string` is longer. The two neighbors are
-/// adjacent on the SA so they share a common prefix; the comparison
-/// only diverges at the byte past their LCP. The candidate whose
-/// divergence-point byte equals `search_string[lcp]` extends further;
-/// the remaining match length is then measured directly.
-fn pick_longer_match(
-    bytes: &[u8],
-    search_string: &[u8],
-    upward_position: usize,
-    downward_position: usize,
-) -> MatchCandidate {
-    let common_prefix_length = match_len(&bytes[upward_position..], &bytes[downward_position..]);
-    if common_prefix_length >= search_string.len() {
-        return MatchCandidate {
-            position_in_concat: upward_position,
-            length: search_string.len(),
-        };
-    }
-    let upward_extends_into_search = upward_position + common_prefix_length < bytes.len()
-        && bytes[upward_position + common_prefix_length] == search_string[common_prefix_length];
-    let winning_position = if upward_extends_into_search {
-        upward_position
-    } else {
-        downward_position
-    };
-    let extra_match_length = match_len(
-        &bytes[winning_position + common_prefix_length..],
-        &search_string[common_prefix_length..],
-    );
-    MatchCandidate {
-        position_in_concat: winning_position,
-        length: common_prefix_length + extra_match_length,
-    }
-}
-
-/// Length of the common prefix between two byte slices.
-fn match_len(left: &[u8], right: &[u8]) -> usize {
-    left.iter()
-        .zip(right)
-        .take_while(|(left_byte, right_byte)| left_byte == right_byte)
-        .count()
-}
-
 // ── Classify and decide ────────────────────────────────────────────────
 
-/// Classify a match candidate into a concrete [`MatchEmission`] and
+/// Classify a finder candidate into a concrete [`MatchEmission`] and
 /// decide whether emitting it beats accumulating a literal byte.
-fn classify_and_decide(
-    candidate: MatchCandidate,
-    state: &EncoderState,
-    sorted_window_size: usize,
-) -> LoopStep {
-    let emission = classify_match(candidate, state.output_position, sorted_window_size);
+fn classify_and_decide(found: FoundMatch, state: &EncoderState) -> LoopStep {
+    let emission = classify_match(found, state.output_position);
     if match_beats_literal(&emission, state) {
         LoopStep::EmitMatch(emission)
     } else {
@@ -432,35 +166,20 @@ fn classify_and_decide(
     }
 }
 
-/// Resolve a candidate's position-in-concat into a file-relative
-/// position and the BPS action that would carry it. The split is
-/// structural: positions below `sorted_window_size` index into the
-/// already-written target half of the concat (`TargetCopy`); positions
-/// at or above it index into source (`SourceCopy`, or `SourceRead` for
-/// the no-offset special case).
-fn classify_match(
-    candidate: MatchCandidate,
-    output_position: usize,
-    sorted_window_size: usize,
-) -> MatchEmission {
-    if candidate.position_in_concat < sorted_window_size {
-        MatchEmission {
-            action: BpsAction::TargetCopy,
-            file_position: candidate.position_in_concat,
-            length: candidate.length,
-        }
-    } else {
-        let file_position = candidate.position_in_concat - sorted_window_size;
-        let action = if file_position == output_position {
-            BpsAction::SourceRead
-        } else {
-            BpsAction::SourceCopy
-        };
-        MatchEmission {
-            action,
-            file_position,
-            length: candidate.length,
-        }
+/// Name the BPS action a candidate would ride out as: a written-target
+/// candidate is a `TargetCopy`; a source candidate at exactly the
+/// output position is the offset-free `SourceRead`, and anywhere else a
+/// `SourceCopy`.
+fn classify_match(found: FoundMatch, output_position: usize) -> MatchEmission {
+    let action = match found.side {
+        MatchSide::FromWrittenTarget => BpsAction::TargetCopy,
+        MatchSide::FromSource if found.file_position == output_position => BpsAction::SourceRead,
+        MatchSide::FromSource => BpsAction::SourceCopy,
+    };
+    MatchEmission {
+        action,
+        file_position: found.file_position,
+        length: found.length,
     }
 }
 
@@ -577,7 +296,9 @@ fn flush_pending_target_read(out: &mut Vec<u8>, state: &mut EncoderState, target
 // follows). Between bytes, 1 is subtracted from the remaining value so
 // that each width has a unique range (no aliased "leading zeros" across
 // widths). Not LEB128 — encoder, decoder, and round-trip tests all
-// live in this module to keep the convention contained.
+// live in this module to keep the convention contained. The finder
+// imports [`varint_cost`] and [`encode_delta`] to rank candidates in
+// the same bytes the emitter will spend.
 
 fn encode_varint(out: &mut Vec<u8>, mut value: u64) {
     while value >= 0x80 {
@@ -589,7 +310,7 @@ fn encode_varint(out: &mut Vec<u8>, mut value: u64) {
 }
 
 /// Number of bytes a value would occupy when byuu-varint encoded.
-fn varint_cost(mut value: u64) -> usize {
+pub(crate) fn varint_cost(mut value: u64) -> usize {
     let mut byte_count = 1;
     while value >= 0x80 {
         value >>= 7;
@@ -601,7 +322,7 @@ fn varint_cost(mut value: u64) -> usize {
 
 /// Zigzag-encode the signed delta `next - previous`: bit 0 carries the
 /// sign, bits 1+ carry the magnitude.
-fn encode_delta(previous: usize, next: usize) -> u64 {
+pub(crate) fn encode_delta(previous: usize, next: usize) -> u64 {
     if next >= previous {
         ((next - previous) as u64) << 1
     } else {
@@ -714,11 +435,42 @@ mod tests {
         // Overwrite target[0x800..0x900] with source[0x100..0x200].
         target[0x800..0x900].copy_from_slice(&source[0x100..0x200]);
         let out = bps_diff(&source, &target);
-        // Mostly SourceRead with one SourceCopy — patch is very small.
+        // Mostly SourceRead with one copy action — patch is very small.
         assert!(
             out.len() < 100,
             "expected compact patch, got {} bytes",
             out.len()
         );
+    }
+
+    #[test]
+    fn scattered_edits_emit_only_aligned_actions() {
+        // One byte flipped every 4 KiB: the shape of a typical ROM edit.
+        // Every flip is a one-byte TargetRead and everything between is
+        // the offset-free SourceRead — no copy action ever spends a
+        // delta, however tempting a far coincidence might look.
+        let source = pseudo_random(0x99, 1 << 18);
+        let flip_stride = 4096;
+        let mut target = source.clone();
+        for spot in (0..target.len()).step_by(flip_stride) {
+            target[spot] ^= 0x5a;
+        }
+        let out = bps_diff(&source, &target);
+        let mut cursor = 0;
+        let mut action_count = 0;
+        while cursor < out.len() {
+            let header = decode_varint(&out, &mut cursor);
+            let tag = header & 3;
+            let length = (header >> 2) + 1;
+            if tag == BpsAction::TargetRead.wire_tag() {
+                assert_eq!(length, 1, "every literal is a single flipped byte");
+                cursor += length as usize;
+            } else {
+                assert_eq!(tag, BpsAction::SourceRead.wire_tag(), "no copy action spends a delta");
+                assert_eq!(length, (flip_stride - 1) as u64);
+            }
+            action_count += 1;
+        }
+        assert_eq!(action_count, 2 * (target.len() / flip_stride));
     }
 }
