@@ -53,7 +53,9 @@ library slap-internal
     , Slap.ByteParser
     , Slap.PatchField
     , Slap.BSDiff.Apply
+    , Slap.BSDiff.Create
     , Slap.BSDiff.Describe
+    , Slap.BSDiff.FFI
     , Slap.BSDiff.Parse
     , Slap.BSDiff.Types
     , Slap.Detect

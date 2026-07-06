@@ -23,6 +23,7 @@ module Slap.Status
   , BSDiffSection(..)
   , DecompressionCause(..)
   , XDelta1DiffCause(..)
+  , BSDiffDifferCause(..)
   , XDelta1GzipStreamInputs(..)
   , CompressionAlgorithm(..)
   , decompressionAlgorithm
@@ -420,6 +421,13 @@ newtype DecompressionCause = DecompressionCause { unDecompressionCause :: Text }
 newtype XDelta1DiffCause = XDelta1DiffCause { unXDelta1DiffCause :: Text }
   deriving (Show, Eq)
 
+-- | The cause of a bsdiff differ failure, carried verbatim from the
+-- Rust side. Sibling of 'XDelta1DiffCause', same contract; raised by
+-- "Slap.BSDiff.FFI" and lifted into 'SlapError' via
+-- 'BSDiffDifferFailed'.
+newtype BSDiffDifferCause = BSDiffDifferCause { unBSDiffDifferCause :: Text }
+  deriving (Show, Eq)
+
 -- | Which input file(s) the patch expected to be gzip streams at
 -- apply time. Carried by 'XDelta1InputPreCompressionUnsupported' so
 -- the renderer can name the affected side(s) precisely without
@@ -496,6 +504,14 @@ data SlapError
   -- invariant violations (cumulative emit length \/= target length
   -- at end, etc.) the differ surfaces rather than panicking.
   | XDelta1DiffFailed XDelta1DiffCause
+
+  -- | The bsdiff differ ('Slap.BSDiff.FFI.bsdiffDiff') failed.
+  -- Carries the Rust-side cause verbatim: internal-invariant
+  -- violations (an add region escaping the source, emitted regions
+  -- not covering the target) the differ surfaces rather than
+  -- panicking. Unlike 'XDelta1DiffFailed' there is no size refusal to
+  -- relay — bsdiff's 64-bit wire fields outreach any input buffer.
+  | BSDiffDifferFailed BSDiffDifferCause
 
   -- | A parsed record's effective end position lies beyond the
   -- variant's wire-format spec ceiling. The 'ActionIndex' names the
@@ -1020,11 +1036,19 @@ data SlapAdvisory
 
   -- | Bytes at the end of an APS-N64 patch too few to begin another
   -- record (a record header is five bytes: a four-byte offset and a
-  -- length byte). The reference applier ends its walk the same way —
-  -- its next record read returns short and the loop stops — but
-  -- silently; slap stops and says so. The 'Length' is the fragment's
-  -- byte count (one to four).
+  -- length byte). The reference applier ends its walk the same way in
+  -- most cases — its next record read returns short and the loop
+  -- stops — but silently; slap stops and says so. The 'Length' is the
+  -- fragment's byte count (one to four).
   | APSN64TrailingFragment !Length
+
+  -- | Bytes at the end of a BSDiff control stream too few to form another
+  -- instruction (one is 24 bytes: three 8-byte sign-magnitude values).
+  -- An applier that reads triples on demand stops when the target fills and never sees such a tail;
+  -- slap decodes the whole stream up front, drops the fragment, and warns —
+  -- the tail sits inside a bzip2-compressed section, so it is the producer's doing, not transit damage.
+  -- The 'Length' is the fragment's byte count (1 to 23).
+  | BSDiffTrailingControlFragment !Length
 
   -- | An EBP patch's metadata trailer existed (the post-@"EOF"@
   -- byte stream began with @{@, the shape signature of an EBPatcher
@@ -1648,6 +1672,9 @@ renderSlapError (DecompressionFailed failure) =
 renderSlapError (XDelta1DiffFailed (XDelta1DiffCause causeMessage)) =
   "xdelta1 differ failed: " <> causeMessage
 
+renderSlapError (BSDiffDifferFailed (BSDiffDifferCause causeMessage)) =
+  "bsdiff differ failed: " <> causeMessage
+
 renderSlapError (RecordExceedsAddressableRange label recordIndex (ActualOffset endOffset) (MaxOffset maxEndOffset)) =
   formatLabelName label <> ": record " <> renderAsText (unActionIndex recordIndex)
   <> " ends at offset 0x" <> renderHexAsText (unOffset endOffset)
@@ -1829,10 +1856,17 @@ renderSlapError (MalformedBSDiffHeader (BSDiffNegativeHeaderSizes control diff t
   <> renderAsText (unControlSectionSize control) <> ", diff=" <> renderAsText (unDiffSectionSize diff)
   <> ", target=" <> renderAsText (unTargetSectionSize target) <> ")"
 
-renderSlapError (MalformedBSDiffHeader (BSDiffSectionsExceedPatch overrunBytes)) =
+renderSlapError (MalformedBSDiffHeader (BSDiffControlOverrunsPatch overrunBytes)) =
   formatLabelName LabelBSDiff
-  <> ": invalid header (control and diff blocks overrun the patch body by "
-  <> renderAsText overrunBytes <> " bytes; they claim more data than the file holds)"
+  <> ": invalid header (the control block's declared size reaches "
+  <> renderAsText overrunBytes <> plural (fromIntegral overrunBytes) " byte" " bytes"
+  <> " past the end of the patch)"
+
+renderSlapError (MalformedBSDiffHeader (BSDiffDiffOverrunsPatch overrunBytes)) =
+  formatLabelName LabelBSDiff
+  <> ": invalid header (the diff block's declared size reaches "
+  <> renderAsText overrunBytes <> plural (fromIntegral overrunBytes) " byte" " bytes"
+  <> " past the end of the patch)"
 
 renderSlapError (MalformedAPSN64Header malformation) =
   formatLabelName LabelAPSN64 <> ": " <> case malformation of
@@ -2201,6 +2235,12 @@ renderSlapAdvisory (APSN64TrailingFragment (Length fragmentLength)) =
   <> ": " <> renderAsText fragmentLength
   <> plural fragmentLength " trailing byte" " trailing bytes"
   <> " after the last record (too few to begin another); not record data, ignored"
+
+renderSlapAdvisory (BSDiffTrailingControlFragment (Length fragmentLength)) =
+  formatLabelName LabelBSDiff
+  <> ": " <> renderAsText fragmentLength
+  <> plural fragmentLength " trailing byte" " trailing bytes"
+  <> " at the end of the control stream (too few to form another instruction); not instruction data, ignored"
 
 renderSlapAdvisory (EBPMetadataMalformed label) =
   formatLabelName label
@@ -2717,10 +2757,13 @@ newtype TargetSectionSize  = TargetSectionSize  { unTargetSectionSize  :: Int64 
 
 -- | The structural failures slap raises when validating a BSDiff fixed-width header.
 -- 'BSDiffNegativeHeaderSizes': at least one of the three section sizes decoded as negative.
--- 'BSDiffSectionsExceedPatch' carries the number of bytes by which the declared control and diff blocks overrun the patch body — equivalently a negative extra block, since the extra block is whatever remains after the two.
+-- The two overrun arms name the block whose declared size reaches past the end of the patch, carrying the distance in bytes;
+-- 'Slap.BSDiff.Parse.parseBSDiff' judges them sequentially (control against the whole body, then diff against what control left),
+-- each step a comparison that cannot wrap the way a summed bound could.
 data BSDiffHeaderMalformation
   = BSDiffNegativeHeaderSizes !ControlSectionSize !DiffSectionSize !TargetSectionSize
-  | BSDiffSectionsExceedPatch !Int64
+  | BSDiffControlOverrunsPatch !Int64
+  | BSDiffDiffOverrunsPatch !Int64
   deriving (Eq, Show)
 
 -- | A header byte slap validates before the main wire-level walk and cannot accept:
@@ -2896,6 +2939,9 @@ slapAdvisorySeverity advisory = case advisory of
   -- time that altered output bytes vs the wire, or integrity checks
   -- that didn't agree with the patch's stored hashes.
   NoEOFMarker{}                        -> SeverityWarning
+  BSDiffTrailingControlFragment{}      -> SeverityWarning
+  APSN64TrailingFragment{}             -> SeverityWarning
+  IPS32TrailingBytes{}                 -> SeverityWarning
   -- PPF2 permits growth, so its apply-grow advisory is a note; PPF1/PPF3
   -- are intended same-size, so growth there warns.
   PPFApplyGrewPastSource LabelPPF2 _ _ -> SeverityNote
@@ -2926,14 +2972,12 @@ slapAdvisorySeverity advisory = case advisory of
   NonCanonicalVCDIFFVarint{}           -> SeverityNote
   OverlappingRecords{}                 -> SeverityNote
   UnsortedRecords{}                    -> SeverityNote
-  IPS32TrailingBytes{}                 -> SeverityNote
   VCDIFFTrailingRemnant{}              -> SeverityNote
   VCDIFFEmptyTargetWindowSegment{}     -> SeverityNote
   VCDIFFEmptyApplicationHeader         -> SeverityNote
   VCDIFFUnevenWindowSizes              -> SeverityNote
   XDelta3WindowSizePastReferenceDecoder{} -> SeverityNote
   VCDIFFCustomTableNoopNoopEntries{}   -> SeverityNote
-  APSN64TrailingFragment{}             -> SeverityNote
   EBPMetadataMalformed{}               -> SeverityNote
   BPSMetadataNonConformant{}           -> SeverityNote
   XDelta1DataRecordNameDiverges{}      -> SeverityNote

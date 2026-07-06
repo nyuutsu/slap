@@ -3,7 +3,7 @@
 module Integration.Create (createTests) where
 
 import Integration.Bootstrap (BootstrapTargets, lookupBootstrapTarget)
-import Integration.HeavyTests (FixtureName(..), bpsCreateIsExpensive)
+import Integration.HeavyTests (FixtureName(..), differentialCreateIsExpensive)
 import Integration.Helpers (assertFailureT)
 import Integration.Helpers
   ( Tier
@@ -64,9 +64,9 @@ planCreateRow getTargets repo fields = case fields of
             runnable     = mkRoundTripTest getTargets label format
                              absoluteBase absoluteBoot targetSha
             constructor
-              | format == CreateDifferential CreateBPS
-              , bpsCreateIsExpensive (FixtureName scenario) = WillRunHeavy
-              | otherwise                                   = WillRun
+              | format `elem` [CreateDifferential CreateBPS, CreateDifferential CreateBSDiff]
+              , differentialCreateIsExpensive (FixtureName scenario) = WillRunHeavy
+              | otherwise                                            = WillRun
         in requireFixture absoluteBase $ \_ ->
            requireFixture absoluteBoot $ \_ ->
              pure [constructor runnable]

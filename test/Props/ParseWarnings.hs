@@ -16,6 +16,10 @@ import Props.Helpers (assertFailureT)
 
 import qualified Slap.APSN64.Parse as APSN64
 import qualified Slap.APSN64.Types as APSN64
+import qualified Slap.BSDiff.Parse as BSDiff
+import Slap.BSDiff.Create (putSignMagnitude64)
+import Slap.BSDiff.Types (bsdiffMagicBytes)
+import Slap.Compression.Stream (bzip2Compress)
 import qualified Slap.IPS.Parse as IPS
 import qualified Slap.PPF1.Parse as PPF1
 import Slap.PPF1.Types (PPF1Origin(..))
@@ -29,6 +33,8 @@ import Slap.Measure (actionAtPosition, Length(..), SubstitutionCount(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Builder as Builder
+import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Word (Word8)
 
 import Test.Tasty
@@ -56,6 +62,8 @@ parseWarningsTests = testGroup "ParseWarnings"
       apsN64SimplePatchHasNoCountryWarning
   , testCase "PPF1 description with bytes that do not decode under the locale surfaces a substitution advisory"
       ppf1DescriptionDecodeSubstitutionEmitsAdvisory
+  , testCase "BSDiff control stream with a trailing partial instruction surfaces a fragment advisory"
+      bsdiffTrailingControlFragmentEmitsAdvisory
   ]
 
 ----------------------------------------------------------------------------
@@ -351,4 +359,39 @@ ppf1DescriptionDecodeSubstitutionEmitsAdvisory =
       assertEqual "surfaced advisories"
         [FieldDecodedSubstituted LabelPPF1 FieldDescription
            (SubstitutionCount 1)]
+        advisories
+
+----------------------------------------------------------------------------
+-- BSDiff: trailing control fragment
+----------------------------------------------------------------------------
+
+-- | A BSDiff patch whose decompressed control stream carries one whole
+-- instruction and a 5-byte tail — too few bytes to form another. The
+-- instruction covers the 1-byte declared target from the extra stream,
+-- so the patch stays appliable; only the fragment is set aside.
+bsdiffPatchWithControlFragment :: PatchFileContents
+bsdiffPatchWithControlFragment =
+  let wholeInstruction = toStrictBytes
+        (putSignMagnitude64 0 <> putSignMagnitude64 1 <> putSignMagnitude64 0)
+      controlCompressed = bzip2Compress (wholeInstruction <> ByteString.replicate 5 0xAB)
+      diffCompressed    = bzip2Compress ByteString.empty
+      extraCompressed   = bzip2Compress (ByteString.singleton 0x58)
+      header = toStrictBytes
+        (  Builder.byteString bsdiffMagicBytes
+        <> putSignMagnitude64 (fromIntegral (ByteString.length controlCompressed))
+        <> putSignMagnitude64 (fromIntegral (ByteString.length diffCompressed))
+        <> putSignMagnitude64 1 )
+  in PatchFileContents (header <> controlCompressed <> diffCompressed <> extraCompressed)
+  where
+    toStrictBytes = LazyByteString.toStrict . Builder.toLazyByteString
+
+-- | The dropped tail is on the record: parsing succeeds, one whole
+-- instruction survives, and the advisory names the fragment's length.
+bsdiffTrailingControlFragmentEmitsAdvisory :: Assertion
+bsdiffTrailingControlFragmentEmitsAdvisory =
+  case BSDiff.parseBSDiff bsdiffPatchWithControlFragment of
+    Left slapError -> assertFailureT ("parse failed: " <> renderSlapError slapError)
+    Right (Parsed _ advisories) ->
+      assertEqual "surfaced advisories"
+        [BSDiffTrailingControlFragment (Length 5)]
         advisories

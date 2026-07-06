@@ -13,9 +13,9 @@ import Data.ByteString (ByteString)
 import Slap.Measure (FileSize(..), Length(..), Delta(..))
 
 data BSDiffPatch = BSDiffPatch
-  { bsdiffControlSize  :: !FileSize   -- compressed, on the wire
-  , bsdiffDiffSize     :: !FileSize   -- compressed, on the wire
-  , bsdiffExtraSize    :: !FileSize   -- compressed, on the wire
+  { bsdiffControlSize  :: !Length     -- compressed, on the wire
+  , bsdiffDiffSize     :: !Length     -- compressed, on the wire
+  , bsdiffExtraSize    :: !Length     -- compressed, on the wire
   , bsdiffTargetSize   :: !FileSize
   , bsdiffInstructions :: [BSDiffInstruction]
   , bsdiffDiffData     :: ByteString  -- decompressed
@@ -31,6 +31,9 @@ data BSDiffInstruction = BSDiffInstruction
   } deriving (Show)
 
 -- | Wire-format magic prefix, per bsdiff 4.3 (Colin Percival).
+-- BSDIFF40 is the flavor that circulates as patch files;
+-- the sibling headers, BSDF2 and ENDSLEY/BSDIFF43, live inside Android's OTA and Play Store pipelines
+-- and never travel as patches, so slap does not speak them.
 bsdiffMagicBytes :: ByteString
 bsdiffMagicBytes = "BSDIFF40"
 

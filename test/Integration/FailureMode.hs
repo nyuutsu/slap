@@ -4,7 +4,7 @@ module Integration.FailureMode (failureModeTests) where
 
 import Integration.Bootstrap (BootstrapTargets, lookupBootstrapTarget)
 import Integration.External (ExternalRun(..), ExternalTool(..), runExternal)
-import Integration.HeavyTests (FixtureName(..), bpsCreateIsExpensive)
+import Integration.HeavyTests (FixtureName(..), differentialCreateIsExpensive)
 import Integration.Helpers (assertFailureT)
 import Integration.Helpers
   ( Tier
@@ -515,7 +515,7 @@ crossFormatRoundTripTests base bps =
 --
 -- The stadium2 BPS row is the long pole of the entire suite (~11 s
 -- single-thread); 'planRoundTrip' consults
--- 'Integration.HeavyTests.bpsCreateIsExpensive' so it ends up in
+-- 'Integration.HeavyTests.differentialCreateIsExpensive' so it ends up in
 -- the heavy bucket without this builder having to know about
 -- scheduling concerns directly.
 createRoundTripTests :: IO BootstrapTargets -> FilePath -> FilePath
@@ -540,7 +540,7 @@ createRoundTripTests getTargets dm4yBase dm4yBps
                            (baseBytes, targetBytes) <- bootstrapTarget basePath patchPath
                            createAndVerify formatString baseBytes targetBytes
           isHeavy      = formatString == "bps"
-                      && bpsCreateIsExpensive (FixtureName basePath)
+                      && differentialCreateIsExpensive (FixtureName basePath)
       in if isHeavy then WillRunHeavy tree else WillRun tree
 
     bootstrapTarget :: FilePath -> FilePath -> IO (ByteString, ByteString)

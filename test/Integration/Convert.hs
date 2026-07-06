@@ -2,7 +2,7 @@
 
 module Integration.Convert (convertTests) where
 
-import Integration.HeavyTests (FixtureName(..), bpsCreateIsExpensive)
+import Integration.HeavyTests (FixtureName(..), differentialCreateIsExpensive)
 import Integration.Helpers (assertFailureT)
 import Integration.Helpers
   ( Tier
@@ -84,7 +84,7 @@ planConvertRow repo fields = case fields of
                                warningsString flagsString targetCreateFormat label
             constructor
               | targetCreateFormat == CreateDifferential CreateBPS
-              , bpsCreateIsExpensive (FixtureName patchRel) = WillRunHeavy
+              , differentialCreateIsExpensive (FixtureName patchRel) = WillRunHeavy
               | otherwise                                   = WillRun
         in requireFixture patchPath $ \_ ->
              pure [constructor runnable]

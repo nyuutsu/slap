@@ -5,6 +5,7 @@ module Slap.Compression.Stream
   , gzipInflate
   , gzipDeflate
   , bzip2Decompress
+  , bzip2Compress
   , LzmaDecoded(..)
   , lzmaDecompress
   , lzmaCompress
@@ -64,6 +65,12 @@ foreign import ccall unsafe "rusty_bzip2_decompress"
     -> Ptr (Ptr Word8) -> Ptr CSize
     -> Ptr (Ptr Word8) -> Ptr CSize
     -> IO CInt
+
+foreign import ccall unsafe "rusty_bzip2_compress"
+  rustyBzip2Compress
+    :: Ptr Word8 -> CSize
+    -> Ptr (Ptr Word8) -> Ptr CSize
+    -> IO ()
 
 foreign import ccall unsafe "rusty_lzma_decompress"
   rustyLzmaDecompress
@@ -186,6 +193,12 @@ gzipDeflate = callCompressor rustyGzipDeflate
 -- | Bzip2 decompress.
 bzip2Decompress :: ByteString -> Either DecompressionCause ByteString
 bzip2Decompress = callDecompressor rustyBzip2Decompress
+
+-- | Bzip2 compress at level 9, the reference bsdiff tooling's setting
+-- (see @rusty-slap/src/compress.rs@ for the level's provenance).
+-- Round-trip partner of 'bzip2Decompress'.
+bzip2Compress :: ByteString -> ByteString
+bzip2Compress = callCompressor rustyBzip2Compress
 
 -- | What one LZMA decompression reports back across the seam: the
 -- decoded bytes, and how many input bytes the decoder consumed

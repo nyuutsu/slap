@@ -9,7 +9,9 @@ crate-type = ["staticlib"]
 [dependencies]
 crc32fast = "1"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
-bzip2-rs = "0.1"
+# The default backend is the pure-Rust libbz2-rs-sys;
+# the C-backed bzip2-sys sits behind an off-by-default feature and stays off.
+bzip2 = "0.6"
 # Store + Deflate only; default features off to keep the C-backed codecs out.
 zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 lzma-rs = { version = "0.3", default-features = false }

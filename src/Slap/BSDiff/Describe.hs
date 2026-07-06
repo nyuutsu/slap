@@ -19,7 +19,7 @@ import Slap.Display.Analysis
   , AnnotDetail(..)
   )
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), renderAsText)
-import Slap.Measure (Offset(..), FileSize(..), advance)
+import Slap.Measure (Offset(..), Length(..), FileSize(..), advance)
 import Data.List (mapAccumL)
 
 ----------------------------------------------------------------------------
@@ -29,9 +29,9 @@ import Data.List (mapAccumL)
 bsdiffMeta :: BSDiffPatch -> [InfoLine]
 bsdiffMeta patch =
   [ InfoLine "new size" (renderAsText (unFileSize (bsdiffTargetSize patch)))
-  , InfoLine "ctrl block" (renderAsText (unFileSize (bsdiffControlSize patch)) <> " bytes (compressed)")
-  , InfoLine "diff block" (renderAsText (unFileSize (bsdiffDiffSize patch)) <> " bytes (compressed)")
-  , InfoLine "extra block" (renderAsText (unFileSize (bsdiffExtraSize patch)) <> " bytes (compressed)")
+  , InfoLine "control block" (renderAsText (unLength (bsdiffControlSize patch)) <> " bytes (compressed)")
+  , InfoLine "diff block" (renderAsText (unLength (bsdiffDiffSize patch)) <> " bytes (compressed)")
+  , InfoLine "extra block" (renderAsText (unLength (bsdiffExtraSize patch)) <> " bytes (compressed)")
   ]
 
 ----------------------------------------------------------------------------

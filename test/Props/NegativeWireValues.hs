@@ -1,47 +1,62 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | A negative value where a format expects a non-negative position
--- or length is malformed, and slap answers it with a typed error that
--- names what was negative — not the generic "writes past target" the
--- bounds primitive would otherwise return.
+-- | A hostile wire value — negative where a format expects
+-- non-negative, or so large a summed bound would wrap — is malformed,
+-- and slap answers it with a typed error that names the actual wall:
+-- not the generic "writes past target" the bounds primitive would
+-- otherwise return, and not the decompression failure a wrong slicing
+-- would produce downstream.
 --
 -- 'Slap.Measure.fitsWithin' is already total (see 'Props.Measure'), so
 -- a negative operand is *safe*: it answers "does not fit" and the write
--- never happens. These tests cover the layer above that — the
--- apply-time guards that turn "does not fit" into an honest message:
+-- never happens. The apply-time tests cover the layer above that — the
+-- guards that turn "does not fit" into a precise message:
 -- 'ApplyNegativeRecordOffset' for a NINJA2 record offset that decoded
 -- negative from its packed integer, and 'ApplyNegativeControlLength'
 -- for a bsdiff control instruction whose sign-magnitude add or copy
 -- length came in negative. (bsdiff's seek delta in the same triple is
--- legitimately signed and is deliberately not caught.)
+-- legitimately signed and is deliberately not caught.) The parse-time
+-- tests cover the bsdiff header's sequential fit checks: two hostile
+-- near-2^63 declared sizes would wrap a summed bound and slip through
+-- as a decompression failure; sequential comparison keeps the verdict
+-- a header verdict naming the block.
 module Props.NegativeWireValues (negativeWireValuesTests) where
 
-import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffInstruction(..))
+import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffInstruction(..), bsdiffMagicBytes)
 import Slap.BSDiff.Apply (applyBSDiff)
+import Slap.BSDiff.Create (putSignMagnitude64)
+import qualified Slap.BSDiff.Parse as BSDiff
 import Slap.NINJA2.Types (NINJA2Patch(..), NINJA2Record(..))
 import Slap.NINJA2.Apply (applyNINJA2)
 import qualified Slap.NINJA2.Parse as NINJA2
 import Slap.Create (createNINJA2)
 import Slap.Status (SlapError(..), ApplyError(..), CreateResult(..),
-                    Parsed(..), renderSlapError)
+                    BSDiffHeaderMalformation(..), Parsed(..), renderSlapError)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Delta(..))
-import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import qualified Slap.Text as SlapText
 
 import Props.Helpers (emptyNINJA2Metadata, assertFailureT)
 
 import qualified Data.ByteString as ByteString
+import Data.ByteString.Builder (toLazyByteString, byteString)
+import qualified Data.ByteString.Lazy as LazyByteString
+import Data.Int (Int64)
 
 import Test.Tasty
 import Test.Tasty.HUnit
 
 negativeWireValuesTests :: TestTree
-negativeWireValuesTests = testGroup "negative wire values are named, not mislabelled"
+negativeWireValuesTests = testGroup "hostile wire values are named, not mislabelled"
   [ testCase "bsdiff: a negative add length is refused as a negative control length"
       bsdiffNegativeAddLength
   , testCase "bsdiff: a negative copy length is refused as a negative control length"
       bsdiffNegativeCopyLength
+  , testCase "bsdiff: a control size past the patch end is a header verdict"
+      bsdiffControlOverrunNamed
+  , testCase "bsdiff: hostile control and diff sizes cannot wrap past the guard"
+      bsdiffHostileSizesCannotWrap
   , testCase "NINJA2: a negative record offset is refused as a negative record offset"
       ninja2NegativeRecordOffset
   ]
@@ -69,14 +84,50 @@ bsdiffNegativeCopyLength =
 -- declared target size, and empty diff\/extra streams.
 bsdiffPatchWithInstruction :: BSDiffInstruction -> BSDiffPatch
 bsdiffPatchWithInstruction instruction = BSDiffPatch
-  { bsdiffControlSize  = FileSize 0
-  , bsdiffDiffSize     = FileSize 0
-  , bsdiffExtraSize    = FileSize 0
+  { bsdiffControlSize  = Length 0
+  , bsdiffDiffSize     = Length 0
+  , bsdiffExtraSize    = Length 0
   , bsdiffTargetSize   = FileSize 4
   , bsdiffInstructions = [instruction]
   , bsdiffDiffData     = ByteString.empty
   , bsdiffExtraData    = ByteString.empty
   }
+
+-- | A 32-byte header and nothing else: the declared sizes are the
+-- whole hostile payload.
+bsdiffHeaderOnlyPatch :: Int64 -> Int64 -> PatchFileContents
+bsdiffHeaderOnlyPatch declaredControlSize declaredDiffSize =
+  PatchFileContents . LazyByteString.toStrict . toLazyByteString $
+    byteString bsdiffMagicBytes
+    <> putSignMagnitude64 declaredControlSize
+    <> putSignMagnitude64 declaredDiffSize
+    <> putSignMagnitude64 4  -- declared target size; never reached
+
+-- | A control size past the empty body must be named as the control
+-- block's overrun, before any slicing or decompression runs.
+bsdiffControlOverrunNamed :: Assertion
+bsdiffControlOverrunNamed =
+  case BSDiff.parseBSDiff (bsdiffHeaderOnlyPatch 24 0) of
+    Left (MalformedBSDiffHeader (BSDiffControlOverrunsPatch 24)) -> pure ()
+    Left other -> assertFailureT
+      ("expected a control-overrun header verdict, got: " <> renderSlapError other)
+    Right _ -> assertFailure
+      "expected parse to refuse the overrunning control size, but it succeeded"
+
+-- | Two near-2^63 declared sizes drive a summed bound past the Int64
+-- floor and back to positive — the shape that would slip a
+-- subtraction-chain guard and explode later as a decompression
+-- failure. The sequential checks name the first wall instead.
+bsdiffHostileSizesCannotWrap :: Assertion
+bsdiffHostileSizesCannotWrap =
+  let nearCeiling = 0x7000000000000000
+  in case BSDiff.parseBSDiff (bsdiffHeaderOnlyPatch nearCeiling nearCeiling) of
+       Left (MalformedBSDiffHeader (BSDiffControlOverrunsPatch overrun)) ->
+         assertEqual "overrun distance" nearCeiling overrun
+       Left other -> assertFailureT
+         ("expected a control-overrun header verdict, got: " <> renderSlapError other)
+       Right _ -> assertFailure
+         "expected parse to refuse the hostile sizes, but it succeeded"
 
 assertNegativeControlLength :: BSDiffPatch -> Assertion
 assertNegativeControlLength patch =

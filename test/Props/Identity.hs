@@ -41,6 +41,7 @@ allCreateFormats =
   , ("APS-N64", CreateDirect       CreateAPSN64)
   , ("APS-GBA", CreateDifferential CreateAPSGBA)
   , ("GDIFF",   CreateDifferential CreateGDIFF)
+  , ("BSDiff",  CreateDifferential CreateBSDiff)
   ]
 
 -- | For any non-empty source, create(src, src) should be an identity patch.

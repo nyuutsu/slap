@@ -11,12 +11,12 @@
 -- queue lets the cheap tests fill in around them and trims wall
 -- clock from ~60 s to ~33.5 s on this machine.
 --
--- Today the only criterion is 'bpsCreateIsExpensive', which is true
--- for the stadium2-class fixtures. The module exists so future heavy
--- classes can be added without touching every test-builder.
+-- Today the only criterion is 'differentialCreateIsExpensive', which
+-- is true for the stadium2-class fixtures. The module exists so future
+-- heavy classes can be added without touching every test-builder.
 module Integration.HeavyTests
   ( FixtureName(..)
-  , bpsCreateIsExpensive
+  , differentialCreateIsExpensive
   ) where
 
 import Data.List (isInfixOf)
@@ -30,24 +30,24 @@ import Data.List (isInfixOf)
 newtype FixtureName = FixtureName String
   deriving (Eq, Show)
 
--- | True when creating a BPS patch from the named fixture is slow
--- enough that scheduling it early in tasty's parallel queue
--- meaningfully reduces suite wall-clock. Currently the
+-- | True when a differential create (BPS, BSDiff) from the named
+-- fixture is slow enough that scheduling it early in tasty's parallel
+-- queue meaningfully reduces suite wall-clock. Currently the
 -- stadium2-class fixtures (@stadium2-fair@, @stadium2-size@): both
 -- build their patch from the ~64 MB stadium2 base ROM and a
--- comparably-sized target, and the suffix-array construction over
--- their concatenation is the long pole of the suite at ~11 s
--- single-thread each.
+-- comparably-sized target, so indexing and walking the pair is the
+-- long pole of the suite — and BSDiff compresses three bzip2 level-9
+-- sections on top of its walk.
 --
 -- The match is by substring against any of 'heavyRomNames', so an
 -- argument carrying the ROM name in any common form — scenario,
 -- relative path, source-ROM path — will be classified consistently.
-bpsCreateIsExpensive :: FixtureName -> Bool
-bpsCreateIsExpensive (FixtureName text) =
+differentialCreateIsExpensive :: FixtureName -> Bool
+differentialCreateIsExpensive (FixtureName text) =
   any (`isInfixOf` text) heavyRomNames
 
--- | ROM short names that mark their fixtures as BPS-create-heavy.
--- A 'FixtureName' counts as expensive whenever any of these appears
--- as a substring of its wrapped text.
+-- | ROM short names that mark their fixtures as differential-create-
+-- heavy. A 'FixtureName' counts as expensive whenever any of these
+-- appears as a substring of its wrapped text.
 heavyRomNames :: [String]
 heavyRomNames = ["stadium2"]

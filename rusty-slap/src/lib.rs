@@ -7,6 +7,8 @@
 
 mod bps_diff;
 mod bps_hash_chain;
+mod bsdiff_diff;
+mod bsdiff_hash_chain;
 mod compress;
 mod crc32;
 mod vcdiff_diff;
@@ -165,6 +167,93 @@ pub unsafe extern "C" fn rusty_bps_diff(
     let action_stream = bps_diff::bps_diff(source, target);
     unsafe { surface_buffer_to_caller(action_stream, output_address_pointer, output_length_pointer) };
     0
+}
+
+// ── bsdiff diff FFI ───────────────────────────────────────────────────
+
+/// Compute a bsdiff decomposition. Returns 0 on success (all five
+/// output buffers populated; `error_cause` null), -1 on failure (all
+/// output buffers null; `error_cause` carries the cause string). All
+/// caller-owned buffers must be freed via [`rusty_free`].
+///
+/// The control triples cross as three parallel homogeneous arrays —
+/// one `u64` LE per `add_length`, one `u64` LE per `copy_length`, one
+/// `i64` LE (two's complement) per `source_seek`. The three arrays
+/// share length N (= the instruction count); each is 8N bytes. The
+/// diff and extra streams cross raw and uncompressed — sign-magnitude
+/// fields, bzip2 sections, and the 32-byte header are all
+/// `Slap.BSDiff.Create`'s to write.
+///
+/// # Safety
+/// All buffer pointers follow rusty-slap's existing convention (see
+/// [`view_caller_buffer`] / [`surface_buffer_to_caller`]).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rusty_bsdiff_diff(
+    source_address:               *const u8,
+    source_length:                usize,
+    target_address:               *const u8,
+    target_length:                usize,
+    add_lengths_address_pointer:  *mut *mut u8,
+    add_lengths_length_pointer:   *mut usize,
+    copy_lengths_address_pointer: *mut *mut u8,
+    copy_lengths_length_pointer:  *mut usize,
+    source_seeks_address_pointer: *mut *mut u8,
+    source_seeks_length_pointer:  *mut usize,
+    diff_stream_address_pointer:  *mut *mut u8,
+    diff_stream_length_pointer:   *mut usize,
+    extra_stream_address_pointer: *mut *mut u8,
+    extra_stream_length_pointer:  *mut usize,
+    error_cause_address_pointer:  *mut *mut u8,
+    error_cause_length_pointer:   *mut usize,
+) -> i32 {
+    let source = unsafe { view_caller_buffer(source_address, source_length) };
+    let target = unsafe { view_caller_buffer(target_address, target_length) };
+    match bsdiff_diff::bsdiff_diff(source, target) {
+        Ok(output) => {
+            let (add_lengths, copy_lengths, source_seeks) =
+                split_triples_to_parallel_arrays(&output.instructions);
+            unsafe {
+                surface_buffer_to_caller(add_lengths,         add_lengths_address_pointer,  add_lengths_length_pointer);
+                surface_buffer_to_caller(copy_lengths,        copy_lengths_address_pointer, copy_lengths_length_pointer);
+                surface_buffer_to_caller(source_seeks,        source_seeks_address_pointer, source_seeks_length_pointer);
+                surface_buffer_to_caller(output.diff_stream,  diff_stream_address_pointer,  diff_stream_length_pointer);
+                surface_buffer_to_caller(output.extra_stream, extra_stream_address_pointer, extra_stream_length_pointer);
+                surface_buffer_to_caller(Vec::new(), error_cause_address_pointer, error_cause_length_pointer);
+            }
+            0
+        }
+        Err(cause_message) => {
+            unsafe {
+                surface_buffer_to_caller(Vec::new(), add_lengths_address_pointer,  add_lengths_length_pointer);
+                surface_buffer_to_caller(Vec::new(), copy_lengths_address_pointer, copy_lengths_length_pointer);
+                surface_buffer_to_caller(Vec::new(), source_seeks_address_pointer, source_seeks_length_pointer);
+                surface_buffer_to_caller(Vec::new(), diff_stream_address_pointer,  diff_stream_length_pointer);
+                surface_buffer_to_caller(Vec::new(), extra_stream_address_pointer, extra_stream_length_pointer);
+                surface_buffer_to_caller(cause_message.into_bytes(), error_cause_address_pointer, error_cause_length_pointer);
+            }
+            -1
+        }
+    }
+}
+
+/// Project a [`bsdiff_diff::BSDiffOutput`]'s control triples into three
+/// parallel homogeneous byte buffers — one per field, the seek's `i64`
+/// serialized two's-complement LE. The inverse split happens on the
+/// Haskell side in `Slap.BSDiff.FFI`. Sibling to
+/// [`split_to_parallel_arrays`].
+fn split_triples_to_parallel_arrays(
+    instructions: &[bsdiff_diff::ControlInstruction],
+) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let instruction_count = instructions.len();
+    let mut add_lengths   = Vec::with_capacity(instruction_count * 8);
+    let mut copy_lengths  = Vec::with_capacity(instruction_count * 8);
+    let mut source_seeks  = Vec::with_capacity(instruction_count * 8);
+    for instruction in instructions {
+        add_lengths.extend_from_slice(&instruction.add_length.to_le_bytes());
+        copy_lengths.extend_from_slice(&instruction.copy_length.to_le_bytes());
+        source_seeks.extend_from_slice(&instruction.source_seek.to_le_bytes());
+    }
+    (add_lengths, copy_lengths, source_seeks)
 }
 
 // ── xdelta1 diff FFI ──────────────────────────────────────────────────
@@ -490,6 +579,31 @@ pub unsafe extern "C" fn rusty_bzip2_decompress(
             error_address_pointer,  error_length_pointer,
         )
     }
+}
+
+/// Bzip2 compress at level 9 (see [`compress::bzip2_compress`] for the
+/// level's provenance): the write-side partner of
+/// [`rusty_bzip2_decompress`]. Rust allocates the output; caller frees
+/// with [`rusty_free`]. No error channel: compression of in-memory
+/// bytes is total at the algorithm level (mirror of
+/// [`rusty_gzip_deflate`]), and allocation failure aborts the process
+/// before any value reaches the caller.
+///
+/// # Safety
+/// - `input_address` must point to `input_length` readable bytes (or
+///   may be null when `input_length == 0`).
+/// - `output_address_pointer` and `output_length_pointer` must be
+///   valid, aligned, and writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rusty_bzip2_compress(
+    input_address:          *const u8,
+    input_length:           usize,
+    output_address_pointer: *mut *mut u8,
+    output_length_pointer:  *mut usize,
+) {
+    let input = unsafe { view_caller_buffer(input_address, input_length) };
+    let compressed = compress::bzip2_compress(input);
+    unsafe { surface_buffer_to_caller(compressed, output_address_pointer, output_length_pointer) };
 }
 
 /// LZMA decompression of one xdelta3-flavored stream (xz header, raw

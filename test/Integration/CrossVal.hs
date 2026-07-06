@@ -10,7 +10,7 @@ import Integration.External
   , parseExternalToolName
   , runExternal
   )
-import Integration.HeavyTests (FixtureName(..), bpsCreateIsExpensive)
+import Integration.HeavyTests (FixtureName(..), differentialCreateIsExpensive)
 import Integration.Helpers (assertFailureT)
 import Integration.Helpers
   ( Tier(..)
@@ -79,7 +79,7 @@ planCrossValRow getTargets repo fields = case fields of
                          basePath bootPath targetSha noMetadataRequested
             constructor
               | format == CreateDifferential CreateBPS
-              , bpsCreateIsExpensive (FixtureName scenario) = WillRunHeavy
+              , differentialCreateIsExpensive (FixtureName scenario) = WillRunHeavy
               | otherwise                                   = WillRun
         in requireFixture basePath $ \_ ->
            requireFixture bootPath $ \_ ->

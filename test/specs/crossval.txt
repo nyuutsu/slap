@@ -71,6 +71,8 @@ xdelta3 | kirby-dl2-dx    | test/data/kirby-dl2/base.gb | test/data/kirby-dl2/ki
 # Not yet wired into the crossval runner (CrossVal.hs applyExternal):
 #   IPS32 — applier available via a wrapper around Atmosphère's applier algorithm
 #   GDIFF — applier available via javaxdelta (com.nothome.delta.GDiffPatcher)
+#   BSDiff — applier available (bspatch); waits on a reference landing in tools/
+#            the way xdelta3's did
 #
 # No external applier available at all:
 #   NINJA1, DPS — no widely available CLI applier
@@ -78,5 +80,6 @@ xdelta3 | kirby-dl2-dx    | test/data/kirby-dl2/base.gb | test/data/kirby-dl2/ki
 #   fairly recent discovery. I'll set it up eventually.
 #
 # External applier exists but slap cannot create the format:
-#   BSDiff (bspatch), xdelta1 (xdelta)
-#   (VCDIFF left this list when the xdelta3 create target landed; its row is above.)
+#   xdelta1 (xdelta)
+#   (VCDIFF left this list when the xdelta3 create target landed, BSDiff when its
+#   create target landed; VCDIFF's row is above, BSDiff's waits on tools/.)

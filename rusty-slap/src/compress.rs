@@ -10,6 +10,7 @@
 
 use std::io::{Read, Write};
 
+use bzip2::read::{BzDecoder, BzEncoder};
 use flate2::read::{GzDecoder, ZlibDecoder, ZlibEncoder};
 use flate2::{Compression, GzBuilder};
 
@@ -62,5 +63,30 @@ pub fn gzip_deflate(input: &[u8]) -> Vec<u8> {
 
 /// Bzip2 decompress.
 pub fn bzip2_decompress(input: &[u8]) -> Result<Vec<u8>, String> {
-    drain_to_vec(bzip2_rs::DecoderReader::new(input))
+    drain_to_vec(BzDecoder::new(input))
+}
+
+/// Bzip2 compress at level 9, the maximum block size — the setting the
+/// reference bsdiff tooling compresses its three sections with
+/// (`kCompressionLevel` in the endorsed source's bz2_compressor.cc),
+/// pinned rather than exposed as a knob no caller currently turns. The
+/// `expect` holds for the reason `gzip_deflate` spells out.
+pub fn bzip2_compress(input: &[u8]) -> Vec<u8> {
+    drain_to_vec(BzEncoder::new(input, bzip2::Compression::best()))
+        .expect("in-memory bzip2 compress yields no error; allocation failure aborts")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{bzip2_compress, bzip2_decompress};
+
+    #[test]
+    fn bzip2_round_trips() {
+        let inputs: [&[u8]; 3] = [b"", b"slap", &[0u8; 100_000]];
+        for input in inputs {
+            let compressed = bzip2_compress(input);
+            assert!(!compressed.is_empty(), "even empty input owes framing bytes");
+            assert_eq!(bzip2_decompress(&compressed).as_deref(), Ok(input));
+        }
+    }
 }

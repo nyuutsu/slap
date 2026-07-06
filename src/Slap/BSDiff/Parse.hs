@@ -13,7 +13,7 @@ import Data.Bits ((.&.), (.|.), shiftL, testBit)
 import Data.Int (Int64)
 import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffInstruction(..), bsdiffMagicBytes, bsdiffInstructionSize)
 import Slap.Compression.Stream (bzip2Decompress)
-import Slap.Status (SlapError(..), BSDiffHeaderMalformation(..),
+import Slap.Status (SlapError(..), SlapAdvisory(..), BSDiffHeaderMalformation(..),
                     ControlSectionSize(..), DiffSectionSize(..), TargetSectionSize(..),
                     DecompressionFailure(..), BSDiffSection(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
@@ -52,20 +52,33 @@ safeDecompressBZip section compressed = case bzip2Decompress compressed of
 -- Parsing
 ----------------------------------------------------------------------------
 
+-- | The declared-size fit checks run sequentially — control against the whole patch body, then diff against what control left —
+-- so each step compares non-negative values and none can wrap.
+-- A summed bound could: two hostile near-2^63 declared sizes drive @body - control - diff@ past the Int64 floor and back to positive,
+-- slipping the guard and misreporting the malformed header as a decompression failure downstream.
 parseBSDiff :: PatchFileContents -> Either SlapError (Parsed BSDiffPatch)
 parseBSDiff (PatchFileContents input)
   | ByteString.length input < bsdiffHeaderSize = Left (InputTooShort LabelBSDiff (RequiredLength (Length bsdiffHeaderSize)) (ActualLength (byteLength input)))
   | ByteString.take 8 input /= bsdiffMagicBytes = Left (BadMagic LabelBSDiff (ActualMagic (ByteString.take 8 input)))
   | rawControlSize < 0 || rawDiffSize < 0 || rawTargetSize < 0 =
       Left (MalformedBSDiffHeader (BSDiffNegativeHeaderSizes (ControlSectionSize rawControlSize) (DiffSectionSize rawDiffSize) (TargetSectionSize rawTargetSize)))
-  | rawExtraSize < 0 =
-      Left (MalformedBSDiffHeader (BSDiffSectionsExceedPatch (negate rawExtraSize)))
+  | rawControlSize > patchBodyLength =
+      Left (MalformedBSDiffHeader (BSDiffControlOverrunsPatch (rawControlSize - patchBodyLength)))
+  | rawDiffSize > patchBodyAfterControl =
+      Left (MalformedBSDiffHeader (BSDiffDiffOverrunsPatch (rawDiffSize - patchBodyAfterControl)))
   | otherwise = do
       controlData <- safeDecompressBZip BSDiffControl controlCompressed
       diffData    <- safeDecompressBZip BSDiffDiff    diffCompressed
       extraData   <- safeDecompressBZip BSDiffExtra   extraCompressed
-      let instructions = parseInstructions controlData
-      Right (Parsed (BSDiffPatch (FileSize (fromIntegral rawControlSize)) (FileSize (fromIntegral rawDiffSize)) (FileSize (fromIntegral rawExtraSize)) (FileSize (fromIntegral rawTargetSize)) instructions diffData extraData) [])
+      let instructions   = parseInstructions controlData
+          fragmentLength = ByteString.length controlData `mod` bsdiffInstructionSize
+      Right (Parsed
+              (BSDiffPatch (Length (fromIntegral rawControlSize))
+                           (Length (fromIntegral rawDiffSize))
+                           (Length (fromIntegral rawExtraSize))
+                           (FileSize (fromIntegral rawTargetSize))
+                           instructions diffData extraData)
+              [BSDiffTrailingControlFragment (Length fragmentLength) | fragmentLength /= 0])
   where
     bsdiffHeaderSize, controlSizeFieldOffset, diffSizeFieldOffset, targetSizeFieldOffset :: Int
     bsdiffHeaderSize       = 32
@@ -75,7 +88,9 @@ parseBSDiff (PatchFileContents input)
     rawControlSize = getSignMagnitude64 controlSizeFieldOffset input
     rawDiffSize    = getSignMagnitude64 diffSizeFieldOffset input
     rawTargetSize  = getSignMagnitude64 targetSizeFieldOffset input
-    rawExtraSize   = fromIntegral (ByteString.length input) - fromIntegral bsdiffHeaderSize - rawControlSize - rawDiffSize
+    patchBodyLength       = fromIntegral (ByteString.length input - bsdiffHeaderSize) :: Int64
+    patchBodyAfterControl = patchBodyLength - rawControlSize
+    rawExtraSize          = patchBodyAfterControl - rawDiffSize
     controlOffset  = bsdiffHeaderSize
     diffOffset     = bsdiffHeaderSize + fromIntegral rawControlSize
     extraOffset    = diffOffset + fromIntegral rawDiffSize
@@ -83,6 +98,9 @@ parseBSDiff (PatchFileContents input)
     diffCompressed    = ByteString.take (fromIntegral rawDiffSize) (ByteString.drop diffOffset input)
     extraCompressed   = ByteString.drop extraOffset input
 
+-- | Decode the control stream, one 24-byte instruction at a time.
+-- A trailing fragment shorter than one instruction is dropped here;
+-- 'parseBSDiff' measures it and reports 'BSDiffTrailingControlFragment'.
 parseInstructions :: ByteString -> [BSDiffInstruction]
 parseInstructions input
   | ByteString.length input < bsdiffInstructionSize = []

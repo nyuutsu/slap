@@ -15,6 +15,9 @@ import qualified Slap.BPS.Apply as BPS
 import qualified Slap.BPS.Parse as BPS
 import qualified Slap.BPS.Types as BPS
 import Slap.BPS.Types (BPSMetadata(..))
+import qualified Slap.BSDiff.Apply as BSDiff
+import qualified Slap.BSDiff.Parse as BSDiff
+import qualified Slap.BSDiff.Types as BSDiff
 import qualified Slap.IPS.Apply as IPS
 import qualified Slap.IPS.Parse as IPS
 import Slap.IPS.Create (resolveSentinelCollisions, optimalIPSRecords)
@@ -118,8 +121,9 @@ import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
                      createDefaultAdvisories,
                      convertDirect, emptyContents)
 import Slap.Create (createBPS, createUPS, createDPS, createNINJA2,
-                    createAPSGBA, createGDIFF, createXDelta1, createRFCVCDIFF,
-                    createXDelta3, WindowCompressionEmission(..), createPatch)
+                    createAPSGBA, createGDIFF, createBSDiff, createXDelta1,
+                    createRFCVCDIFF, createXDelta3,
+                    WindowCompressionEmission(..), createPatch)
 
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString8
@@ -147,6 +151,11 @@ roundTripTests = testGroup "RoundTrip"
       , testProperty "block-move" prop_bpsBlockMove
       , testProperty "no-size-regression" prop_bpsNoSizeRegression
       , testProperty "metadata-round-trip" prop_bpsMetadata
+      ]
+  , testGroup "BSDiff"
+      [ testProperty "round-trip" prop_bsdiff
+      , testProperty "scattered edits become few long instructions" prop_bsdiffScatteredEdits
+      , testProperty "padding-heavy input completes" prop_bsdiffPaddingRun
       ]
   , testGroup "IPS"
       [ testProperty "round-trip" prop_ips
@@ -356,6 +365,80 @@ prop_bpsMetadata = forAll genPair $ \(source, target) ->
       Right (CreateResult patch _) -> case BPS.parseBPS patch of
         Left slapError -> counterexample (Text.unpack (renderSlapError slapError)) $ property False
         Right (Parsed parsed _parseWarnings) -> BPS.unBPSMetadata (BPS.bpsMetadata parsed) === meta
+
+prop_bsdiff :: Property
+prop_bsdiff = forAll genPair $ \(source, target) ->
+  case createBSDiff (InputFileContents source) (OutputFileContents target) of
+    Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
+    Right (CreateResult patch _) -> case BSDiff.parseBSDiff patch of
+      Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
+      Right (Parsed parsed _parseWarnings) ->
+        BSDiff.applyBSDiff parsed (InputFileContents source) === Right (OutputFileContents target)
+
+-- | The format's signature behavior, asserted at the patch level: a
+-- large file with a scatter of single-byte edits must come back as a
+-- few long instructions whose diff stream is nearly all zeros — and
+-- the whole patch, bzip2 having crushed those zeros, stays tiny.
+-- That behavior is what makes the output a bsdiff in spirit and not
+-- just in magic bytes.
+prop_bsdiffScatteredEdits :: Property
+prop_bsdiffScatteredEdits = once $
+  let source = pseudoRandomBytes 0x1001 (256 * 1024)
+      editPositions = [5000 + editIndex * 12000 | editIndex <- [0 .. 19 :: Int]]
+      target = ByteString.pack
+        [ if index `elem` editPositions then byte `Bits.xor` 0x5A else byte
+        | (index, byte) <- zip [0 ..] (ByteString.unpack source)
+        ]
+  in case createBSDiff (InputFileContents source) (OutputFileContents target) of
+       Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
+       Right (CreateResult patch _) -> case BSDiff.parseBSDiff patch of
+         Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
+         Right (Parsed parsed _parseWarnings) ->
+           let instructionCount = length (BSDiff.bsdiffInstructions parsed)
+               nonZeroDeltas    = ByteString.length (ByteString.filter (/= 0) (BSDiff.bsdiffDiffData parsed))
+               patchSize        = ByteString.length (unPatchFileContents patch)
+           in counterexample ("instructions: " ++ show instructionCount
+                               ++ ", nonzero deltas: " ++ show nonZeroDeltas
+                               ++ ", patch size: " ++ show patchSize) $
+              conjoin
+                [ BSDiff.applyBSDiff parsed (InputFileContents source) === Right (OutputFileContents target)
+                , property (instructionCount <= 25)
+                , property (nonZeroDeltas <= 20)
+                , property (patchSize < 4096)
+                ]
+
+-- | The padding-heavy input shape: megabytes of one repeated byte
+-- around a sparse content island that shifts between source and
+-- target. Every window hashes into one seeder bucket, and the probe
+-- cap is what holds the runtime line — the observable here is that
+-- create completes at test speed at all (a cliff would blow the
+-- suite's wall clock, and the onecore CSV would name this test).
+prop_bsdiffPaddingRun :: Property
+prop_bsdiffPaddingRun = once $
+  let island = pseudoRandomBytes 0x1002 4096
+      source = ByteString.concat
+        [ByteString.replicate 1000000 0xFF, island, ByteString.replicate 3000000 0xFF]
+      target = ByteString.concat
+        [ByteString.replicate 1001000 0xFF, island, ByteString.replicate 2999000 0xFF]
+  in case createBSDiff (InputFileContents source) (OutputFileContents target) of
+       Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
+       Right (CreateResult patch _) -> case BSDiff.parseBSDiff patch of
+         Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
+         Right (Parsed parsed _parseWarnings) ->
+           BSDiff.applyBSDiff parsed (InputFileContents source) === Right (OutputFileContents target)
+
+-- | SplitMix64 stream, matching the pseudo-random helper rusty-slap's
+-- test modules use: deterministic content with no short period, so
+-- instruction counting over it stays meaningful.
+pseudoRandomBytes :: Word.Word64 -> Int -> ByteString.ByteString
+pseudoRandomBytes seed byteCount = fst (ByteString.unfoldrN byteCount nextByte seed)
+  where
+    nextByte state =
+      let advanced   = state + 0x9e3779b97f4a7c15
+          mixedOnce  = (advanced `Bits.xor` (advanced `Bits.shiftR` 30)) * 0xbf58476d1ce4e5b9
+          mixedTwice = (mixedOnce `Bits.xor` (mixedOnce `Bits.shiftR` 27)) * 0x94d049bb133111eb
+          finalMix   = mixedTwice `Bits.xor` (mixedTwice `Bits.shiftR` 31)
+      in Just (fromIntegral finalMix, advanced)
 
 prop_ups :: Property
 prop_ups = forAll genUPSEncodeablePair $ \(source, target) ->

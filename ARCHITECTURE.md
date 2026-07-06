@@ -1,6 +1,6 @@
 # Architecture
 
-slap is a Haskell CLI backed by a small Rust staticlib (`rusty-slap`) for byte-crunching. Haskell owns parsing, applying, creating, converting, inspecting, and the CLI; Rust owns CRC-32, Adler-32, the cost-aware hash-chain match finders behind BPS/VCDIFF/xdelta1 diff, and compression/decompression.
+slap is a Haskell CLI backed by a small Rust staticlib (`rusty-slap`) for byte-crunching. Haskell owns parsing, applying, creating, converting, inspecting, and the CLI; Rust owns CRC-32, Adler-32, the hash-chain match finders behind BPS/VCDIFF/xdelta1/BSDiff diff, and compression/decompression.
 
 CLAUDE.md describes the values; this document covers the shape. If the document and the code disagree, trust the code.
 
@@ -10,7 +10,7 @@ Four layers, dependencies flowing strictly downward.
 
 1. **Foundation.** No format-specific knowledge: `Measure`, `FileContents`, `FFI`, `Binary`, `ByteParser`, `PatchFormat`, `Compression.Stream`, `FormatLabel`, `Checksum`, `Status`, `Text`, `FieldName`, `JSON`, `PatchField`, `MetadataField`, `MetadataInclusion`, `Constraint`, `Dialect`, `Narrow`, `Platform`, `PlatformType`.
 
-2. **Format modules.** Each `Slap/Foo/` directory owns one format, decomposed into `Types`, `Parse`, `Apply`, `Describe`, `Create`. Additional format-specific modules are allowed where the work earns its own home — `Slap.IPS.Optimize` is the current example, hosting the DP partitioner that decides which copy and RLE records IPS create should emit. Some formats currently lack `Create`; that's a gap the project is closing, not a design choice. No format module imports another format module; siblings share only the foundation.
+2. **Format modules.** Each `Slap/Foo/` directory owns one format, decomposed into `Types`, `Parse`, `Apply`, `Describe`, `Create`. Additional format-specific modules are allowed where the work earns its own home — `Slap.IPS.Optimize` hosts the DP partitioner that decides which copy and RLE records IPS create should emit, and the differential formats whose diff runs in Rust each keep an `FFI` sibling. No format module imports another format module; siblings share only the foundation.
 
 3. **Coordination.** `Detect`, `Convert`, `SomePatch`, `Create`, `Display`, `Compression.Yay0`. Bridges between format-specific code and the frontend.
 
@@ -55,7 +55,7 @@ Direct formats carry literal replacement bytes; differential formats carry instr
 | APSGBA  | Differential | Yes                    |
 | GDIFF   | Differential | Yes                    |
 | VCDIFF  | Differential | Yes (RFC, xdelta3)     |
-| BSDiff  | Differential | No                     |
+| BSDiff  | Differential | Yes                    |
 | XDelta1 | Differential | Yes                    |
 
 Appliers return `Either SlapError OutputFileContents`; some wrap the success side in `Outcome` to carry apply-time advisories.
@@ -64,6 +64,8 @@ Appliers return `Either SlapError OutputFileContents`; some wrap the success sid
 
 ## rusty-slap
 
-A Rust staticlib, fat LTO, `panic=abort`, linked into the Haskell binary via FFI. CRC-32 and Adler-32 (via `crc32fast` and a hand-rolled adler32), the hash-chain match finders behind BPS/VCDIFF/xdelta1 diff (each pricing candidates in the emitted format's own wire bytes rather than chasing the longest match), compression and decompression for zlib, gzip, and xdelta3-flavored LZMA, and decompression for bzip2 (via pure-Rust `flate2`, `bzip2-rs`, `lzma-rs`, and — for the LZMA2 encoder `lzma-rs` lacks — `lzma-rust2`, so the staticlib has no C dependencies and Cargo handles cross-platform builds cleanly).
+A Rust staticlib, fat LTO, `panic=abort`, linked into the Haskell binary via FFI. CRC-32 and Adler-32 (via `crc32fast` and a hand-rolled adler32), the hash-chain match finders behind BPS/VCDIFF/xdelta1/BSDiff diff (the first three price candidates in the emitted format's own wire bytes rather than chasing the longest match; BSDiff's answers a stateless longest-match question because that format's own walk carries the alignment judgment), and compression and decompression for zlib, gzip, bzip2, and xdelta3-flavored LZMA (via pure-Rust `flate2`, `bzip2`, `lzma-rs`, and — for the LZMA2 encoder `lzma-rs` lacks — `lzma-rust2`, so the staticlib has no C dependencies and Cargo handles cross-platform builds cleanly).
 
-The FFI boundary lives in `Slap.FFI` (CRC-32, Adler-32, BPS diff) and `Slap.Compression.Stream` (compression codecs). Rust allocates output buffers; Haskell copies into `ByteString` and calls `rusty_free`. Adding a new codec follows the existing pattern: a function in `compress.rs` (or its own module when it carries real mechanism, as `xdelta3_lzma.rs` does), a `pub unsafe extern "C"` wrapper in `lib.rs`, a `foreign import ccall` and a public function in `Slap.Compression.Stream`. This layer is expected to grow over time.
+Rust holds the per-byte loops and the pure-systems supply chain. Each format's seam crosses where its data is narrowest, which is why the boundary sits at a different depth per format: BPS hands back its encoded action stream, xdelta1 and BSDiff hand back instruction triples plus raw streams, VCDIFF hands back covers.
+
+The FFI boundary lives in `Slap.FFI` (the cross-format kernels: CRC-32, Adler-32), `Slap.Compression.Stream` (compression codecs), and each differ's own `Slap.<Format>.FFI` sibling module. Rust allocates output buffers; Haskell copies into `ByteString` and calls `rusty_free`. Adding a new codec follows the existing pattern: a function in `compress.rs` (or its own module when it carries real mechanism, as `xdelta3_lzma.rs` does), a `pub unsafe extern "C"` wrapper in `lib.rs`, a `foreign import ccall` and a public function in `Slap.Compression.Stream`. This layer is expected to grow over time.

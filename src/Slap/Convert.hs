@@ -80,6 +80,7 @@ import qualified Slap.UPS.Create as UPS
 import qualified Slap.APSN64.Types as APSN64
 import qualified Slap.APSN64.Create as APSN64
 import qualified Slap.APSGBA.Create as APSGBA
+import qualified Slap.BSDiff.Create as BSDiff
 import Slap.NINJA2.Types (TextMode(..))
 import qualified Slap.NINJA2.Types as NINJA2
 import qualified Slap.NINJA2.Create as NINJA2
@@ -197,13 +198,12 @@ data DirectCreate
   | CreatePPF4 | CreateNINJA1 | CreatePMSR | CreateAPSN64
   deriving (Show, Eq, Enum, Bounded)
 
--- | Differential creation target.  Formats slap can parse but not yet
--- create (BSDiff) belong to DifferentialFormat (the format taxonomy)
--- but not here (slap's current creation capability).
+-- | Differential creation target: every differential format slap
+-- parses, it also creates.
 data DifferentialCreate
   = CreateBPS | CreateUPS | CreateDPS | CreateNINJA2
-  | CreateAPSGBA | CreateGDIFF | CreateXDelta1 | CreateRFCVCDIFF
-  | CreateXDelta3
+  | CreateAPSGBA | CreateGDIFF | CreateBSDiff | CreateXDelta1
+  | CreateRFCVCDIFF | CreateXDelta3
   deriving (Show, Eq)
 
 -- | Target format for patch creation or conversion.
@@ -494,6 +494,7 @@ acceptedMetadataFields (CreateDifferential format) = case format of
     , MetadataDate, MetadataWebsite, MetadataRomType, MetadataTextMode ]
   CreateAPSGBA  -> Set.empty
   CreateGDIFF   -> Set.empty
+  CreateBSDiff  -> Set.empty
   CreateXDelta1 -> Set.fromList [MetadataVerificationInclusion, MetadataPatchCompression,
                                  MetadataXDelta1FromName, MetadataXDelta1ToName]
   CreateRFCVCDIFF -> Set.empty
@@ -611,6 +612,7 @@ acceptedConstraints (CreateDifferential format) = case format of
   CreateNINJA2  -> Set.empty
   CreateAPSGBA  -> Set.empty
   CreateGDIFF   -> Set.empty
+  CreateBSDiff  -> Set.empty
   CreateXDelta1 -> Set.empty
   CreateRFCVCDIFF -> Set.empty
   CreateXDelta3   -> Set.empty
@@ -1227,6 +1229,7 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
     NINJA2.createNINJA2 source target ninja2Meta
   CreateAPSGBA  -> APSGBA.createAPSGBA source target
   CreateGDIFF   -> GDIFF.createGDIFF source target
+  CreateBSDiff  -> BSDiff.createBSDiff source target
   CreateRFCVCDIFF -> VCDIFF.createRFCVCDIFF source target
   CreateXDelta3 -> do
     compressionEmission <- xdelta3CompressionEmission meta
@@ -1383,6 +1386,7 @@ createFormatTokens =
   , ("aps-gba", CreateDifferential CreateAPSGBA, Canonical)
   , ("apsgba",  CreateDifferential CreateAPSGBA, Alias)
   , ("gdiff",   CreateDifferential CreateGDIFF,  Canonical)
+  , ("bsdiff",  CreateDifferential CreateBSDiff, Canonical)
   , ("xdelta1", CreateDifferential CreateXDelta1, Canonical)
   , ("rfc-vcdiff", CreateDifferential CreateRFCVCDIFF, Canonical)
   , ("xdelta3", CreateDifferential CreateXDelta3, Canonical)
@@ -1443,6 +1447,7 @@ differentialFormatInfo CreateDPS     = FormatInfo ".dps"     "DPS"       LabelDP
 differentialFormatInfo CreateNINJA2  = FormatInfo ".rup"     "NINJA2"    LabelNINJA2
 differentialFormatInfo CreateAPSGBA  = FormatInfo ".aps"     "APS (GBA)" LabelAPSGBA
 differentialFormatInfo CreateGDIFF   = FormatInfo ".gdiff"   "GDIFF"     LabelGDIFF
+differentialFormatInfo CreateBSDiff  = FormatInfo ".bsdiff"  "BSDiff"    LabelBSDiff
 differentialFormatInfo CreateXDelta1 = FormatInfo ".xdelta1" "XDelta1"   LabelXDelta1
 differentialFormatInfo CreateRFCVCDIFF = FormatInfo ".rfc-vcdiff" "VCDIFF" LabelVCDIFF
 differentialFormatInfo CreateXDelta3   = FormatInfo ".xdelta"      "xdelta3" LabelVCDIFF
