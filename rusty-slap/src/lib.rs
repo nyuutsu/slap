@@ -10,7 +10,7 @@ mod bps_suffix_sort;
 mod compress;
 mod crc32;
 mod vcdiff_diff;
-mod vcdiff_suffix_sort;
+mod vcdiff_hash_chain;
 mod xdelta1_diff;
 mod xdelta1_suffix_array;
 mod xdelta3_djw;
@@ -263,9 +263,9 @@ fn split_to_parallel_arrays(
 
 // ── VCDIFF cover FFI ──────────────────────────────────────────────────
 
-/// Compute a VCDIFF cover for a (source, target) pair — the naive
-/// greedy segmentation into copies and literals. Rust allocates the
-/// three parallel arrays; the caller frees each with [`rusty_free`].
+/// Compute a VCDIFF cover for a (source, target) pair — the greedy
+/// segmentation into copies and literals. Rust allocates the three
+/// parallel arrays; the caller frees each with [`rusty_free`].
 ///
 /// Returns 0 unconditionally — the cover is total (every input yields
 /// one, the empty target included). The `i32` slot keeps the FFI

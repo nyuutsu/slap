@@ -367,7 +367,6 @@ prop_ups = forAll genUPSEncodeablePair $ \(source, target) ->
 
 -- | The load-bearing test: a created VCDIFF patch, parsed and applied
 -- to the source, reconstructs the target exactly — through the matcher.
--- (The input-size bound the naive pre-suffix-array matcher needed is gone with it.)
 prop_vcdiff :: Property
 prop_vcdiff = forAll genPair $ \(source, target) ->
   case createRFCVCDIFF (InputFileContents source) (OutputFileContents target) of
@@ -688,14 +687,13 @@ vcdiffRealDiffShrinks =
          assertBool "matcher patch is smaller than the all-literal floor"
            (ByteString.length matchedBytes < ByteString.length floorBytes)
 
--- | A pair the matcher must cover with several segments of both kinds —
--- a source-region COPY, a literal over the changed middle, and a second
--- source-region COPY. Round-tripping proves the three parallel arrays
--- marshal and unmarshal in order, not just for a single segment.
+-- | A pair the matcher covers with several segments of both kinds —
+-- a source-region COPY, a literal over the changed middle, and a second source-region COPY, each copied run long enough to be worth its address.
+-- Round-tripping proves the three parallel arrays marshal and unmarshal in order, not just for a single segment.
 vcdiffMatcherMultipleCopies :: Assertion
 vcdiffMatcherMultipleCopies =
-  let source = ByteString.pack (map (fromIntegral . fromEnum) "ABCDEFGHIJKL")
-      target = ByteString.pack (map (fromIntegral . fromEnum) "ABCD??IJKL")
+  let source = ByteString.pack (map (fromIntegral . fromEnum) "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+      target = ByteString.pack (map (fromIntegral . fromEnum) "ABCDEFGHIJKLM??nopqrstuvwxyz")
       segments = coverSegments (vcdiffCover (InputFileContents source) (OutputFileContents target))
       isCopy    segment = case segment of CoverCopy{}    -> True; CoverLiteral{} -> False
       isLiteral segment = case segment of CoverLiteral{} -> True; CoverCopy{}    -> False
@@ -712,12 +710,10 @@ vcdiffMatcherMultipleCopies =
             (Right (OutputFileContents target))
             (VCDIFF.applyVCDIFF parsed (InputFileContents source))
 
--- | The matcher's output pinned against a hand-computed greedy cover,
--- independent of round-trip — so 02c's suffix-array matcher has a
--- behavioural reference, not only a does-it-apply check. The greedy walk
--- over target "ABCDEFGHZZ" against source "ABCDEFGH" takes the whole
--- eight-byte source match, then the trailing "ZZ" (no earlier
--- occurrence, and under the four-byte floor) as a literal.
+-- | The matcher's output pinned against a hand-computed cover, independent of round-trip —
+-- a behavioural reference, not only a does-it-apply check.
+-- Over target "ABCDEFGHZZ" against source "ABCDEFGH" the matcher takes the whole eight-byte source match,
+-- then the trailing "ZZ" (no earlier occurrence) as a literal.
 vcdiffMatcherAgreesWithHandBuiltCover :: Assertion
 vcdiffMatcherAgreesWithHandBuiltCover =
   let source = ByteString.pack (map (fromIntegral . fromEnum) "ABCDEFGH")

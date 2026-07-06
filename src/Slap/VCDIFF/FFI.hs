@@ -1,6 +1,7 @@
 -- | VCDIFF cover-matcher binding to rusty-slap.
 --
--- The Rust side owns the longest-match search over the superstring @U@: a greedy cover walk (@rusty-slap/src/vcdiff_diff.rs@) driven by a suffix-array matcher (@rusty-slap/src/vcdiff_suffix_sort.rs@).
+-- The Rust side owns the match search over the superstring @U@: a greedy cover walk (@rusty-slap/src/vcdiff_diff.rs@) driven by a cost-aware matcher (@rusty-slap/src/vcdiff_hash_chain.rs@),
+-- which offers a copy only where it beats writing the bytes as literals.
 --
 -- Total: every input yields a cover, the empty target included, so there is no error channel. A malformed buffer is a loud 'error', not a silently defaulted segment.
 module Slap.VCDIFF.FFI

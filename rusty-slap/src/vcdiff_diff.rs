@@ -5,19 +5,24 @@
 //! segments the target, `Slap.VCDIFF.Create` serializes the segments to
 //! wire bytes. This module owns the cover's shape (the [`CoverSegment`]
 //! vocabulary and the greedy parse that lays segments down) and drives a
-//! longest-match engine to fill it. That engine is the suffix-array
-//! matcher in [`crate::vcdiff_suffix_sort`]: at each target position the
-//! parse asks it for the longest run that recurs earlier in the
-//! superstring `U = source ++ target`, takes it when it clears
-//! [`MIN_MATCH_LENGTH`], and otherwise grows the current literal run by a byte.
+//! match engine to fill it. That engine is the cost-aware matcher in
+//! [`crate::vcdiff_hash_chain`]: at each target position the parse asks
+//! for a copy worth its wire cost, takes what is offered, and otherwise
+//! grows the current literal run by a byte. What "worth taking" means —
+//! and why it is not "the longest match available" — is that module's
+//! story; the parse holds no thresholds of its own.
 
-use crate::vcdiff_suffix_sort::{Match, SuperstringMatcher};
+use crate::vcdiff_hash_chain::HashChainMatcher;
 
-/// Shortest run the matcher emits as a COPY. Four is the natural floor:
-/// it is the smallest size the default code table's COPY rows encode,
-/// and below it a COPY (opcode + coded size + address) does not beat
-/// writing the bytes literally.
-const MIN_MATCH_LENGTH: usize = 4;
+/// A match the engine stands behind at one target position: where it
+/// begins in the superstring `U = source ++ target` and how long it
+/// runs. The parse's query-answer vocabulary, owned here by the asker;
+/// the engine answers in it.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub struct Match {
+    pub superstring_offset: usize,
+    pub length: usize,
+}
 
 /// Whether a cover segment copies earlier bytes or carries literal
 /// target bytes. Crosses the FFI seam as a single tag byte
@@ -40,45 +45,40 @@ pub struct CoverSegment {
 
 /// Segment a target into a cover against a source. Total: every input
 /// yields a cover, the empty target included (the empty cover). When
-/// nothing recurs, the whole target comes back as a single literal.
-///
-/// The longest-match engine is the suffix-array matcher built once here;
-/// [`greedy_cover`] drives it. The naive scan this engine replaces lives
-/// on as the differential oracle in this module's tests.
+/// nothing is worth copying, the whole target comes back as a single
+/// literal.
 pub fn vcdiff_cover(source: &[u8], target: &[u8]) -> Vec<CoverSegment> {
-    let matcher = SuperstringMatcher::build(source, target);
-    greedy_cover(target.len(), |position| matcher.longest_match_at(position))
+    let mut matcher = HashChainMatcher::build(source, target);
+    greedy_cover(target.len(), |position| matcher.match_at(position))
 }
 
-/// Greedily parse a target of `target_length` bytes into a cover: at
-/// each position take the longest match the engine reports when it
-/// clears [`MIN_MATCH_LENGTH`], otherwise extend the pending literal run by one
-/// byte. The match engine is a parameter, so the production suffix-array
-/// matcher and the test oracle drive this identical parse — the cover's
-/// shape is decided here, once, and the engine only answers the longest-
-/// match query.
+/// Greedily parse a target of `target_length` bytes into a cover: take
+/// every match the engine offers, and extend the pending literal run by
+/// one byte where it offers none. The engine is a parameter, and it
+/// owns the whole worth-taking judgment — the parse decides only the
+/// segmentation that follows from its answers, so a different engine
+/// (the tests drive hand-shaped ones) changes what is found, never how
+/// a cover is laid down.
 fn greedy_cover(
     target_length: usize,
-    mut longest_match_at: impl FnMut(usize) -> Option<Match>,
+    mut worthwhile_match_at: impl FnMut(usize) -> Option<Match>,
 ) -> Vec<CoverSegment> {
     let mut segments = Vec::new();
     let mut literal_start = 0; // start, in the target, of the pending literal run
     let mut target_position = 0;
     while target_position < target_length {
-        match longest_match_at(target_position) {
-            Some(longest_match) if longest_match.length >= MIN_MATCH_LENGTH => {
+        match worthwhile_match_at(target_position) {
+            Some(taken) => {
                 flush_literal(&mut segments, literal_start, target_position);
                 segments.push(CoverSegment {
                     kind: SegmentKind::Copy,
-                    offset: longest_match.superstring_offset as u64,
-                    length: longest_match.length as u64,
+                    offset: taken.superstring_offset as u64,
+                    length: taken.length as u64,
                 });
-                target_position += longest_match.length;
+                target_position += taken.length;
                 literal_start = target_position;
             }
-            // No match, or one too short to be worth a COPY: this byte
-            // extends the pending literal run.
-            _ => target_position += 1,
+            None => target_position += 1,
         }
     }
     flush_literal(&mut segments, literal_start, target_length);
@@ -99,73 +99,11 @@ fn flush_literal(segments: &mut Vec<CoverSegment>, start: usize, end: usize) {
     }
 }
 
-// ── Differential oracle and tests ────────────────────────────────────
+// ── Tests ────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
-    use super::{greedy_cover, vcdiff_cover, CoverSegment, SegmentKind};
-    use crate::vcdiff_suffix_sort::{Match, SuperstringMatcher};
-
-    // ── The naive quadratic matcher, retained as the oracle ──────────
-
-    /// The longest run of target bytes beginning at `position` that also
-    /// occurs earlier in `U` — at a `U` offset strictly before the write
-    /// head (`source.len() + position`). `None` only when no candidate
-    /// matches even one byte; the caller applies the [`super::MIN_MATCH_LENGTH`]
-    /// floor. The quadratic scan the suffix-array engine replaced, kept
-    /// as the exhaustively-correct reference.
-    fn naive_longest_match_at(source: &[u8], target: &[u8], position: usize) -> Option<Match> {
-        let write_head = source.len() + position;
-        let mut best: Option<Match> = None;
-        for candidate in 0..write_head {
-            let length = extend_match(source, target, candidate, position);
-            if length > 0 && best.as_ref().is_none_or(|found| length > found.length) {
-                best = Some(Match { superstring_offset: candidate, length });
-            }
-        }
-        best
-    }
-
-    /// Match the target at `position` against the superstring at
-    /// `candidate`, returning the matched length. Bounded by
-    /// [`match_reach`], so a source-segment match never crosses into the
-    /// target region and no match runs past the target's end. Reads `U`
-    /// through [`byte_in_superstring`], so a match that overruns the
-    /// write head — the run-length case — is found naturally.
-    fn extend_match(source: &[u8], target: &[u8], candidate: usize, position: usize) -> usize {
-        let reach = match_reach(source, target, candidate, position);
-        let mut length = 0;
-        while length < reach
-            && byte_in_superstring(source, target, candidate + length) == target[position + length]
-        {
-            length += 1;
-        }
-        length
-    }
-
-    /// How far a match anchored at `candidate` may run. A source-region
-    /// candidate is capped at the source's end (a COPY beginning in the
-    /// source segment may not cross into the target region); both regions
-    /// are capped at the target bytes still to be produced.
-    fn match_reach(source: &[u8], target: &[u8], candidate: usize, position: usize) -> usize {
-        let remaining_target = target.len() - position;
-        if candidate < source.len() {
-            (source.len() - candidate).min(remaining_target)
-        } else {
-            remaining_target
-        }
-    }
-
-    /// The byte at absolute offset `u_offset` in `U = source ++ target`.
-    fn byte_in_superstring(source: &[u8], target: &[u8], u_offset: usize) -> u8 {
-        if u_offset < source.len() {
-            source[u_offset]
-        } else {
-            target[u_offset - source.len()]
-        }
-    }
-
-    // ── Random inputs and cover utilities ────────────────────────────
+    use super::{vcdiff_cover, CoverSegment, SegmentKind};
 
     /// SplitMix64, matching the house pseudo-random helper.
     fn pseudo_random_bytes(seed: u64, length: usize) -> Vec<u8> {
@@ -192,29 +130,11 @@ mod tests {
             .collect()
     }
 
-    /// The cover's structure with offsets deliberately dropped: each
-    /// segment as `(kind tag, length)`. Offsets are excluded because any
-    /// valid longest-match occurrence is correct, so two engines may pick
-    /// different-but-equally-valid offsets; the structure must still
-    /// agree.
-    fn cover_structure(cover: &[CoverSegment]) -> Vec<(u8, u64)> {
-        cover
-            .iter()
-            .map(|segment| {
-                let tag = match segment.kind {
-                    SegmentKind::Literal => 0,
-                    SegmentKind::Copy => 1,
-                };
-                (tag, segment.length)
-            })
-            .collect()
-    }
-
     /// Rebuild the target from a cover, reading copies out of
     /// `source ++ produced-so-far` byte by byte (so a self-referential
-    /// overlap resolves) and literals out of the target. A wrong copy
-    /// offset reproduces wrong bytes here even when the structure agrees,
-    /// so this validates the offsets the structure check leaves free.
+    /// overlap resolves) and literals out of the target. This is the
+    /// hard correctness bar: whatever the engine chose to find or skip,
+    /// a cover that fails here is wrong.
     fn reconstruct_from_cover(source: &[u8], target: &[u8], cover: &[CoverSegment]) -> Vec<u8> {
         let mut produced: Vec<u8> = Vec::with_capacity(target.len());
         for segment in cover {
@@ -254,35 +174,11 @@ mod tests {
         (0x0a, 512, 512, 16),
     ];
 
-    fn case_inputs(seed: u64, source_len: usize, target_len: usize, alphabet: u8) -> (Vec<u8>, Vec<u8>) {
-        let source = pseudo_random_low_alphabet(seed, source_len, alphabet);
-        let target = pseudo_random_low_alphabet(seed ^ 0xa5a5, target_len, alphabet);
-        (source, target)
-    }
-
-    // ── The load-bearing differential check ──────────────────────────
-
-    #[test]
-    fn cover_structure_matches_the_naive_oracle() {
-        for &(seed, source_len, target_len, alphabet) in CASES {
-            let (source, target) = case_inputs(seed, source_len, target_len, alphabet);
-            let matcher = SuperstringMatcher::build(&source, &target);
-            let suffix_array_cover =
-                greedy_cover(target.len(), |position| matcher.longest_match_at(position));
-            let oracle_cover =
-                greedy_cover(target.len(), |position| naive_longest_match_at(&source, &target, position));
-            assert_eq!(
-                cover_structure(&suffix_array_cover),
-                cover_structure(&oracle_cover),
-                "structure divergence at case seed {seed:#x}",
-            );
-        }
-    }
-
     #[test]
     fn cover_reconstructs_the_target() {
         for &(seed, source_len, target_len, alphabet) in CASES {
-            let (source, target) = case_inputs(seed, source_len, target_len, alphabet);
+            let source = pseudo_random_low_alphabet(seed, source_len, alphabet);
+            let target = pseudo_random_low_alphabet(seed ^ 0xa5a5, target_len, alphabet);
             let cover = vcdiff_cover(&source, &target);
             assert_eq!(
                 reconstruct_from_cover(&source, &target, &cover),
@@ -304,12 +200,75 @@ mod tests {
     }
 
     #[test]
+    fn scattered_edits_stay_in_lockstep() {
+        // A source with one byte flipped every 4 KiB: the shape of a
+        // typical ROM edit, and the shape that exposed the old exact-
+        // longest contract — its cover chased four-byte coincidences all
+        // over the source, trading compressible literals for address
+        // noise. The cover must be the boring one: a one-byte literal
+        // and an aligned copy per flip, every copy in lockstep, nothing
+        // reaching across the file.
+        let source = pseudo_random_bytes(0x77, 1 << 18);
+        let flip_stride = 4096;
+        let mut target = source.clone();
+        for spot in (0..target.len()).step_by(flip_stride) {
+            target[spot] ^= 0x5a;
+        }
+        let cover = vcdiff_cover(&source, &target);
+        assert_eq!(cover.len(), 2 * (target.len() / flip_stride));
+        let mut output_cursor = 0u64;
+        for segment in &cover {
+            match segment.kind {
+                SegmentKind::Literal => assert_eq!(segment.length, 1),
+                SegmentKind::Copy => {
+                    assert_eq!(
+                        segment.offset, output_cursor,
+                        "a copy left lockstep at output position {output_cursor}",
+                    );
+                    assert_eq!(segment.length, (flip_stride - 1) as u64);
+                }
+            }
+            output_cursor += segment.length;
+        }
+        assert_eq!(reconstruct_from_cover(&source, &target, &cover), target);
+    }
+
+    #[test]
+    fn a_padding_coincidence_does_not_lure_the_cover_off_lockstep() {
+        // Long zero runs with one byte flipped, and the flip's window
+        // recurring at a far zero position: an alignment-blind engine
+        // would spend a noisy far address on that recurrence one byte
+        // before pursuit resumes for free. The cover must be the
+        // aligned one: copy to the flip, the flipped byte as a literal,
+        // copy to the end.
+        let mut source = vec![0u8; 20000];
+        for (index, byte) in source[10000..10100].iter_mut().enumerate() {
+            *byte = (index * 7) as u8;
+        }
+        source[15000] = 0x5a;
+        let mut target = source.clone();
+        target[5000] ^= 0x5a;
+        let cover = vcdiff_cover(&source, &target);
+        let shape: Vec<(bool, u64, u64)> = cover
+            .iter()
+            .map(|segment| {
+                (matches!(segment.kind, SegmentKind::Copy), segment.offset, segment.length)
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            vec![(true, 0, 5000), (false, 5000, 1), (true, 5001, 14999)],
+        );
+        assert_eq!(reconstruct_from_cover(&source, &target, &cover), target);
+    }
+
+    #[test]
     fn interleaved_source_chunks_round_trip() {
         // A target stitched from source slices in a shuffled order plus
         // an unmatched literal — the multi-segment crossing case, where
         // the cover must alternate copies and a literal and the copies
         // reach back into different parts of the source.
-        let source: Vec<u8> = (0..200u32).map(|n| (n * 7) as u8).collect();
+        let source: Vec<u8> = (0..200u32).map(|position| (position * 7) as u8).collect();
         let mut target = Vec::new();
         target.extend_from_slice(&source[120..160]);
         target.extend_from_slice(b"an unmatched literal stretch");
@@ -318,7 +277,7 @@ mod tests {
         let cover = vcdiff_cover(&source, &target);
         assert_eq!(reconstruct_from_cover(&source, &target, &cover), target);
         assert!(
-            cover.iter().filter(|s| matches!(s.kind, SegmentKind::Copy)).count() >= 3,
+            cover.iter().filter(|segment| matches!(segment.kind, SegmentKind::Copy)).count() >= 3,
             "expected several copies reaching into different source regions",
         );
     }
@@ -326,10 +285,10 @@ mod tests {
     #[test]
     fn handles_a_megabyte_pair() {
         // A megabyte target derived from a megabyte source: large enough
-        // to exercise the suffix-array engine at scale and confirm the
-        // cover is still exact there. The generous time bound is a
-        // regression tripwire — a return to quadratic behaviour would
-        // run far past it.
+        // to exercise the index at scale and confirm the cover is still
+        // exact there. The generous time bound is a regression tripwire
+        // — super-linear behaviour in the index or the probe would run
+        // far past it.
         let source = pseudo_random_low_alphabet(0x512e, 1 << 20, 64);
         let mut target = source.clone();
         for spot in (0..target.len()).step_by(4096) {
