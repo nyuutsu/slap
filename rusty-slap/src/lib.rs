@@ -12,7 +12,7 @@ mod crc32;
 mod vcdiff_diff;
 mod vcdiff_hash_chain;
 mod xdelta1_diff;
-mod xdelta1_suffix_array;
+mod xdelta1_hash_chain;
 mod xdelta3_djw;
 mod xdelta3_fgk;
 mod xdelta3_lzma;

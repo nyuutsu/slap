@@ -6,25 +6,18 @@
 //! bytes that didn't match (accumulated into the inline data
 //! segment).
 //!
-//! The matcher is a suffix-array index over source (see
-//! [`crate::xdelta1_suffix_array`]) queried once per target position.
-//! The walk is greedy: at each position, take the longest match the
-//! SA reports if it reaches [`MIN_MATCH_LENGTH`], otherwise
-//! accumulate one literal byte and advance.
+//! The matcher is a source hash-chain finder (see
+//! [`crate::xdelta1_hash_chain`]) queried once per target position.
+//! The walk is greedy: at each position, take the match the finder
+//! offers, otherwise accumulate one literal byte and advance. The
+//! finder owns the shortest-match floor and the pursuit/discovery
+//! choice, so this walk holds no matching policy of its own.
 //!
 //! Crosses the FFI seam as parallel homogeneous buffers. The Haskell
 //! side in `Slap.XDelta1.FFI` reassembles the output and feeds it to
 //! `Slap.XDelta1.Create.assemblePatch`.
 
-use crate::xdelta1_suffix_array::SourceSuffixArrayIndex;
-
-/// Shortest match length the differ will emit as a file-source
-/// instruction. Matches the canonical xdelta1 setting. Below this,
-/// short coincidental matches splinter what would be one long literal
-/// run or one long file-source match into many records, each with its
-/// own per-instruction varint overhead — and the greedy walk, having
-/// no lookahead, commits to every such match it sees.
-const MIN_MATCH_LENGTH: usize = 8;
+use crate::xdelta1_hash_chain::SourceHashChainMatcher;
 
 // ── Public surface ─────────────────────────────────────────────────────
 
@@ -79,10 +72,10 @@ pub struct XDelta1DiffOutput {
 /// Compute an xdelta1 diff. Returns the pre-serialization structured
 /// output for the FFI bridge.
 ///
-/// Failures: sources too large for the `u32`-indexed suffix array
-/// (surfaced by [`SourceSuffixArrayIndex::build`]) and internal-
-/// invariant violations (cumulative emit length != target length at
-/// end).
+/// Failures: sources larger than xdelta1's 32-bit wire offsets can
+/// address (surfaced by [`SourceHashChainMatcher::build`]) and
+/// internal-invariant violations (cumulative emit length != target
+/// length at end).
 pub fn xdelta1_diff(source: &[u8], target: &[u8]) -> Result<XDelta1DiffOutput, String> {
     if target.is_empty() {
         return Ok(XDelta1DiffOutput {
@@ -92,20 +85,13 @@ pub fn xdelta1_diff(source: &[u8], target: &[u8]) -> Result<XDelta1DiffOutput, S
         });
     }
 
-    let suffix_array_index = SourceSuffixArrayIndex::build(source)?;
-    let mut state          = EncoderState::initial();
+    let mut matcher = SourceHashChainMatcher::build(source)?;
+    let mut state   = EncoderState::initial();
     while state.target_position < target.len() {
-        let target_suffix = &target[state.target_position..];
-        let match_candidate =
-            suffix_array_index.longest_match_for_target_suffix(source, target_suffix);
-        match match_candidate {
-            Some(accepted_match) if (accepted_match.match_length as usize) >= MIN_MATCH_LENGTH =>
-                state.emit_file_match(
-                    target,
-                    accepted_match.source_offset as u64,
-                    accepted_match.match_length as u64,
-                ),
-            _ =>
+        match matcher.match_at(target, state.target_position) {
+            Some(found) =>
+                state.emit_file_match(target, found.source_offset as u64, found.length as u64),
+            None =>
                 state.accumulate_literal_byte(),
         }
     }
@@ -232,7 +218,8 @@ impl EncoderState {
         target_length:           usize,
         file_source_offset_mode: FileSourceOffsetMode,
     ) -> Result<XDelta1DiffOutput, String> {
-        let cumulative_emitted_length: u64 = self.instructions.iter().map(|i| i.length).sum();
+        let cumulative_emitted_length: u64 =
+            self.instructions.iter().map(|instruction| instruction.length).sum();
         if cumulative_emitted_length != target_length as u64 {
             return Err(format!(
                 "xdelta1 differ: cumulative emit length {cumulative_emitted_length} != \
@@ -286,14 +273,14 @@ mod tests {
         assert!(diff
             .instructions
             .iter()
-            .all(|i| i.target == InstructionTarget::DataSource));
+            .all(|instruction| instruction.target == InstructionTarget::DataSource));
         assert_eq!(diff.data_segment, target);
         assert_roundtrip(&[], &target);
     }
 
     #[test]
     fn source_shorter_than_min_match_is_all_literal() {
-        let source: Vec<u8> = (0..3u8).collect(); // length 3 < MIN_MATCH_LENGTH
+        let source: Vec<u8> = (0..3u8).collect(); // length 3, under the finder's 8-byte floor
         let target: Vec<u8> = (0..10u8).collect();
         let diff = xdelta1_diff(&source, &target).expect("differ should succeed");
         assert_eq!(diff.instructions.len(), 1);
@@ -308,7 +295,7 @@ mod tests {
         let data: Vec<u8> = (0..=255u8).cycle().take(4096).collect();
         let diff = xdelta1_diff(&data, &data).expect("differ should succeed");
         assert_eq!(diff.data_segment.len(), 0);
-        assert!(diff.instructions.iter().any(|i| i.target == InstructionTarget::FileSource));
+        assert!(diff.instructions.iter().any(|instruction| instruction.target == InstructionTarget::FileSource));
         assert_roundtrip(&data, &data);
     }
 
@@ -338,7 +325,7 @@ mod tests {
         let file_source_count = diff
             .instructions
             .iter()
-            .filter(|i| i.target == InstructionTarget::FileSource)
+            .filter(|instruction| instruction.target == InstructionTarget::FileSource)
             .count();
         assert_eq!(file_source_count, 0);
         assert_roundtrip(&source, &target);

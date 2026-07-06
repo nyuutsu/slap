@@ -1,6 +1,6 @@
 # Architecture
 
-slap is a Haskell CLI backed by a small Rust staticlib (`rusty-slap`) for byte-crunching. Haskell owns parsing, applying, creating, converting, inspecting, and the CLI; Rust owns CRC-32, Adler-32, SA-IS suffix array, BPS diff, and decompression.
+slap is a Haskell CLI backed by a small Rust staticlib (`rusty-slap`) for byte-crunching. Haskell owns parsing, applying, creating, converting, inspecting, and the CLI; Rust owns CRC-32, Adler-32, the cost-aware hash-chain match finders behind BPS/VCDIFF/xdelta1 diff, and compression/decompression.
 
 CLAUDE.md describes the values; this document covers the shape. If the document and the code disagree, trust the code.
 
@@ -64,6 +64,6 @@ Appliers return `Either SlapError OutputFileContents`; some wrap the success sid
 
 ## rusty-slap
 
-A Rust staticlib, fat LTO, `panic=abort`, linked into the Haskell binary via FFI. CRC-32 and Adler-32 (via `crc32fast` and a hand-rolled adler32), SA-IS suffix array, BPS diff, compression and decompression for zlib, gzip, and xdelta3-flavored LZMA, and decompression for bzip2 (via pure-Rust `flate2`, `bzip2-rs`, `lzma-rs`, and — for the LZMA2 encoder `lzma-rs` lacks — `lzma-rust2`, so the staticlib has no C dependencies and Cargo handles cross-platform builds cleanly).
+A Rust staticlib, fat LTO, `panic=abort`, linked into the Haskell binary via FFI. CRC-32 and Adler-32 (via `crc32fast` and a hand-rolled adler32), the hash-chain match finders behind BPS/VCDIFF/xdelta1 diff (each pricing candidates in the emitted format's own wire bytes rather than chasing the longest match), compression and decompression for zlib, gzip, and xdelta3-flavored LZMA, and decompression for bzip2 (via pure-Rust `flate2`, `bzip2-rs`, `lzma-rs`, and — for the LZMA2 encoder `lzma-rs` lacks — `lzma-rust2`, so the staticlib has no C dependencies and Cargo handles cross-platform builds cleanly).
 
 The FFI boundary lives in `Slap.FFI` (CRC-32, Adler-32, BPS diff) and `Slap.Compression.Stream` (compression codecs). Rust allocates output buffers; Haskell copies into `ByteString` and calls `rusty_free`. Adding a new codec follows the existing pattern: a function in `compress.rs` (or its own module when it carries real mechanism, as `xdelta3_lzma.rs` does), a `pub unsafe extern "C"` wrapper in `lib.rs`, a `foreign import ccall` and a public function in `Slap.Compression.Stream`. This layer is expected to grow over time.
