@@ -1,17 +1,20 @@
 {-# LANGUAGE LambdaCase #-}
 
--- | VCDIFF patch creation: a cover of the target serialized to wire bytes, in the arc the user named.
+-- | VCDIFF patch creation: covers of the target serialized to wire bytes, in the arc the user named.
 --
--- Creation has two halves. A /matcher/ ('Slap.VCDIFF.FFI.vcdiffCover', Rust-backed) segments the target into copies and literals, a 'Cover';
--- this module is the other half, turning a cover into a patch.
--- 'createRFCVCDIFF' and 'createXDelta3' run the matcher and serialize its cover;
+-- Creation has two halves. A /matcher/ ('Slap.VCDIFF.FFI', Rust-backed) segments the target into copies and literals, per window, as 'Cover's;
+-- this module is the other half, turning covers into a patch.
+-- 'createRFCVCDIFF' and 'createXDelta3' run the matcher and serialize its covers;
 -- when the matcher finds nothing the cover is all-literal and the bytes are the bedrock floor's exactly.
 -- The cover-driven entries ('createFromCover', 'createConsideringCustomTable') let tests exercise the full COPY\/ADD\/RUN path on hand-built covers.
 --
--- The path is cover to instructions to resolved instructions to wire bytes, source-free, under the active code table, in one window:
+-- The path is cover to instructions to resolved instructions to wire bytes, source-free, under the active code table, window by window:
 -- each segment becomes an instruction ('coverToInstructions'),
+-- an xdelta3 window's source segment tightens to the span its copies read ('tightenToUsedSourceSpan'),
 -- each COPY's address is resolved once against the cache ('resolveInstructionAddresses'),
 -- and the resolved stream packs into the densest opcodes the table offers ('packInstructions').
+-- The RFC arc emits one window spanning the whole target; the xdelta3 arc slices the target by the requested 'XDelta3WindowSize'
+-- (8 MiB by default — the reference tool's own emission shape, and what keeps every xdelta3 build able to decode the result).
 --
 -- The create token names the arc the user asked for; the bytes earn their flavor by the features they use.
 -- A patch on the default table with no checksum, no compressed section, and no application header reaches for no flavor-distinguishing feature,
@@ -46,14 +49,15 @@ module Slap.VCDIFF.Create
   ) where
 
 import Slap.VCDIFF.Types (vcdiffMagicBytes, VCDIFFInstruction(..),
+                          XDelta3WindowSize, unXDelta3WindowSize,
                           vcdDecompressBit, vcdAppHeaderBit, vcdSourceBit, vcdAdler32Bit,
                           vcdDataCompBit, vcdInstCompBit, vcdAddrCompBit)
 import Slap.VCDIFF.SecondaryCompression
   ( secondaryCompressorId
   , SectionCarriage(..), carriageBytes
-  , SectionCompressor, sectionCompressorAlgorithm, sectionCompressorCarriage )
+  , SectionCompressor, sectionCompressorAlgorithm, sectionCompressorKindCarriages )
 import Slap.VCDIFF.Cover (Cover(..), CoverSegment(..))
-import Slap.VCDIFF.FFI (vcdiffCover)
+import Slap.VCDIFF.FFI (vcdiffCover, vcdiffWindowedCovers)
 import Slap.VCDIFF.AddressCache
   ( AddressCacheConfig(..), NearSlotCount(..), SameBlockCount(..)
   , freshAddressCache, defaultAddressCacheConfig
@@ -76,6 +80,7 @@ import qualified Data.ByteString as ByteString
 import Data.ByteString.Builder (Builder, byteString, word8, word32BE, toLazyByteString)
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.List (sortOn)
+import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
@@ -97,7 +102,7 @@ createRFCVCDIFF inputContents@(InputFileContents source) outputContents@(OutputF
            (vcdiffCover inputContents outputContents))
 
 -- | Create an xdelta3 patch reconstructing @target@:
--- the same matcher-driven cover as 'createRFCVCDIFF', emitted with the extensions the canonical tool's own output carries.
+-- matcher-driven covers, one per 'XDelta3WindowSize' slice of the target, emitted with the extensions the canonical tool's own output carries.
 -- Today those are the per-window Adler32
 -- (on by default, declined by @--omit-verification@; the only integrity data the format has,
 -- so opting out leaves nothing attesting the output — the same gap 'Slap.Status.VerificationOptedOutByCreator' names at apply),
@@ -109,14 +114,13 @@ createRFCVCDIFF inputContents@(InputFileContents source) outputContents@(OutputF
 -- A patch carrying none of these — or with verification declined and compression never paying —
 -- uses no flavor-distinguishing feature at all,
 -- parsing back as 'Slap.VCDIFF.Types.PatchCoreOnly' — readable as xdelta3, which is what was asked for.
-createXDelta3 :: VerificationInclusion -> WindowCompressionEmission -> Maybe ByteString -> InputFileContents -> OutputFileContents
+createXDelta3 :: VerificationInclusion -> WindowCompressionEmission -> XDelta3WindowSize -> Maybe ByteString -> InputFileContents -> OutputFileContents
               -> Either SlapError CreateResult
-createXDelta3 verificationChoice compressionEmission maybeAppHeader inputContents@(InputFileContents source) outputContents@(OutputFileContents target) = do
+createXDelta3 verificationChoice compressionEmission windowSize maybeAppHeader (InputFileContents source) (OutputFileContents target) = do
   rejectUnaddressablePair (SourceFileSize (byteFileSize source)) (TargetFileSize (byteFileSize target))
   Right (CreateResult (PatchFileContents patchBytes) [])
   where
-    patchBytes = emitXDelta3Patch checksumEmission compressionEmission maybeAppHeader source target
-                   (vcdiffCover inputContents outputContents)
+    patchBytes = emitXDelta3Patch checksumEmission compressionEmission maybeAppHeader windowSize source target
     checksumEmission = case verificationChoice of
       IncludeVerification -> CarryWindowAdler32
       OmitVerification    -> OmitWindowAdler32
@@ -410,13 +414,27 @@ layoutSections opcodeResolver resolved = Sections
 ----------------------------------------------------------------------------
 
 -- | How a window sources its copies.
--- A window with any COPY declares the whole source as its segment ('DrawsFromSource', the VCD_SOURCE indicator and the two segment varints);
--- an all-literal window is self-contained ('SelfContained'), with neither.
--- These are exactly the two wire branches 'encodeWindow' takes, and naming them keeps that branch exhaustive:
+-- A window with source-region copies declares a segment ('DrawsFromSource', the VCD_SOURCE indicator and the two segment varints);
+-- a window with none is self-contained ('SelfContained'), with neither — even when it copies its own output, whose addresses then begin at zero.
+-- These are exactly the two wire branches 'encodeWindowBytes' takes, and naming them keeps that branch exhaustive:
 -- a later sourcing (a VCD_TARGET window, once windows can reference earlier output)
 -- lands here as a third constructor and a compile error at every consumer, not a silent fall-through.
-data WindowSourcing = SelfContained | DrawsFromSource
+data WindowSourcing = SelfContained | DrawsFromSource !SourceSegmentSpan
   deriving (Eq, Show)
+
+-- | The span of source a window declares as its segment: where it starts, and how far it runs.
+-- The RFC arc's single window declares the whole source; an xdelta3 window declares the span its copies actually read ('tightenToUsedSourceSpan').
+data SourceSegmentSpan = SourceSegmentSpan
+  { segmentSpanPosition :: !Offset
+  , segmentSpanLength   :: !Length
+  }
+  deriving (Eq, Show)
+
+-- | The declared segment's length as the position a window's own output begins at in @U@: zero for a self-contained window.
+-- Both the resolver's initial write head and the rebasing arithmetic read it, so the two cannot disagree about where the window region starts.
+sourcingSegmentLength :: WindowSourcing -> Length
+sourcingSegmentLength SelfContained                = Length 0
+sourcingSegmentLength (DrawsFromSource segmentSpan) = segmentSpanLength segmentSpan
 
 -- | Whether an emitted window carries the per-window Adler32 of its output (VCD_ADLER32, an xdelta3 extension).
 -- The RFC and core emissions always pass 'OmitWindowAdler32' — their windows have no slot for a checksum,
@@ -433,21 +451,13 @@ data WindowCompressionEmission
   = CompressSectionsWith !SectionCompressor
   | EmitSectionsPlain
 
--- | A window rendered to wire bytes, paired with how its sections went out.
--- The patch header must declare the secondary compressor exactly when some window's
--- section leans on it, so the fact rides up beside the bytes.
-data EncodedWindow = EncodedWindow
-  { encodedWindowBytes              :: !ByteString
-  , encodedWindowSectionCompression :: !WindowSectionCompression
-  }
-
--- | Whether any of an emitted window's three sections rides secondary-compressed, and under which compressor when one does,
+-- | Whether any of an emitted patch's sections rides secondary-compressed, and under which compressor when one does,
 -- so the header's declaration can only ever name the compressor the sections actually used.
 data WindowSectionCompression
   = SomeSectionsCompressed !SectionCompressor
   | AllSectionsPlain
 
--- | The table-independent groundwork for a cover's single window: how the window sources its copies,
+-- | The table-independent groundwork for one window: how it sources its copies,
 -- and the resolved instruction stream (its COPY modes selected once, valid under any table of the same cache geometry).
 -- Both the default and the candidate emission build on the one plan, and the design reads the resolved stream off it.
 data WindowPlan = WindowPlan
@@ -455,15 +465,16 @@ data WindowPlan = WindowPlan
   , planSourcing :: !WindowSourcing
   }
 
--- | Plan a cover's single window against a source under a cache geometry:
--- select the instruction stream's COPY addresses against the given 'AddressCacheConfig', and decide how the window sources its copies.
--- The write head starts at @len(S)@ for a source-drawing window (the segment it declares)
--- and at zero for a self-contained one, which has no COPY to measure against it anyway.
+-- | Plan a cover's single whole-target window against a source under a cache geometry:
+-- select the instruction stream's COPY addresses against the given 'AddressCacheConfig', and decide how the window sources its copies —
+-- any COPY and the whole source is the declared segment, none and the window is self-contained.
+-- The write head starts at the declared segment's length, which has the whole source's for a source-drawing window here.
 --
 -- The config is the one the window will declare:
 -- its addresses are resolved against the very cache the decoder rebuilds from the table data's cache sizes,
 -- so resolve and declaration cannot drift (see 'assembleCustomTablePatch').
 -- 'emitDefaultPatch' plans under 'defaultAddressCacheConfig'; 'grownCacheCandidate' plans under each config it probes.
+-- The xdelta3 windows plan through 'planTightenedWindow' instead, which narrows the declared segment first.
 planWindow :: AddressCacheConfig -> ByteString -> ByteString -> Cover -> WindowPlan
 planWindow config source target cover = WindowPlan
   { planResolved = resolveInstructionAddresses config initialHere instructions
@@ -471,86 +482,143 @@ planWindow config source target cover = WindowPlan
   }
   where
     instructions = coverToInstructions target cover
-    sourcing     = windowSourcing instructions
-    initialHere  = case sourcing of
-      DrawsFromSource -> lengthToOffset (byteLength source)
-      SelfContained   -> Offset 0
+    sourcing
+      | any instructionCopies instructions =
+          DrawsFromSource (SourceSegmentSpan (Offset 0) (byteLength source))
+      | otherwise = SelfContained
+    initialHere = lengthToOffset (sourcingSegmentLength sourcing)
 
--- | How a window sources its copies, read off its instructions:
--- any COPY and it draws on the source (declaring the whole source as its segment), none and it is self-contained.
--- Total over the three instruction kinds.
-windowSourcing :: [VCDIFFInstruction] -> WindowSourcing
-windowSourcing instructions
-  | any instructionCopies instructions = DrawsFromSource
-  | otherwise                          = SelfContained
+-- | Whether an instruction copies — the fact a window's sourcing is read off. Total over the three instruction kinds.
+instructionCopies :: VCDIFFInstruction -> Bool
+instructionCopies = \case
+  Copy _ _ -> True
+  Add _    -> False
+  Run _ _  -> False
+
+-- | Plan one xdelta3 window: instructions from its cover, the declared source segment tightened to the span those instructions read,
+-- addresses rebased to match, then COPY modes resolved against the cache the declared segment implies —
+-- the write head starting at the declared span's length, exactly where the decoder's will.
+planTightenedWindow :: AddressCacheConfig -> Length -> ByteString -> Cover -> WindowPlan
+planTightenedWindow config sourceLength windowSlice cover = WindowPlan
+  { planResolved = resolveInstructionAddresses config initialHere rebasedInstructions
+  , planSourcing = sourcing
+  }
   where
-    instructionCopies = \case
-      Copy _ _ -> True
-      Add _    -> False
-      Run _ _  -> False
+    (sourcing, rebasedInstructions) =
+      tightenToUsedSourceSpan sourceLength (coverToInstructions windowSlice cover)
+    initialHere = lengthToOffset (sourcingSegmentLength sourcing)
 
--- | The window for a plan under a table:
--- the Win_Indicator and (when copying) the source-segment varints, then the delta encoding behind its length varint —
--- target size, Delta_Indicator, the three section lengths, the checksum when carried, the three sections.
--- When copying, the window declares the entire source as its segment so the COPY addresses can reach into @U@;
--- otherwise it is self-contained, the two segment varints absent, reproducing the bedrock floor exactly.
--- Under 'CompressSectionsWith' each section rides the carriage its compressor chooses for it,
--- the Delta_Indicator bits composed from the choices; one window means each kind's stream is exactly its one section.
-encodeWindow :: Table.CodeTable -> ByteString -> ByteString
-             -> WindowChecksumEmission -> WindowCompressionEmission -> WindowPlan -> EncodedWindow
-encodeWindow table source target checksumEmission compressionEmission plan =
-  EncodedWindow (builderBytes windowBuilder) sectionCompression
+-- | Tighten a window's declared source segment to the span its source-region copies actually read, rebasing every copy address to match.
+-- Addresses arrive against @whole source ++ window@ (the matcher's world) and leave against @declared segment ++ window@ (the wire's):
+-- a source-region address shifts down by the span's start, a window-region address by the whole source's length less the span's.
+-- A window with no source-region copies declares no segment at all.
+-- Runs before 'resolveInstructionAddresses' on purpose: the cache state the resolver threads depends on the numeric addresses,
+-- so the decoder — which sees only wire addresses — rebuilds exactly the cache the encoder selected modes against.
+tightenToUsedSourceSpan :: Length -> [VCDIFFInstruction] -> (WindowSourcing, [VCDIFFInstruction])
+tightenToUsedSourceSpan (Length sourceLength) instructions = case sourceReadBounds of
+    []     -> (SelfContained, map (rebaseCopyAddress 0 0) instructions)
+    bounds ->
+      let spanStart  = minimum (map fst bounds)
+          spanLength = maximum (map snd bounds) - spanStart
+      in ( DrawsFromSource (SourceSegmentSpan (Offset spanStart) (Length spanLength))
+         , map (rebaseCopyAddress spanStart spanLength) instructions )
   where
-    sections = layoutSections (denseOpcodes table) (planResolved plan)
+    -- Each source-region copy's read interval; a copy never crosses the
+    -- source's end (core invariant 2, which the matcher's reach cap upholds),
+    -- so the interval ends are source positions and the span they union to
+    -- is entirely inside the source.
+    sourceReadBounds =
+      [ (address, address + unLength copyLength)
+      | Copy copyLength (Offset address) <- instructions
+      , address < sourceLength ]
 
-    chooseCarriage = case compressionEmission of
-      CompressSectionsWith compressor -> sectionCompressorCarriage compressor
-      EmitSectionsPlain               -> CarriedPlain
-    dataCarriage        = chooseCarriage (sectionData sections)
-    instructionCarriage = chooseCarriage (sectionInstructions sections)
-    addressCarriage     = chooseCarriage (sectionAddresses sections)
+    rebaseCopyAddress spanStart spanLength = \case
+      Copy copyLength (Offset address)
+        | address < sourceLength -> Copy copyLength (Offset (address - spanStart))
+        | otherwise              -> Copy copyLength (Offset (address - sourceLength + spanLength))
+      instruction -> instruction
 
-    sectionCompression = case compressionEmission of
-      EmitSectionsPlain -> AllSectionsPlain
-      CompressSectionsWith compressor ->
-        case (dataCarriage, instructionCarriage, addressCarriage) of
-          (CarriedPlain _, CarriedPlain _, CarriedPlain _) -> AllSectionsPlain
-          _                                                -> SomeSectionsCompressed compressor
+-- | The groundwork of one emitted window: its slice of the target, how it sources its copies, and its three sections, laid out but not yet carried.
+-- Both emissions build on the same planned window — the plain patch and the secondary-compressed one differ only in the carriages dressed on at 'encodeWindowBytes'.
+data PlannedWindow = PlannedWindow
+  { plannedSlice    :: !ByteString
+  , plannedSourcing :: !WindowSourcing
+  , plannedSections :: !Sections
+  }
+
+-- | Lay a window's plan out into its 'PlannedWindow' under a table's opcodes.
+layoutPlannedWindow :: DenseOpcodes -> ByteString -> WindowPlan -> PlannedWindow
+layoutPlannedWindow opcodeResolver windowSlice plan = PlannedWindow
+  { plannedSlice    = windowSlice
+  , plannedSourcing = planSourcing plan
+  , plannedSections = layoutSections opcodeResolver (planResolved plan)
+  }
+
+-- | The carriages one window's three sections ride out on, kind by kind.
+-- A record, not a triple, so the data, instruction, and address sections cannot transpose between layout and wire.
+data WindowCarriages = WindowCarriages
+  { dataCarriage        :: !SectionCarriage
+  , instructionCarriage :: !SectionCarriage
+  , addressCarriage     :: !SectionCarriage
+  }
+
+-- | Every section as laid out: the plain emission's carriages, and what a compressor's carriage run degrades to where nothing pays.
+plainCarriages :: Sections -> WindowCarriages
+plainCarriages sections = WindowCarriages
+  { dataCarriage        = CarriedPlain (sectionData sections)
+  , instructionCarriage = CarriedPlain (sectionInstructions sections)
+  , addressCarriage     = CarriedPlain (sectionAddresses sections)
+  }
+
+-- | Whether any of a window's sections rides compressed: the fact the Delta_Indicator spells per window and the patch header's declaration folds over.
+anyCarriageCompressed :: WindowCarriages -> Bool
+anyCarriageCompressed carriages =
+  any carriageIsCompressed [dataCarriage carriages, instructionCarriage carriages, addressCarriage carriages]
+
+carriageIsCompressed :: SectionCarriage -> Bool
+carriageIsCompressed CarriedCompressed{} = True
+carriageIsCompressed CarriedPlain{}      = False
+
+-- | One window's wire bytes: the Win_Indicator and (when a segment is declared) its two varints, then the delta encoding behind its length varint —
+-- target window size, Delta_Indicator (composed from the carriages), the three section lengths, the checksum when carried, the three sections as carried.
+-- The carried checksum is the Adler32 of this window's decoded output — its slice of the target — computed here so the value cannot drift from the window it attests;
+-- four bytes big-endian between the section lengths and the data section (docs/vcdiff/xdelta3/spec.md "Per-window Adler32").
+encodeWindowBytes :: WindowChecksumEmission -> PlannedWindow -> WindowCarriages -> ByteString
+encodeWindowBytes checksumEmission plannedWindow carriages = builderBytes windowBuilder
+  where
+    windowSlice = plannedSlice plannedWindow
 
     deltaIndicator :: Word8
     deltaIndicator =
-      carriageCompressionBit vcdDataCompBit dataCarriage
-        .|. carriageCompressionBit vcdInstCompBit instructionCarriage
-        .|. carriageCompressionBit vcdAddrCompBit addressCarriage
+      carriageCompressionBit vcdDataCompBit (dataCarriage carriages)
+        .|. carriageCompressionBit vcdInstCompBit (instructionCarriage carriages)
+        .|. carriageCompressionBit vcdAddrCompBit (addressCarriage carriages)
 
     -- The Win_Indicator and (for a source-drawing window) the source-segment varints, which precede the delta-encoding-length on the wire.
     windowIndicatorAndSegment =
-      word8 (windowIndicator (planSourcing plan) checksumEmission)
-        <> case planSourcing plan of
-             DrawsFromSource ->
-                  varintOfLength (byteLength source)   -- source-segment length
-               <> putVcdiffVarint 0                    -- source-segment position
+      word8 (windowIndicator (plannedSourcing plannedWindow) checksumEmission)
+        <> case plannedSourcing plannedWindow of
+             DrawsFromSource segmentSpan ->
+                  varintOfLength (segmentSpanLength segmentSpan)
+               <> putVcdiffVarint (fromIntegral (unOffset (segmentSpanPosition segmentSpan)))
              SelfContained -> mempty
 
-    -- The carried checksum is the Adler32 of this window's decoded output — the whole target, the window being the only one —
-    -- computed here so the value cannot drift from the window it attests.
-    -- Four bytes big-endian between the section lengths and the data section (docs/vcdiff/xdelta3/spec.md "Per-window Adler32").
     checksumBytes = case checksumEmission of
-      CarryWindowAdler32 -> word32BE (unAdler32 (adler32 target))
+      CarryWindowAdler32 -> word32BE (unAdler32 (adler32 windowSlice))
       OmitWindowAdler32  -> mempty
 
     -- Everything the delta-encoding-length field measures:
     -- the target window size, the indicator, the three section lengths, the checksum when carried, then the three sections in order.
     deltaEncoding = builderBytes
-      (  varintOfLength (byteLength target)
+      (  varintOfLength (byteLength windowSlice)
       <> word8 deltaIndicator
-      <> varintOfLength (byteLength (carriageBytes dataCarriage))
-      <> varintOfLength (byteLength (carriageBytes instructionCarriage))
-      <> varintOfLength (byteLength (carriageBytes addressCarriage))
+      <> varintOfLength (byteLength (carriageBytes (dataCarriage carriages)))
+      <> varintOfLength (byteLength (carriageBytes (instructionCarriage carriages)))
+      <> varintOfLength (byteLength (carriageBytes (addressCarriage carriages)))
       <> checksumBytes
-      <> byteString (carriageBytes dataCarriage)
-      <> byteString (carriageBytes instructionCarriage)
-      <> byteString (carriageBytes addressCarriage) )
+      <> byteString (carriageBytes (dataCarriage carriages))
+      <> byteString (carriageBytes (instructionCarriage carriages))
+      <> byteString (carriageBytes (addressCarriage carriages)) )
 
     windowBuilder =
          windowIndicatorAndSegment
@@ -576,35 +644,87 @@ assemblePatch headerAfterVersion windowBytes = builderBytes
 emitDefaultPatch :: ByteString -> ByteString -> Cover -> ByteString
 emitDefaultPatch source target cover =
   assemblePatch (word8 noHeaderFeatures)
-                (encodedWindowBytes
-                   (encodeWindow Table.defaultCodeTable source target OmitWindowAdler32 EmitSectionsPlain
-                      (planWindow defaultAddressCacheConfig source target cover)))
+                (encodeWindowBytes OmitWindowAdler32 plannedWindow
+                   (plainCarriages (plannedSections plannedWindow)))
+  where
+    plannedWindow =
+      layoutPlannedWindow (denseOpcodes Table.defaultCodeTable) target
+        (planWindow defaultAddressCacheConfig source target cover)
 
--- | Emit a cover as an xdelta3 patch: the default table always (xdelta3 rejects custom ones),
--- the window carrying its Adler32 when verification is included,
--- its sections riding the chosen secondary compressor where that shrinks them when compression is included.
--- The header declares the compressor exactly when some section leans on it
--- ('xdelta3HeaderFor'), so a window whose sections all stayed plain declares nothing
--- and its patch comes out byte-identical to the plain emission.
+-- | Emit an xdelta3 patch: the target sliced into 'XDelta3WindowSize' windows and each covered against the source
+-- ('Slap.VCDIFF.FFI.vcdiffWindowedCovers' — a window's copies reach the source and its own slice, never an earlier window's output),
+-- on the default table always (xdelta3 rejects custom ones),
+-- every window carrying the Adler32 of its own slice when verification is included,
+-- each window's source segment tightened to the span its copies read,
+-- and the sections riding the chosen secondary compressor where that shrinks them when compression is included —
+-- each kind's sections crossing the compressor together, in window order, the write-side mirror of the decode side's gathering.
+-- The header declares the compressor exactly when some section leans on it ('xdelta3HeaderFor'),
+-- so a patch whose sections all stayed plain declares nothing and comes out byte-identical to the plain emission.
 -- The compressed emission ships only when it beats the plain one outright —
 -- the same explicit gate 'emitConsideringCustomTable' holds its candidate to,
--- catching the edge where a section shrinks by no more than the one extra header byte
--- (the compressor id) its declaration costs.
-emitXDelta3Patch :: WindowChecksumEmission -> WindowCompressionEmission -> Maybe ByteString -> ByteString -> ByteString -> Cover -> ByteString
-emitXDelta3Patch checksumEmission compressionEmission maybeAppHeader source target cover =
+-- catching the edge where the sections shrink by no more than the one extra header byte (the compressor id) the declaration costs.
+emitXDelta3Patch :: WindowChecksumEmission -> WindowCompressionEmission -> Maybe ByteString -> XDelta3WindowSize -> ByteString -> ByteString -> ByteString
+emitXDelta3Patch checksumEmission compressionEmission maybeAppHeader windowSize source target =
   case compressionEmission of
     EmitSectionsPlain -> plainPatch
-    CompressSectionsWith _compressor
-      | ByteString.length compressedPatch < ByteString.length plainPatch -> compressedPatch
-      | otherwise                                                        -> plainPatch
+    CompressSectionsWith compressor
+      | ByteString.length (compressedPatch compressor) < ByteString.length plainPatch ->
+          compressedPatch compressor
+      | otherwise -> plainPatch
   where
-    plan            = planWindow defaultAddressCacheConfig source target cover
-    plainPatch      = assembledUnder EmitSectionsPlain
-    compressedPatch = assembledUnder compressionEmission
-    assembledUnder emission =
-      let encodedWindow = encodeWindow Table.defaultCodeTable source target checksumEmission emission plan
-      in assemblePatch (xdelta3HeaderFor maybeAppHeader (encodedWindowSectionCompression encodedWindow))
-                       (encodedWindowBytes encodedWindow)
+    plannedWindows =
+      zipWith planOne
+        (windowSlices windowSize target)
+        (NonEmpty.toList (vcdiffWindowedCovers windowSize (InputFileContents source) (OutputFileContents target)))
+      where
+        planOne windowSlice cover =
+          layoutPlannedWindow (denseOpcodes Table.defaultCodeTable) windowSlice
+            (planTightenedWindow defaultAddressCacheConfig (byteLength source) windowSlice cover)
+
+    plainPatch =
+      assemblePatch (xdelta3HeaderFor maybeAppHeader AllSectionsPlain)
+        (windowRunBytes [ (plannedWindow, plainCarriages (plannedSections plannedWindow))
+                        | plannedWindow <- plannedWindows ])
+
+    compressedPatch compressor =
+      let carriagedWindows = carriagedUnder compressor plannedWindows
+          declaration
+            | any (anyCarriageCompressed . snd) carriagedWindows = SomeSectionsCompressed compressor
+            | otherwise                                          = AllSectionsPlain
+      in assemblePatch (xdelta3HeaderFor maybeAppHeader declaration) (windowRunBytes carriagedWindows)
+
+    windowRunBytes carriagedWindows =
+      ByteString.concat
+        [ encodeWindowBytes checksumEmission plannedWindow carriages
+        | (plannedWindow, carriages) <- carriagedWindows ]
+
+-- | Dress every window's sections in a compressor's carriages: each kind's sections cross the compressor together, in window order,
+-- so a gathered compressor's stream (and its keep-where-it-pays settling) spans the patch the way the decode side expects.
+carriagedUnder :: SectionCompressor -> [PlannedWindow] -> [(PlannedWindow, WindowCarriages)]
+carriagedUnder compressor plannedWindows =
+  zip plannedWindows
+    (zipWith3 WindowCarriages
+      (kindCarriageRun sectionData)
+      (kindCarriageRun sectionInstructions)
+      (kindCarriageRun sectionAddresses))
+  where
+    kindCarriageRun sectionOf =
+      sectionCompressorKindCarriages compressor
+        (map (sectionOf . plannedSections) plannedWindows)
+
+-- | The target cut into the windows an xdelta3 create emits: full-size slices in order, then the remainder,
+-- the empty target one empty window — matching the matcher's own slicing, and the emission the reference tool itself writes for an empty target.
+windowSlices :: XDelta3WindowSize -> ByteString -> [ByteString]
+windowSlices windowSize target
+  | ByteString.null target = [ByteString.empty]
+  | otherwise              = slicesOf target
+  where
+    sliceLength = unXDelta3WindowSize windowSize
+    slicesOf remaining
+      | ByteString.length remaining <= sliceLength = [remaining]
+      | otherwise =
+          let (slice, rest) = ByteString.splitAt sliceLength remaining
+          in slice : slicesOf rest
 
 -- | The xdelta3 patch header for what the patch actually carries:
 -- VCD_DECOMPRESS and the compressor's catalog id when some section rides compressed,
@@ -650,7 +770,7 @@ candidatePatchForConfig source target cover config =
   where
     plan = planWindow config source target cover
     assembleUnderDesignedTable assignments =
-      assembleCustomTablePatch config source target plan
+      assembleCustomTablePatch config target plan
         (Table.codeTableWithEntriesReplaced Table.defaultCodeTable assignments)
 
 -- | A cache geometry probed during the grow, paired with the custom-table patch bytes it produces.
@@ -720,12 +840,13 @@ maxCacheDimension = 255
 -- so the cache the decoder rebuilds matches the cache the encoder selected modes against.
 -- The inner delta itself stays on the default geometry, RFC 3284 §7c requiring it, which the default-only 'emitDefaultPatch' provides.
 assembleCustomTablePatch
-  :: AddressCacheConfig -> ByteString -> ByteString -> WindowPlan -> Table.CodeTable -> ByteString
-assembleCustomTablePatch config source target plan candidate =
+  :: AddressCacheConfig -> ByteString -> WindowPlan -> Table.CodeTable -> ByteString
+assembleCustomTablePatch config target plan candidate =
   assemblePatch (word8 customCodeTableHeader <> framedCodeTableData)
-                (encodedWindowBytes
-                   (encodeWindow candidate source target OmitWindowAdler32 EmitSectionsPlain plan))
+                (encodeWindowBytes OmitWindowAdler32 plannedWindow
+                   (plainCarriages (plannedSections plannedWindow)))
   where
+    plannedWindow = layoutPlannedWindow (denseOpcodes candidate) target plan
     framedCodeTableData = varintOfLength (byteLength codeTableData) <> byteString codeTableData
     codeTableData       = builderBytes (cacheSizeHeader <> byteString innerDelta)
     cacheSizeHeader     = word8 (fromIntegral (unNearSlotCount  (nearSlotCount  config)))
@@ -883,8 +1004,8 @@ windowIndicator :: WindowSourcing -> WindowChecksumEmission -> Word8
 windowIndicator sourcing checksumEmission = sourcingBits .|. checksumBits
   where
     sourcingBits = case sourcing of
-      DrawsFromSource -> bit vcdSourceBit
-      SelfContained   -> 0x00
+      DrawsFromSource _segmentSpan -> bit vcdSourceBit
+      SelfContained                -> 0x00
     checksumBits = case checksumEmission of
       CarryWindowAdler32 -> bit vcdAdler32Bit
       OmitWindowAdler32  -> 0x00

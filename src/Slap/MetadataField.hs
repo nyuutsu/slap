@@ -36,6 +36,7 @@ data MetadataField
   | MetadataEmbeddedBlob
   | MetadataXDelta1FromName
   | MetadataXDelta1ToName
+  | MetadataWindowSize
   deriving (Eq, Ord, Show)
 
 -- | Human-readable name for prose contexts in error and help messages.
@@ -60,6 +61,7 @@ metadataFieldName MetadataTextMode            = "NINJA2 text mode"
 metadataFieldName MetadataEmbeddedBlob        = "embedded metadata blob"
 metadataFieldName MetadataXDelta1FromName     = "xdelta1 from-name"
 metadataFieldName MetadataXDelta1ToName       = "xdelta1 to-name"
+metadataFieldName MetadataWindowSize          = "window size"
 
 -- | The CLI flag name (without leading dashes) that sets each field.
 -- Used in rejection messages so the user sees the exact flag they
@@ -85,3 +87,4 @@ metadataFieldFlagName MetadataTextMode            = "ninja2-text-mode"
 metadataFieldFlagName MetadataEmbeddedBlob        = "metadata"
 metadataFieldFlagName MetadataXDelta1FromName     = "from-name"
 metadataFieldFlagName MetadataXDelta1ToName       = "to-name"
+metadataFieldFlagName MetadataWindowSize          = "window-size"

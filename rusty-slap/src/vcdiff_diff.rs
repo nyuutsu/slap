@@ -6,11 +6,18 @@
 //! wire bytes. This module owns the cover's shape (the [`CoverSegment`]
 //! vocabulary and the greedy parse that lays segments down) and drives a
 //! match engine to fill it. That engine is the cost-aware matcher in
-//! [`crate::vcdiff_hash_chain`]: at each target position the parse asks
-//! for a copy worth its wire cost, takes what is offered, and otherwise
-//! grows the current literal run by a byte. What "worth taking" means —
-//! and why it is not "the longest match available" — is that module's
+//! [`crate::vcdiff_hash_chain`]: at each position the parse asks for a
+//! copy worth its wire cost, takes what is offered, and otherwise grows
+//! the current literal run by a byte. What "worth taking" means — and
+//! why it is not "the longest match available" — is that module's
 //! story; the parse holds no thresholds of its own.
+//!
+//! A patch's windows each get their own parse over their own slice
+//! ([`vcdiff_windowed_covers`]): the matcher indexes the source once
+//! and runs one session per window, so every copy stays inside
+//! `source ++ that window's slice` — the engine's Windows note has the
+//! why. [`vcdiff_cover`] is the one-window reading the RFC arc and the
+//! custom-table inner delta use.
 
 use crate::vcdiff_hash_chain::HashChainMatcher;
 
@@ -33,23 +40,53 @@ pub enum SegmentKind {
 }
 
 /// One segment of a cover. A copy reproduces `length` bytes from the
-/// absolute `offset` in `U = source ++ target`; a literal carries
-/// `length` bytes beginning at the `offset` into the target. The two
-/// share the (offset, length) shape, so the cover crosses the FFI seam
-/// as one uniform triple stream tagged by `kind`.
+/// absolute `offset` in `U = source ++ window`; a literal carries
+/// `length` bytes beginning at the `offset` into the window's slice.
+/// Both offsets are window-relative (a one-window cover's window is
+/// the whole target). The two share the (offset, length) shape, so the
+/// cover crosses the FFI seam as one uniform triple stream tagged by
+/// `kind`.
 pub struct CoverSegment {
     pub kind: SegmentKind,
     pub offset: u64,
     pub length: u64,
 }
 
-/// Segment a target into a cover against a source. Total: every input
-/// yields a cover, the empty target included (the empty cover). When
-/// nothing is worth copying, the whole target comes back as a single
-/// literal.
+/// Segment a target into a single-window cover against a source.
+/// Total: every input yields a cover, the empty target included (the
+/// empty cover). When nothing is worth copying, the whole target comes
+/// back as a single literal.
 pub fn vcdiff_cover(source: &[u8], target: &[u8]) -> Vec<CoverSegment> {
-    let mut matcher = HashChainMatcher::build(source, target);
-    greedy_cover(target.len(), |position| matcher.match_at(position))
+    vcdiff_windowed_covers(source, target, target.len().max(1))
+        .into_iter()
+        .next()
+        .expect("windowed covers always hold at least one window")
+}
+
+/// Segment a target into one cover per window: equal slices of
+/// `window_length` bytes, the final one the remainder, the empty
+/// target one empty window (the emission the reference tool itself
+/// writes for an empty target, and refuses the zero-window
+/// alternative of). The matcher indexes the source once; each window's
+/// session sees only its own slice, so no cover ever copies from an
+/// earlier window's output.
+pub fn vcdiff_windowed_covers<'pair>(
+    source: &'pair [u8],
+    target: &'pair [u8],
+    window_length: usize,
+) -> Vec<Vec<CoverSegment>> {
+    assert!(window_length > 0, "vcdiff windowed covers: window length must be positive");
+    if target.is_empty() {
+        return vec![Vec::new()];
+    }
+    let mut matcher = HashChainMatcher::build(source, window_length.min(target.len()));
+    target
+        .chunks(window_length)
+        .map(|window| {
+            matcher.begin_window(window);
+            greedy_cover(window.len(), |position| matcher.match_at(position))
+        })
+        .collect()
 }
 
 /// Greedily parse a target of `target_length` bytes into a cover: take
@@ -103,7 +140,7 @@ fn flush_literal(segments: &mut Vec<CoverSegment>, start: usize, end: usize) {
 
 #[cfg(test)]
 mod tests {
-    use super::{vcdiff_cover, CoverSegment, SegmentKind};
+    use super::{vcdiff_cover, vcdiff_windowed_covers, CoverSegment, SegmentKind};
 
     /// SplitMix64, matching the house pseudo-random helper.
     fn pseudo_random_bytes(seed: u64, length: usize) -> Vec<u8> {
@@ -231,6 +268,57 @@ mod tests {
             output_cursor += segment.length;
         }
         assert_eq!(reconstruct_from_cover(&source, &target, &cover), target);
+    }
+
+    #[test]
+    fn an_empty_target_is_one_empty_window() {
+        let source = pseudo_random_bytes(0x71, 64);
+        let covers = vcdiff_windowed_covers(&source, &[], 4096);
+        assert_eq!(covers.len(), 1);
+        assert!(covers[0].is_empty());
+    }
+
+    #[test]
+    fn windows_never_reference_earlier_windows() {
+        // A 16-byte pattern repeated eight times over an empty source:
+        // one window over the whole target copies the repeats, while
+        // 16-byte windows each see only their own slice and must carry
+        // their bytes literally — the cross-window copy does not exist
+        // to find.
+        let pattern = pseudo_random_bytes(0x72, 16);
+        let mut target = Vec::new();
+        for _ in 0..8 {
+            target.extend_from_slice(&pattern);
+        }
+        let whole = vcdiff_cover(&[], &target);
+        assert!(
+            whole.iter().any(|segment| matches!(segment.kind, SegmentKind::Copy)),
+            "a single window sees the repeats",
+        );
+        let windowed = vcdiff_windowed_covers(&[], &target, 16);
+        assert_eq!(windowed.len(), 8);
+        for cover in &windowed {
+            assert_eq!(cover.len(), 1);
+            assert!(matches!(cover[0].kind, SegmentKind::Literal));
+        }
+    }
+
+    #[test]
+    fn windowed_covers_reconstruct_every_window() {
+        // Scattered edits with a window length deliberately unaligned
+        // with the edit stride, so edits land at different offsets
+        // within each window.
+        let source = pseudo_random_bytes(0x73, 1 << 16);
+        let mut target = source.clone();
+        for spot in (0..target.len()).step_by(4096) {
+            target[spot] ^= 0x5a;
+        }
+        let window_length = 10_000;
+        let covers = vcdiff_windowed_covers(&source, &target, window_length);
+        assert_eq!(covers.len(), target.len().div_ceil(window_length));
+        for (window, cover) in target.chunks(window_length).zip(&covers) {
+            assert_eq!(reconstruct_from_cover(&source, window, cover), window);
+        }
     }
 
     #[test]

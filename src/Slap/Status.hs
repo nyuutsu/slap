@@ -997,6 +997,15 @@ data SlapAdvisory
   -- Legal, just quiet; slap parses on and remarks.
   | VCDIFFEmptyApplicationHeader
 
+  -- | A multi-window patch's window sizes are not a run of one size and then a remainder — the shape every encoder slap knows of emits.
+  -- Window sizing is the encoder's own affair (RFC 3284 asks a decoder for no knowledge of the window selection algorithm), so the patch is valid; slap applies it and remarks.
+  | VCDIFFUnevenWindowSizes
+
+  -- | An xdelta3 create was asked (@--window-size@) for windows larger than the widespread xdelta3 3.0.11 build's compiled ceiling, which that build refuses to decode past.
+  -- The patch is conformant, and slap and later xdelta3 builds read it fine; the note names the one decoder that will decline it.
+  -- The 'Length' is the requested window size; the 'MaxLength' is that build's ceiling.
+  | XDelta3WindowSizePastReferenceDecoder Length MaxLength
+
   -- | A patch's custom code table holds one or more entries that are
   -- NOOP followed by NOOP — an entry that does nothing at all. The
   -- shape breaks no rule (RFC 3284 §5.4 lets a NOOP fill either half
@@ -2167,6 +2176,16 @@ renderSlapAdvisory VCDIFFEmptyApplicationHeader =
   formatLabelName LabelVCDIFF
   <> ": the patch declares an application header and then says nothing (zero bytes)"
 
+renderSlapAdvisory VCDIFFUnevenWindowSizes =
+  formatLabelName LabelVCDIFF
+  <> ": windows are unevenly sized; unusual, applied normally"
+
+renderSlapAdvisory (XDelta3WindowSizePastReferenceDecoder (Length requestedWindowBytes) (MaxLength (Length referenceCeiling))) =
+  "xdelta3: window size " <> renderAsText requestedWindowBytes
+  <> " bytes is larger than the " <> renderAsText referenceCeiling
+  <> "-byte windows the widespread xdelta3 3.0.11 build decodes;"
+  <> " the patch is valid, but that build will refuse it"
+
 renderSlapAdvisory (VCDIFFCustomTableNoopNoopEntries entryCount) =
   formatLabelName LabelVCDIFF
   <> ": custom code table has " <> renderAsText entryCount
@@ -2909,6 +2928,8 @@ slapAdvisorySeverity advisory = case advisory of
   VCDIFFTrailingRemnant{}              -> SeverityNote
   VCDIFFEmptyTargetWindowSegment{}     -> SeverityNote
   VCDIFFEmptyApplicationHeader         -> SeverityNote
+  VCDIFFUnevenWindowSizes              -> SeverityNote
+  XDelta3WindowSizePastReferenceDecoder{} -> SeverityNote
   VCDIFFCustomTableNoopNoopEntries{}   -> SeverityNote
   APSN64TrailingFragment{}             -> SeverityNote
   EBPMetadataMalformed{}               -> SeverityNote

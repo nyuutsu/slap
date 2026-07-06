@@ -86,6 +86,8 @@ import qualified Slap.NINJA2.Create as NINJA2
 import qualified Slap.GDIFF.Create as GDIFF
 import qualified Slap.VCDIFF.Create as VCDIFF
 import Slap.VCDIFF.Create (WindowCompressionEmission(..))
+import Slap.VCDIFF.Types (XDelta3WindowSize, unXDelta3WindowSize,
+                          defaultXDelta3WindowSize, xdelta3ReferenceDecoderWindowCap)
 import Slap.VCDIFF.SecondaryCompression
   (XDelta3SecondaryCompressor(..), encodableSectionCompressor, compressionAlgorithmOf)
 import qualified Slap.XDelta1.Create as XDelta1
@@ -108,7 +110,7 @@ import Slap.FFI (crc32)
 import Slap.Measure (FileSize(..), Length(..), Offset(..), Hunk(..),
                       SplitHunk, SplitUndoHunk,
                       ActualSize(..), ExpectedSize(..),
-                      SentinelOffset(..),
+                      SentinelOffset(..), MaxLength(..),
                       splitHunks, splitHunksUnbounded, splitUndoHunks,
                       splitPayload, byteFileSize, byteLength)
 import Slap.Narrow (EncodedHunk, EncodingLimits(..),
@@ -271,6 +273,11 @@ data RequestedPatchMetadata = RequestedPatchMetadata
   , requestedXDelta1ToName        :: Maybe XDelta1ToName
     -- ^ xdelta1 only: counterpart to 'requestedXDelta1FromName' for
     -- the to-name slot.
+  , requestedWindowSize           :: Maybe XDelta3WindowSize
+    -- ^ xdelta3 only: the window size to slice the target by — the user's @--window-size SIZE@;
+    -- absent means 'defaultXDelta3WindowSize'. Never inherited on convert, unlike the compressor:
+    -- a compressor is one declared wire fact, while a source patch declares no window size —
+    -- its windows each carry their own, so there is no single fact to carry, and extraction leaves this 'Nothing'.
   }
 
 -- | What to do with a PPF2/PPF3 FILE_ID.DIZ on create or convert:
@@ -322,6 +329,7 @@ noMetadataRequested = RequestedPatchMetadata
   , requestedEmbeddedBlob        = Nothing
   , requestedXDelta1FromName     = Nothing
   , requestedXDelta1ToName       = Nothing
+  , requestedWindowSize          = Nothing
   }
 
 -- | Merge two metadata records: first (CLI) wins for each field, then
@@ -348,6 +356,7 @@ mergeRequestedMetadata cli source = RequestedPatchMetadata
   , requestedWebsite             = requestedWebsite cli             <|> requestedWebsite source
   , requestedTextMode            = requestedTextMode cli            <|> requestedTextMode source
   , requestedEmbeddedBlob        = requestedEmbeddedBlob cli        <|> requestedEmbeddedBlob source
+  , requestedWindowSize          = requestedWindowSize cli          <|> requestedWindowSize source
   , requestedXDelta1FromName     = requestedXDelta1FromName cli     <|> requestedXDelta1FromName source
   , requestedXDelta1ToName       = requestedXDelta1ToName cli       <|> requestedXDelta1ToName source
   }
@@ -489,7 +498,8 @@ acceptedMetadataFields (CreateDifferential format) = case format of
                                  MetadataXDelta1FromName, MetadataXDelta1ToName]
   CreateRFCVCDIFF -> Set.empty
   CreateXDelta3   -> Set.fromList [MetadataVerificationInclusion, MetadataPatchCompression,
-                                   MetadataSecondaryCompressor, MetadataEmbeddedBlob]
+                                   MetadataSecondaryCompressor, MetadataEmbeddedBlob,
+                                   MetadataWindowSize]
 
 -- | The 'MetadataField's the user explicitly set on a
 -- 'RequestedPatchMetadata'. A 'Maybe' field counts as set when 'Just'.
@@ -515,6 +525,7 @@ requestedMetadataFields meta = Set.fromList $ concat
   , [MetadataEmbeddedBlob        | isJust (requestedEmbeddedBlob        meta)]
   , [MetadataXDelta1FromName     | isJust (requestedXDelta1FromName     meta)]
   , [MetadataXDelta1ToName       | isJust (requestedXDelta1ToName       meta)]
+  , [MetadataWindowSize          | isJust (requestedWindowSize          meta)]
   ]
 
 -- | Reject any metadata field set by the user that the target format
@@ -830,10 +841,21 @@ defaultAssumptionAdvisories target meta sourceRomType sourceImageType = concat
 -- where no source PatchContents is available.
 createDefaultAdvisories :: CreateFormat -> RequestedPatchMetadata -> [SlapAdvisory]
 createDefaultAdvisories format meta =
-  droppedEmbeddedBlobAdvisories format meta ++ case format of
+  droppedEmbeddedBlobAdvisories format meta ++ windowSizeAdvisories format meta ++ case format of
     CreateDirect target  -> defaultAssumptionAdvisories target meta Nothing Nothing
                             ++ undoVerificationAdvisories target meta
     CreateDifferential _ -> []
+
+-- | The note for an xdelta3 create asked (@--window-size@) for windows past what the widespread reference build decodes:
+-- the patch is valid and the create proceeds; the user hears which decoder will decline the result.
+windowSizeAdvisories :: CreateFormat -> RequestedPatchMetadata -> [SlapAdvisory]
+windowSizeAdvisories (CreateDifferential CreateXDelta3) meta =
+  [ XDelta3WindowSizePastReferenceDecoder
+      (Length (unXDelta3WindowSize requested))
+      (MaxLength (Length (unXDelta3WindowSize xdelta3ReferenceDecoderWindowCap)))
+  | Just requested <- [requestedWindowSize meta]
+  , requested > xdelta3ReferenceDecoderWindowCap ]
+windowSizeAdvisories _ _ = []
 
 -- | A metadata blob the target format can't carry is dropped —
 -- an advisory, not a refusal, since it doesn't change the applied output.
@@ -1208,9 +1230,10 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
   CreateRFCVCDIFF -> VCDIFF.createRFCVCDIFF source target
   CreateXDelta3 -> do
     compressionEmission <- xdelta3CompressionEmission meta
-    VCDIFF.createXDelta3 verificationChoice compressionEmission (requestedEmbeddedBlob meta) source target
+    VCDIFF.createXDelta3 verificationChoice compressionEmission windowChoice (requestedEmbeddedBlob meta) source target
     where
       verificationChoice = fromMaybe IncludeVerification (requestedVerificationInclusion meta)
+      windowChoice       = fromMaybe defaultXDelta3WindowSize (requestedWindowSize meta)
   CreateXDelta1 -> case maybeResolvedNames of
     Just resolvedNames ->
       XDelta1.createXDelta1 verificationChoice compressionChoice resolvedNames source target

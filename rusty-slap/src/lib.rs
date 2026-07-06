@@ -263,68 +263,85 @@ fn split_to_parallel_arrays(
 
 // ── VCDIFF cover FFI ──────────────────────────────────────────────────
 
-/// Compute a VCDIFF cover for a (source, target) pair — the greedy
-/// segmentation into copies and literals. Rust allocates the three
-/// parallel arrays; the caller frees each with [`rusty_free`].
+/// Compute the per-window VCDIFF covers for a (source, target) pair —
+/// the greedy segmentation of each `window_length`-byte slice of the
+/// target (final slice the remainder; the empty target one empty
+/// window) into copies and literals. `window_length` must be positive;
+/// a caller wanting one window over everything passes the target's
+/// length (or more). Rust allocates the four output arrays; the caller
+/// frees each with [`rusty_free`].
 ///
-/// Returns 0 unconditionally — the cover is total (every input yields
-/// one, the empty target included). The `i32` slot keeps the FFI
-/// return-type discipline uniform with [`rusty_bps_diff`].
+/// Returns 0 unconditionally — the covers are total (every input
+/// yields them). The `i32` slot keeps the FFI return-type discipline
+/// uniform with [`rusty_bps_diff`].
 ///
-/// The cover crosses as three parallel homogeneous arrays sharing the
-/// segment count N: one `kind` byte per segment (0 = literal, 1 =
-/// copy); one `u64` LE `offset` per segment (a copy's absolute `U`
-/// offset, a literal's target offset); one `u64` LE `length` per
-/// segment. The offset and length buffers are 8N bytes.
+/// The covers cross as three parallel homogeneous arrays sharing the
+/// total segment count N — one `kind` byte per segment (0 = literal,
+/// 1 = copy); one `u64` LE `offset` per segment (window-relative: a
+/// copy's offset into `source ++ that window's slice`, a literal's
+/// offset into the slice); one `u64` LE `length` per segment — plus a
+/// fourth array of one `u64` LE segment count per window, in window
+/// order, which is how the caller splits the flat stream back into
+/// covers. The offset and length buffers are 8N bytes.
 ///
 /// # Safety
 /// Buffer pointers follow rusty-slap's existing convention (see
 /// [`view_caller_buffer`] / [`surface_buffer_to_caller`]).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rusty_vcdiff_cover(
-    source_address:          *const u8,
-    source_length:           usize,
-    target_address:          *const u8,
-    target_length:           usize,
-    kinds_address_pointer:   *mut *mut u8,
-    kinds_length_pointer:    *mut usize,
-    offsets_address_pointer: *mut *mut u8,
-    offsets_length_pointer:  *mut usize,
-    lengths_address_pointer: *mut *mut u8,
-    lengths_length_pointer:  *mut usize,
+    source_address:                *const u8,
+    source_length:                 usize,
+    target_address:                *const u8,
+    target_length:                 usize,
+    window_length:                 usize,
+    kinds_address_pointer:         *mut *mut u8,
+    kinds_length_pointer:          *mut usize,
+    offsets_address_pointer:       *mut *mut u8,
+    offsets_length_pointer:        *mut usize,
+    lengths_address_pointer:       *mut *mut u8,
+    lengths_length_pointer:        *mut usize,
+    window_counts_address_pointer: *mut *mut u8,
+    window_counts_length_pointer:  *mut usize,
 ) -> i32 {
     let source = unsafe { view_caller_buffer(source_address, source_length) };
     let target = unsafe { view_caller_buffer(target_address, target_length) };
-    let cover  = vcdiff_diff::vcdiff_cover(source, target);
-    let (kinds, offsets, lengths) = split_cover_to_parallel_arrays(&cover);
+    let covers = vcdiff_diff::vcdiff_windowed_covers(source, target, window_length);
+    let (kinds, offsets, lengths, window_counts) = split_covers_to_parallel_arrays(&covers);
     unsafe {
-        surface_buffer_to_caller(kinds,   kinds_address_pointer,   kinds_length_pointer);
-        surface_buffer_to_caller(offsets, offsets_address_pointer, offsets_length_pointer);
-        surface_buffer_to_caller(lengths, lengths_address_pointer, lengths_length_pointer);
+        surface_buffer_to_caller(kinds,         kinds_address_pointer,         kinds_length_pointer);
+        surface_buffer_to_caller(offsets,       offsets_address_pointer,       offsets_length_pointer);
+        surface_buffer_to_caller(lengths,       lengths_address_pointer,       lengths_length_pointer);
+        surface_buffer_to_caller(window_counts, window_counts_address_pointer, window_counts_length_pointer);
     }
     0
 }
 
-/// Project a cover into three parallel homogeneous byte buffers — one
-/// `kind` byte, one LE `u64` offset, and one LE `u64` length per
-/// segment. The inverse zip happens on the Haskell side in
+/// Project per-window covers into three parallel homogeneous byte
+/// buffers — one `kind` byte, one LE `u64` offset, and one LE `u64`
+/// length per segment, all windows concatenated in order — plus the
+/// per-window segment counts (one LE `u64` each) the flat stream is
+/// split back by. The inverse happens on the Haskell side in
 /// `Slap.VCDIFF.FFI`. Sibling to [`split_to_parallel_arrays`].
-fn split_cover_to_parallel_arrays(
-    cover: &[vcdiff_diff::CoverSegment],
-) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-    let segment_count = cover.len();
-    let mut kinds   = Vec::with_capacity(segment_count);
-    let mut offsets = Vec::with_capacity(segment_count * 8);
-    let mut lengths = Vec::with_capacity(segment_count * 8);
-    for segment in cover {
-        kinds.push(match segment.kind {
-            vcdiff_diff::SegmentKind::Literal => 0,
-            vcdiff_diff::SegmentKind::Copy    => 1,
-        });
-        offsets.extend_from_slice(&segment.offset.to_le_bytes());
-        lengths.extend_from_slice(&segment.length.to_le_bytes());
+fn split_covers_to_parallel_arrays(
+    covers: &[Vec<vcdiff_diff::CoverSegment>],
+) -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
+    let segment_count: usize = covers.iter().map(Vec::len).sum();
+    let mut kinds         = Vec::with_capacity(segment_count);
+    let mut offsets       = Vec::with_capacity(segment_count * 8);
+    let mut lengths       = Vec::with_capacity(segment_count * 8);
+    let mut window_counts = Vec::with_capacity(covers.len() * 8);
+    for cover in covers {
+        window_counts.extend_from_slice(&(cover.len() as u64).to_le_bytes());
+        for segment in cover {
+            kinds.push(match segment.kind {
+                vcdiff_diff::SegmentKind::Literal => 0,
+                vcdiff_diff::SegmentKind::Copy    => 1,
+            });
+            offsets.extend_from_slice(&segment.offset.to_le_bytes());
+            lengths.extend_from_slice(&segment.length.to_le_bytes());
+        }
     }
-    (kinds, offsets, lengths)
+    (kinds, offsets, lengths, window_counts)
 }
 
 // ── Free ──────────────────────────────────────────────────────────────
@@ -544,6 +561,59 @@ pub unsafe extern "C" fn rusty_lzma_compress(
     let input = unsafe { view_caller_buffer(input_address, input_length) };
     let compressed = xdelta3_lzma::lzma_compress(input);
     unsafe { surface_buffer_to_caller(compressed, output_address_pointer, output_length_pointer) };
+}
+
+/// LZMA compression of one kind's sections into one continuous
+/// xdelta3-flavored stream, sync-flushed at every section boundary and
+/// never finished (see [`xdelta3_lzma::lzma_compress_sections`]): the
+/// write-side seam the multi-window emitter drives. Sections cross as
+/// a concatenated buffer plus `section_count` per-section lengths (the
+/// [`rusty_fgk_decompress`] convention); back come the stream bytes
+/// and one `u64` LE piece-end offset per section, which is how the
+/// caller slices the stream into per-window pieces. Rust allocates
+/// both outputs; caller frees each with [`rusty_free`]. No error
+/// channel: compression of in-memory bytes is total at the algorithm
+/// level (mirror of [`rusty_lzma_compress`]).
+///
+/// # Safety
+/// - `sections_address` must point to `sections_length` readable bytes
+///   (or may be null when `sections_length == 0`).
+/// - `section_lengths_address` must point to `section_count` readable
+///   `usize` values (or may be null when `section_count == 0`), and
+///   they must sum to `sections_length`.
+/// - The four out-pointers must be valid, aligned, and writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rusty_lzma_compress_sections(
+    sections_address:        *const u8,
+    sections_length:         usize,
+    section_lengths_address: *const usize,
+    section_count:           usize,
+    stream_address_pointer:  *mut *mut u8,
+    stream_length_pointer:   *mut usize,
+    cuts_address_pointer:    *mut *mut u8,
+    cuts_length_pointer:     *mut usize,
+) {
+    let concatenated = unsafe { view_caller_buffer(sections_address, sections_length) };
+    let section_lengths = if section_count == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(section_lengths_address, section_count) }
+    };
+    let mut sections = Vec::with_capacity(section_count);
+    let mut consumed = 0;
+    for &section_length in section_lengths {
+        sections.push(&concatenated[consumed..consumed + section_length]);
+        consumed += section_length;
+    }
+    let outcome = xdelta3_lzma::lzma_compress_sections(&sections);
+    let mut cut_bytes = Vec::with_capacity(outcome.piece_end_offsets.len() * 8);
+    for piece_end in &outcome.piece_end_offsets {
+        cut_bytes.extend_from_slice(&(*piece_end as u64).to_le_bytes());
+    }
+    unsafe {
+        surface_buffer_to_caller(outcome.stream_bytes, stream_address_pointer, stream_length_pointer);
+        surface_buffer_to_caller(cut_bytes,            cuts_address_pointer,   cuts_length_pointer);
+    }
 }
 
 /// DJW decompression of one xdelta3 secondary-compressed section

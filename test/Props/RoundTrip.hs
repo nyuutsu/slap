@@ -48,7 +48,9 @@ import qualified Slap.VCDIFF.Apply as VCDIFF
 import qualified Slap.VCDIFF.Parse as VCDIFF
 import Slap.VCDIFF.Types (VCDIFFPatch(..), Window(..), VCDIFFInstruction(..),
                           RFCHeader(..), CustomCodeTable(..), patchWindows,
-                          XDelta3Header(..), xdelta3WindowAdler32, vcdiffAppHeader)
+                          XDelta3Header(..), xdelta3WindowAdler32, xdelta3WindowBody, vcdiffAppHeader,
+                          XDelta3WindowSize, xdelta3WindowSizeOfBytes,
+                          defaultXDelta3WindowSize, xdelta3ReferenceDecoderWindowCap)
 import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor(..),
                                          secondaryCompressorCatalog, secondaryCompressorId,
                                          SectionCompressor, sectionCompressorAlgorithm,
@@ -113,6 +115,7 @@ import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
                      RequestedDialects(..),
                      VerificationInclusion(..), CompressionInclusion(..),
                      xdelta3CompressionEmission, mergeRequestedMetadata,
+                     createDefaultAdvisories,
                      convertDirect, emptyContents)
 import Slap.Create (createBPS, createUPS, createDPS, createNINJA2,
                     createAPSGBA, createGDIFF, createXDelta1, createRFCVCDIFF,
@@ -204,6 +207,9 @@ roundTripTests = testGroup "RoundTrip"
       , testCase     "single: the repeated odd-size ADD is minted into the table" vcdiffOddSizeSingleIsMinted
       , testProperty "xdelta3: round-trip carrying the window's Adler32" prop_xdelta3
       , testProperty "xdelta3: both extensions omitted emits the core shape" prop_xdelta3OmitBothIsCoreShaped
+      , testProperty "xdelta3: many tiny windows partition, checksum, and round-trip" prop_xdelta3ManyWindows
+      , testCase     "xdelta3: uneven window sizes earn the note; slap's own emission does not" vcdiffUnevenWindowNote
+      , testCase     "xdelta3: a window size past the reference decoder's cap earns the note" xdelta3WindowCapNote
       , testCase     "xdelta3: exact wire bytes for a two-byte target" xdelta3ExactWireBytes
       , testCase     "xdelta3: compression pays on a repetitive cover and declares LZMA"
           (xdelta3CompressionPaysOnARepetitiveCover lzmaSectionCompressor)
@@ -383,7 +389,7 @@ prop_vcdiff = forAll genPair $ \(source, target) ->
 -- fixes the flavor either way.
 prop_xdelta3 :: Property
 prop_xdelta3 = forAll genPair $ \(source, target) ->
-  case createXDelta3 IncludeVerification (CompressSectionsWith lzmaSectionCompressor) Nothing (InputFileContents source) (OutputFileContents target) of
+  case createXDelta3 IncludeVerification (CompressSectionsWith lzmaSectionCompressor) defaultXDelta3WindowSize Nothing (InputFileContents source) (OutputFileContents target) of
     Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
     Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
       Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
@@ -398,7 +404,7 @@ prop_xdelta3 = forAll genPair $ \(source, target) ->
 -- and still applies.
 prop_xdelta3OmitBothIsCoreShaped :: Property
 prop_xdelta3OmitBothIsCoreShaped = forAll genPair $ \(source, target) ->
-  case createXDelta3 OmitVerification EmitSectionsPlain Nothing (InputFileContents source) (OutputFileContents target) of
+  case createXDelta3 OmitVerification EmitSectionsPlain defaultXDelta3WindowSize Nothing (InputFileContents source) (OutputFileContents target) of
     Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
     Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
       Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
@@ -406,6 +412,87 @@ prop_xdelta3OmitBothIsCoreShaped = forAll genPair $ \(source, target) ->
         PatchCoreOnly _windows ->
           VCDIFF.applyVCDIFF parsed (InputFileContents source) === Right (OutputFileContents target)
         otherFlavor -> counterexample ("parsed flavor: " ++ show otherFlavor) $ property False
+
+-- | Many tiny windows: a window size far below the generated pairs forces a real multi-window
+-- emission, which must partition the target exactly (every window's declared size is its slice's),
+-- carry one Adler32 per window — each attesting its own slice, not the whole —
+-- and still apply back to the target through slap's own decode.
+prop_xdelta3ManyWindows :: Property
+prop_xdelta3ManyWindows = forAll genPair $ \(source, target) ->
+  case createXDelta3 IncludeVerification (CompressSectionsWith lzmaSectionCompressor) sixtyFourByteWindows Nothing (InputFileContents source) (OutputFileContents target) of
+    Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
+    Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
+      Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
+      Right (Parsed parsed _parseWarnings) -> case parsed of
+        PatchXDelta3 _header windows ->
+          let slices = windowSlicesOf 64 target
+          in map (windowTargetSize . xdelta3WindowBody) (toList windows)
+               === map (FileSize . ByteString.length) slices
+             .&&. map xdelta3WindowAdler32 (toList windows) === map (Just . adler32) slices
+             .&&. VCDIFF.applyVCDIFF parsed (InputFileContents source) === Right (OutputFileContents target)
+        otherFlavor -> counterexample ("parsed flavor: " ++ show otherFlavor) $ property False
+  where
+    windowSlicesOf sliceLength bytes
+      | ByteString.null bytes = [ByteString.empty]
+      | ByteString.length bytes <= sliceLength = [bytes]
+      | otherwise = let (slice, rest) = ByteString.splitAt sliceLength bytes
+                    in slice : windowSlicesOf sliceLength rest
+
+-- | A deliberately tiny window size, so ordinary property pairs emit many windows.
+sixtyFourByteWindows :: XDelta3WindowSize
+sixtyFourByteWindows = case xdelta3WindowSizeOfBytes 64 of
+  Just windowSize -> windowSize
+  Nothing         -> error "sixty-four bytes is positive"
+
+-- | slap's own multi-window emission is a run of equal windows and a remainder, so the
+-- uneven-windows note must stay silent on it — and must fire on a hand-built patch whose
+-- windows run 5, 1, 3 bytes (three self-contained ADD windows, decoded correctly by
+-- slap and the reference tool alike; window sizing is the encoder's own affair).
+vcdiffUnevenWindowNote :: Assertion
+vcdiffUnevenWindowNote = do
+  let unevenPatch = PatchFileContents (ByteString.pack (concat
+        [ [0xD6, 0xC3, 0xC4, 0x00, 0x00]
+        , addOnlyWindow [0x41, 0x41, 0x41, 0x41, 0x41]
+        , addOnlyWindow [0x43]
+        , addOnlyWindow [0x42, 0x42, 0x42]
+        ]))
+      -- A self-contained window carrying one fixed-size ADD: the default
+      -- table holds ADD(n) at opcode 1 + n for sizes 1-17.
+      addOnlyWindow payload = concat
+        [ [0x00, fromIntegral (6 + length payload)]
+        , [fromIntegral (length payload), 0x00, fromIntegral (length payload), 0x01, 0x00]
+        , payload
+        , [fromIntegral (1 + length payload)]
+        ]
+  case VCDIFF.parseVCDIFF unevenPatch of
+    Left slapError -> assertFailureT ("uneven parse: " <> renderSlapError slapError)
+    Right (Parsed _parsed advisories) ->
+      assertBool "the uneven note fires" (VCDIFFUnevenWindowSizes `elem` advisories)
+  case createXDelta3 OmitVerification EmitSectionsPlain sixtyFourByteWindows Nothing
+         (InputFileContents ByteString.empty)
+         (OutputFileContents (ByteString.replicate 200 0x55)) of
+    Left createError -> assertFailureT ("create: " <> renderSlapError createError)
+    Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
+      Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
+      Right (Parsed _parsed advisories) ->
+        assertBool "slap's own emission stays silent"
+          (VCDIFFUnevenWindowSizes `notElem` advisories)
+
+-- | The over-cap note names the one decoder that will refuse the patch: present past the
+-- reference build's 16 MiB ceiling, absent at the default.
+xdelta3WindowCapNote :: Assertion
+xdelta3WindowCapNote = do
+  let advisoriesAt windowSize = createDefaultAdvisories
+        (CreateDifferential CreateXDelta3)
+        noMetadataRequested { requestedWindowSize = windowSize }
+      isCapNote XDelta3WindowSizePastReferenceDecoder{} = True
+      isCapNote _                                       = False
+  assertBool "a 17 MiB window earns the note"
+    (any isCapNote (advisoriesAt (xdelta3WindowSizeOfBytes (17 * 1024 * 1024))))
+  assertBool "the default earns none"
+    (not (any isCapNote (advisoriesAt (Just defaultXDelta3WindowSize))))
+  assertBool "the cap itself earns none"
+    (not (any isCapNote (advisoriesAt (Just xdelta3ReferenceDecoderWindowCap))))
 
 -- | The exact-wire twin of 'vcdiffExactWireBytes' for the xdelta3 entry: the same two-byte target,
 -- now with the VCD_ADLER32 bit in the Win_Indicator and the four checksum bytes
@@ -422,7 +509,7 @@ xdelta3ExactWireBytes =
         , 0x00, 0xC6, 0x00, 0x84              -- Adler32 of "AB", big-endian
         , 0x41, 0x42                          -- data section
         , 0x03 ]                              -- instruction section: ADD(2)'s opcode
-  in case createXDelta3 IncludeVerification (CompressSectionsWith lzmaSectionCompressor) Nothing (InputFileContents ByteString.empty) (OutputFileContents target) of
+  in case createXDelta3 IncludeVerification (CompressSectionsWith lzmaSectionCompressor) defaultXDelta3WindowSize Nothing (InputFileContents ByteString.empty) (OutputFileContents target) of
        Left createError -> assertFailureT ("create: " <> renderSlapError createError)
        Right (CreateResult (PatchFileContents patch) _) ->
          assertEqual "exact wire bytes" expected patch
@@ -449,7 +536,7 @@ xdelta3CompressionPaysOnARepetitiveCover :: SectionCompressor -> Assertion
 xdelta3CompressionPaysOnARepetitiveCover compressor = do
   let (source, target) = repetitiveCoverPair
       createWith compressionEmission =
-        createXDelta3 IncludeVerification compressionEmission Nothing
+        createXDelta3 IncludeVerification compressionEmission defaultXDelta3WindowSize Nothing
                       (InputFileContents source) (OutputFileContents target)
   case (createWith (CompressSectionsWith compressor), createWith EmitSectionsPlain) of
     (Right (CreateResult compressedPatch _), Right (CreateResult (PatchFileContents plainBytes) _)) -> do
@@ -477,7 +564,7 @@ xdelta3UnpayingCompressionLeavesTheCoreShape :: Assertion
 xdelta3UnpayingCompressionLeavesTheCoreShape =
   let target = ByteString.pack [0x41, 0x42]
       createWith compressionEmission =
-        createXDelta3 OmitVerification compressionEmission Nothing
+        createXDelta3 OmitVerification compressionEmission defaultXDelta3WindowSize Nothing
                       (InputFileContents ByteString.empty) (OutputFileContents target)
   in case (createWith (CompressSectionsWith lzmaSectionCompressor), createWith EmitSectionsPlain) of
        (Right (CreateResult requestedPatch _), Right (CreateResult declinedPatch _)) -> do
@@ -497,7 +584,7 @@ xdelta3UnpayingCompressionLeavesTheCoreShape =
 xdelta3DeclaredCompressorInheritsOnConvert :: Assertion
 xdelta3DeclaredCompressorInheritsOnConvert = do
   let (source, target) = repetitiveCoverPair
-  case createXDelta3 IncludeVerification (CompressSectionsWith djwSectionCompressor) Nothing
+  case createXDelta3 IncludeVerification (CompressSectionsWith djwSectionCompressor) defaultXDelta3WindowSize Nothing
          (InputFileContents source) (OutputFileContents target) of
     Left createError -> assertFailureT ("create: " <> renderSlapError createError)
     Right (CreateResult patchBytes _) ->
@@ -513,7 +600,7 @@ xdelta3DeclaredCompressorInheritsOnConvert = do
 xdelta3AppHeaderRoundTrips :: Assertion
 xdelta3AppHeaderRoundTrips =
   let headerBytes = ByteString8.pack "made with slap"
-  in case createXDelta3 OmitVerification EmitSectionsPlain (Just headerBytes)
+  in case createXDelta3 OmitVerification EmitSectionsPlain defaultXDelta3WindowSize (Just headerBytes)
             (InputFileContents (ByteString.replicate 64 0x11))
             (OutputFileContents (ByteString.replicate 64 0x22)) of
        Left createError -> assertFailureT ("create: " <> renderSlapError createError)
@@ -529,7 +616,7 @@ xdelta3AppHeaderRoundTrips =
 xdelta3AppHeaderOfferedForInheritance :: Assertion
 xdelta3AppHeaderOfferedForInheritance =
   let headerBytes = ByteString8.pack "dm4y-output.gbc//dm4y-input.gbc/"
-  in case createXDelta3 OmitVerification EmitSectionsPlain (Just headerBytes)
+  in case createXDelta3 OmitVerification EmitSectionsPlain defaultXDelta3WindowSize (Just headerBytes)
             (InputFileContents (ByteString.replicate 64 0x11))
             (OutputFileContents (ByteString.replicate 64 0x22)) of
        Left createError -> assertFailureT ("create: " <> renderSlapError createError)
@@ -545,7 +632,7 @@ xdelta3AppHeaderOfferedForInheritance =
 -- | The application header survives the convert merge, in all three directions: xdelta3 to itself, BPS to xdelta3, xdelta3 to BPS.
 xdelta3AppHeaderCarriesAcrossConvert :: Assertion
 xdelta3AppHeaderCarriesAcrossConvert = do
-    xdelta3Patch <- patchBytesFrom (createXDelta3 OmitVerification EmitSectionsPlain (Just blob) source target)
+    xdelta3Patch <- patchBytesFrom (createXDelta3 OmitVerification EmitSectionsPlain defaultXDelta3WindowSize (Just blob) source target)
     bpsPatch     <- patchBytesFrom (createBPS source target (BPSMetadata blob))
     assertCarries "xdelta3 to xdelta3" xdelta3Patch (CreateDifferential CreateXDelta3)
     assertCarries "BPS to xdelta3"     bpsPatch     (CreateDifferential CreateXDelta3)
@@ -586,7 +673,7 @@ xdelta3EmptyAppHeader =
         , 0x02, 0x00, 0x02, 0x01, 0x00        -- target size, Delta_Indicator, three section lengths
         , 0x41, 0x42                          -- data section
         , 0x03 ]                              -- instruction section: ADD(2)'s opcode
-  in case createXDelta3 OmitVerification EmitSectionsPlain (Just ByteString.empty)
+  in case createXDelta3 OmitVerification EmitSectionsPlain defaultXDelta3WindowSize (Just ByteString.empty)
             (InputFileContents ByteString.empty) (OutputFileContents target) of
        Left createError -> assertFailureT ("create: " <> renderSlapError createError)
        Right (CreateResult patchBytes@(PatchFileContents wireBytes) _) -> do

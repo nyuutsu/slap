@@ -69,7 +69,7 @@ import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State.Strict (StateT, evalStateT, gets, modify)
 import Data.Bits (testBit, (.&.))
 import Data.Foldable (traverse_)
-import Data.List (zipWith4)
+import Data.List (unsnoc, zipWith4)
 import Data.Maybe (isJust, isNothing, listToMaybe, mapMaybe, catMaybes)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -118,6 +118,7 @@ parseNotes rawPatch =
     ++ emptyApplicationHeaderNotes rawPatch
     ++ trailingRemnantNotes rawPatch
     ++ emptyTargetSegmentNotes rawPatch
+    ++ unevenWindowNotes rawPatch
 
 -- | Every overlong-varint note the framing stage gathered, in wire order: the header's length-field notes, then each window's framing-field notes ('rawVarintNotes').
 framingVarintNotes :: RawPatch -> [SlapAdvisory]
@@ -135,6 +136,23 @@ trailingRemnantNotes :: RawPatch -> [SlapAdvisory]
 trailingRemnantNotes rawPatch = case rawTrailingRemnant rawPatch of
   Nothing            -> []
   Just remnantLength -> [VCDIFFTrailingRemnant remnantLength]
+
+-- | The note for windows that are not a run of one size and then a remainder — the shape every encoder slap knows of emits.
+-- Judged on the declared target sizes in wire order; window sizing is the encoder's own affair, so an uneven run is remarked on, never refused.
+unevenWindowNotes :: RawPatch -> [SlapAdvisory]
+unevenWindowNotes rawPatch =
+  [ VCDIFFUnevenWindowSizes
+  | not (windowSizesRunEvenly (map rawTargetSize (rawWindows rawPatch))) ]
+
+-- | Whether a window-size sequence is full-sized windows and then a remainder: every size but the last equal to the first, the last no larger.
+-- Zero windows and a single window are trivially even.
+windowSizesRunEvenly :: [FileSize] -> Bool
+windowSizesRunEvenly windowSizes = case windowSizes of
+  [] -> True
+  (leadingSize : followingSizes) -> case unsnoc followingSizes of
+    Nothing -> True
+    Just (fullSizedWindows, finalWindow) ->
+      all (== leadingSize) fullSizedWindows && finalWindow <= leadingSize
 
 -- | A note for each VCD_TARGET window whose declared source segment is empty: it draws nothing from the produced target, the only legal shape a first-window VCD_TARGET can take and a pointless one anywhere. The window's position rides in the note.
 emptyTargetSegmentNotes :: RawPatch -> [SlapAdvisory]

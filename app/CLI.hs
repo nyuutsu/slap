@@ -45,6 +45,7 @@ import Slap.Convert (CreateFormat(..), DifferentialCreate(CreateBPS),
                      TextMode(..))
 import Slap.XDelta1.Types (XDelta1FromName(..), XDelta1ToName(..))
 import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor, secondaryCompressorTokens)
+import Slap.VCDIFF.Types (XDelta3WindowSize, xdelta3WindowSizeOfBytes)
 import Slap.Constraint (Constraint(..), constraintFlagName)
 import Slap.Dialect (Dialect(..), dialectFlagName)
 import Slap.PPF1.Types (PPF1Origin(..))
@@ -58,7 +59,7 @@ import Slap.Text (EncodedText(..), EncodingName(..), resolveEncodingName,
 import Slap.Display.Glyph (rightwardsArrow)
 
 import qualified Data.Text as Text
-import Data.Char (toLower)
+import Data.Char (isDigit, toLower)
 import Data.List (intercalate)
 import Options.Applicative
 import Options.Applicative.Help.Pretty (pretty, vcat)
@@ -621,6 +622,28 @@ parseSecondaryCompressor input =
     Nothing         -> Left ("unknown compressor: " ++ input
                           ++ "\n  expected: " ++ intercalate ", " (map fst secondaryCompressorTokens))
 
+-- | Parse a @--window-size@ value: a byte count with an optional k or m suffix (KiB / MiB).
+-- Sized in 'Integer' first, so an absurd count is refused rather than wrapped;
+-- zero is refused by 'xdelta3WindowSizeOfBytes', the type's one door.
+parseWindowSize :: String -> Either String XDelta3WindowSize
+parseWindowSize input = case span isDigit input of
+  ("", _) -> Left ("not a window size: " ++ input ++ windowSizeShapeHint)
+  (digits, suffix) -> do
+    multiplier <- case map toLower suffix of
+      ""  -> Right 1
+      "k" -> Right 1024
+      "m" -> Right (1024 * 1024)
+      _   -> Left ("unknown window-size suffix: " ++ suffix ++ windowSizeShapeHint)
+    let byteCount = read digits * multiplier :: Integer
+    if byteCount > toInteger (maxBound :: Int)
+      then Left ("window size past what this host can hold: " ++ input)
+      else case xdelta3WindowSizeOfBytes (fromInteger byteCount) of
+             Just windowSize -> Right windowSize
+             Nothing         -> Left "window size must be at least 1 byte"
+
+windowSizeShapeHint :: String
+windowSizeShapeHint = "\n  expected: a byte count with an optional k or m suffix, e.g. 65536, 512k, 8m"
+
 -- | Parse the metadata flags shared between @slap create@ and @slap convert@.
 -- Produces a 'RequestedPatchMetadata' with 'requestedEmbeddedBlob' set to 'Nothing';
 -- the resolvers @resolveCreateMetadata@ and @resolveConvertMetadata@ (in @Main@) fill that field from each command's blob source:
@@ -647,6 +670,9 @@ requestedMetadataParser = do
                                   <> completeWith (map fst secondaryCompressorTokens)
                                   <> help ("Secondary compressor for xdelta3 (default lzma): "
                                         ++ intercalate ", " (map fst secondaryCompressorTokens))))
+    windowSize        <- optional (option (eitherReader parseWindowSize) (long "window-size" <> metavar "SIZE"
+                            <> help ("xdelta3 window size: bytes with an optional k or m suffix (default 8m)."
+                                  ++ " The widespread xdelta3 3.0.11 build declines to decode windows past 16m; slap reads them fine.")))
     unstable          <- optional (flag' UnstablePatch (long "unstable"
                             <> help "Mark patch unstable (DPS)"))
     romType           <- optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
@@ -693,6 +719,7 @@ requestedMetadataParser = do
       , requestedEmbeddedBlob        = Nothing
       , requestedXDelta1FromName     = fmap (XDelta1FromName . wrapUtf8) xdelta1FromName
       , requestedXDelta1ToName       = fmap (XDelta1ToName   . wrapUtf8) xdelta1ToName
+      , requestedWindowSize          = windowSize
       }
   where
     wrapUtf8 :: String -> EncodedText

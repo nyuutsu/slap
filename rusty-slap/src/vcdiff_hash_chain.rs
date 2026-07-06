@@ -1,11 +1,11 @@
 //! VCDIFF's cost-aware matcher: the engine behind the worth-taking-match
-//! query the cover greedy-parse in `vcdiff_diff.rs` asks at every target
-//! position.
+//! query the cover greedy-parse in `vcdiff_diff.rs` asks at every
+//! position of a window.
 //!
 //! ## The contract prices wire bytes, not match length
 //!
 //! The useful question is not "what is the longest run recurring earlier
-//! in `U = source ++ target`" but "is there a copy here whose wire cost
+//! in `U = source ++ window`" but "is there a copy here whose wire cost
 //! beats writing the bytes as literals". A COPY spends an opcode, a
 //! size, and an address, and a far address is a few near-random bytes
 //! the secondary compressor cannot squeeze, while the literal bytes it
@@ -36,12 +36,23 @@
 //!   lure the encoder off alignment one byte before pursuit resumes
 //!   for free.
 //!
-//! Source anchors are indexed once at build; target anchors are indexed
-//! lazily, only for positions the parse has settled, so a candidate
-//! starting at or past the write head is never in the table at all.
+//! ## Windows
+//!
+//! One matcher serves a whole create: the source index is built once,
+//! and each emitted window runs its own session ([`begin_window`]) in
+//! which the window-side index and the pursuit start empty. A window's
+//! world is exactly `source ++ its own slice`, so a copy into an
+//! earlier window's output — the cross-window self-reference an
+//! xdelta3 window cannot express — is never found, rather than found
+//! and filtered. Source anchors are indexed in reverse so each bucket
+//! leads with run-start, cheapest-address candidates; window anchors
+//! are indexed lazily, only for positions the parse has settled, so a
+//! candidate at or past the write head is never in the table at all.
 //! Chain cells hold positions at the width the pair's size selects
 //! (`u32` whenever `U` fits, `u64` beyond), so the matcher stays total
 //! without paying eight-byte cells on ordinary inputs.
+//!
+//! [`begin_window`]: HashChainMatcher::begin_window
 
 use crate::vcdiff_diff::Match;
 
@@ -76,16 +87,16 @@ const ADDRESS_NOISE_MARGIN: usize = 4;
 const ANCHOR_LENGTH: usize = 8;
 
 /// How many chain entries one probe walks before giving up. Bounds the
-/// work a repetitive region — a padding run hashing every window to the
-/// same bucket — can demand per position.
+/// work a repetitive region — a padding run hashing every window into
+/// one bucket — can demand per position.
 const PROBE_CAP: usize = 32;
 
 // ── Public surface ───────────────────────────────────────────────────
 
-/// A worth-taking-match index over the superstring `U = source ++ target`,
-/// asked one query per target position, in parse order. Queries are
-/// `&mut self`: each one settles more of the target into the lazy index
-/// and an accepted match becomes the next pursuit base.
+/// A worth-taking-match index over `U = source ++ current window`,
+/// asked one query per window position, in parse order. Queries are
+/// `&mut self`: each one settles more of the window into the lazy
+/// index and an accepted match becomes the next pursuit base.
 pub struct HashChainMatcher<'pair> {
     engine: EngineWidth<'pair>,
 }
@@ -98,22 +109,32 @@ enum EngineWidth<'pair> {
 }
 
 impl<'pair> HashChainMatcher<'pair> {
-    /// Build the matcher for a `(source, target)` pair. An empty target
-    /// has no positions to query and skips indexing entirely.
-    pub fn build(source: &'pair [u8], target: &'pair [u8]) -> Self {
-        let superstring_length = source
+    /// Index the source and size the window-side buffers for the
+    /// largest window a session will bring. Done once per create,
+    /// however many windows follow.
+    pub fn build(source: &'pair [u8], largest_window_length: usize) -> Self {
+        let superstring_ceiling = source
             .len()
-            .checked_add(target.len())
-            .expect("vcdiff matcher: source + target overflows usize");
-        let engine = if superstring_length < u32::MAX as usize {
-            EngineWidth::Narrow(Engine::build(source, target))
+            .checked_add(largest_window_length)
+            .expect("vcdiff matcher: source + window overflows usize");
+        let engine = if superstring_ceiling < u32::MAX as usize {
+            EngineWidth::Narrow(Engine::build(source, largest_window_length))
         } else {
-            EngineWidth::Wide(Engine::build(source, target))
+            EngineWidth::Wide(Engine::build(source, largest_window_length))
         };
         HashChainMatcher { engine }
     }
 
-    /// A match at `target[position..]` worth its wire cost, or `None`
+    /// Start a session over one window: the window-side index and the
+    /// pursuit reset, the source index persists.
+    pub fn begin_window(&mut self, window: &'pair [u8]) {
+        match &mut self.engine {
+            EngineWidth::Narrow(engine) => engine.begin_window(window),
+            EngineWidth::Wide(engine) => engine.begin_window(window),
+        }
+    }
+
+    /// A match at `window[position..]` worth its wire cost, or `None`
     /// when literals are the better spend. The parse takes every match
     /// returned; the pricing lives here.
     pub fn match_at(&mut self, position: usize) -> Option<Match> {
@@ -183,59 +204,55 @@ impl ChainCell for u64 {
 
 /// The pursuit base: the last accepted copy, as the alignment it
 /// established. At a later query the continuation candidate is
-/// `u_offset + (position - target_position)` — the address that copy
+/// `u_offset + (position - window_position)` — the address that copy
 /// would have reached had it kept running through the gap.
 #[derive(Copy, Clone)]
 struct Pursuit {
     u_offset: usize,
-    target_position: usize,
+    window_position: usize,
 }
 
 struct Engine<'pair, Cell> {
     source: &'pair [u8],
-    target: &'pair [u8],
-    /// Newest anchor per bucket; `CHAIN_END` for an untouched bucket.
-    bucket_heads: Vec<Cell>,
-    /// Per-`U`-position next-older-anchor link, same bucket.
-    chain_links: Vec<Cell>,
-    /// Right-shift turning a folded anchor's hash into a bucket index.
-    hash_shift: u32,
-    /// First target position whose anchor is not yet in the table; the
+    /// The current session's window; empty until the first
+    /// `begin_window`.
+    window: &'pair [u8],
+    /// The source index, built once: newest anchor per bucket, and
+    /// per-source-position next-older-anchor links.
+    source_bucket_heads: Vec<Cell>,
+    source_chain_links: Vec<Cell>,
+    source_hash_shift: u32,
+    /// The window index, reset per session: heads refilled, links
+    /// overwritten as positions settle. Links are indexed by window
+    /// position; a candidate's `U` offset is `source.len() +` that.
+    window_bucket_heads: Vec<Cell>,
+    window_chain_links: Vec<Cell>,
+    window_hash_shift: u32,
+    /// First window position whose anchor is not yet in the table; the
     /// lazy indexing high-water mark.
-    next_target_anchor: usize,
+    next_window_anchor: usize,
     pursuit: Option<Pursuit>,
 }
 
 impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
-    fn build(source: &'pair [u8], target: &'pair [u8]) -> Self {
-        // No positions will ever be queried, so no table is built: the
-        // empty-target create should not pay for indexing a large source.
-        if target.is_empty() {
-            return Engine {
-                source,
-                target,
-                bucket_heads: Vec::new(),
-                chain_links: Vec::new(),
-                hash_shift: u64::BITS,
-                next_target_anchor: 0,
-                pursuit: None,
-            };
-        }
-        let superstring_length = source.len() + target.len();
-        let bucket_bits = bucket_bits_for(superstring_length);
+    fn build(source: &'pair [u8], largest_window_length: usize) -> Self {
+        let source_bucket_bits = bucket_bits_for(source.len());
+        let window_bucket_bits = bucket_bits_for(largest_window_length);
         let mut engine = Engine {
             source,
-            target,
-            bucket_heads: vec![Cell::CHAIN_END; 1 << bucket_bits],
-            chain_links: vec![Cell::CHAIN_END; superstring_length],
-            hash_shift: u64::BITS - bucket_bits,
-            next_target_anchor: 0,
+            window: &[],
+            source_bucket_heads: vec![Cell::CHAIN_END; 1 << source_bucket_bits],
+            source_chain_links: vec![Cell::CHAIN_END; source.len()],
+            source_hash_shift: u64::BITS - source_bucket_bits,
+            window_bucket_heads: vec![Cell::CHAIN_END; 1 << window_bucket_bits],
+            window_chain_links: vec![Cell::CHAIN_END; largest_window_length],
+            window_hash_shift: u64::BITS - window_bucket_bits,
+            next_window_anchor: 0,
             pursuit: None,
         };
-        // Anchors never span the source/target boundary: a copy starting
-        // in the source segment may not cross its end (core invariant 2),
-        // so a spanning window could only describe copies no window may
-        // make.
+        // Anchors never span the source's end: a copy starting in the
+        // source segment may not cross it (core invariant 2), so a
+        // spanning window could only describe copies no window may make.
         //
         // Built in reverse: prepending walks each bucket newest-first, so
         // reverse order leaves the lowest positions at the front — for
@@ -245,15 +262,29 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
         // trims the tail of the run, not its head.
         if source.len() >= ANCHOR_LENGTH {
             for anchor_start in (0..=source.len() - ANCHOR_LENGTH).rev() {
-                engine.insert_anchor(anchor_start, &source[anchor_start..anchor_start + ANCHOR_LENGTH]);
+                engine.insert_source_anchor(
+                    anchor_start,
+                    &source[anchor_start..anchor_start + ANCHOR_LENGTH],
+                );
             }
         }
         engine
     }
 
+    fn begin_window(&mut self, window: &'pair [u8]) {
+        debug_assert!(
+            window.len() <= self.window_chain_links.len(),
+            "vcdiff matcher: a window longer than the largest the build sized for"
+        );
+        self.window = window;
+        self.window_bucket_heads.fill(Cell::CHAIN_END);
+        self.next_window_anchor = 0;
+        self.pursuit = None;
+    }
+
     fn match_at(&mut self, position: usize) -> Option<Match> {
-        self.index_settled_target_anchors(position);
-        if self.target.len() - position < PURSUIT_MATCH_FLOOR {
+        self.index_settled_window_anchors(position);
+        if self.window.len() - position < PURSUIT_MATCH_FLOOR {
             return None;
         }
         let pursued = self.pursue(position);
@@ -271,6 +302,15 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
             .map(|found| self.adopt(found, position))
     }
 
+    /// Record an accepted match as the new pursuit base and hand it back.
+    fn adopt(&mut self, found: Match, position: usize) -> Match {
+        self.pursuit = Some(Pursuit {
+            u_offset: found.superstring_offset,
+            window_position: position,
+        });
+        found
+    }
+
     /// What lockstep already earns without a discovery: the pursuit
     /// match here, or a one-byte literal and the pursuit match one
     /// position on — whichever nets more, and `i64::MIN` with no
@@ -285,29 +325,20 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
         held_now.into_iter().chain(held_next).max().unwrap_or(i64::MIN)
     }
 
-    /// Record an accepted match as the new pursuit base and hand it back.
-    fn adopt(&mut self, found: Match, position: usize) -> Match {
-        self.pursuit = Some(Pursuit {
-            u_offset: found.superstring_offset,
-            target_position: position,
-        });
-        found
-    }
-
-    /// Feed the table every target anchor the parse has settled: anchor
-    /// starts strictly before `position` whose window lies inside the
-    /// target. Nothing at or past the write head is ever inserted, so
+    /// Feed the table every window anchor the parse has settled: anchor
+    /// starts strictly before `position` whose span lies inside the
+    /// window. Nothing at or past the write head is ever inserted, so
     /// the table cannot answer with a copy no window may make.
-    fn index_settled_target_anchors(&mut self, position: usize) {
-        while self.next_target_anchor < position
-            && self.next_target_anchor + ANCHOR_LENGTH <= self.target.len()
+    fn index_settled_window_anchors(&mut self, position: usize) {
+        while self.next_window_anchor < position
+            && self.next_window_anchor + ANCHOR_LENGTH <= self.window.len()
         {
-            let anchor_start = self.next_target_anchor;
-            self.insert_anchor(
-                self.source.len() + anchor_start,
-                &self.target[anchor_start..anchor_start + ANCHOR_LENGTH],
+            let anchor_start = self.next_window_anchor;
+            self.insert_window_anchor(
+                anchor_start,
+                &self.window[anchor_start..anchor_start + ANCHOR_LENGTH],
             );
-            self.next_target_anchor += 1;
+            self.next_window_anchor += 1;
         }
     }
 
@@ -317,7 +348,7 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
     /// source's end has nothing left to continue.
     fn pursue(&self, position: usize) -> Option<Match> {
         let pursuit = self.pursuit?;
-        let candidate = pursuit.u_offset + (position - pursuit.target_position);
+        let candidate = pursuit.u_offset + (position - pursuit.window_position);
         if pursuit.u_offset < self.source.len() && candidate >= self.source.len() {
             return None;
         }
@@ -329,54 +360,82 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
         }
     }
 
-    /// The discovery tier: walk the query anchor's chain and keep the
-    /// candidate with the best net saving, provided it clears its own
-    /// priced threshold. Returns the winner with its net, for the
-    /// pursuit comparison at the caller.
+    /// The discovery tier: walk the query anchor's source and window
+    /// chains and keep the candidate with the best net saving, provided
+    /// it clears its own priced threshold. Returns the winner with its
+    /// net, for the lockstep comparison at the caller.
     fn probe(&self, position: usize) -> Option<(Match, i64)> {
-        if position + ANCHOR_LENGTH > self.target.len() {
+        if position + ANCHOR_LENGTH > self.window.len() {
             return None;
         }
         let here = self.source.len() + position;
-        let bucket = self.bucket_of(&self.target[position..position + ANCHOR_LENGTH]);
+        let anchor = &self.window[position..position + ANCHOR_LENGTH];
         let mut best: Option<(Match, i64)> = None;
-        let mut cursor = self.bucket_heads[bucket];
+
+        let mut source_cursor =
+            self.source_bucket_heads[bucket_for(anchor, self.source_hash_shift)];
         for _ in 0..PROBE_CAP {
-            if cursor.is_chain_end() {
+            if source_cursor.is_chain_end() {
                 break;
             }
-            let candidate = cursor.as_index();
-            let length = self.extend(candidate, position);
-            let cost = 1                                            // opcode
-                + varint_length(length)                             // worst-case size varint
-                + priced_address_bytes(candidate, here);
-            if length >= cost + ADDRESS_NOISE_MARGIN {
-                let net = length as i64 - cost as i64;
-                if best.map_or(true, |(_, best_net)| net > best_net) {
-                    best = Some((Match { superstring_offset: candidate, length }, net));
-                }
+            let candidate = source_cursor.as_index();
+            best = self.better_of(best, candidate, position, here);
+            source_cursor = self.source_chain_links[candidate];
+        }
+
+        let mut window_cursor =
+            self.window_bucket_heads[bucket_for(anchor, self.window_hash_shift)];
+        for _ in 0..PROBE_CAP {
+            if window_cursor.is_chain_end() {
+                break;
             }
-            cursor = self.chain_links[candidate];
+            let window_position = window_cursor.as_index();
+            best = self.better_of(best, self.source.len() + window_position, position, here);
+            window_cursor = self.window_chain_links[window_position];
+        }
+
+        best
+    }
+
+    /// Fold one discovery candidate into the running best: extend it,
+    /// price it, and keep it only past its own threshold and the best
+    /// so far.
+    fn better_of(
+        &self,
+        best: Option<(Match, i64)>,
+        candidate: usize,
+        position: usize,
+        here: usize,
+    ) -> Option<(Match, i64)> {
+        let length = self.extend(candidate, position);
+        let cost = 1                                            // opcode
+            + varint_length(length)                             // worst-case size varint
+            + priced_address_bytes(candidate, here);
+        if length >= cost + ADDRESS_NOISE_MARGIN {
+            let net = length as i64 - cost as i64;
+            if best.map_or(true, |(_, best_net)| net > best_net) {
+                return Some((Match { superstring_offset: candidate, length }, net));
+            }
         }
         best
     }
 
     /// The matched run length at a candidate: byte-wise agreement
-    /// between `target[position..]` and `U[candidate..]`, capped at the
-    /// target bytes still to be produced and, for a source-anchored
+    /// between `window[position..]` and `U[candidate..]`, capped at the
+    /// window bytes still to be produced and, for a source-anchored
     /// candidate, at the source's end (core invariant 2). A
-    /// target-anchored candidate may run past the write head — the
+    /// window-anchored candidate may run past the write head — the
     /// self-referential overlap the format blesses — and comparing
-    /// against the final target bytes is exact there, because that
+    /// against the final window bytes is exact there, because that
     /// overlapped copy reproduces those very bytes.
     fn extend(&self, candidate: usize, position: usize) -> usize {
-        let mut reach = self.target.len() - position;
+        let mut reach = self.window.len() - position;
         if candidate < self.source.len() {
             reach = reach.min(self.source.len() - candidate);
         }
         let mut length = 0;
         while length < reach
-            && self.byte_in_superstring(candidate + length) == self.target[position + length]
+            && self.byte_in_superstring(candidate + length) == self.window[position + length]
         {
             length += 1;
         }
@@ -387,33 +446,39 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
         if u_offset < self.source.len() {
             self.source[u_offset]
         } else {
-            self.target[u_offset - self.source.len()]
+            self.window[u_offset - self.source.len()]
         }
     }
 
-    fn insert_anchor(&mut self, u_offset: usize, window: &[u8]) {
-        let bucket = self.bucket_of(window);
-        self.chain_links[u_offset] = self.bucket_heads[bucket];
-        self.bucket_heads[bucket] = Cell::from_index(u_offset);
+    fn insert_source_anchor(&mut self, source_position: usize, window_bytes: &[u8]) {
+        let bucket = bucket_for(window_bytes, self.source_hash_shift);
+        self.source_chain_links[source_position] = self.source_bucket_heads[bucket];
+        self.source_bucket_heads[bucket] = Cell::from_index(source_position);
     }
 
-    /// Fold the anchor window into one register and Fibonacci-hash it
-    /// down to a bucket index.
-    fn bucket_of(&self, window: &[u8]) -> usize {
-        let mut folded = 0u64;
-        for &byte in window {
-            folded = folded << 8 | byte as u64;
-        }
-        (folded.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> self.hash_shift) as usize
+    fn insert_window_anchor(&mut self, window_position: usize, window_bytes: &[u8]) {
+        let bucket = bucket_for(window_bytes, self.window_hash_shift);
+        self.window_chain_links[window_position] = self.window_bucket_heads[bucket];
+        self.window_bucket_heads[bucket] = Cell::from_index(window_position);
     }
 }
 
-/// Bucket-count bits for a pair's combined size: roughly one bucket per
-/// indexed position, held between 16 Ki buckets (below which even tiny
-/// inputs would chain needlessly) and 8 Mi (above which the head table's
-/// own memory stops paying).
-fn bucket_bits_for(superstring_length: usize) -> u32 {
-    let wanted = usize::BITS - superstring_length.max(1).leading_zeros();
+/// Fold an anchor window into one register and Fibonacci-hash it down
+/// to a bucket index under the given shift.
+fn bucket_for(window_bytes: &[u8], hash_shift: u32) -> usize {
+    let mut folded = 0u64;
+    for &byte in window_bytes {
+        folded = folded << 8 | byte as u64;
+    }
+    (folded.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> hash_shift) as usize
+}
+
+/// Bucket-count bits for an indexed length: roughly one bucket per
+/// position, held between 16 Ki buckets (below which even tiny inputs
+/// would chain needlessly) and 8 Mi (above which the head table's own
+/// memory stops paying).
+fn bucket_bits_for(indexed_length: usize) -> u32 {
+    let wanted = usize::BITS - indexed_length.max(1).leading_zeros();
     wanted.clamp(14, 23)
 }
 
@@ -459,6 +524,15 @@ mod tests {
             .collect()
     }
 
+    fn matcher_over<'pair>(
+        source: &'pair [u8],
+        window: &'pair [u8],
+    ) -> HashChainMatcher<'pair> {
+        let mut matcher = HashChainMatcher::build(source, window.len());
+        matcher.begin_window(window);
+        matcher
+    }
+
     #[test]
     fn a_far_four_byte_coincidence_is_left_as_literal() {
         // Plant exactly four source bytes inside an otherwise unrelated
@@ -467,7 +541,7 @@ mod tests {
         let source = pseudo_random_bytes(0x21, 4096);
         let mut target = pseudo_random_bytes(0x22, 1024);
         target[500..504].copy_from_slice(&source[2000..2004]);
-        let mut matcher = HashChainMatcher::build(&source, &target);
+        let mut matcher = matcher_over(&source, &target);
         assert_eq!(matcher.match_at(500), None);
     }
 
@@ -476,7 +550,7 @@ mod tests {
         let source = pseudo_random_bytes(0x31, 4096);
         let mut target = pseudo_random_bytes(0x32, 1024);
         target[500..564].copy_from_slice(&source[2000..2064]);
-        let mut matcher = HashChainMatcher::build(&source, &target);
+        let mut matcher = matcher_over(&source, &target);
         let found = matcher.match_at(500).expect("a 64-byte relocation pays for its address");
         assert_eq!(found.superstring_offset, 2000);
         assert!(found.length >= 64);
@@ -491,10 +565,10 @@ mod tests {
         let mut target = source[..107].to_vec();
         target[100] ^= 0x5a;
 
-        let mut cold = HashChainMatcher::build(&source, &target);
+        let mut cold = matcher_over(&source, &target);
         assert_eq!(cold.match_at(101), None);
 
-        let mut warm = HashChainMatcher::build(&source, &target);
+        let mut warm = matcher_over(&source, &target);
         let opening = warm.match_at(0).expect("the unedited prefix matches");
         assert_eq!((opening.superstring_offset, opening.length), (0, 100));
         assert_eq!(warm.match_at(100), None);
@@ -505,12 +579,33 @@ mod tests {
     #[test]
     fn self_reference_still_answers_with_an_empty_source() {
         let target: Vec<u8> = b"abcabcabcabcabcabc".to_vec();
-        let mut matcher = HashChainMatcher::build(&[], &target);
+        let mut matcher = matcher_over(&[], &target);
         for position in 0..3 {
             assert_eq!(matcher.match_at(position), None, "nothing earlier to copy at {position}");
         }
         let found = matcher.match_at(3).expect("the period-3 run recurs from the start");
         assert_eq!(found.superstring_offset, 0);
         assert_eq!(found.length, 15);
+    }
+
+    #[test]
+    fn a_new_session_forgets_the_previous_window() {
+        // Two identical windows over an empty source: within the first,
+        // position 8 copies the settled start; a fresh session over the
+        // second window holds nothing settled, so the same query finds
+        // nothing — the cross-window reference does not exist to find.
+        let pattern = pseudo_random_bytes(0x61, 8);
+        let mut window: Vec<u8> = pattern.clone();
+        window.extend_from_slice(&pattern);
+        let mut matcher = HashChainMatcher::build(&[], window.len());
+
+        matcher.begin_window(&window);
+        let within = matcher.match_at(8).expect("the repeat is visible within one window");
+        assert_eq!((within.superstring_offset, within.length), (0, 8));
+
+        matcher.begin_window(&window);
+        for warmup in 0..3 {
+            assert_eq!(matcher.match_at(warmup), None, "fresh session at {warmup}");
+        }
     }
 }

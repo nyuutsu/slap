@@ -8,6 +8,8 @@ module Slap.Compression.Stream
   , LzmaDecoded(..)
   , lzmaDecompress
   , lzmaCompress
+  , LzmaSectionStream(..)
+  , lzmaCompressSections
   , DjwDecoded(..)
   , djwDecompress
   , djwCompress
@@ -28,7 +30,7 @@ import System.IO.Unsafe (unsafePerformIO)
 
 import Slap.Measure (Length(..))
 import Slap.Status (DecompressionCause(..))
-import Slap.FFI (readByteString, readText, withByteString)
+import Slap.FFI (readByteString, readText, readWord64LE, withByteString)
 
 foreign import ccall unsafe "rusty_zlib_inflate"
   rustyZlibInflate
@@ -233,6 +235,49 @@ lzmaDecompress input = unsafePerformIO $
 -- Round-trip partner of 'lzmaDecompress'.
 lzmaCompress :: ByteString -> ByteString
 lzmaCompress = callCompressor rustyLzmaCompress
+
+foreign import ccall unsafe "rusty_lzma_compress_sections"
+  rustyLzmaCompressSections
+    :: Ptr Word8 -> CSize               -- concatenated sections
+    -> Ptr CSize -> CSize               -- per-section lengths, section count
+    -> Ptr (Ptr Word8) -> Ptr CSize     -- stream bytes
+    -> Ptr (Ptr Word8) -> Ptr CSize     -- piece-end offsets, one u64 LE per section
+    -> IO ()
+
+-- | One kind's sections compressed as a single continuous stream, with the cut positions that split it back into per-section pieces.
+-- The first piece begins at offset zero and carries the xz framing; every later piece is a bare continuation slice —
+-- exactly the carriage shape the decode side gathers back together.
+data LzmaSectionStream = LzmaSectionStream
+  { lzmaStreamBytes     :: !ByteString
+  , lzmaPieceEndOffsets :: ![Int]
+  }
+  deriving (Show, Eq)
+
+-- | LZMA compression of one kind's sections, in window order, into one continuous xdelta3-flavored stream:
+-- one encoder runs the whole stream, sync-flushed at every section boundary, the dictionary carrying across —
+-- so a later window's section compresses against everything before it.
+-- The gathered partner of 'lzmaCompress'; 'lzmaDecompress' reads the whole stream back.
+lzmaCompressSections :: [ByteString] -> LzmaSectionStream
+lzmaCompressSections sections = unsafePerformIO $
+  withByteString (ByteString.concat sections) $ \sectionsPointer sectionsLength ->
+    withArray (map (fromIntegral . ByteString.length) sections) $ \sectionLengthsPointer ->
+      alloca $ \streamAddressPointer ->
+        alloca $ \streamLengthPointer ->
+          alloca $ \cutsAddressPointer ->
+            alloca $ \cutsLengthPointer -> do
+              rustyLzmaCompressSections
+                sectionsPointer sectionsLength
+                sectionLengthsPointer (fromIntegral (length sections))
+                streamAddressPointer streamLengthPointer
+                cutsAddressPointer   cutsLengthPointer
+              streamBytes <- readByteString streamAddressPointer streamLengthPointer
+              cutBytes    <- readByteString cutsAddressPointer   cutsLengthPointer
+              pure LzmaSectionStream
+                { lzmaStreamBytes     = streamBytes
+                , lzmaPieceEndOffsets =
+                    [ fromIntegral (readWord64LE cutBytes (8 * pieceIndex))
+                    | pieceIndex <- [0 .. length sections - 1] ]
+                }
 
 -- | What one DJW decompression reports back across the seam:
 -- the decoded bytes, and how many input bytes the decoder consumed before its output budget filled.

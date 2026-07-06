@@ -112,43 +112,72 @@ fn xz_framing_length(input: &[u8]) -> Result<usize, String> {
 /// turns a level knob today.
 const ENCODING_PRESET: u32 = 6;
 
-/// Compress one plain buffer into the xdelta3-flavored stream
-/// [`lzma_decompress`] reads back: the xz stream and block headers,
-/// then LZMA2 chunks left sync-flushed, never finished (see the module
-/// header for why the end-of-stream marker must not be written).
+/// One kind's sections compressed as the continuous stream
+/// [`lzma_decompress`] reads back, with the cut positions that split
+/// it into per-section pieces. The first piece begins at offset 0 and
+/// carries the xz framing; every later piece is a bare continuation
+/// slice, exactly the carriage the decode side gathers back together.
+pub struct LzmaSectionStream {
+    pub stream_bytes: Vec<u8>,
+    /// End offset of each section's piece within `stream_bytes`, one
+    /// per section, ascending; the last equals the stream's length.
+    pub piece_end_offsets: Vec<usize>,
+}
+
+/// Compress a kind's sections, in window order, into one
+/// xdelta3-flavored stream: the xz stream and block headers, then
+/// LZMA2 chunks sync-flushed at every section boundary and never
+/// finished (see the module header for why the end-of-stream marker
+/// must not be written). One encoder runs the whole stream, so the
+/// dictionary persists across sections — a later window's section
+/// compresses against everything before it, which is most of why the
+/// gathered stream beats per-section streams.
 ///
-/// Total: any byte buffer compresses, the empty one included (its
-/// stream is the bare framing). The writer sinks into a `Vec`, which
-/// cannot raise an I/O error, so an `Err` from the encoder would mean
-/// an encoder bug; the `expect` dies loudly on one.
-pub fn lzma_compress(plain: &[u8]) -> Vec<u8> {
+/// Total: any sections compress, the empty list included (its stream
+/// is the bare framing, with no pieces to cut). The writer sinks into
+/// a `Vec`, which cannot raise an I/O error, so an `Err` from the
+/// encoder would mean an encoder bug; the `expect`s die loudly on one.
+pub fn lzma_compress_sections(sections: &[&[u8]]) -> LzmaSectionStream {
     use std::io::Write;
 
+    let total_length: usize = sections.iter().map(|section| section.len()).sum();
     let mut options = lzma_rust2::Lzma2Options::with_preset(ENCODING_PRESET);
-    // A dictionary reaching past the input buys nothing, so it shrinks
-    // to the input's length (floored at the format's minimum) and the
-    // decoder's allocation shrinks with it. The block header rounds
-    // back up to the nearest encodable size, so the decoder always
-    // allocates at least what the encoder used.
-    options.lzma_options.dict_size = (plain.len() as u64)
+    // A dictionary reaching past the whole stream's input buys nothing,
+    // so it shrinks to the sections' combined length (floored at the
+    // format's minimum) and the decoder's allocation shrinks with it.
+    // The block header rounds back up to the nearest encodable size, so
+    // the decoder always allocates at least what the encoder used.
+    options.lzma_options.dict_size = (total_length as u64)
         .clamp(
             u64::from(lzma_rust2::DICT_SIZE_MIN),
             u64::from(options.lzma_options.dict_size),
         ) as u32;
     let dictionary_size = options.lzma_options.dict_size;
 
-    let mut writer = lzma_rust2::Lzma2Writer::new(Vec::new(), options);
-    writer
-        .write_all(plain)
-        .expect("xdelta3_lzma: LZMA2 encoder failed on an in-memory sink");
-    writer
-        .flush()
-        .expect("xdelta3_lzma: LZMA2 encoder failed to flush on an in-memory sink");
-    let chunks = writer.into_inner();
+    // The sink starts as the framing bytes, so chunk output appends
+    // straight after them and every cut offset is already
+    // stream-absolute.
+    let mut writer = lzma_rust2::Lzma2Writer::new(xz_framing(dictionary_size), options);
+    let mut piece_end_offsets = Vec::with_capacity(sections.len());
+    for section in sections {
+        writer
+            .write_all(section)
+            .expect("xdelta3_lzma: LZMA2 encoder failed on an in-memory sink");
+        writer
+            .flush()
+            .expect("xdelta3_lzma: LZMA2 encoder failed to flush on an in-memory sink");
+        piece_end_offsets.push(writer.inner().len());
+    }
+    LzmaSectionStream {
+        stream_bytes: writer.into_inner(),
+        piece_end_offsets,
+    }
+}
 
-    let mut stream = xz_framing(dictionary_size);
-    stream.extend_from_slice(&chunks);
-    stream
+/// Compress one plain buffer into a stream of its own: the one-section
+/// reading of [`lzma_compress_sections`].
+pub fn lzma_compress(plain: &[u8]) -> Vec<u8> {
+    lzma_compress_sections(&[plain]).stream_bytes
 }
 
 /// The xz stream header and block header that open a stream: the same
@@ -364,6 +393,39 @@ mod tests {
                 outcome.consumed_input_length,
                 stream.len(),
                 "seed {seed:#x}: the stream must decode with nothing left over",
+            );
+        }
+    }
+
+    /// Every stream prefix ending at a cut decodes to exactly the
+    /// sections written up to that cut, fully consumed: the cuts land
+    /// on chunk boundaries, and the dictionary carries across them.
+    /// This is the same walk the window emitter's pieces take through
+    /// a decoder, prefix by prefix.
+    #[test]
+    fn section_stream_prefixes_decode_to_their_sections() {
+        let sections: Vec<Vec<u8>> = vec![
+            pseudo_random_bytes(0xA1, 30_000).into_iter().map(|byte| byte % 8).collect(),
+            pseudo_random_bytes(0xA2, 10),
+            pseudo_random_bytes(0xA3, 80_000).into_iter().map(|byte| byte % 8).collect(),
+        ];
+        let section_slices: Vec<&[u8]> = sections.iter().map(Vec::as_slice).collect();
+        let outcome = lzma_compress_sections(&section_slices);
+        assert_eq!(outcome.piece_end_offsets.len(), sections.len());
+        assert_eq!(
+            *outcome.piece_end_offsets.last().expect("three pieces"),
+            outcome.stream_bytes.len(),
+        );
+        let mut expected = Vec::new();
+        for (index, section) in sections.iter().enumerate() {
+            expected.extend_from_slice(section);
+            let prefix = &outcome.stream_bytes[..outcome.piece_end_offsets[index]];
+            let decoded = lzma_decompress(prefix).expect("a cut prefix decodes");
+            assert_eq!(decoded.decoded_bytes, expected, "prefix {index}");
+            assert_eq!(
+                decoded.consumed_input_length,
+                prefix.len(),
+                "prefix {index} must decode with nothing left over",
             );
         }
     }

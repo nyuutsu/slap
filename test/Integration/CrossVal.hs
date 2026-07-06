@@ -33,6 +33,7 @@ import Slap.Convert
   (CreateFormat(..), DifferentialCreate(..), RequestedPatchMetadata(..),
    noMetadataRequested, noConstraintsRequested, noDialectsRequested)
 import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor(..))
+import Slap.VCDIFF.Types (xdelta3WindowSizeOfBytes)
 import Slap.Create (createPatch)
 import Slap.Status (CreateResult(..), renderSlapError)
 import Slap.FileContents
@@ -59,7 +60,8 @@ crossValTests AllTests getTargets = do
   rowMaybes    <- concat <$> mapM (planCrossValRow getTargets repo) rows
   djwRow       <- planDJWCompressedRow getTargets repo
   appHeaderRow <- planAppHeaderRow getTargets repo
-  pure (namedGroup "crossval" (rowMaybes ++ djwRow ++ appHeaderRow))
+  windowedRow  <- planWindowedRow getTargets repo
+  pure (namedGroup "crossval" (rowMaybes ++ djwRow ++ appHeaderRow ++ windowedRow))
 
 -- | Map a single crossval-spec row to its planned outcome: a runnable
 -- test, or a typed skip. Malformed rows and rows whose @format@ field
@@ -145,6 +147,43 @@ appHeaderRowTest getTargets basePath bootPath =
                 ("VCD_APPHEADER" `isInfixOf` externalRunStdout headerRun)
               assertBool "printhdr shows the header bytes"
                 (headerText `isInfixOf` externalRunStdout headerRun)
+          applyExternal Xdelta3 baseFile patchFile outFile
+          resultBytes <- ByteString.readFile outFile
+          assertEqual "SHA1 mismatch"
+            "a34fb26e1066e464e55b473f0a1f87e9c764a010" (sha1Hex resultBytes)
+
+-- | The multi-window row, planned by hand like the two above:
+-- slap creates with windows far smaller than the target — a real multi-window emission, its LZMA streams
+-- continuing across windows — and the installed xdelta3 must decode the whole run to the same target.
+planWindowedRow :: IO BootstrapTargets -> FilePath -> IO [MaybeTest]
+planWindowedRow getTargets repo =
+  let basePath = repo </> "test/data/kirby-dl2/base.gb"
+      bootPath = repo </> "test/data/kirby-dl2/kirby-dl2-dx.bps"
+  in requireFixture basePath $ \_ ->
+     requireFixture bootPath $ \_ ->
+       requireExternalTool Xdelta3 $ \_ ->
+         pure [WillRun (windowedRowTest getTargets basePath bootPath)]
+
+windowedRowTest :: IO BootstrapTargets -> FilePath -> FilePath -> TestTree
+windowedRowTest getTargets basePath bootPath =
+  testCase "xdelta3/kirby-dl2-dx window-size 128k" $ do
+    bootstrapTargets <- getTargets
+    baseBytes        <- mmapRomFile basePath
+    let targetBytes  = lookupBootstrapTarget bootstrapTargets basePath bootPath
+        windowedMeta = noMetadataRequested
+          { requestedWindowSize = xdelta3WindowSizeOfBytes (128 * 1024) }
+    case createPatch (CreateDifferential CreateXDelta3) Nothing
+           (InputFileContents baseBytes)
+           (OutputFileContents targetBytes)
+           windowedMeta Nothing noConstraintsRequested noDialectsRequested of
+      Left slapError ->
+        assertFailureT ("create failed: " <> renderSlapError slapError)
+      Right (CreateResult patchBytes _) ->
+        withTempFile "slap-xv-patch" $ \patchFile ->
+        withTempFile "slap-xv-base"  $ \baseFile ->
+        withTempFile "slap-xv-out"   $ \outFile -> do
+          ByteString.writeFile patchFile (unPatchFileContents patchBytes)
+          ByteString.writeFile baseFile  baseBytes
           applyExternal Xdelta3 baseFile patchFile outFile
           resultBytes <- ByteString.readFile outFile
           assertEqual "SHA1 mismatch"

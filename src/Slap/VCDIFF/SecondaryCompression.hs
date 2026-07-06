@@ -22,14 +22,15 @@ module Slap.VCDIFF.SecondaryCompression
     -- * The emission paths
   , SectionCompressor
   , sectionCompressorAlgorithm
-  , sectionCompressorCarriage
+  , sectionCompressorKindCarriages
   , encodableSectionCompressor
   , lzmaSectionCompressor
   , djwSectionCompressor
   ) where
 
 import Slap.Binary (getVcdiffVarint, VarintResult(..), putVcdiffVarint)
-import Slap.Compression.Stream (LzmaDecoded(..), lzmaDecompress, lzmaCompress,
+import Slap.Compression.Stream (LzmaDecoded(..), lzmaDecompress,
+                                LzmaSectionStream(..), lzmaCompressSections,
                                 DjwDecoded(..), djwDecompress, djwCompress,
                                 FgkDecoded(..), fgkDecompress)
 import Slap.Measure (Length(..), byteLength, lengthToFileSize, subtractLength,
@@ -290,13 +291,14 @@ handOutDecodedSlices decodedStream contributions =
 ----------------------------------------------------------------------------
 
 -- | A compressor the create path can encode with: the algorithm the patch header declares,
--- and the carriage its sections ride out on. The two travel together because the header's
--- declaration and the sections' encoding must name the same algorithm.
+-- and the carriage run one kind's sections ride out on — one plain section per window in,
+-- one carriage per window out, the write-side mirror of the decode paths above.
+-- The two travel together because the header's declaration and the sections' encoding must name the same algorithm.
 -- The constructor stays private and only 'encodableSectionCompressor' mints values,
 -- so an emission compressing with FGK is unrepresentable, not merely refused.
 data SectionCompressor = SectionCompressor
-  { sectionCompressorAlgorithm :: !XDelta3SecondaryCompressor
-  , sectionCompressorCarriage  :: ByteString -> SectionCarriage
+  { sectionCompressorAlgorithm     :: !XDelta3SecondaryCompressor
+  , sectionCompressorKindCarriages :: [ByteString] -> [SectionCarriage]
   }
 
 -- | The compressors slap can encode with today: LZMA and DJW.
@@ -308,12 +310,51 @@ encodableSectionCompressor SecondaryDJW  = Just djwSectionCompressor
 encodableSectionCompressor SecondaryFGK  = Nothing
 
 lzmaSectionCompressor :: SectionCompressor
-lzmaSectionCompressor = SectionCompressor SecondaryLZMA (carriageKeepingSmaller lzmaCompress)
+lzmaSectionCompressor = SectionCompressor SecondaryLZMA lzmaKindCarriages
 
+-- | DJW sections stand alone (each carries its own tables and bit stream), so the kind's carriage run is the per-section choice, window by window.
 djwSectionCompressor :: SectionCompressor
-djwSectionCompressor = SectionCompressor SecondaryDJW (carriageKeepingSmaller djwCompress)
+djwSectionCompressor = SectionCompressor SecondaryDJW (map (carriageKeepingSmaller djwCompress))
 
--- | The carriage one section rides out under a compressor: the compressed piece — its
+-- | The carriages one kind's sections ride out on under LZMA: the participating sections compressed as one continuous stream
+-- ('Slap.Compression.Stream.lzmaCompressSections'), each window's piece framed behind its decompressed-size varint.
+-- A section participates only while its framed piece is smaller than its plain bytes;
+-- when one stops paying it drops to plain and the remaining participants re-encode,
+-- because a later piece leaned on the dropped section's dictionary and the stream must be rebuilt without it.
+-- Each drop shrinks the participant run, so the settling terminates — and a section that does not pay is rare enough that the first pass is normally the only pass.
+-- An empty section never participates: nothing compresses to nothing, and the read side refuses a compressed section declaring zero output.
+lzmaKindCarriages :: [ByteString] -> [SectionCarriage]
+lzmaKindCarriages plainSections =
+    settleParticipants
+      [ numbered | numbered@(_, sectionBytes) <- numberedSections
+                 , not (ByteString.null sectionBytes) ]
+  where
+    numberedSections = zip [0 :: Int ..] plainSections
+
+    settleParticipants :: [(Int, ByteString)] -> [SectionCarriage]
+    settleParticipants [] = map CarriedPlain plainSections
+    settleParticipants participants =
+      let framedByWindow = framedPiecesFor participants
+          stillPaying    = [ numbered
+                           | numbered@(windowIndex, plainBytes) <- participants
+                           , Just framed <- [lookup windowIndex framedByWindow]
+                           , ByteString.length framed < ByteString.length plainBytes ]
+      in if map fst stillPaying == map fst participants
+           then [ maybe (CarriedPlain plainBytes) CarriedCompressed (lookup windowIndex framedByWindow)
+                | (windowIndex, plainBytes) <- numberedSections ]
+           else settleParticipants stillPaying
+
+    framedPiecesFor :: [(Int, ByteString)] -> [(Int, ByteString)]
+    framedPiecesFor participants =
+      let sectionStream = lzmaCompressSections (map snd participants)
+          pieceBounds   = zip (0 : lzmaPieceEndOffsets sectionStream) (lzmaPieceEndOffsets sectionStream)
+          pieceAt (pieceStart, pieceEnd) =
+            ByteString.take (pieceEnd - pieceStart)
+                            (ByteString.drop pieceStart (lzmaStreamBytes sectionStream))
+      in [ (windowIndex, framedCompressedSection (byteLength plainBytes) (pieceAt bounds))
+         | ((windowIndex, plainBytes), bounds) <- zip participants pieceBounds ]
+
+-- | The carriage one section rides out under a per-section compressor: the compressed piece — its
 -- decompressed-size varint, then the compressor's stream — when that is smaller than the
 -- plain bytes, the plain bytes otherwise (docs/vcdiff/xdelta3/questions.md: a section is kept compressed only where it shrinks).
 -- The write-side partner of 'readContribution', producing exactly the framing it peels;
@@ -327,7 +368,11 @@ carriageKeepingSmaller compress plainSection
       CarriedCompressed compressedSection
   | otherwise = CarriedPlain plainSection
   where
-    compressedSection = declaredOutputSizeVarint <> compress plainSection
-    declaredOutputSizeVarint =
-      LazyByteString.toStrict
-        (toLazyByteString (putVcdiffVarint (fromIntegral (unLength (byteLength plainSection)))))
+    compressedSection = framedCompressedSection (byteLength plainSection) (compress plainSection)
+
+-- | A compressed section's wire bytes: the decompressed-size varint, then the compressor's stream piece — exactly the framing 'readContribution' peels.
+framedCompressedSection :: Length -> ByteString -> ByteString
+framedCompressedSection declaredOutputLength streamPiece =
+  LazyByteString.toStrict
+    (toLazyByteString (putVcdiffVarint (fromIntegral (unLength declaredOutputLength))))
+    <> streamPiece
