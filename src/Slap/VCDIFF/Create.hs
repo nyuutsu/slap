@@ -10,7 +10,7 @@
 --
 -- The path is cover to instructions to resolved instructions to wire bytes, source-free, under the active code table, window by window:
 -- each segment becomes an instruction ('coverToInstructions'),
--- a windowed emission's segment tightens to the span its copies read ('tightenToUsedSpan'),
+-- the declared segment tightens to the span the copies actually read ('tightenToUsedSpan'),
 -- each COPY's address is resolved once against the cache ('resolveInstructionAddresses'),
 -- and the resolved stream packs into the densest opcodes the table offers ('packInstructions').
 -- The xdelta3 arc slices the target by the requested 'EmissionWindowSize'
@@ -438,7 +438,7 @@ data WindowSourcing = SelfContained | DrawsOn !SegmentOrigin !SourceSegmentSpan
   deriving (Eq, Show)
 
 -- | The span a window declares as its segment: where it starts in its origin's space, and how far it runs.
--- The RFC arc's single window declares the whole source; a windowed emission declares the span its copies actually read ('tightenToUsedSpan').
+-- Always the span the window's copies actually read ('tightenToUsedSpan'), never the whole space they could have.
 data SourceSegmentSpan = SourceSegmentSpan
   { segmentSpanPosition :: !Offset
   , segmentSpanLength   :: !Length
@@ -480,37 +480,7 @@ data WindowPlan = WindowPlan
   , planSourcing :: !WindowSourcing
   }
 
--- | Plan a cover's single whole-target window against a source under a cache geometry:
--- select the instruction stream's COPY addresses against the given 'AddressCacheConfig', and decide how the window sources its copies —
--- any COPY and the whole source is the declared segment, none and the window is self-contained.
--- The write head starts at the declared segment's length, which has the whole source's for a source-drawing window here.
---
--- The config is the one the window will declare:
--- its addresses are resolved against the very cache the decoder rebuilds from the table data's cache sizes,
--- so resolve and declaration cannot drift (see 'assembleCustomTablePatch').
--- 'emitDefaultPatch' plans under 'defaultAddressCacheConfig'; 'grownCacheCandidate' plans under each config it probes.
--- The xdelta3 windows plan through 'planTightenedWindow' instead, which narrows the declared segment first.
-planWindow :: AddressCacheConfig -> ByteString -> ByteString -> Cover -> WindowPlan
-planWindow config source target cover = WindowPlan
-  { planResolved = resolveInstructionAddresses config initialHere instructions
-  , planSourcing = sourcing
-  }
-  where
-    instructions = coverToInstructions target cover
-    sourcing
-      | any instructionCopies instructions =
-          DrawsOn FromSourceFile (SourceSegmentSpan (Offset 0) (byteLength source))
-      | otherwise = SelfContained
-    initialHere = lengthToOffset (sourcingSegmentLength sourcing)
-
--- | Whether an instruction copies — the fact a window's sourcing is read off. Total over the three instruction kinds.
-instructionCopies :: VCDIFFInstruction -> Bool
-instructionCopies = \case
-  Copy _ _ -> True
-  Add _    -> False
-  Run _ _  -> False
-
--- | Plan one windowed-emission window: instructions from its cover, the declared segment tightened to the span those instructions read,
+-- | Plan one emitted window: instructions from its cover, the declared segment tightened to the span those instructions read,
 -- addresses rebased to match, then COPY modes resolved against the cache the declared segment implies —
 -- the write head starting at the declared span's length, exactly where the decoder's will.
 -- The 'SegmentOrigin' names the side a surviving segment is cut from, and with it the external space the cover addressed:
@@ -672,7 +642,7 @@ emitDefaultPatch source target cover =
   where
     plannedWindow =
       layoutPlannedWindow (denseOpcodes Table.defaultCodeTable) target
-        (planWindow defaultAddressCacheConfig source target cover)
+        (planTightenedWindow defaultAddressCacheConfig FromSourceFile (byteLength source) target cover)
 
 -- | Emit an xdelta3 patch: the target sliced into 'EmissionWindowSize' windows and each covered against the source
 -- ('Slap.VCDIFF.FFI.vcdiffWindowedCovers' — a window's copies reach the source and its own slice, never an earlier window's output),
@@ -905,7 +875,7 @@ candidatePatchForConfig :: ByteString -> ByteString -> Cover -> AddressCacheConf
 candidatePatchForConfig source target cover config =
   fmap assembleUnderDesignedTable (donorMints [planResolved plan])
   where
-    plan = planWindow config source target cover
+    plan = planTightenedWindow config FromSourceFile (byteLength source) target cover
     assembleUnderDesignedTable assignments =
       assembleCustomTablePatch config target plan
         (Table.codeTableWithEntriesReplaced Table.defaultCodeTable assignments)
@@ -973,7 +943,7 @@ maxCacheDimension = 255
 -- the header declares VCD_CODETABLE and carries the framed table data ('framedCustomTableData'),
 -- and the window is the cover packed under the candidate,
 -- so the table the decoder rebuilds is exactly the one this window was packed against.
--- @config@ is the geometry the window's addresses were resolved under ('planWindow'),
+-- @config@ is the geometry the window's addresses were resolved under ('planTightenedWindow'),
 -- so the cache the decoder rebuilds matches the cache the encoder selected modes against.
 assembleCustomTablePatch
   :: AddressCacheConfig -> ByteString -> WindowPlan -> Table.CodeTable -> ByteString
