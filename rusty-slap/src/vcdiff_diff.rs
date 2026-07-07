@@ -30,13 +30,19 @@
 use crate::vcdiff_hash_chain::{HashChainMatcher, ProducedTargetMatcher};
 
 /// A match the engine stands behind at one target position: where it
-/// begins in the superstring `U = source ++ target` and how long it
-/// runs. The parse's query-answer vocabulary, owned here by the asker;
-/// the engine answers in it.
+/// begins in the superstring `U = source ++ target`, how long it runs,
+/// and how far back into the pending literal run it reaches. The
+/// parse's query-answer vocabulary, owned here by the asker; the
+/// engine answers in it.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub struct Match {
     pub superstring_offset: usize,
     pub length: usize,
+    /// How many bytes before the queried position the match begins:
+    /// the engines extend an accepted match backward while the bytes
+    /// before it agree, and never past the query's literal floor —
+    /// everything earlier is already covered.
+    pub starts_earlier_by: usize,
 }
 
 /// Whether a cover segment copies earlier bytes or carries literal
@@ -95,7 +101,7 @@ pub fn vcdiff_windowed_covers<'pair>(
         .chunks(window_length)
         .map(|window| {
             matcher.begin_window(window);
-            greedy_cover(window.len(), |position| matcher.match_at(position))
+            greedy_cover(window.len(), |position, literal_floor| matcher.match_at(position, literal_floor))
         })
         .collect()
 }
@@ -127,7 +133,7 @@ pub fn vcdiff_produced_target_covers(
         .map(|window| {
             matcher.begin_window(window_base, window.len());
             window_base += window.len();
-            greedy_cover(window.len(), |position| matcher.match_at(position))
+            greedy_cover(window.len(), |position, literal_floor| matcher.match_at(position, literal_floor))
         })
         .collect()
 }
@@ -138,24 +144,27 @@ pub fn vcdiff_produced_target_covers(
 /// owns the whole worth-taking judgment — the parse decides only the
 /// segmentation that follows from its answers, so a different engine
 /// (the tests drive hand-shaped ones) changes what is found, never how
-/// a cover is laid down.
+/// a cover is laid down. The query carries the pending literal's start
+/// so an offered match may begin inside the run ('starts_earlier_by');
+/// the literal then flushes shorter, its tail absorbed into the copy.
 fn greedy_cover(
     target_length: usize,
-    mut worthwhile_match_at: impl FnMut(usize) -> Option<Match>,
+    mut worthwhile_match_at: impl FnMut(usize, usize) -> Option<Match>,
 ) -> Vec<CoverSegment> {
     let mut segments = Vec::new();
     let mut literal_start = 0; // start, in the target, of the pending literal run
     let mut target_position = 0;
     while target_position < target_length {
-        match worthwhile_match_at(target_position) {
+        match worthwhile_match_at(target_position, literal_start) {
             Some(taken) => {
-                flush_literal(&mut segments, literal_start, target_position);
+                let copy_start = target_position - taken.starts_earlier_by;
+                flush_literal(&mut segments, literal_start, copy_start);
                 segments.push(CoverSegment {
                     kind: SegmentKind::Copy,
                     offset: taken.superstring_offset as u64,
                     length: taken.length as u64,
                 });
-                target_position += taken.length;
+                target_position = copy_start + taken.length;
                 literal_start = target_position;
             }
             None => target_position += 1,

@@ -148,11 +148,13 @@ impl<'pair> HashChainMatcher<'pair> {
 
     /// A match at `window[position..]` worth its wire cost, or `None`
     /// when literals are the better spend. The parse takes every match
-    /// returned; the pricing lives here.
-    pub fn match_at(&mut self, position: usize) -> Option<Match> {
+    /// returned; the pricing lives here. `literal_floor` is where the
+    /// pending literal run began — the accepted match may reach back
+    /// that far ('Match::starts_earlier_by'), never further.
+    pub fn match_at(&mut self, position: usize, literal_floor: usize) -> Option<Match> {
         match &mut self.engine {
-            EngineWidth::Narrow(engine) => engine.match_at(position),
-            EngineWidth::Wide(engine) => engine.match_at(position),
+            EngineWidth::Narrow(engine) => engine.match_at(position, literal_floor),
+            EngineWidth::Wide(engine) => engine.match_at(position, literal_floor),
         }
     }
 }
@@ -206,10 +208,10 @@ impl<'target> ProducedTargetMatcher<'target> {
     /// A match at `window[position..]` worth its wire cost, or `None`
     /// when literals are the better spend — [`HashChainMatcher::match_at`]'s
     /// contract, answered from the produced target.
-    pub fn match_at(&mut self, position: usize) -> Option<Match> {
+    pub fn match_at(&mut self, position: usize, literal_floor: usize) -> Option<Match> {
         match &mut self.engine {
-            ProducedTargetWidth::Narrow(engine) => engine.match_at(position),
-            ProducedTargetWidth::Wide(engine) => engine.match_at(position),
+            ProducedTargetWidth::Narrow(engine) => engine.match_at(position, literal_floor),
+            ProducedTargetWidth::Wide(engine) => engine.match_at(position, literal_floor),
         }
     }
 }
@@ -354,7 +356,7 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
         self.pursuit = None;
     }
 
-    fn match_at(&mut self, position: usize) -> Option<Match> {
+    fn match_at(&mut self, position: usize, literal_floor: usize) -> Option<Match> {
         self.index_settled_window_anchors(position);
         if self.window.len() - position < PURSUIT_MATCH_FLOOR {
             return None;
@@ -363,16 +365,54 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
         let offer = choose_offer(pursued, || self.probe(position), || {
             lockstep_hold_net(pursued, self.pursue(position + 1))
         });
-        offer.map(|found| self.adopt(found, position))
+        offer.map(|found| {
+            let reaching = self.extend_backward(found, position, literal_floor);
+            self.adopt(reaching, position - reaching.starts_earlier_by)
+        })
     }
 
     /// Record an accepted match as the new pursuit base and hand it back.
-    fn adopt(&mut self, found: Match, position: usize) -> Match {
+    /// The base is the match's own start, so a backward-reaching match
+    /// records the same alignment its forward continuation will pursue.
+    fn adopt(&mut self, found: Match, match_start_position: usize) -> Match {
         self.pursuit = Some(Pursuit {
             u_offset: found.superstring_offset,
-            window_position: position,
+            window_position: match_start_position,
         });
         found
+    }
+
+    /// Reach an accepted match backward into the pending literal run:
+    /// while the byte before the match agrees with the byte before the
+    /// query, both step back, and the copy absorbs what the literal
+    /// would have carried. Bounded by the literal floor (everything
+    /// earlier is already covered), and by the candidate's own region —
+    /// a source-anchored match stops at the source's start, a
+    /// window-anchored one at the window's, since a copy may not cross
+    /// the region seam.
+    fn extend_backward(&self, found: Match, position: usize, literal_floor: usize) -> Match {
+        let candidate = found.superstring_offset;
+        let candidate_floor = if candidate < self.source.len() { 0 } else { self.source.len() };
+        let limit = (position - literal_floor).min(candidate - candidate_floor);
+        let mut backset = 0;
+        while backset < limit
+            && self.byte_in_superstring(candidate - backset - 1) == self.window[position - backset - 1]
+        {
+            backset += 1;
+        }
+        Match {
+            superstring_offset: candidate - backset,
+            length: found.length + backset,
+            starts_earlier_by: backset,
+        }
+    }
+
+    fn byte_in_superstring(&self, u_offset: usize) -> u8 {
+        if u_offset < self.source.len() {
+            self.source[u_offset]
+        } else {
+            self.window[u_offset - self.source.len()]
+        }
     }
 
     /// Feed the table every window tile the parse has settled: tile
@@ -404,7 +444,7 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
         }
         let length = self.extend(candidate, position);
         if length >= PURSUIT_MATCH_FLOOR {
-            Some(Match { superstring_offset: candidate, length })
+            Some(Match { superstring_offset: candidate, length, starts_earlier_by: 0 })
         } else {
             None
         }
@@ -527,7 +567,7 @@ impl<'target, Cell: ChainCell> ProducedTargetEngine<'target, Cell> {
         self.pursuit = None;
     }
 
-    fn match_at(&mut self, position: usize) -> Option<Match> {
+    fn match_at(&mut self, position: usize, literal_floor: usize) -> Option<Match> {
         let write_head = self.window_base + position;
         self.index_settled_anchors(write_head);
         if self.window_end - write_head < PURSUIT_MATCH_FLOOR {
@@ -537,16 +577,44 @@ impl<'target, Cell: ChainCell> ProducedTargetEngine<'target, Cell> {
         let offer = choose_offer(pursued, || self.probe(position), || {
             lockstep_hold_net(pursued, self.pursue(position + 1))
         });
-        offer.map(|found| self.adopt(found, position))
+        offer.map(|found| {
+            let reaching = self.extend_backward(found, position, literal_floor);
+            self.adopt(reaching, position - reaching.starts_earlier_by)
+        })
     }
 
     /// Record an accepted match as the new pursuit base and hand it back.
-    fn adopt(&mut self, found: Match, position: usize) -> Match {
+    /// The base is the match's own start, so a backward-reaching match
+    /// records the same alignment its forward continuation will pursue.
+    fn adopt(&mut self, found: Match, match_start_position: usize) -> Match {
         self.pursuit = Some(Pursuit {
             u_offset: found.superstring_offset,
-            window_position: position,
+            window_position: match_start_position,
         });
         found
+    }
+
+    /// Reach an accepted match backward into the pending literal run, as
+    /// [`Engine::extend_backward`] — the region seam here is the window
+    /// base: a prior-target match stops at the target's start, a
+    /// self-referential one at the base, since a copy that starts in the
+    /// segment may not cross into the window's own output or the reverse.
+    fn extend_backward(&self, found: Match, position: usize, literal_floor: usize) -> Match {
+        let candidate = found.superstring_offset;
+        let candidate_floor = if candidate < self.window_base { 0 } else { self.window_base };
+        let limit = (position - literal_floor).min(candidate - candidate_floor);
+        let write_head = self.window_base + position;
+        let mut backset = 0;
+        while backset < limit
+            && self.target[candidate - backset - 1] == self.target[write_head - backset - 1]
+        {
+            backset += 1;
+        }
+        Match {
+            superstring_offset: candidate - backset,
+            length: found.length + backset,
+            starts_earlier_by: backset,
+        }
     }
 
     /// Feed the table every tile the parse has settled: tile starts
@@ -576,7 +644,7 @@ impl<'target, Cell: ChainCell> ProducedTargetEngine<'target, Cell> {
         let candidate = pursuit.u_offset + (position - pursuit.window_position);
         let length = self.extend(candidate, position);
         if length >= PURSUIT_MATCH_FLOOR {
-            Some(Match { superstring_offset: candidate, length })
+            Some(Match { superstring_offset: candidate, length, starts_earlier_by: 0 })
         } else {
             None
         }
@@ -685,7 +753,7 @@ fn fold_priced_candidate(
     if length >= cost + ADDRESS_NOISE_MARGIN {
         let net = length as i64 - cost as i64;
         if best.map_or(true, |(_, best_net)| net > best_net) {
-            return Some((Match { superstring_offset: candidate, length }, net));
+            return Some((Match { superstring_offset: candidate, length, starts_earlier_by: 0 }, net));
         }
     }
     best
@@ -799,7 +867,7 @@ mod tests {
         let mut target = pseudo_random_bytes(0x22, 1024);
         target[500..504].copy_from_slice(&source[2000..2004]);
         let mut matcher = matcher_over(&source, &target);
-        assert_eq!(matcher.match_at(500), None);
+        assert_eq!(matcher.match_at(500, 0), None);
     }
 
     #[test]
@@ -808,7 +876,7 @@ mod tests {
         let mut target = pseudo_random_bytes(0x32, 1024);
         target[500..564].copy_from_slice(&source[2000..2064]);
         let mut matcher = matcher_over(&source, &target);
-        let found = matcher.match_at(500).expect("a 64-byte relocation pays for its address");
+        let found = matcher.match_at(500, 0).expect("a 64-byte relocation pays for its address");
         assert_eq!(found.superstring_offset, 2000);
         assert!(found.length >= 64);
     }
@@ -823,13 +891,13 @@ mod tests {
         target[100] ^= 0x5a;
 
         let mut cold = matcher_over(&source, &target);
-        assert_eq!(cold.match_at(101), None);
+        assert_eq!(cold.match_at(101, 0), None);
 
         let mut warm = matcher_over(&source, &target);
-        let opening = warm.match_at(0).expect("the unedited prefix matches");
+        let opening = warm.match_at(0, 0).expect("the unedited prefix matches");
         assert_eq!((opening.superstring_offset, opening.length), (0, 100));
-        assert_eq!(warm.match_at(100), None);
-        let tail = warm.match_at(101).expect("pursuit continues past the edit");
+        assert_eq!(warm.match_at(100, 100), None);
+        let tail = warm.match_at(101, 100).expect("pursuit continues past the edit");
         assert_eq!((tail.superstring_offset, tail.length), (101, 6));
     }
 
@@ -838,9 +906,9 @@ mod tests {
         let target: Vec<u8> = b"abcabcabcabcabcabc".to_vec();
         let mut matcher = matcher_over(&[], &target);
         for position in 0..3 {
-            assert_eq!(matcher.match_at(position), None, "nothing earlier to copy at {position}");
+            assert_eq!(matcher.match_at(position, 0), None, "nothing earlier to copy at {position}");
         }
-        let found = matcher.match_at(3).expect("the period-3 run recurs from the start");
+        let found = matcher.match_at(3, 0).expect("the period-3 run recurs from the start");
         assert_eq!(found.superstring_offset, 0);
         assert_eq!(found.length, 15);
     }
@@ -857,12 +925,12 @@ mod tests {
         let mut matcher = HashChainMatcher::build(&[], window.len());
 
         matcher.begin_window(&window);
-        let within = matcher.match_at(8).expect("the repeat is visible within one window");
+        let within = matcher.match_at(8, 0).expect("the repeat is visible within one window");
         assert_eq!((within.superstring_offset, within.length), (0, 8));
 
         matcher.begin_window(&window);
         for warmup in 0..3 {
-            assert_eq!(matcher.match_at(warmup), None, "fresh session at {warmup}");
+            assert_eq!(matcher.match_at(warmup, 0), None, "fresh session at {warmup}");
         }
     }
 
@@ -878,10 +946,10 @@ mod tests {
         let mut matcher = ProducedTargetMatcher::build(&target);
 
         matcher.begin_window(0, 8);
-        assert_eq!(matcher.match_at(0), None, "window 0 has nothing settled to copy");
+        assert_eq!(matcher.match_at(0, 0), None, "window 0 has nothing settled to copy");
 
         matcher.begin_window(8, 8);
-        let across = matcher.match_at(0).expect("window 1 copies window 0 whole");
+        let across = matcher.match_at(0, 0).expect("window 1 copies window 0 whole");
         assert_eq!((across.superstring_offset, across.length), (0, 8));
     }
 
@@ -899,8 +967,12 @@ mod tests {
         let mut matcher = ProducedTargetMatcher::build(&target);
         matcher.begin_window(0, 36);
         matcher.begin_window(36, 48);
-        let capped = matcher.match_at(4).expect("the run before the base is offered");
-        assert_eq!((capped.superstring_offset, capped.length), (16, 20));
+        let capped = matcher.match_at(4, 0).expect("the run before the base is offered");
+        assert_eq!(
+            (capped.superstring_offset, capped.length, capped.starts_earlier_by),
+            (12, 24, 4),
+            "backward reach absorbs the four literal bytes, and the copy still ends at the base",
+        );
     }
 
     #[test]
@@ -909,9 +981,9 @@ mod tests {
         let mut matcher = ProducedTargetMatcher::build(&target);
         matcher.begin_window(0, target.len());
         for position in 0..3 {
-            assert_eq!(matcher.match_at(position), None, "nothing earlier to copy at {position}");
+            assert_eq!(matcher.match_at(position, 0), None, "nothing earlier to copy at {position}");
         }
-        let found = matcher.match_at(3).expect("the period-3 run recurs from the start");
+        let found = matcher.match_at(3, 0).expect("the period-3 run recurs from the start");
         assert_eq!(found.superstring_offset, 0);
         assert_eq!(found.length, 15);
     }
