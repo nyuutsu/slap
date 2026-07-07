@@ -4,3 +4,6 @@
 [submodule "docs"]
 	path = docs
 	url = git@github.com:nyuutsu/slap-format-documentation.git
+[submodule "rusty-slap/vendor/lzma-rust2"]
+	path = rusty-slap/vendor/lzma-rust2
+	url = git@github.com:nyuutsu/lzma-rust2.git

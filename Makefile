@@ -10,7 +10,13 @@ export RUSTFLAGS += -C target-cpu=native
 
 all: rusty-slap cabal
 
+# The lzma-rust2 fork rides as a submodule; a fresh clone needs it before
+# cargo can see the path dependency. Only initialize when it's absent, so
+# a checkout you're working in never gets yanked back to the pinned commit.
 rusty-slap:
+	@if [ ! -f rusty-slap/vendor/lzma-rust2/Cargo.toml ]; then \
+	  git submodule update --init rusty-slap/vendor/lzma-rust2; \
+	fi
 	cd rusty-slap && cargo build --release
 
 # Point cabal at the rusty-slap staticlib via a gitignored

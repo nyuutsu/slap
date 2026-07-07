@@ -104,8 +104,6 @@ dependencies = [
 [[package]]
 name = "lzma-rust2"
 version = "0.16.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce716bf1a316f47a280fc76295f6495b5bea4752bca01c3b3885e101b1c23c02"
 
 [[package]]
 name = "memchr"
