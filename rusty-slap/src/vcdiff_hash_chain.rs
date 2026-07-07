@@ -105,6 +105,13 @@ const ANCHOR_LENGTH: usize = 8;
 /// one bucket — can demand per position.
 const PROBE_CAP: usize = 32;
 
+/// How many source-tile inserts hash ahead of their table writes at
+/// build time. An insert's one cache-hostile touch is its bucket head;
+/// hashing a batch first and prefetching those heads lets the misses
+/// overlap instead of serializing. Behavior-neutral: the inserts land
+/// in the same order either way.
+const INSERT_BATCH: usize = 64;
+
 // ── Public surface ───────────────────────────────────────────────────
 
 /// A worth-taking-match index over `U = source ++ current window`,
@@ -312,18 +319,9 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
         let window_tile_count = tile_count_of(largest_window_length);
         let source_bucket_bits = bucket_bits_for(source_tile_count);
         let window_bucket_bits = bucket_bits_for(window_tile_count);
-        let mut engine = Engine {
-            source,
-            window: &[],
-            source_bucket_heads: vec![Cell::CHAIN_END; 1 << source_bucket_bits],
-            source_chain_links: vec![Cell::CHAIN_END; source_tile_count],
-            source_hash_shift: u64::BITS - source_bucket_bits,
-            window_bucket_heads: vec![Cell::CHAIN_END; 1 << window_bucket_bits],
-            window_chain_links: vec![Cell::CHAIN_END; window_tile_count],
-            window_hash_shift: u64::BITS - window_bucket_bits,
-            next_window_anchor: 0,
-            pursuit: None,
-        };
+        let source_hash_shift = u64::BITS - source_bucket_bits;
+        let mut source_bucket_heads = vec![Cell::CHAIN_END; 1 << source_bucket_bits];
+        let mut source_chain_links = vec![Cell::CHAIN_END; source_tile_count];
         // Tiles never span the source's end ('tile_count_of' counts only
         // whole ones): a copy starting in the source segment may not
         // cross it (core invariant 2), so a spanning tile could only
@@ -334,15 +332,40 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
         // repeated content (a padding run hashing every tile into one
         // bucket) those are the run-start candidates with the longest
         // reach and the cheapest SELF addresses, and the probe cap then
-        // trims the tail of the run, not its head.
-        for tile_ordinal in (0..source_tile_count).rev() {
-            let tile_start = tile_ordinal * ANCHOR_LENGTH;
-            engine.insert_source_anchor(
-                tile_ordinal,
-                &source[tile_start..tile_start + ANCHOR_LENGTH],
-            );
+        // trims the tail of the run, not its head. Inserts run a batch
+        // at a time (INSERT_BATCH): hash the batch, prefetch its bucket
+        // heads, then write.
+        let mut batch_buckets = [0usize; INSERT_BATCH];
+        let mut unfiled = source_tile_count;
+        while unfiled > 0 {
+            let batch = INSERT_BATCH.min(unfiled);
+            for slot in 0..batch {
+                let tile_start = (unfiled - 1 - slot) * ANCHOR_LENGTH;
+                let bucket =
+                    bucket_for(&source[tile_start..tile_start + ANCHOR_LENGTH], source_hash_shift);
+                batch_buckets[slot] = bucket;
+                prefetch_for_write(&source_bucket_heads[bucket]);
+            }
+            for slot in 0..batch {
+                let tile_ordinal = unfiled - 1 - slot;
+                let bucket = batch_buckets[slot];
+                source_chain_links[tile_ordinal] = source_bucket_heads[bucket];
+                source_bucket_heads[bucket] = Cell::from_index(tile_ordinal);
+            }
+            unfiled -= batch;
         }
-        engine
+        Engine {
+            source,
+            window: &[],
+            source_bucket_heads,
+            source_chain_links,
+            source_hash_shift,
+            window_bucket_heads: vec![Cell::CHAIN_END; 1 << window_bucket_bits],
+            window_chain_links: vec![Cell::CHAIN_END; window_tile_count],
+            window_hash_shift: u64::BITS - window_bucket_bits,
+            next_window_anchor: 0,
+            pursuit: None,
+        }
     }
 
     fn begin_window(&mut self, window: &'pair [u8]) {
@@ -505,12 +528,6 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
         } else {
             common_prefix_length(&self.window[candidate - self.source.len()..], query)
         }
-    }
-
-    fn insert_source_anchor(&mut self, tile_ordinal: usize, tile_bytes: &[u8]) {
-        let bucket = bucket_for(tile_bytes, self.source_hash_shift);
-        self.source_chain_links[tile_ordinal] = self.source_bucket_heads[bucket];
-        self.source_bucket_heads[bucket] = Cell::from_index(tile_ordinal);
     }
 
     fn insert_window_anchor(&mut self, tile_ordinal: usize, tile_bytes: &[u8]) {
@@ -757,6 +774,19 @@ fn fold_priced_candidate(
         }
     }
     best
+}
+
+/// Hint the cache that a bucket head is about to be read and written.
+/// Advice only, and a no-op where the intrinsic is unavailable, so
+/// behavior never depends on it.
+#[inline(always)]
+fn prefetch_for_write<Cell>(head: *const Cell) {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        core::arch::x86_64::_mm_prefetch(head as *const i8, core::arch::x86_64::_MM_HINT_T0);
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    let _ = head;
 }
 
 /// Fold an anchor window into one register and Fibonacci-hash it down

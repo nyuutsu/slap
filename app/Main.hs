@@ -95,7 +95,8 @@ import Control.Monad (when, forM_)
 import System.Directory (copyFile, doesFileExist)
 import System.Exit (exitSuccess)
 import System.FilePath (dropExtension, replaceExtension, takeBaseName, takeExtension)
-import System.IO (hSetEncoding, stderr, stdout)
+import System.IO (IOMode(ReadMode), hFileSize, hSetEncoding, stderr, stdout, withFile)
+import System.IO.MMap (mmapFileByteString)
 import System.IO.Error (isDoesNotExistError, ioeGetErrorString)
 import GHC.IO.Encoding (setFileSystemEncoding, setLocaleEncoding, utf8)
 import GHC.IO.Encoding.UTF8 (mkUTF8)
@@ -130,14 +131,29 @@ main = do
 
 -- | Read a user-supplied input file, turning its two interesting IO failure modes into typed 'SlapError' values on slap's normal error channel:
 -- the path is absent ('MissingInputFile'), or present but unopenable ('UnreadableInputFile').
+-- The bytes arrive memory-mapped, so a large input costs address space and page cache rather than heap,
+-- paged in as slap touches it.
+-- The in-place apply and undo overwrite the very file mapped here; that is sound because each writes
+-- only a fully materialized output and reads nothing from the input afterwards —
+-- 'applyAndWriteTo' and 'undoAndWriteTo' own that ordering.
 readInputFile :: FilePath -> IO ByteString
 readInputFile path = do
-  result <- try (ByteString.readFile path)
+  result <- try (mapWholeFile path)
   case result of
     Right fileBytes -> pure fileBytes
     Left ioErr
       | isDoesNotExistError ioErr -> bailError (MissingInputFile path)
       | otherwise                 -> bailError (UnreadableInputFile path (ioeGetErrorString ioErr))
+
+-- | Map a whole file as an immutable 'ByteString'.
+-- An empty file skips the map — there is no zero-length mapping — and reads as the empty 'ByteString' it is;
+-- the size probe also surfaces the not-a-readable-file failures ('readInputFile' types them) before any mapping happens.
+mapWholeFile :: FilePath -> IO ByteString
+mapWholeFile path = do
+  byteCount <- withFile path ReadMode hFileSize
+  if byteCount == 0
+    then pure ByteString.empty
+    else mmapFileByteString path Nothing
 
 -- | Read a file, transparently unwrapping single-entry archives.
 readUnwrap :: FilePath -> IO ByteString
