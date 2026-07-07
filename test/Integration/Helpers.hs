@@ -1,8 +1,6 @@
 module Integration.Helpers
   ( -- * Test tier
     Tier(..)
-  , isHeavyPath
-  , isHeavySuiteName
   , restrictToTier
   , onlyAtFull
     -- * ROM access (mmap-backed, kernel page cache only)
@@ -81,24 +79,11 @@ import qualified Data.Text as Text
 -- (add a constructor, update 'restrictToTier' and 'onlyAtFull').
 data Tier = AllTests deriving (Eq, Show)
 
--- | True if @path@ refers to one of the heavy ROMs the integration suite
--- knows about: stadium2 (64 MB N64) or paper-mario (40 MB N64). Used as
--- the row-/case-level filter for the 'Quick' tier across the spec-driven
--- test groups (create, convert, metadata, undo, bootstrap collection).
-isHeavyPath :: FilePath -> Bool
-isHeavyPath path = "stadium2" `isInfixOf` path || "paper-mario" `isInfixOf` path
-
-isHeavySuiteName :: String -> Bool
-isHeavySuiteName suiteFileName =
-     suiteFileName == "stadium2-fair.suite"
-  || suiteFileName == "stadium2-size.suite"
-  || suiteFileName == "papermario-pmmq.suite"
-
--- | Filter entries by tier. With only 'AllTests' today, this is the identity
--- on the list — every entry is included. The signature and call sites are
--- preserved so that re-introducing a filtering tier is a one-line change here.
-restrictToTier :: Tier -> (a -> Bool) -> [a] -> [a]
-restrictToTier AllTests _entryIsHeavy items = items
+-- | Filter entries by tier. With only 'AllTests' today, this is the identity on the list — every entry is included.
+-- Call sites are preserved so that re-introducing a filtering tier is a local change here
+-- (a new constructor decides its own criterion).
+restrictToTier :: Tier -> [a] -> [a]
+restrictToTier AllTests items = items
 
 -- | Extras that contribute only at the heaviest tier. With only 'AllTests'
 -- today, this always includes everything. Call sites are preserved so that

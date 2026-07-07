@@ -5,7 +5,6 @@ module Integration.Apply (applyTests) where
 import Integration.Helpers (assertFailureT)
 import Integration.Helpers
   ( Tier
-  , isHeavySuiteName
   , restrictToTier
   , repoDir
   , parseSuiteFile
@@ -47,7 +46,7 @@ applyTests tier = do
   suiteFiles <- sort . filter (\fileName -> takeExtension fileName == ".suite")
                 <$> listDirectory suitesDir
   perSuiteOutcomes <- mapM (planSuite repo suitesDir)
-                           (restrictToTier tier isHeavySuiteName suiteFiles)
+                           (restrictToTier tier suiteFiles)
   pure (namedGroup "apply" (concat perSuiteOutcomes))
 
 -- | Plan a single suite. Returns either one 'WillRun' wrapping the

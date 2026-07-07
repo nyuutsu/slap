@@ -8,16 +8,6 @@
 -- @defaultMain@. The bootstrap resource is wrapped around the tree
 -- so its acquire / release brackets the tasty run; per-test
 -- parallelism is whatever @-with-rtsopts=-N@ gave us.
---
--- Each 'GroupPlan' carries two buckets of trees: the normal bucket
--- for ordinary tests, and a heavy bucket for tests whose BPS create
--- on a stadium2-class fixture sets the suite's wall-clock floor.
--- This file simply concatenates: heavy trees go into a synthetic
--- @"heavy"@ subgroup that appears first under the @"integration"@
--- root, so tasty's parallel scheduler picks them up before the
--- short tests fill the queue. The classification itself lives in
--- 'Integration.HeavyTests' and is consulted by each test-builder
--- when it constructs its trees.
 module Integration.Runner (runIntegrationSuite) where
 
 import Integration.Apply (applyTests)
@@ -81,14 +71,9 @@ runIntegrationSuite tier = do
   hPutStrLn stderr (renderSkipSummary (groupPlanSkips combinedPlan))
   checkRequiredTools (groupPlanSkips combinedPlan)
 
-  let normalTrees   = groupPlanTrees      combinedPlan
-      heavyTrees    = groupPlanHeavyTrees combinedPlan
-      suiteChildren
-        | null heavyTrees = normalTrees
-        | otherwise       = testGroup "heavy" heavyTrees : normalTrees
-      suiteTree     = testGroup "integration" suiteChildren
-      wrappedTree   = bootstrapAccessWrap bootstrapAccess suiteTree
-      ingredients   = [listingTests, consoleStatsReporter]
+  let suiteTree   = testGroup "integration" (groupPlanTrees combinedPlan)
+      wrappedTree = bootstrapAccessWrap bootstrapAccess suiteTree
+      ingredients = [listingTests, consoleStatsReporter]
   defaultMainWithIngredients ingredients wrappedTree
 
 -- | Resolve the slap binary once and cache the result in @SLAP_BIN@ so

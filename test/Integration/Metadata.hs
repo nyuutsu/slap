@@ -5,7 +5,6 @@ module Integration.Metadata (metadataTests) where
 import Integration.Helpers (assertFailureT)
 import Integration.Helpers
   ( Tier
-  , isHeavyPath
   , restrictToTier
   , repoDir
   , attemptConvert
@@ -58,15 +57,13 @@ import qualified Data.Text as Text
 metadataTests :: Tier -> IO GroupPlan
 metadataTests tier = do
   repo <- repoDir
-  let inTierCases = restrictToTier tier caseIsHeavy metadataCases
+  let inTierCases = restrictToTier tier metadataCases
   caseMaybes      <- concat <$> mapM (planMetadataCase repo) inTierCases
   appHeaderMaybes <- planAppHeaderLiftCase repo
   let programmaticMaybes =
         map WillRun (testTreesFromGroup bpsMetadataGroup)
         ++ map WillRun (testTreesFromGroup ppfFileIdDizGroup)
   pure (namedGroup "metadata" (caseMaybes ++ appHeaderMaybes ++ programmaticMaybes))
-  where
-    caseIsHeavy (_format, relPath, _fields) = isHeavyPath relPath
 
 -- | Decompose a 'testGroup' built locally back into its child trees so
 -- the per-test count flowing into 'GroupPlan' matches reality. The

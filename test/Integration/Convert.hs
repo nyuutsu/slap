@@ -2,11 +2,9 @@
 
 module Integration.Convert (convertTests) where
 
-import Integration.HeavyTests (FixtureName(..), differentialCreateIsExpensive)
 import Integration.Helpers (assertFailureT)
 import Integration.Helpers
   ( Tier
-  , isHeavyPath
   , restrictToTier
   , repoDir
   , parseSpecFile
@@ -32,7 +30,6 @@ import Slap.SomePatch (SomePatch, parseSome)
 import Slap.Text (EncodingName(EncodingUtf8))
 import Slap.Convert
   ( CreateFormat(..)
-  , DifferentialCreate(..)
   , RequestedPatchMetadata(..)
   , UndoInclusion(..)
   , VerificationInclusion(..)
@@ -65,7 +62,7 @@ convertTests :: Tier -> IO GroupPlan
 convertTests tier = do
   repo <- repoDir
   allRows <- parseSpecFile (repo </> "test" </> "specs" </> "convert.txt")
-  let inTierRows = restrictToTier tier (any isHeavyPath) allRows
+  let inTierRows = restrictToTier tier allRows
   rowMaybes <- concat <$> mapM (planConvertRow repo) inTierRows
   let refusalMaybes = map WillRun applyOutputRefusalTests
   pure (namedGroup "convert" (rowMaybes ++ refusalMaybes))
@@ -82,12 +79,8 @@ planConvertRow repo fields = case fields of
                           ++ " (" ++ patchRel ++ ")"
             runnable       = mkConvertTest repo patchPath baseRel targetSha verdict
                                warningsString flagsString targetCreateFormat label
-            constructor
-              | targetCreateFormat == CreateDifferential CreateBPS
-              , differentialCreateIsExpensive (FixtureName patchRel) = WillRunHeavy
-              | otherwise                                   = WillRun
         in requireFixture patchPath $ \_ ->
-             pure [constructor runnable]
+             pure [WillRun runnable]
     | otherwise -> pure []  -- unknown @--to FORMAT@ in the spec row
   _ -> pure []              -- malformed spec row
 

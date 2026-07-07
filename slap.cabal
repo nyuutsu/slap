@@ -228,7 +228,6 @@ test-suite integration
   other-modules:    Integration.Helpers
                   , Integration.External
                   , Integration.Skip
-                  , Integration.HeavyTests
                   , Integration.Bootstrap
                   , Integration.Runner
                   , Integration.Apply

@@ -527,7 +527,7 @@ customCodetableTests = []
 -- gated to 'Full' because they each materialise a 4 MB garbage source
 -- file via 'writeGarbage'.
 ninja1VerifyTests :: Tier -> FilePath -> FilePath -> [TestTree]
-ninja1VerifyTests tier base ips = quickCases ++ onlyAtFull tier heavyCases
+ninja1VerifyTests tier base ips = quickCases ++ onlyAtFull tier fullTierCases
   where
     quickCases =
       [ testCase "ninja1-verify/info shows source CRC" $
@@ -549,7 +549,7 @@ ninja1VerifyTests tier base ips = quickCases ++ onlyAtFull tier heavyCases
             expectOk ["apply", patch, base, "-o", out] "ninja1/correct" "applied"
       ]
 
-    heavyCases =
+    fullTierCases =
       [ -- The 64 MiB stadium2 source exceeds NINJA1's 0x1e00000 sampling
         -- threshold, so verification runs the stored source hashes over the
         -- sampled input (first 20 MiB + last 10 MiB + decimal size) rather

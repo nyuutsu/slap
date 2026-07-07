@@ -4,7 +4,6 @@ module Integration.FailureMode (failureModeTests) where
 
 import Integration.Bootstrap (BootstrapTargets, lookupBootstrapTarget)
 import Integration.External (ExternalRun(..), ExternalTool(..), runExternal)
-import Integration.HeavyTests (FixtureName(..), differentialCreateIsExpensive)
 import Integration.Helpers (assertFailureT)
 import Integration.Helpers
   ( Tier
@@ -134,10 +133,10 @@ failureModeTests tier getTargets = do
   vcdiffAdlerMaybes <- requireSlapBinary $ \_ ->
                          pure (map WillRun vcdiffAdlerVerificationTests)
 
-  -- The heavy strand needs the slap binary AND various ROM/patch
+  -- The full-tier strand needs the slap binary AND various ROM/patch
   -- fixtures. Each sub-group gates independently so a missing
   -- fixture only suppresses its own tests.
-  heavyMaybes <- fmap (onlyAtFull tier . concat) $ sequence
+  fullTierMaybes <- fmap (onlyAtFull tier . concat) $ sequence
     [ requireSlapBinary $ \_ ->
         requireFixture dm4yBase $ \_ ->
           pure (map WillRun
@@ -161,7 +160,7 @@ failureModeTests tier getTargets = do
   pure (namedGroup "failure-mode"
           (smcMaybes ++ xdelta1ShapeMaybes ++ dialectMaybes
             ++ xdelta1NoVerifyMaybes ++ xdelta1InputPreCompressionMaybes
-            ++ corruptCrcMaybes ++ vcdiffAdlerMaybes ++ heavyMaybes))
+            ++ corruptCrcMaybes ++ vcdiffAdlerMaybes ++ fullTierMaybes))
 
 ----------------------------------------------------------------------------
 -- 1. Wrong source ROM (critical)
@@ -512,12 +511,6 @@ crossFormatRoundTripTests base bps =
 -- | Create a patch from real ROM pairs, parse it back, apply, and verify
 -- the output matches the original target. Exercises create+parse+apply at
 -- realistic scale — something the QuickCheck property tests can't cover.
---
--- The stadium2 BPS row is the long pole of the entire suite (~11 s
--- single-thread); 'planRoundTrip' consults
--- 'Integration.HeavyTests.differentialCreateIsExpensive' so it ends up in
--- the heavy bucket without this builder having to know about
--- scheduling concerns directly.
 createRoundTripTests :: IO BootstrapTargets -> FilePath -> FilePath
                      -> FilePath -> FilePath -> [MaybeTest]
 createRoundTripTests getTargets dm4yBase dm4yBps
@@ -536,12 +529,9 @@ createRoundTripTests getTargets dm4yBase dm4yBps
           patchPath    = roundTripCasePatch  roundTrip
           formatString = roundTripCaseFormat roundTrip
           label        = "create-round-trip/" ++ roundTripCaseName roundTrip
-          tree         = testCase label $ do
-                           (baseBytes, targetBytes) <- bootstrapTarget basePath patchPath
-                           createAndVerify formatString baseBytes targetBytes
-          isHeavy      = formatString == "bps"
-                      && differentialCreateIsExpensive (FixtureName basePath)
-      in if isHeavy then WillRunHeavy tree else WillRun tree
+      in WillRun $ testCase label $ do
+           (baseBytes, targetBytes) <- bootstrapTarget basePath patchPath
+           createAndVerify formatString baseBytes targetBytes
 
     bootstrapTarget :: FilePath -> FilePath -> IO (ByteString, ByteString)
     bootstrapTarget basePath patchPath = do

@@ -3,11 +3,9 @@
 module Integration.Create (createTests) where
 
 import Integration.Bootstrap (BootstrapTargets, lookupBootstrapTarget)
-import Integration.HeavyTests (FixtureName(..), differentialCreateIsExpensive)
 import Integration.Helpers (assertFailureT)
 import Integration.Helpers
   ( Tier
-  , isHeavyPath
   , restrictToTier
   , repoDir
   , parseSpecFile
@@ -46,13 +44,9 @@ createTests :: Tier -> IO BootstrapTargets -> IO GroupPlan
 createTests tier getTargets = do
   repo    <- repoDir
   allRows <- parseSpecFile (repo </> "test" </> "specs" </> "create.txt")
-  let inTierRows = restrictToTier tier rowIsHeavy allRows
+  let inTierRows = restrictToTier tier allRows
   rowMaybes <- concat <$> mapM (planCreateRow getTargets repo) inTierRows
   pure (namedGroup "create" rowMaybes)
-  where
-    rowIsHeavy row = case row of
-      (_format : _scenario : basePath : _) -> isHeavyPath basePath
-      _                                    -> False
 
 planCreateRow :: IO BootstrapTargets -> FilePath -> [String] -> IO [MaybeTest]
 planCreateRow getTargets repo fields = case fields of
@@ -63,13 +57,9 @@ planCreateRow getTargets repo fields = case fields of
             label        = formatString ++ "/" ++ scenario
             runnable     = mkRoundTripTest getTargets label format
                              absoluteBase absoluteBoot targetSha
-            constructor
-              | format `elem` [CreateDifferential CreateBPS, CreateDifferential CreateBSDiff]
-              , differentialCreateIsExpensive (FixtureName scenario) = WillRunHeavy
-              | otherwise                                            = WillRun
         in requireFixture absoluteBase $ \_ ->
            requireFixture absoluteBoot $ \_ ->
-             pure [constructor runnable]
+             pure [WillRun runnable]
     | otherwise -> pure []  -- spec row references unknown format
   _ -> pure []
 

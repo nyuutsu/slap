@@ -24,7 +24,6 @@ module Integration.Bootstrap
 
 import Integration.Helpers
   ( Tier
-  , isHeavyPath
   , restrictToTier
   , parseSpecFile
   , applyPatch
@@ -98,10 +97,8 @@ collectBootstrapPairs tier repo = do
             (repo </> "test/data/stadium2/fair-heavy/patch.bps")
         ]
       allPairs = Set.toList (Set.fromList (specPairs ++ failureModePairs))
-  filterM bothFilesExist (restrictToTier tier pairIsHeavy allPairs)
+  filterM bothFilesExist (restrictToTier tier allPairs)
   where
-    pairIsHeavy pair = isHeavyPath (bootstrapBase pair)
-                    || isHeavyPath (bootstrapPatch pair)
     bothFilesExist pair = do
       baseExists  <- doesFileExist (bootstrapBase pair)
       patchExists <- doesFileExist (bootstrapPatch pair)

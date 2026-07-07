@@ -51,56 +51,44 @@ data SkipReason
   deriving (Eq, Ord, Show)
 
 -- | Construction-phase outcome for a single planned test: it either
--- becomes a 'TestTree' the runner will execute (in the normal or
--- heavy bucket — see 'Integration.HeavyTests'), or it becomes a
+-- becomes a 'TestTree' the runner will execute, or it becomes a
 -- 'SkipReason' the runner aggregates.
 data MaybeTest
   = WillRun TestTree
-  | WillRunHeavy TestTree
   | WillSkip SkipReason
 
--- | The output of a single test group's construction phase: trees
--- that will run (split into the normal bucket and the heavy bucket
--- so the runner can schedule heavy tests first), plus the reasons
--- for trees that won't.
+-- | The output of a single test group's construction phase: the trees
+-- that will run, plus the reasons for trees that won't.
 data GroupPlan = GroupPlan
-  { groupPlanTrees      :: ![TestTree]
-  , groupPlanHeavyTrees :: ![TestTree]
-  , groupPlanSkips      :: ![SkipReason]
+  { groupPlanTrees :: ![TestTree]
+  , groupPlanSkips :: ![SkipReason]
   }
 
 instance Semigroup GroupPlan where
-  GroupPlan trees1 heavy1 skips1 <> GroupPlan trees2 heavy2 skips2 =
-    GroupPlan (trees1 <> trees2) (heavy1 <> heavy2) (skips1 <> skips2)
+  GroupPlan trees1 skips1 <> GroupPlan trees2 skips2 =
+    GroupPlan (trees1 <> trees2) (skips1 <> skips2)
 
 instance Monoid GroupPlan where
-  mempty = GroupPlan [] [] []
+  mempty = GroupPlan [] []
 
--- | Split a list of 'MaybeTest' into normal trees, heavy trees, and
--- skip reasons.
+-- | Split a list of 'MaybeTest' into trees and skip reasons.
 partitionMaybeTests :: [MaybeTest] -> GroupPlan
 partitionMaybeTests = foldr step mempty
   where
-    step (WillRun tree)      plan = plan { groupPlanTrees      = tree   : groupPlanTrees      plan }
-    step (WillRunHeavy tree) plan = plan { groupPlanHeavyTrees = tree   : groupPlanHeavyTrees plan }
-    step (WillSkip reason)   plan = plan { groupPlanSkips      = reason : groupPlanSkips      plan }
+    step (WillRun tree)    plan = plan { groupPlanTrees = tree   : groupPlanTrees plan }
+    step (WillSkip reason) plan = plan { groupPlanSkips = reason : groupPlanSkips plan }
 
 -- | Wrap the runnable trees of a 'partitionMaybeTests' result in a
 -- named tasty group, leaving the skip reasons unwrapped so the
--- runner can aggregate them across groups. Heavy and normal trees
--- each get their own copy of the named group: that mirroring is
--- what lets the runner present heavy tests under
--- @integration.heavy.\<name\>.\<rest\>@ alongside the regular
--- @integration.\<name\>.\<rest\>@. The standard last step of every
--- 'IO GroupPlan' function.
+-- runner can aggregate them across groups. The standard last step of
+-- every 'IO GroupPlan' function.
 namedGroup :: String -> [MaybeTest] -> GroupPlan
 namedGroup name maybeTests =
   let plan = partitionMaybeTests maybeTests
       wrapNonEmpty []    = []
       wrapNonEmpty trees = [testGroup name trees]
   in GroupPlan
-       (wrapNonEmpty (groupPlanTrees      plan))
-       (wrapNonEmpty (groupPlanHeavyTrees plan))
+       (wrapNonEmpty (groupPlanTrees plan))
        (groupPlanSkips plan)
 
 ----------------------------------------------------------------------------

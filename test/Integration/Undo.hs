@@ -5,7 +5,6 @@ module Integration.Undo (undoTests) where
 import Integration.Helpers (assertFailureT)
 import Integration.Helpers
   ( Tier
-  , isHeavyPath
   , restrictToTier
   , repoDir
   , parseSpecFile
@@ -39,13 +38,9 @@ undoTests :: Tier -> IO GroupPlan
 undoTests tier = do
   repo    <- repoDir
   allRows <- parseSpecFile (repo </> "test" </> "specs" </> "undo.txt")
-  let inTierRows = restrictToTier tier rowIsHeavy allRows
+  let inTierRows = restrictToTier tier allRows
   rowMaybes <- concat <$> mapM (planUndoRow repo) inTierRows
   pure (namedGroup "undo" rowMaybes)
-  where
-    rowIsHeavy row = case row of
-      (_method : basePath : _) -> isHeavyPath basePath
-      _                        -> False
 
 planUndoRow :: FilePath -> [String] -> IO [MaybeTest]
 planUndoRow repo fields = case fields of

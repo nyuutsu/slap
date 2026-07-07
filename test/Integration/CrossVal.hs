@@ -10,7 +10,6 @@ import Integration.External
   , parseExternalToolName
   , runExternal
   )
-import Integration.HeavyTests (FixtureName(..), differentialCreateIsExpensive)
 import Integration.Helpers (assertFailureT)
 import Integration.Helpers
   ( Tier(..)
@@ -77,14 +76,10 @@ planCrossValRow getTargets repo fields = case fields of
             label    = formatString ++ "/" ++ scenario
             runnable = buildCrossValTest getTargets label format tool
                          basePath bootPath targetSha noMetadataRequested
-            constructor
-              | format == CreateDifferential CreateBPS
-              , differentialCreateIsExpensive (FixtureName scenario) = WillRunHeavy
-              | otherwise                                   = WillRun
         in requireFixture basePath $ \_ ->
            requireFixture bootPath $ \_ ->
              requireExternalTool tool $ \_ ->
-               pure [constructor runnable]
+               pure [WillRun runnable]
     | otherwise -> pure []  -- spec row references unknown format/tool wire name
   _ -> pure []              -- malformed spec row
 
