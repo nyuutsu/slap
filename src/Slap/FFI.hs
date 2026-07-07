@@ -49,8 +49,8 @@ crc32 input = CRC32 $ unsafePerformIO $
   withByteString input $ \dataPointer dataLength ->
     pure $! rustyCRC32 dataPointer dataLength
 
--- | Adler-32 via rusty-slap (RFC 1950). The @pure $!@ is load-bearing
--- for the same reason as in 'crc32'.
+-- | Adler-32 via rusty-slap (RFC 1950, runtime-SIMD simd-adler32).
+-- The @pure $!@ is load-bearing for the same reason as in 'crc32'.
 adler32 :: ByteString -> Adler32
 adler32 input = Adler32 $ unsafePerformIO $
   withByteString input $ \dataPointer dataLength ->

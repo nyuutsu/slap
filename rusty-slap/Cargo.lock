@@ -130,6 +130,7 @@ dependencies = [
  "flate2",
  "lzma-rs",
  "lzma-rust2",
+ "simd-adler32",
  "zip",
 ]
 

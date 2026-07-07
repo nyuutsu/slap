@@ -116,11 +116,10 @@ pub unsafe extern "C" fn rusty_crc32(input_address: *const u8, input_length: usi
     crc32::crc32(input)
 }
 
-/// Adler-32 checksum per RFC 1950. Folds the byte stream through the
-/// two running sums named in the spec: `byte_sum` (the byte-modular
-/// running total) and `cumulative_sum` (the running total of every
-/// `byte_sum` value). The packed wire form is `cumulative_sum << 16 |
-/// byte_sum`.
+/// Adler-32 checksum per RFC 1950, computed by simd-adler32 —
+/// runtime-selected SIMD lanes where the host has them, the spec's
+/// two running sums elsewhere. The xdelta3 per-window checksum walks
+/// whole targets through here, once at create and once at apply.
 ///
 /// # Safety
 /// `input_address` must point to `input_length` readable bytes (or may
@@ -128,12 +127,7 @@ pub unsafe extern "C" fn rusty_crc32(input_address: *const u8, input_length: usi
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rusty_adler32(input_address: *const u8, input_length: usize) -> u32 {
     let input = unsafe { view_caller_buffer(input_address, input_length) };
-    let (byte_sum, cumulative_sum) = input.iter().fold((1u32, 0u32), |(byte_sum, cumulative_sum), &byte| {
-        let next_byte_sum       = (byte_sum + byte as u32) % 65521;
-        let next_cumulative_sum = (cumulative_sum + next_byte_sum) % 65521;
-        (next_byte_sum, next_cumulative_sum)
-    });
-    (cumulative_sum << 16) | byte_sum
+    simd_adler32::adler32(&input)
 }
 
 // ── BPS diff FFI ──────────────────────────────────────────────────────

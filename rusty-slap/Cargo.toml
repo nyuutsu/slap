@@ -8,6 +8,7 @@ crate-type = ["staticlib"]
 
 [dependencies]
 crc32fast = "1"
+simd-adler32 = "0.3"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 # The default backend is the pure-Rust libbz2-rs-sys;
 # the C-backed bzip2-sys sits behind an off-by-default feature and stays off.
