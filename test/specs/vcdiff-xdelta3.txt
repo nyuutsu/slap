@@ -5,11 +5,11 @@
 # per-window Adler32, and (where the producer chose it) LZMA secondary
 # compression intact. slap applies the patch and the output is
 # compared, byte for byte, against xdelta3 applying the same patch —
-# never slap against slap. Gated on xdelta3 and on the fixtures, both
-# of which are local-only, so rows skip cleanly where either is absent.
+# never slap against slap. Gated on xdelta3 and on the base ROM, which
+# is local-only, so rows skip cleanly where either is absent.
 #
 # pokesta2-debug-lzma is the first compressed row, keeping this
 # header's old promise: a wild LZMA patch (8 windows, 64 MB output)
 # against the stadium2 fixture base.
 
-test/data/stadium2/base.z64 | roms/curated/xdelta3/[4771]pokesta2-debugmenu-v1/Pokemon Stadium 2 Debug Menu Patch v1 [jrra]/jrra-np3e0-v1.xdelta | pokesta2-debug-lzma
+test/data/stadium2/base.z64 | test/data/stadium2/debug-menu/patch.xdelta | pokesta2-debug-lzma

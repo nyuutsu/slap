@@ -3,15 +3,16 @@
 #
 # slap applies the patch and the output is compared, byte for byte,
 # against xdelta3 applying the same patch — never slap against slap.
-# Gated on xdelta3 and on the fixtures, both of which are local-only
-# (roms/ is gitignored), so the group skips cleanly where either is
-# absent.
+# Gated on xdelta3 and on the fixtures: base ROMs are local-only as
+# ever, and the constructors-wc patch is local-only too (its author's
+# readme forbids redistribution; test/data's README has the path to
+# place it at). Rows skip cleanly where anything is absent.
 #
-# These are the patches in roms/curated/rfc-vcdiff/ confirmed CoreOnly:
-# header indicator none, every window VCD_SOURCE-only (no VCD_TARGET,
-# no per-window Adler32), no secondary compression. The "AF" Karateka
-# pair is multi-window; constructors-wc is a single RUN-heavy window.
+# All three patches are confirmed CoreOnly: header indicator none,
+# every window VCD_SOURCE-only (no VCD_TARGET, no per-window Adler32),
+# no secondary compression. The "AF" Karateka pair is multi-window;
+# constructors-wc is a single RUN-heavy window.
 
-roms/curated/rfc-vcdiff/roms/Karateka (Japan).nes | roms/curated/rfc-vcdiff/patches/[6516]Karateka (J) (Indonesia) [Translate by AF]/Karateka (J) [Indonesia TL by AF].xdelta | karateka-tl
-roms/curated/rfc-vcdiff/roms/Karateka (Japan).nes | roms/curated/rfc-vcdiff/patches/[6516]Karateka (J) (Indonesia) [Translate by AF]/Karateka (J) [Indonesia TL Hack by AF].xdelta | karateka-hack
-roms/curated/rfc-vcdiff/roms/Wrecking Crew (Japan) (Disk Writer).fds | roms/curated/rfc-vcdiff/patches/[2616]constructors-wc/constructors-wc/constructors wrecking crew.xdelta | constructors-wc
+test/data/karateka/base.nes | test/data/karateka/indonesia-tl/patch.xdelta | karateka-tl
+test/data/karateka/base.nes | test/data/karateka/indonesia-hack/patch.xdelta | karateka-hack
+test/data/wrecking-crew/base.fds | test/data/wrecking-crew/constructors/patch.xdelta | constructors-wc
