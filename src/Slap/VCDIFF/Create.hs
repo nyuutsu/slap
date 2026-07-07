@@ -50,6 +50,10 @@ module Slap.VCDIFF.Create
   , ResolvedInstruction(..)
   , resolveInstructionAddresses
   , designCandidateTable
+    -- * The windowed arm compete (exported for testing)
+  , WindowArmCompete(..)
+  , ChosenWindowArm(..)
+  , recompeteArmsUnderCandidateTable
   ) where
 
 import Slap.VCDIFF.Types (vcdiffMagicBytes, VCDIFFInstruction(..), SegmentOrigin(..),

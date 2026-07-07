@@ -87,8 +87,10 @@ cliTests tier = do
       requireExternalTool Unzip $ \_ ->
         pure (map WillRun (archiveTests dm4yBase dm4yIps dm4yBps dm4yUps))
 
-    -- Codetable and VCD_TARGET tests are slap-only (committed fixtures; no ROM gate).
-    let codetableMaybes = map WillRun (customCodetableTests ++ vcdTargetTests)
+    -- Codetable, VCD_TARGET, and VCDIFF-flag tests are slap-only
+    -- (committed or temp-file fixtures; no ROM gate).
+    let codetableMaybes =
+          map WillRun (customCodetableTests ++ vcdTargetTests ++ vcdiffCreateFlagTests)
 
     -- Explain-mode tests use dm4y paths but degrade to "no --with"
     -- mode when the base ROM is missing. They register
@@ -566,6 +568,66 @@ customCodetableTests =
   ]
   where
     customTableFixture name = "test/data/vcdiff-custom-table/" ++ name
+
+-- | The VCDIFF create flags through real argv, on temp-file pairs so no fixture
+-- gate applies. Each accepted flag round-trips through apply; the FGK case is
+-- the flag surface of 'XDelta3CompressorEncodingUnsupported'.
+vcdiffCreateFlagTests :: [TestTree]
+vcdiffCreateFlagTests =
+  [ testCase "vcdiff-flags/--window-size slices and applies back" $
+      withGarbagePair $ \source target ->
+      withTempFile "slap-patch" $ \patch ->
+      withTempFile "slap-out" $ \out -> do
+        expectOk [ "create", "--format", "rfc-vcdiff", "--window-size", "32k"
+                 , source, target, patch ]
+          "vcdiff-flags/window-size" "wrote"
+        removeIfExists out
+        expectOk ["apply", patch, source, "-o", out]
+          "vcdiff-flags/window-size-apply" "applied"
+        assertRebuiltTarget target out
+
+  , testCase "vcdiff-flags/--compress-with djw applies back" $
+      withGarbagePair $ \source target ->
+      withTempFile "slap-patch" $ \patch ->
+      withTempFile "slap-out" $ \out -> do
+        expectOk [ "create", "--format", "xdelta3", "--compress-with", "djw"
+                 , source, target, patch ]
+          "vcdiff-flags/compress-with-djw" "wrote"
+        removeIfExists out
+        expectOk ["apply", patch, source, "-o", out]
+          "vcdiff-flags/compress-with-djw-apply" "applied"
+        assertRebuiltTarget target out
+
+  , testCase "vcdiff-flags/--no-compress applies back" $
+      withGarbagePair $ \source target ->
+      withTempFile "slap-patch" $ \patch ->
+      withTempFile "slap-out" $ \out -> do
+        expectOk [ "create", "--format", "xdelta3", "--no-compress"
+                 , source, target, patch ]
+          "vcdiff-flags/no-compress" "wrote"
+        removeIfExists out
+        expectOk ["apply", patch, source, "-o", out]
+          "vcdiff-flags/no-compress-apply" "applied"
+        assertRebuiltTarget target out
+
+  , testCase "vcdiff-flags/--compress-with fgk is refused" $
+      withGarbagePair $ \source target ->
+      withTempFile "slap-patch" $ \patch ->
+        expectFail [ "create", "--format", "xdelta3", "--compress-with", "fgk"
+                   , source, target, patch ]
+          "vcdiff-flags/compress-with-fgk" "cannot yet write"
+  ]
+  where
+    withGarbagePair body =
+      withTempFile "slap-source" $ \source ->
+      withTempFile "slap-target" $ \target -> do
+        writeGarbage source (128 * 1024)
+        writeGarbage target (128 * 1024)
+        body source target
+    assertRebuiltTarget target out = do
+      targetSha <- sha1Hex <$> ByteString.readFile target
+      outSha    <- sha1Hex <$> ByteString.readFile out
+      assertEqual "apply output rebuilds the target" targetSha outSha
 
 -- | VCD_TARGET apply coverage. No oracle can cross-validate these;
 -- the expected outputs come from the fixtures' @generate.py@, which has the story.

@@ -21,8 +21,9 @@ import Integration.Skip
   , requireFixture
   )
 import Slap.Convert
-  (CreateFormat(..), DifferentialCreate(..), noMetadataRequested, noConstraintsRequested,
-   noDialectsRequested)
+  (CreateFormat(..), DifferentialCreate(..), RequestedPatchMetadata(..),
+   noMetadataRequested, noConstraintsRequested, noDialectsRequested)
+import Slap.VCDIFF.Types (emissionWindowSizeOfBytes)
 import Slap.XDelta1.Types (ResolvedXDelta1FileNames, resolveXDelta1FileNames)
 import Slap.Create (createPatch)
 import Slap.Status (CreateResult(..), renderSlapError)
@@ -45,8 +46,27 @@ createTests tier getTargets = do
   repo    <- repoDir
   allRows <- parseSpecFile (repo </> "test" </> "specs" </> "create.txt")
   let inTierRows = restrictToTier tier allRows
-  rowMaybes <- concat <$> mapM (planCreateRow getTargets repo) inTierRows
-  pure (namedGroup "create" rowMaybes)
+  rowMaybes      <- concat <$> mapM (planCreateRow getTargets repo) inTierRows
+  windowedMaybes <- planWindowedRFCCreateRow getTargets repo
+  pure (namedGroup "create" (rowMaybes ++ windowedMaybes))
+
+-- | The windowed reading of the rfc-vcdiff row: the dm4y pair round-tripped under
+-- 256 KiB windows — sixteen windows over a real hack, the arms competing and
+-- VCD_TARGET on offer. The spec grammar has no flag column, so the one windowed
+-- row is planned by hand.
+planWindowedRFCCreateRow :: IO BootstrapTargets -> FilePath -> IO [MaybeTest]
+planWindowedRFCCreateRow getTargets repo =
+  let basePath = repo </> "test/data/dm4y/base.gbc"
+      bootPath = repo </> "test/data/dm4y/patch.bps"
+      windowSize = case emissionWindowSizeOfBytes (256 * 1024) of
+        Just positiveSize -> positiveSize
+        Nothing           -> error "planWindowedRFCCreateRow: 256 KiB is a positive window size"
+      windowedMeta = noMetadataRequested { requestedWindowSize = Just windowSize }
+  in requireFixture basePath $ \_ ->
+     requireFixture bootPath $ \_ ->
+       pure [WillRun (mkRoundTripTest getTargets "rfc-vcdiff/dm4y-windowed"
+                        (CreateDifferential CreateRFCVCDIFF) windowedMeta
+                        basePath bootPath "b460119b0fbd80cecba3ded57fa11a16370dd43e")]
 
 planCreateRow :: IO BootstrapTargets -> FilePath -> [String] -> IO [MaybeTest]
 planCreateRow getTargets repo fields = case fields of
@@ -55,7 +75,7 @@ planCreateRow getTargets repo fields = case fields of
         let absoluteBase = repo </> basePath
             absoluteBoot = repo </> bootstrapPath
             label        = formatString ++ "/" ++ scenario
-            runnable     = mkRoundTripTest getTargets label format
+            runnable     = mkRoundTripTest getTargets label format noMetadataRequested
                              absoluteBase absoluteBoot targetSha
         in requireFixture absoluteBase $ \_ ->
            requireFixture absoluteBoot $ \_ ->
@@ -67,16 +87,17 @@ mkRoundTripTest
   :: IO BootstrapTargets
   -> String      -- ^ test label
   -> CreateFormat
+  -> RequestedPatchMetadata
   -> FilePath    -- ^ base ROM path
   -> FilePath    -- ^ bootstrap-patch path (key into the bootstrap map)
   -> String      -- ^ expected target SHA1
   -> TestTree
-mkRoundTripTest getTargets label format basePath bootPath expectedTargetSha =
+mkRoundTripTest getTargets label format meta basePath bootPath expectedTargetSha =
   testCase label $ do
     bootstrapTargets <- getTargets
     baseBytes <- mmapRomFile basePath
     let targetBytes = lookupBootstrapTarget bootstrapTargets basePath bootPath
-    roundTrip format basePath bootPath baseBytes targetBytes expectedTargetSha
+    roundTrip format meta basePath bootPath baseBytes targetBytes expectedTargetSha
 
 -- | Create a patch in @format@, parse it back, apply to @baseBytes@,
 -- and assert the resulting SHA1. The two 'FilePath' arguments feed
@@ -84,13 +105,13 @@ mkRoundTripTest getTargets label format basePath bootPath expectedTargetSha =
 -- formats receive 'Nothing' for the resolved-names slot); without
 -- them, the create dispatcher would refuse with
 -- 'XDelta1ConvertRequiresNames'.
-roundTrip :: CreateFormat -> FilePath -> FilePath -> ByteString -> ByteString -> String -> IO ()
-roundTrip format basePath bootPath baseBytes targetBytes expectedSha = do
+roundTrip :: CreateFormat -> RequestedPatchMetadata -> FilePath -> FilePath -> ByteString -> ByteString -> String -> IO ()
+roundTrip format meta basePath bootPath baseBytes targetBytes expectedSha = do
   let resolvedXDelta1Names = resolveXDelta1NamesForRoundTrip format basePath bootPath
   case createPatch format resolvedXDelta1Names
          (InputFileContents baseBytes)
          (OutputFileContents targetBytes)
-         noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
+         meta Nothing noConstraintsRequested noDialectsRequested of
     Left slapError ->
       assertFailureT ("create failed: " <> renderSlapError slapError)
     Right (CreateResult patchBytes _) -> case parseSome noDialectsRequested EncodingUtf8 patchBytes of

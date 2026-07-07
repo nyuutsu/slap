@@ -61,7 +61,9 @@ import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor(..),
                                          lzmaSectionCompressor, djwSectionCompressor)
 import Slap.VCDIFF.Create (createFromCover, createConsideringCustomTable,
                            coverToInstructions, resolveInstructionAddresses,
-                           designCandidateTable, rejectUnaddressablePair)
+                           designCandidateTable, rejectUnaddressablePair,
+                           WindowArmCompete(..), ChosenWindowArm(..),
+                           recompeteArmsUnderCandidateTable)
 import Slap.VCDIFF.CodeTable (serializeCodeTable, deserializeCodeTable)
 import qualified Slap.VCDIFF.CodeTable as Table
 import Slap.VCDIFF.Describe (vcdiffMeta)
@@ -241,6 +243,8 @@ roundTripTests = testGroup "RoundTrip"
       , testCase     "windowed rfc: a source-favoring pair matches the plain xdelta3 emission byte for byte" windowedRFCSourceArmMatchesXDelta3
       , testCase     "windowed rfc: a pooled custom table amortizes across the windows" windowedRFCCustomTableAmortizes
       , testCase     "windowed rfc: an empty target is one empty window" windowedRFCEmptyTarget
+      , testCase     "windowed rfc: the rematch flips an arm the designed table favors" armRematchFlipsUnderMintedTable
+      , testCase     "windowed rfc: the rematch stands pat when the mints favor neither arm" armRematchStandsPatWithoutAdvantage
       , testCase     "create: the matcher's addressable-range wall holds at its exact boundary" vcdiffUnaddressablePairRefused
       ]
   , testGroup "PPF1"
@@ -945,6 +949,67 @@ windowedRFCEmptyTarget = do
         assertEqual "applies back to the empty target"
           (Right (OutputFileContents ByteString.empty))
           (VCDIFF.applyVCDIFF parsed (InputFileContents source))
+
+-- | The rematch flips a window the designed table favors. The two arms below encode
+-- to the same size under the default table — six fixed-size opcodes, three one-byte
+-- operands, fifteen literal bytes each — and only the runner-up repeats its
+-- (ADD 5, COPY 7) pair often enough to earn a minted opcode, so the judge finds it
+-- strictly smaller; 'recompeteArmsUnderCandidateTable' has the judging story.
+armRematchFlipsUnderMintedTable :: Assertion
+armRematchFlipsUnderMintedTable =
+  case recompeteArmsUnderCandidateTable defaultAddressCacheConfig [rematchCompete] of
+    Just [rematchWinner] ->
+      assertEqual "the target arm earns the window" FromProducedTarget (chosenOrigin rematchWinner)
+    Just rematched ->
+      assertFailureT ("one compete in, " <> Text.pack (show (length rematched)) <> " arms out")
+    Nothing -> assertFailureT "expected the minted table to flip the compete"
+  where
+    rematchCompete = WindowArmCompete
+      { competeWinner   = rematchArm FromSourceFile     variedPairsCover
+      , competeRunnerUp = rematchArm FromProducedTarget repeatedPairsCover
+      }
+
+-- | The stand-pat control: both arms carry the varied shapes, the pooled mints help
+-- them equally, and the rematch answers 'Nothing' — the settled arms stand.
+armRematchStandsPatWithoutAdvantage :: Assertion
+armRematchStandsPatWithoutAdvantage =
+  assertEqual "no flip" Nothing
+    (fmap (map chosenOrigin)
+          (recompeteArmsUnderCandidateTable defaultAddressCacheConfig [standPatCompete]))
+  where
+    standPatCompete = WindowArmCompete
+      { competeWinner   = rematchArm FromSourceFile     variedPairsCover
+      , competeRunnerUp = rematchArm FromProducedTarget variedPairsCover
+      }
+
+-- | An arm over the shared 36-byte window slice for the rematch cases.
+-- The default-table bytes go unread by the judge, so the field carries empty bytes.
+rematchArm :: SegmentOrigin -> Cover -> ChosenWindowArm
+rematchArm armOrigin armCover = ChosenWindowArm
+  { chosenOrigin            = armOrigin
+  , chosenExternalLength    = Length 64
+  , chosenSlice             = ByteString.pack [0 .. 35]
+  , chosenCover             = armCover
+  , chosenDefaultTableBytes = ByteString.empty
+  }
+
+-- | Three (ADD 5, COPY 7) pairs, every copy at external address 0: the repeated
+-- shape a designed table mints a combined opcode for.
+repeatedPairsCover :: Cover
+repeatedPairsCover = Cover
+  [ CoverLiteral (Offset 0)  (Length 5), CoverCopy (Length 7) (Offset 0)
+  , CoverLiteral (Offset 12) (Length 5), CoverCopy (Length 7) (Offset 0)
+  , CoverLiteral (Offset 24) (Length 5), CoverCopy (Length 7) (Offset 0)
+  ]
+
+-- | The same wire budget spent on pairs whose sizes never repeat, so no shape
+-- reaches the mint threshold on its own.
+variedPairsCover :: Cover
+variedPairsCover = Cover
+  [ CoverLiteral (Offset 0)  (Length 5), CoverCopy (Length 7) (Offset 0)
+  , CoverLiteral (Offset 12) (Length 6), CoverCopy (Length 8) (Offset 15)
+  , CoverLiteral (Offset 26) (Length 4), CoverCopy (Length 6) (Offset 40)
+  ]
 
 -- prop_vcdiffIgnoresSource is gone as of 02b. In the floor it was a
 -- tripwire: source-independence held only because the encoder read
