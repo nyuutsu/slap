@@ -39,7 +39,6 @@ APS-N64  | test/data/dm4y/patch.aps       | real | slap
 NINJA1   | test/data/dm4y/patch.ninja1    | real | slap
 NINJA2   | test/data/dm4y/patch.rup       | real | slap
 GDIFF    | test/data/dm4y/patch.gdiff     | real | slap
-# VCDIFF mid-reimplementation: apply is stubbed; row returns with the rebuilt family.
-# VCDIFF   | test/data/dm4y/patch.vcdiff    | real | xdelta3 -S none
+VCDIFF   | test/data/dm4y/patch.vcdiff    | real | xdelta3 -S none
 bsdiff   | test/data/dm4y/patch.bsdiff    | real | bsdiff
 xdelta1  | test/data/dm4y/patch.xdelta1   | real | slap

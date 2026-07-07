@@ -9,8 +9,7 @@ desc:   stadium2 size-change (64 MB -> 128 MB)
 
 BPS      | test/data/stadium2/size-change/patch.bps      | synthetic | Flips
 UPS      | test/data/stadium2/size-change/patch.ups       | synthetic | Go ups
-# VCDIFF mid-reimplementation: apply is stubbed; row returns with the rebuilt family.
-# VCDIFF   | test/data/stadium2/size-change/patch.vcdiff    | synthetic | xdelta3
+VCDIFF   | test/data/stadium2/size-change/patch.vcdiff    | synthetic | xdelta3
 bsdiff   | test/data/stadium2/size-change/patch.bsdiff    | synthetic | bsdiff
 xdelta1  | test/data/stadium2/size-change/patch.xdelta1   | synthetic | slap
 GDIFF    | test/data/stadium2/size-change/patch.gdiff     | synthetic | javaxdelta
