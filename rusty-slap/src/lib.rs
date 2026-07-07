@@ -405,6 +405,43 @@ pub unsafe extern "C" fn rusty_vcdiff_cover(
     0
 }
 
+/// Compute the per-window produced-target VCDIFF covers for a target —
+/// the greedy segmentation of each `window_length`-byte slice against
+/// the output of the windows before it, for the VCD_TARGET arm of
+/// RFC-flavor windowed creation. Buffer protocol, cover encoding, and
+/// totality are [`rusty_vcdiff_cover`]'s; the covers themselves, and
+/// the coordinate space their offsets live in, are
+/// [`vcdiff_diff::vcdiff_produced_target_covers`]'s.
+///
+/// # Safety
+/// Buffer pointers follow rusty-slap's existing convention (see
+/// [`view_caller_buffer`] / [`surface_buffer_to_caller`]).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rusty_vcdiff_produced_target_cover(
+    target_address:                *const u8,
+    target_length:                 usize,
+    window_length:                 usize,
+    kinds_address_pointer:         *mut *mut u8,
+    kinds_length_pointer:          *mut usize,
+    offsets_address_pointer:       *mut *mut u8,
+    offsets_length_pointer:        *mut usize,
+    lengths_address_pointer:       *mut *mut u8,
+    lengths_length_pointer:        *mut usize,
+    window_counts_address_pointer: *mut *mut u8,
+    window_counts_length_pointer:  *mut usize,
+) -> i32 {
+    let target = unsafe { view_caller_buffer(target_address, target_length) };
+    let covers = vcdiff_diff::vcdiff_produced_target_covers(target, window_length);
+    let (kinds, offsets, lengths, window_counts) = split_covers_to_parallel_arrays(&covers);
+    unsafe {
+        surface_buffer_to_caller(kinds,         kinds_address_pointer,         kinds_length_pointer);
+        surface_buffer_to_caller(offsets,       offsets_address_pointer,       offsets_length_pointer);
+        surface_buffer_to_caller(lengths,       lengths_address_pointer,       lengths_length_pointer);
+        surface_buffer_to_caller(window_counts, window_counts_address_pointer, window_counts_length_pointer);
+    }
+    0
+}
+
 /// Project per-window covers into three parallel homogeneous byte
 /// buffers — one `kind` byte, one LE `u64` offset, and one LE `u64`
 /// length per segment, all windows concatenated in order — plus the

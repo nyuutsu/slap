@@ -28,11 +28,12 @@ module Slap.VCDIFF.Types
   , vcdSourceBit, vcdTargetBit, vcdAdler32Bit
   , vcdDataCompBit, vcdInstCompBit, vcdAddrCompBit
     -- * Window sizing (emission)
-  , XDelta3WindowSize
-  , unXDelta3WindowSize
-  , xdelta3WindowSizeOfBytes
+  , EmissionWindowSize
+  , unEmissionWindowSize
+  , emissionWindowSizeOfBytes
   , defaultXDelta3WindowSize
   , xdelta3ReferenceDecoderWindowCap
+  , RFCWindowing(..)
   ) where
 
 import Slap.Measure (Offset, Length(..), FileSize(..))
@@ -205,25 +206,35 @@ data SegmentOrigin = FromSourceFile | FromProducedTarget
 -- Window sizing (emission)
 ----------------------------------------------------------------------------
 
--- | The window size an xdelta3 create slices its target by: full-size windows in order, then the remainder,
+-- | The window size a windowed create slices its target by: full-size windows in order, then the remainder,
 -- the empty target one empty window (the same emission the canonical tool writes for one).
--- Positive by 'xdelta3WindowSizeOfBytes', the only constructor, so a partition that could not terminate is unrepresentable.
-newtype XDelta3WindowSize = XDelta3WindowSize { unXDelta3WindowSize :: Int }
+-- Positive by 'emissionWindowSizeOfBytes', the only constructor, so a partition that could not terminate is unrepresentable.
+newtype EmissionWindowSize = EmissionWindowSize { unEmissionWindowSize :: Int }
   deriving (Eq, Ord, Show)
 
--- | The one door to an 'XDelta3WindowSize': any positive byte count. 'Nothing' for zero or less.
-xdelta3WindowSizeOfBytes :: Int -> Maybe XDelta3WindowSize
-xdelta3WindowSizeOfBytes byteCount
-  | byteCount >= 1 = Just (XDelta3WindowSize byteCount)
+-- | The one door to an 'EmissionWindowSize': any positive byte count. 'Nothing' for zero or less.
+emissionWindowSizeOfBytes :: Int -> Maybe EmissionWindowSize
+emissionWindowSizeOfBytes byteCount
+  | byteCount >= 1 = Just (EmissionWindowSize byteCount)
   | otherwise      = Nothing
 
 -- | 8 MiB: the canonical tool's own encoder default, and comfortably inside what every xdelta3 build decodes.
-defaultXDelta3WindowSize :: XDelta3WindowSize
-defaultXDelta3WindowSize = XDelta3WindowSize (8 * 1024 * 1024)
+defaultXDelta3WindowSize :: EmissionWindowSize
+defaultXDelta3WindowSize = EmissionWindowSize (8 * 1024 * 1024)
 
 -- | 16 MiB: the compiled window ceiling (@XD3_HARDMAXWINSIZE@) of the widespread xdelta3 3.0.11 builds, which refuse to decode a window past it.
 -- Later xdelta3 sources raise the ceiling, and other decoders (slap included) have none;
 -- a create asked for windows above this is emitting a valid patch that one important decoder will decline,
 -- and 'Slap.Convert.createDefaultAdvisories' says so.
-xdelta3ReferenceDecoderWindowCap :: XDelta3WindowSize
-xdelta3ReferenceDecoderWindowCap = XDelta3WindowSize (16 * 1024 * 1024)
+xdelta3ReferenceDecoderWindowCap :: EmissionWindowSize
+xdelta3ReferenceDecoderWindowCap = EmissionWindowSize (16 * 1024 * 1024)
+
+-- | How an RFC-flavor create windows its target.
+-- 'OneWholeTargetWindow' is the default: slap applies patches whole in memory, so no memory bound asks for slicing,
+-- a single window pays no per-window framing, and nothing a multi-window patch can copy is out of its reach.
+-- 'SlicedIntoWindows' is the @--window-size@ opt-in, and the partition that gives VCD_TARGET something to reference:
+-- a window can only draw on output produced before it, so the feature exists exactly where there is an earlier window.
+data RFCWindowing
+  = OneWholeTargetWindow
+  | SlicedIntoWindows !EmissionWindowSize
+  deriving (Eq, Show)

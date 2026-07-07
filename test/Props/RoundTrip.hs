@@ -51,8 +51,9 @@ import qualified Slap.VCDIFF.Apply as VCDIFF
 import qualified Slap.VCDIFF.Parse as VCDIFF
 import Slap.VCDIFF.Types (VCDIFFPatch(..), Window(..), VCDIFFInstruction(..),
                           RFCHeader(..), CustomCodeTable(..), patchWindows,
+                          SourceSegment(..), SegmentOrigin(..),
                           XDelta3Header(..), xdelta3WindowAdler32, xdelta3WindowBody, vcdiffAppHeader,
-                          XDelta3WindowSize, xdelta3WindowSizeOfBytes,
+                          EmissionWindowSize, emissionWindowSizeOfBytes, RFCWindowing(..),
                           defaultXDelta3WindowSize, xdelta3ReferenceDecoderWindowCap)
 import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor(..),
                                          secondaryCompressorCatalog, secondaryCompressorId,
@@ -235,6 +236,11 @@ roundTripTests = testGroup "RoundTrip"
           xdelta3EmptyAppHeader
       , testCase     "xdelta3: selecting fgk is declined by name" xdelta3FGKSelectionDeclinedByName
       , testCase     "xdelta3: compressor ids round-trip through the catalog" xdelta3CompressorIdsRoundTripThroughTheCatalog
+      , testProperty "windowed rfc: many tiny windows round-trip" prop_windowedRFC
+      , testCase     "windowed rfc: the target arm wins the repeats and earns the RFC flavor" windowedRFCTargetArmWins
+      , testCase     "windowed rfc: a source-favoring pair matches the plain xdelta3 emission byte for byte" windowedRFCSourceArmMatchesXDelta3
+      , testCase     "windowed rfc: a pooled custom table amortizes across the windows" windowedRFCCustomTableAmortizes
+      , testCase     "windowed rfc: an empty target is one empty window" windowedRFCEmptyTarget
       , testCase     "create: the matcher's addressable-range wall holds at its exact boundary" vcdiffUnaddressablePairRefused
       ]
   , testGroup "PPF1"
@@ -458,7 +464,7 @@ prop_ups = forAll genUPSEncodeablePair $ \(source, target) ->
 -- to the source, reconstructs the target exactly — through the matcher.
 prop_vcdiff :: Property
 prop_vcdiff = forAll genPair $ \(source, target) ->
-  case createRFCVCDIFF (InputFileContents source) (OutputFileContents target) of
+  case createRFCVCDIFF OneWholeTargetWindow (InputFileContents source) (OutputFileContents target) of
     Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
     Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
       Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
@@ -524,8 +530,8 @@ prop_xdelta3ManyWindows = forAll genPair $ \(source, target) ->
                     in slice : windowSlicesOf sliceLength rest
 
 -- | A deliberately tiny window size, so ordinary property pairs emit many windows.
-sixtyFourByteWindows :: XDelta3WindowSize
-sixtyFourByteWindows = case xdelta3WindowSizeOfBytes 64 of
+sixtyFourByteWindows :: EmissionWindowSize
+sixtyFourByteWindows = case emissionWindowSizeOfBytes 64 of
   Just windowSize -> windowSize
   Nothing         -> error "sixty-four bytes is positive"
 
@@ -573,7 +579,7 @@ xdelta3WindowCapNote = do
       isCapNote XDelta3WindowSizePastReferenceDecoder{} = True
       isCapNote _                                       = False
   assertBool "a 17 MiB window earns the note"
-    (any isCapNote (advisoriesAt (xdelta3WindowSizeOfBytes (17 * 1024 * 1024))))
+    (any isCapNote (advisoriesAt (emissionWindowSizeOfBytes (17 * 1024 * 1024))))
   assertBool "the default earns none"
     (not (any isCapNote (advisoriesAt (Just defaultXDelta3WindowSize))))
   assertBool "the cap itself earns none"
@@ -827,6 +833,119 @@ vcdiffUnaddressablePairRefused = do
     Left (VCDIFFPairExceedsAddressableRange _ _ _) -> pure ()
     other -> assertFailure ("expected the addressable-range refusal, got " ++ show other)
 
+-- | The windowed sibling of 'prop_vcdiff': sliced into deliberately tiny windows, an RFC create
+-- still parses and applies back to the target exactly, whichever arm each window settled on.
+prop_windowedRFC :: Property
+prop_windowedRFC = forAll genPair $ \(source, target) ->
+  case createRFCVCDIFF (SlicedIntoWindows sixtyFourByteWindows) (InputFileContents source) (OutputFileContents target) of
+    Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
+    Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
+      Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
+      Right (Parsed parsed _parseWarnings) ->
+        VCDIFF.applyVCDIFF parsed (InputFileContents source) === Right (OutputFileContents target)
+
+-- | The constructed case the target arm exists for: a repeated block over an unrelated source.
+-- Sliced at the block size, window 0 carries the block itself (nothing is settled below its base,
+-- so VCD_TARGET cannot mark it), every later window wins by copying earlier output,
+-- and the patch earns 'PatchRFC' — the VCD_TARGET windows are what eject the bytes from the core shape.
+-- slap's own emission parses with no advisories, and the whole thing applies back exactly.
+windowedRFCTargetArmWins :: Assertion
+windowedRFCTargetArmWins = do
+  let block  = pseudoRandomBytes 0xb10c 4096
+      target = ByteString.concat (replicate 8 block)
+      source = pseudoRandomBytes 0x50fa 4096
+      blockSizedWindows = case emissionWindowSizeOfBytes 4096 of
+        Just windowSize -> windowSize
+        Nothing         -> error "four KiB is positive"
+  case createRFCVCDIFF (SlicedIntoWindows blockSizedWindows) (InputFileContents source) (OutputFileContents target) of
+    Left createError -> assertFailureT ("create: " <> renderSlapError createError)
+    Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
+      Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
+      Right (Parsed parsed advisories) -> do
+        assertEqual "slap's own emission parses clean" [] advisories
+        case parsed of
+          PatchRFC header windows -> do
+            assertEqual "no custom code table rode along" (RFCHeader Nothing) header
+            case toList windows of
+              [] -> assertFailure "expected eight windows, got none"
+              firstWindow : laterWindows -> do
+                assertEqual "window 0 is self-contained"
+                  Nothing (windowSourceSegment firstWindow)
+                assertEqual "every later window draws on the produced target"
+                  (replicate 7 (Just FromProducedTarget))
+                  (map (fmap sourceSegmentOrigin . windowSourceSegment) laterWindows)
+          _ -> assertFailure "expected the RFC flavor (VCD_TARGET windows present)"
+        assertEqual "the windowed VCD_TARGET patch applies back exactly"
+          (Right (OutputFileContents target))
+          (VCDIFF.applyVCDIFF parsed (InputFileContents source))
+
+-- | On a small pair with no long self-repeats every window settles on its source arm, no custom table
+-- can amortize over a mere eight windows (the gate declines), and the windowed RFC emission is then
+-- byte-identical to the plain xdelta3 one (verification and compression omitted):
+-- same matcher, same tightening, same packer, and no extension bytes on either side.
+-- The equality also witnesses the tie rule in the compete (the source arm takes every tie),
+-- and that a windowed RFC patch which reached for no RFC feature stays exactly as xdelta3-readable as ever.
+windowedRFCSourceArmMatchesXDelta3 :: Assertion
+windowedRFCSourceArmMatchesXDelta3 = do
+  let source = pseudoRandomBytes 0x77e5 512
+      target = ByteString.pack
+        [ if index == 0 then byte `Bits.xor` 0x5a else byte
+        | (index, byte) <- zip [0 :: Int ..] (ByteString.unpack source) ]
+      rfcResult = createRFCVCDIFF (SlicedIntoWindows sixtyFourByteWindows)
+                    (InputFileContents source) (OutputFileContents target)
+      xdelta3Result = createXDelta3 OmitVerification EmitSectionsPlain sixtyFourByteWindows Nothing
+                        (InputFileContents source) (OutputFileContents target)
+  case (rfcResult, xdelta3Result) of
+    (Right (CreateResult (PatchFileContents rfcBytes) _), Right (CreateResult (PatchFileContents xdelta3Bytes) _)) ->
+      assertEqual "source-armed windowed RFC equals the plain xdelta3 emission" xdelta3Bytes rfcBytes
+    _ -> assertFailure "both creates succeed on an ordinary pair"
+
+-- | The amortization case: 512 source-lockstep windows, each a COPY whose size the default table
+-- can only spell with a coded-size varint. Pooled across windows the repeated COPY(64) shape earns
+-- its mint — the table ships once in the header and drops a varint per window — so the windowed
+-- patch undercuts the plain xdelta3 emission (which has no table to reach for),
+-- carries VCD_CODETABLE, and still applies back exactly.
+windowedRFCCustomTableAmortizes :: Assertion
+windowedRFCCustomTableAmortizes = do
+  let source = pseudoRandomBytes 0x7ab1 32768
+      target = ByteString.pack
+        [ if index `mod` 4096 == 0 then byte `Bits.xor` 0x5a else byte
+        | (index, byte) <- zip [0 :: Int ..] (ByteString.unpack source) ]
+      rfcResult = createRFCVCDIFF (SlicedIntoWindows sixtyFourByteWindows)
+                    (InputFileContents source) (OutputFileContents target)
+      xdelta3Result = createXDelta3 OmitVerification EmitSectionsPlain sixtyFourByteWindows Nothing
+                        (InputFileContents source) (OutputFileContents target)
+  case (rfcResult, xdelta3Result) of
+    (Right (CreateResult rfcPatch@(PatchFileContents rfcBytes) _), Right (CreateResult (PatchFileContents xdelta3Bytes) _)) -> do
+      assertBool "the pooled table pays: windowed RFC undercuts the table-less xdelta3 emission"
+        (ByteString.length rfcBytes < ByteString.length xdelta3Bytes)
+      case VCDIFF.parseVCDIFF rfcPatch of
+        Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
+        Right (Parsed parsed _parseWarnings) -> do
+          case parsed of
+            PatchRFC header _ -> case rfcCustomCodeTable header of
+              Just _  -> pure ()
+              Nothing -> assertFailure "expected the custom code table in the RFC header"
+            _ -> assertFailure "expected PatchRFC (the custom table is the RFC signal here)"
+          assertEqual "the amortized patch applies back exactly"
+            (Right (OutputFileContents target))
+            (VCDIFF.applyVCDIFF parsed (InputFileContents source))
+    _ -> assertFailure "both creates succeed on an ordinary pair"
+
+-- | An empty target under windowing: one empty window, applied back to the empty file.
+windowedRFCEmptyTarget :: Assertion
+windowedRFCEmptyTarget = do
+  let source = pseudoRandomBytes 0xe0 64
+  case createRFCVCDIFF (SlicedIntoWindows sixtyFourByteWindows) (InputFileContents source) (OutputFileContents ByteString.empty) of
+    Left createError -> assertFailureT ("create: " <> renderSlapError createError)
+    Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
+      Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
+      Right (Parsed parsed _parseWarnings) -> do
+        assertEqual "one window" 1 (length (toList (patchWindows parsed)))
+        assertEqual "applies back to the empty target"
+          (Right (OutputFileContents ByteString.empty))
+          (VCDIFF.applyVCDIFF parsed (InputFileContents source))
+
 -- prop_vcdiffIgnoresSource is gone as of 02b. In the floor it was a
 -- tripwire: source-independence held only because the encoder read
 -- nothing of the source, and its own comment said it would fall when
@@ -845,7 +964,7 @@ vcdiffRealDiffShrinks =
       target = ByteString.take 32 source
             <> ByteString.pack [0xFF, 0xFE]
             <> ByteString.drop 34 source
-  in case createRFCVCDIFF (InputFileContents source) (OutputFileContents target) of
+  in case createRFCVCDIFF OneWholeTargetWindow (InputFileContents source) (OutputFileContents target) of
        Left createError -> assertFailureT ("create: " <> renderSlapError createError)
        Right (CreateResult matchedPatch@(PatchFileContents matchedBytes) _) -> do
          case VCDIFF.parseVCDIFF matchedPatch of
@@ -874,7 +993,7 @@ vcdiffMatcherMultipleCopies =
     assertBool "cover has multiple segments"            (length segments > 1)
     assertBool "cover has both a copy and a literal"
       (any isCopy segments && any isLiteral segments)
-    case createRFCVCDIFF (InputFileContents source) (OutputFileContents target) of
+    case createRFCVCDIFF OneWholeTargetWindow (InputFileContents source) (OutputFileContents target) of
       Left createError -> assertFailureT ("create: " <> renderSlapError createError)
       Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
         Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
@@ -908,7 +1027,7 @@ vcdiffFloorReachableThroughMatcher =
       CreateResult (PatchFileContents floorBytes) _ =
         createFromCover (InputFileContents source) (OutputFileContents target)
                         (Cover [CoverLiteral (Offset 0) (byteLength target)])
-  in case createRFCVCDIFF (InputFileContents source) (OutputFileContents target) of
+  in case createRFCVCDIFF OneWholeTargetWindow (InputFileContents source) (OutputFileContents target) of
        Left createError -> assertFailureT ("create: " <> renderSlapError createError)
        Right (CreateResult (PatchFileContents liveBytes) _) ->
          assertEqual "live path falls back to the floor bytes" floorBytes liveBytes

@@ -45,7 +45,7 @@ import Slap.Convert (CreateFormat(..), DifferentialCreate(CreateBPS),
                      TextMode(..))
 import Slap.XDelta1.Types (XDelta1FromName(..), XDelta1ToName(..))
 import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor, secondaryCompressorTokens)
-import Slap.VCDIFF.Types (XDelta3WindowSize, xdelta3WindowSizeOfBytes)
+import Slap.VCDIFF.Types (EmissionWindowSize, emissionWindowSizeOfBytes)
 import Slap.Constraint (Constraint(..), constraintFlagName)
 import Slap.Dialect (Dialect(..), dialectFlagName)
 import Slap.PPF1.Types (PPF1Origin(..))
@@ -624,8 +624,8 @@ parseSecondaryCompressor input =
 
 -- | Parse a @--window-size@ value: a byte count with an optional k or m suffix (KiB / MiB).
 -- Sized in 'Integer' first, so an absurd count is refused rather than wrapped;
--- zero is refused by 'xdelta3WindowSizeOfBytes', the type's one door.
-parseWindowSize :: String -> Either String XDelta3WindowSize
+-- zero is refused by 'emissionWindowSizeOfBytes', the type's one door.
+parseWindowSize :: String -> Either String EmissionWindowSize
 parseWindowSize input = case span isDigit input of
   ("", _) -> Left ("not a window size: " ++ input ++ windowSizeShapeHint)
   (digits, suffix) -> do
@@ -637,7 +637,7 @@ parseWindowSize input = case span isDigit input of
     let byteCount = read digits * multiplier :: Integer
     if byteCount > toInteger (maxBound :: Int)
       then Left ("window size past what this host can hold: " ++ input)
-      else case xdelta3WindowSizeOfBytes (fromInteger byteCount) of
+      else case emissionWindowSizeOfBytes (fromInteger byteCount) of
              Just windowSize -> Right windowSize
              Nothing         -> Left "window size must be at least 1 byte"
 
@@ -671,7 +671,8 @@ requestedMetadataParser = do
                                   <> help ("Secondary compressor for xdelta3 (default lzma): "
                                         ++ intercalate ", " (map fst secondaryCompressorTokens))))
     windowSize        <- optional (option (eitherReader parseWindowSize) (long "window-size" <> metavar "SIZE"
-                            <> help ("xdelta3 window size: bytes with an optional k or m suffix (default 8m)."
+                            <> help ("VCDIFF window size: bytes with an optional k or m suffix. xdelta3 defaults to 8m;"
+                                  ++ " rfc-vcdiff defaults to one window spanning the whole output."
                                   ++ " The widespread xdelta3 3.0.11 build declines to decode windows past 16m; slap reads them fine.")))
     unstable          <- optional (flag' UnstablePatch (long "unstable"
                             <> help "Mark patch unstable (DPS)"))

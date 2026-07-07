@@ -33,7 +33,7 @@ import Slap.Convert
   (CreateFormat(..), DifferentialCreate(..), RequestedPatchMetadata(..),
    noMetadataRequested, noConstraintsRequested, noDialectsRequested)
 import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor(..))
-import Slap.VCDIFF.Types (xdelta3WindowSizeOfBytes)
+import Slap.VCDIFF.Types (emissionWindowSizeOfBytes)
 import Slap.Create (createPatch)
 import Slap.Status (CreateResult(..), renderSlapError)
 import Slap.FileContents
@@ -171,7 +171,7 @@ windowedRowTest getTargets basePath bootPath =
     baseBytes        <- mmapRomFile basePath
     let targetBytes  = lookupBootstrapTarget bootstrapTargets basePath bootPath
         windowedMeta = noMetadataRequested
-          { requestedWindowSize = xdelta3WindowSizeOfBytes (128 * 1024) }
+          { requestedWindowSize = emissionWindowSizeOfBytes (128 * 1024) }
     case createPatch (CreateDifferential CreateXDelta3) Nothing
            (InputFileContents baseBytes)
            (OutputFileContents targetBytes)

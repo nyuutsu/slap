@@ -87,7 +87,7 @@ import qualified Slap.NINJA2.Create as NINJA2
 import qualified Slap.GDIFF.Create as GDIFF
 import qualified Slap.VCDIFF.Create as VCDIFF
 import Slap.VCDIFF.Create (WindowCompressionEmission(..))
-import Slap.VCDIFF.Types (XDelta3WindowSize, unXDelta3WindowSize,
+import Slap.VCDIFF.Types (EmissionWindowSize, unEmissionWindowSize, RFCWindowing(..),
                           defaultXDelta3WindowSize, xdelta3ReferenceDecoderWindowCap)
 import Slap.VCDIFF.SecondaryCompression
   (XDelta3SecondaryCompressor(..), encodableSectionCompressor, compressionAlgorithmOf)
@@ -273,9 +273,11 @@ data RequestedPatchMetadata = RequestedPatchMetadata
   , requestedXDelta1ToName        :: Maybe XDelta1ToName
     -- ^ xdelta1 only: counterpart to 'requestedXDelta1FromName' for
     -- the to-name slot.
-  , requestedWindowSize           :: Maybe XDelta3WindowSize
-    -- ^ xdelta3 only: the window size to slice the target by — the user's @--window-size SIZE@;
-    -- absent means 'defaultXDelta3WindowSize'. Never inherited on convert, unlike the compressor:
+  , requestedWindowSize           :: Maybe EmissionWindowSize
+    -- ^ The window size a VCDIFF create slices its output by — the user's @--window-size SIZE@.
+    -- Absent means each arc's own default: 8 MiB windows for xdelta3 ('defaultXDelta3WindowSize'),
+    -- one window spanning everything for RFC VCDIFF ('OneWholeTargetWindow', which has the why).
+    -- Never inherited on convert, unlike the compressor:
     -- a compressor is one declared wire fact, while a source patch declares no window size —
     -- its windows each carry their own, so there is no single fact to carry, and extraction leaves this 'Nothing'.
   }
@@ -497,7 +499,7 @@ acceptedMetadataFields (CreateDifferential format) = case format of
   CreateBSDiff  -> Set.empty
   CreateXDelta1 -> Set.fromList [MetadataVerificationInclusion, MetadataPatchCompression,
                                  MetadataXDelta1FromName, MetadataXDelta1ToName]
-  CreateRFCVCDIFF -> Set.empty
+  CreateRFCVCDIFF -> Set.fromList [MetadataWindowSize]
   CreateXDelta3   -> Set.fromList [MetadataVerificationInclusion, MetadataPatchCompression,
                                    MetadataSecondaryCompressor, MetadataEmbeddedBlob,
                                    MetadataWindowSize]
@@ -850,11 +852,12 @@ createDefaultAdvisories format meta =
 
 -- | The note for an xdelta3 create asked (@--window-size@) for windows past what the widespread reference build decodes:
 -- the patch is valid and the create proceeds; the user hears which decoder will decline the result.
+-- xdelta3's alone — an RFC VCDIFF create has no reference decoder to name, so it honors any window size silently.
 windowSizeAdvisories :: CreateFormat -> RequestedPatchMetadata -> [SlapAdvisory]
 windowSizeAdvisories (CreateDifferential CreateXDelta3) meta =
   [ XDelta3WindowSizePastReferenceDecoder
-      (Length (unXDelta3WindowSize requested))
-      (MaxLength (Length (unXDelta3WindowSize xdelta3ReferenceDecoderWindowCap)))
+      (Length (unEmissionWindowSize requested))
+      (MaxLength (Length (unEmissionWindowSize xdelta3ReferenceDecoderWindowCap)))
   | Just requested <- [requestedWindowSize meta]
   , requested > xdelta3ReferenceDecoderWindowCap ]
 windowSizeAdvisories _ _ = []
@@ -1230,7 +1233,10 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
   CreateAPSGBA  -> APSGBA.createAPSGBA source target
   CreateGDIFF   -> GDIFF.createGDIFF source target
   CreateBSDiff  -> BSDiff.createBSDiff source target
-  CreateRFCVCDIFF -> VCDIFF.createRFCVCDIFF source target
+  CreateRFCVCDIFF ->
+    VCDIFF.createRFCVCDIFF
+      (maybe OneWholeTargetWindow SlicedIntoWindows (requestedWindowSize meta))
+      source target
   CreateXDelta3 -> do
     compressionEmission <- xdelta3CompressionEmission meta
     VCDIFF.createXDelta3 verificationChoice compressionEmission windowChoice (requestedEmbeddedBlob meta) source target

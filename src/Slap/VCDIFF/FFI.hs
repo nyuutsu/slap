@@ -1,17 +1,21 @@
 -- | VCDIFF cover-matcher binding to rusty-slap.
 --
--- The Rust side owns the match search over the superstring @U@: a greedy cover walk (@rusty-slap/src/vcdiff_diff.rs@)
+-- The Rust side owns the match search: a greedy cover walk (@rusty-slap/src/vcdiff_diff.rs@)
 -- driven by a cost-aware matcher (@rusty-slap/src/vcdiff_hash_chain.rs@),
 -- which offers a copy only where it beats writing the bytes as literals.
--- The windowed entry covers each window of the target against @source ++ that window's slice@:
+-- Two windowed entries, one per engine.
+-- 'vcdiffWindowedCovers' covers each window of the target against @source ++ that window's slice@:
 -- the matcher indexes the source once and forgets each window's output as the next begins,
 -- so a cover that copies from an earlier window's output cannot come back across this seam.
+-- 'vcdiffProducedTargetCovers' is the deliberate opposite, for the VCD_TARGET arm of RFC windowed creation:
+-- the settled index is retained across windows on purpose.
 --
 -- Total: every input yields covers, the empty target included (one empty window), so there is no error channel.
 -- A malformed buffer is a loud 'error', not a silently defaulted segment.
 module Slap.VCDIFF.FFI
   ( vcdiffCover
   , vcdiffWindowedCovers
+  , vcdiffProducedTargetCovers
   ) where
 
 import Data.ByteString (ByteString)
@@ -28,11 +32,21 @@ import Slap.FFI (readByteString, withByteString, readWord64LE)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Measure (Offset(..), Length(..))
 import Slap.VCDIFF.Cover (Cover(..), CoverSegment(..))
-import Slap.VCDIFF.Types (XDelta3WindowSize, unXDelta3WindowSize)
+import Slap.VCDIFF.Types (EmissionWindowSize, unEmissionWindowSize)
 
 foreign import ccall unsafe "rusty_vcdiff_cover"
   rustyVCDIFFCover
     :: Ptr Word8 -> CSize -> Ptr Word8 -> CSize
+    -> CSize                           -- window length
+    -> Ptr (Ptr Word8) -> Ptr CSize    -- kinds
+    -> Ptr (Ptr Word8) -> Ptr CSize    -- offsets
+    -> Ptr (Ptr Word8) -> Ptr CSize    -- lengths
+    -> Ptr (Ptr Word8) -> Ptr CSize    -- per-window segment counts
+    -> IO CInt
+
+foreign import ccall unsafe "rusty_vcdiff_produced_target_cover"
+  rustyVCDIFFProducedTargetCover
+    :: Ptr Word8 -> CSize
     -> CSize                           -- window length
     -> Ptr (Ptr Word8) -> Ptr CSize    -- kinds
     -> Ptr (Ptr Word8) -> Ptr CSize    -- offsets
@@ -48,8 +62,36 @@ vcdiffCover source target@(OutputFileContents targetBytes) =
 
 -- | One cover per window: full-size windows in order, then the remainder, the empty target one empty window.
 -- A cover's copy offsets address @source ++ its own window's slice@, and its literal offsets index that slice.
-vcdiffWindowedCovers :: XDelta3WindowSize -> InputFileContents -> OutputFileContents -> NonEmpty Cover
-vcdiffWindowedCovers windowSize = coversOfWindowLength (unXDelta3WindowSize windowSize)
+vcdiffWindowedCovers :: EmissionWindowSize -> InputFileContents -> OutputFileContents -> NonEmpty Cover
+vcdiffWindowedCovers windowSize = coversOfWindowLength (unEmissionWindowSize windowSize)
+
+-- | One cover per window against the target's own earlier windows: the produced-target sibling of 'vcdiffWindowedCovers',
+-- for the VCD_TARGET arm of RFC windowed creation.
+-- A cover's copy offsets are positions in the target itself; its literal offsets index the window's slice, as ever.
+vcdiffProducedTargetCovers :: EmissionWindowSize -> OutputFileContents -> NonEmpty Cover
+vcdiffProducedTargetCovers windowSize (OutputFileContents target) =
+  unsafePerformIO $
+    withByteString target $ \targetPointer targetLength ->
+    alloca $ \kindsAddressPointer   ->
+    alloca $ \kindsLengthPointer    ->
+    alloca $ \offsetsAddressPointer ->
+    alloca $ \offsetsLengthPointer  ->
+    alloca $ \lengthsAddressPointer ->
+    alloca $ \lengthsLengthPointer  ->
+    alloca $ \countsAddressPointer  ->
+    alloca $ \countsLengthPointer   -> do
+      _ <- rustyVCDIFFProducedTargetCover
+             targetPointer targetLength
+             (fromIntegral (unEmissionWindowSize windowSize))
+             kindsAddressPointer   kindsLengthPointer
+             offsetsAddressPointer offsetsLengthPointer
+             lengthsAddressPointer lengthsLengthPointer
+             countsAddressPointer  countsLengthPointer
+      kindBytes   <- readByteString kindsAddressPointer   kindsLengthPointer
+      offsetBytes <- readByteString offsetsAddressPointer offsetsLengthPointer
+      lengthBytes <- readByteString lengthsAddressPointer lengthsLengthPointer
+      countBytes  <- readByteString countsAddressPointer  countsLengthPointer
+      pure (decodeWindowedCovers "rusty_vcdiff_produced_target_cover" countBytes kindBytes offsetBytes lengthBytes)
 
 -- | The Rust matcher cannot fail, so its return code is ignored.
 coversOfWindowLength :: Int -> InputFileContents -> OutputFileContents -> NonEmpty Cover
@@ -77,22 +119,23 @@ coversOfWindowLength windowLength (InputFileContents source) (OutputFileContents
       offsetBytes <- readByteString offsetsAddressPointer offsetsLengthPointer
       lengthBytes <- readByteString lengthsAddressPointer lengthsLengthPointer
       countBytes  <- readByteString countsAddressPointer  countsLengthPointer
-      pure (decodeWindowedCovers countBytes kindBytes offsetBytes lengthBytes)
+      pure (decodeWindowedCovers "rusty_vcdiff_cover" countBytes kindBytes offsetBytes lengthBytes)
 
 -- | Zip the flat parallel buffers (one kind byte, eight LE offset bytes, eight LE length bytes per segment)
 -- back into per-window 'Cover's, split by the per-window segment counts (eight LE bytes each), in window order.
-decodeWindowedCovers :: ByteString -> ByteString -> ByteString -> ByteString -> NonEmpty Cover
-decodeWindowedCovers countBytes kindBytes offsetBytes lengthBytes
+-- The Rust entry's name rides along so a torn buffer blames the function that produced it.
+decodeWindowedCovers :: String -> ByteString -> ByteString -> ByteString -> ByteString -> NonEmpty Cover
+decodeWindowedCovers rustEntryName countBytes kindBytes offsetBytes lengthBytes
   | ByteString.length countBytes `mod` 8 /= 0        = tornCover "window counts" countBytes (8 * windowCount)
   | ByteString.length offsetBytes /= 8 * segmentCount = tornCover "offsets" offsetBytes (8 * segmentCount)
   | ByteString.length lengthBytes /= 8 * segmentCount = tornCover "lengths" lengthBytes (8 * segmentCount)
   | sum segmentCountPerWindow /= segmentCount =
-      error (tornCoverMessage
+      error (tornCoverMessage rustEntryName
         ("window counts sum to " <> show (sum segmentCountPerWindow)
          <> " segments but the buffers hold " <> show segmentCount))
   | otherwise = case NonEmpty.nonEmpty (coversFromSegment 0 segmentCountPerWindow) of
       Just covers -> covers
-      Nothing     -> error (tornCoverMessage "zero windows (there is always at least one)")
+      Nothing     -> error (tornCoverMessage rustEntryName "zero windows (there is always at least one)")
   where
     segmentCount = ByteString.length kindBytes
     windowCount  = ByteString.length countBytes `div` 8
@@ -111,13 +154,13 @@ decodeWindowedCovers countBytes kindBytes offsetBytes lengthBytes
       in case ByteString.index kindBytes index of
            0   -> CoverLiteral segmentOffset segmentLength
            1   -> CoverCopy    segmentLength segmentOffset
-           tag -> error (tornCoverMessage
+           tag -> error (tornCoverMessage rustEntryName
                     ("kind byte " <> show tag <> " at segment " <> show index
                      <> " (expected 0 = literal or 1 = copy)"))
 
-    tornCover field buffer expected = error (tornCoverMessage
+    tornCover field buffer expected = error (tornCoverMessage rustEntryName
       (field <> " buffer is " <> show (ByteString.length buffer) <> " bytes, expected "
              <> show expected <> " (8 LE bytes per entry)"))
 
-tornCoverMessage :: String -> String
-tornCoverMessage detail = "Slap.VCDIFF.FFI: torn cover from rusty_vcdiff_cover: " <> detail
+tornCoverMessage :: String -> String -> String
+tornCoverMessage rustEntryName detail = "Slap.VCDIFF.FFI: torn cover from " <> rustEntryName <> ": " <> detail

@@ -19,8 +19,15 @@
 //! why. Every caller goes through the windowed entry, the RFC arc and
 //! the custom-table inner delta slicing at the target's own length for
 //! their one whole-target window.
+//!
+//! [`vcdiff_produced_target_covers`] is the same parse driven by the
+//! other engine: each window covered against the output of the windows
+//! before it, for the VCD_TARGET arm of RFC-flavor windowed creation.
+//! The two entries share the greedy parse and the segment vocabulary;
+//! what differs is the engine, and with it the coordinate space a
+//! copy's offset lives in.
 
-use crate::vcdiff_hash_chain::HashChainMatcher;
+use crate::vcdiff_hash_chain::{HashChainMatcher, ProducedTargetMatcher};
 
 /// A match the engine stands behind at one target position: where it
 /// begins in the superstring `U = source ++ target` and how long it
@@ -93,6 +100,38 @@ pub fn vcdiff_windowed_covers<'pair>(
         .collect()
 }
 
+/// Segment a target into one cover per window against the target's own
+/// earlier windows: the produced-target sibling of
+/// [`vcdiff_windowed_covers`], for the VCD_TARGET arm of RFC-flavor
+/// windowed creation. No source is involved — a VCD_TARGET window
+/// draws only on produced output, which is exactly the target prefix
+/// below the window's base. A copy's offset is therefore a position in
+/// the target itself; a literal's offset indexes the window's slice,
+/// as ever. Window slicing matches the sibling: equal slices, the
+/// final one the remainder, the empty target one empty window.
+pub fn vcdiff_produced_target_covers(
+    target: &[u8],
+    window_length: usize,
+) -> Vec<Vec<CoverSegment>> {
+    assert!(
+        window_length > 0,
+        "vcdiff produced-target covers: window length must be positive"
+    );
+    if target.is_empty() {
+        return vec![Vec::new()];
+    }
+    let mut matcher = ProducedTargetMatcher::build(target);
+    let mut window_base = 0;
+    target
+        .chunks(window_length)
+        .map(|window| {
+            matcher.begin_window(window_base, window.len());
+            window_base += window.len();
+            greedy_cover(window.len(), |position| matcher.match_at(position))
+        })
+        .collect()
+}
+
 /// Greedily parse a target of `target_length` bytes into a cover: take
 /// every match the engine offers, and extend the pending literal run by
 /// one byte where it offers none. The engine is a parameter, and it
@@ -144,7 +183,10 @@ fn flush_literal(segments: &mut Vec<CoverSegment>, start: usize, end: usize) {
 
 #[cfg(test)]
 mod tests {
-    use super::{vcdiff_cover, vcdiff_windowed_covers, CoverSegment, SegmentKind};
+    use super::{
+        vcdiff_cover, vcdiff_produced_target_covers, vcdiff_windowed_covers, CoverSegment,
+        SegmentKind,
+    };
 
     /// SplitMix64, matching the house pseudo-random helper.
     fn pseudo_random_bytes(seed: u64, length: usize) -> Vec<u8> {
@@ -305,6 +347,93 @@ mod tests {
             assert_eq!(cover.len(), 1);
             assert!(matches!(cover[0].kind, SegmentKind::Literal));
         }
+    }
+
+    /// Rebuild the target from produced-target covers. Copies read at
+    /// their flat target offsets out of the output built so far — the
+    /// produced prefix and the window's own output are one buffer — and
+    /// each is additionally held to legality: a copy starting before its
+    /// window's base must not cross it, since the wire segment can only
+    /// span produced output.
+    fn reconstruct_from_produced_target_covers(
+        target: &[u8],
+        covers: &[Vec<CoverSegment>],
+    ) -> Vec<u8> {
+        let mut produced: Vec<u8> = Vec::with_capacity(target.len());
+        for cover in covers {
+            let window_base = produced.len();
+            for segment in cover {
+                let offset = segment.offset as usize;
+                let length = segment.length as usize;
+                match segment.kind {
+                    SegmentKind::Literal => produced.extend_from_slice(
+                        &target[window_base + offset..window_base + offset + length],
+                    ),
+                    SegmentKind::Copy => {
+                        assert!(
+                            offset >= window_base || offset + length <= window_base,
+                            "a copy crossed its window's base: [{offset}, {})",
+                            offset + length,
+                        );
+                        for step in 0..length {
+                            produced.push(produced[offset + step]);
+                        }
+                    }
+                }
+            }
+        }
+        produced
+    }
+
+    #[test]
+    fn produced_target_covers_reconstruct_every_window() {
+        for &(seed, _source_length, target_length, alphabet) in CASES {
+            let target = pseudo_random_low_alphabet(seed ^ 0x5a5a, target_length, alphabet);
+            for window_length in [7usize, 64, 4096] {
+                let covers = vcdiff_produced_target_covers(&target, window_length);
+                assert_eq!(covers.len(), target.len().div_ceil(window_length).max(1));
+                assert_eq!(
+                    reconstruct_from_produced_target_covers(&target, &covers),
+                    target,
+                    "reconstruction divergence at seed {seed:#x}, window {window_length}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn produced_target_covers_reach_across_windows() {
+        // The repeated-pattern shape of windows_never_reference_earlier_windows,
+        // through the other engine: 16-byte windows over a repeating
+        // 16-byte pattern copy an earlier window instead of carrying
+        // literals — the reference the source-pair engine must not find
+        // is here the whole point.
+        let pattern = pseudo_random_bytes(0x74, 16);
+        let mut target = Vec::new();
+        for _ in 0..8 {
+            target.extend_from_slice(&pattern);
+        }
+        let covers = vcdiff_produced_target_covers(&target, 16);
+        assert_eq!(covers.len(), 8);
+        assert_eq!(covers[0].len(), 1);
+        assert!(matches!(covers[0][0].kind, SegmentKind::Literal));
+        for (window_index, cover) in covers.iter().enumerate().skip(1) {
+            assert_eq!(cover.len(), 1);
+            assert!(matches!(cover[0].kind, SegmentKind::Copy));
+            assert_eq!(
+                (cover[0].offset, cover[0].length),
+                (((window_index - 1) * 16) as u64, 16),
+                "window {window_index} copies the newest settled repeat",
+            );
+        }
+        assert_eq!(reconstruct_from_produced_target_covers(&target, &covers), target);
+    }
+
+    #[test]
+    fn an_empty_target_is_one_empty_produced_target_window() {
+        let covers = vcdiff_produced_target_covers(&[], 4096);
+        assert_eq!(covers.len(), 1);
+        assert!(covers[0].is_empty());
     }
 
     #[test]

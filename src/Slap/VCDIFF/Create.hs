@@ -10,16 +10,19 @@
 --
 -- The path is cover to instructions to resolved instructions to wire bytes, source-free, under the active code table, window by window:
 -- each segment becomes an instruction ('coverToInstructions'),
--- an xdelta3 window's source segment tightens to the span its copies read ('tightenToUsedSourceSpan'),
+-- a windowed emission's segment tightens to the span its copies read ('tightenToUsedSpan'),
 -- each COPY's address is resolved once against the cache ('resolveInstructionAddresses'),
 -- and the resolved stream packs into the densest opcodes the table offers ('packInstructions').
--- The RFC arc emits one window spanning the whole target; the xdelta3 arc slices the target by the requested 'XDelta3WindowSize'
+-- The xdelta3 arc slices the target by the requested 'EmissionWindowSize'
 -- (8 MiB by default — the reference tool's own emission shape, and what keeps every xdelta3 build able to decode the result).
+-- The RFC arc emits one window spanning the whole target unless @--window-size@ says otherwise ('RFCWindowing', which has the why).
+-- The windowed RFC opt-in is where VCD_TARGET lives — each window is covered both against the source and against
+-- earlier windows' output, and ships whichever arm encodes smaller ('emitWindowedRFCPatch').
 --
 -- The create token names the arc the user asked for; the bytes earn their flavor by the features they use.
--- A patch on the default table with no checksum, no compressed section, and no application header reaches for no flavor-distinguishing feature,
--- so it parses back as 'Slap.VCDIFF.Types.PatchCoreOnly';
--- a custom code table is an RFC-arc feature (RFC 3284 §7's VCD_CODETABLE), parsing back as @PatchRFC@;
+-- A patch on the default table with no checksum, no compressed section, no application header, and no VCD_TARGET window
+-- reaches for no flavor-distinguishing feature, so it parses back as 'Slap.VCDIFF.Types.PatchCoreOnly';
+-- a custom code table (RFC 3284 §7's VCD_CODETABLE) and a VCD_TARGET window are RFC-arc features, parsing back as @PatchRFC@;
 -- a per-window Adler32, a declared secondary compressor, and an application header are xdelta3 extensions, parsing back as @PatchXDelta3@.
 --
 -- A custom code table carries its own opcode assignments and cache geometry, tuned to this patch:
@@ -31,6 +34,7 @@
 -- so a table close to the default costs almost nothing to ship.
 -- 'createRFCVCDIFF' grows the cache a slot at a time, redesigns the table under each geometry,
 -- and ships the smallest candidate, but only when it beats the no-custom-table default patch outright.
+-- A windowed create weighs the same consideration over every window's stream at once ('windowedCandidatePatchForConfig').
 -- The design ('designCandidateTable') stays deliberately simple; sharpening it is later work.
 -- 'createXDelta3' never considers one: xdelta3 rejects custom tables, so on that arc the default table is the only table there is.
 module Slap.VCDIFF.Create
@@ -48,16 +52,16 @@ module Slap.VCDIFF.Create
   , designCandidateTable
   ) where
 
-import Slap.VCDIFF.Types (vcdiffMagicBytes, VCDIFFInstruction(..),
-                          XDelta3WindowSize,
-                          vcdDecompressBit, vcdAppHeaderBit, vcdSourceBit, vcdAdler32Bit,
+import Slap.VCDIFF.Types (vcdiffMagicBytes, VCDIFFInstruction(..), SegmentOrigin(..),
+                          EmissionWindowSize, RFCWindowing(..),
+                          vcdDecompressBit, vcdAppHeaderBit, vcdSourceBit, vcdTargetBit, vcdAdler32Bit,
                           vcdDataCompBit, vcdInstCompBit, vcdAddrCompBit)
 import Slap.VCDIFF.SecondaryCompression
   ( secondaryCompressorId
   , SectionCarriage(..), carriageBytes
   , SectionCompressor, sectionCompressorAlgorithm, sectionCompressorKindCarriages )
 import Slap.VCDIFF.Cover (Cover(..), CoverSegment(..))
-import Slap.VCDIFF.FFI (vcdiffCover, vcdiffWindowedCovers)
+import Slap.VCDIFF.FFI (vcdiffCover, vcdiffWindowedCovers, vcdiffProducedTargetCovers)
 import Slap.VCDIFF.AddressCache
   ( AddressCacheConfig(..), NearSlotCount(..), SameBlockCount(..)
   , freshAddressCache, defaultAddressCacheConfig
@@ -88,22 +92,29 @@ import Data.Maybe (fromMaybe)
 import Data.Ord (Down(..))
 import Data.Word (Word8)
 
--- | Create a VCDIFF patch reconstructing @target@.
--- The cover comes from the matcher ('Slap.VCDIFF.FFI.vcdiffCover'), so the patch copies the runs the target shares with the source or with itself;
+-- | Create a VCDIFF patch reconstructing @target@, windowed as asked.
+-- Under 'OneWholeTargetWindow' (the default) the cover comes from the matcher ('Slap.VCDIFF.FFI.vcdiffCover'),
+-- so the patch copies the runs the target shares with the source or with itself;
 -- the bytes are then weighed under the default table and a designed custom one, the smaller shipping ('createConsideringCustomTable').
 -- When the matcher finds nothing (an unrelated source, a target shorter than the minimum match)
 -- the cover is all-literal and the bytes are the bedrock floor's exactly.
+-- Under 'SlicedIntoWindows' (the @--window-size@ opt-in) the target is sliced and each window competes
+-- its source arm against its produced-target arm ('emitWindowedRFCPatch') — the arc VCD_TARGET is emitted on.
 -- The 'Either' carries one refusal of its own, a pair the matcher could not address ('rejectUnaddressablePair');
 -- no metadata, no advisories.
-createRFCVCDIFF :: InputFileContents -> OutputFileContents
+createRFCVCDIFF :: RFCWindowing -> InputFileContents -> OutputFileContents
                 -> Either SlapError CreateResult
-createRFCVCDIFF inputContents@(InputFileContents source) outputContents@(OutputFileContents target) = do
+createRFCVCDIFF windowing inputContents@(InputFileContents source) outputContents@(OutputFileContents target) = do
   rejectUnaddressablePair (SourceFileSize (byteFileSize source)) (TargetFileSize (byteFileSize target))
-  Right (createConsideringCustomTable inputContents outputContents
-           (vcdiffCover inputContents outputContents))
+  Right $ case windowing of
+    OneWholeTargetWindow ->
+      createConsideringCustomTable inputContents outputContents
+        (vcdiffCover inputContents outputContents)
+    SlicedIntoWindows windowSize ->
+      CreateResult (PatchFileContents (emitWindowedRFCPatch windowSize source target)) []
 
 -- | Create an xdelta3 patch reconstructing @target@:
--- matcher-driven covers, one per 'XDelta3WindowSize' slice of the target, emitted with the extensions the canonical tool's own output carries.
+-- matcher-driven covers, one per 'EmissionWindowSize' slice of the target, emitted with the extensions the canonical tool's own output carries.
 -- Today those are the per-window Adler32
 -- (on by default, declined by @--omit-verification@; the only integrity data the format has,
 -- so opting out leaves nothing attesting the output — the same gap 'Slap.Status.VerificationOptedOutByCreator' names at apply),
@@ -117,7 +128,7 @@ createRFCVCDIFF inputContents@(InputFileContents source) outputContents@(OutputF
 -- uses no flavor-distinguishing feature at all,
 -- parsing back as 'Slap.VCDIFF.Types.PatchCoreOnly' — readable as xdelta3, which is what was asked for.
 createXDelta3
-  :: VerificationInclusion -> WindowCompressionEmission -> XDelta3WindowSize
+  :: VerificationInclusion -> WindowCompressionEmission -> EmissionWindowSize
   -> Maybe ByteString -> InputFileContents -> OutputFileContents
   -> Either SlapError CreateResult
 createXDelta3 verificationChoice compressionEmission windowSize maybeAppHeader (InputFileContents source) (OutputFileContents target) = do
@@ -418,16 +429,16 @@ layoutSections opcodeResolver resolved = Sections
 ----------------------------------------------------------------------------
 
 -- | How a window sources its copies.
--- A window with source-region copies declares a segment ('DrawsFromSource', the VCD_SOURCE indicator and the two segment varints);
--- a window with none is self-contained ('SelfContained'), with neither — even when it copies its own output, whose addresses then begin at zero.
--- These are exactly the two wire branches 'encodeWindowBytes' takes, and naming them keeps that branch exhaustive:
--- a later sourcing (a VCD_TARGET window, once windows can reference earlier output)
--- lands here as a third constructor and a compile error at every consumer, not a silent fall-through.
-data WindowSourcing = SelfContained | DrawsFromSource !SourceSegmentSpan
+-- A window with external copies declares a segment ('DrawsOn': the matching copy-source indicator bit and the two segment varints),
+-- cut from the side its 'SegmentOrigin' names — the source file (VCD_SOURCE) or earlier windows' output (VCD_TARGET).
+-- A window with none is self-contained ('SelfContained'), declaring neither bit and no varints —
+-- even when it copies its own output, whose addresses then begin at zero.
+-- The origin is the decode side's own 'SegmentOrigin', so the two directions cannot drift on what a segment means.
+data WindowSourcing = SelfContained | DrawsOn !SegmentOrigin !SourceSegmentSpan
   deriving (Eq, Show)
 
--- | The span of source a window declares as its segment: where it starts, and how far it runs.
--- The RFC arc's single window declares the whole source; an xdelta3 window declares the span its copies actually read ('tightenToUsedSourceSpan').
+-- | The span a window declares as its segment: where it starts in its origin's space, and how far it runs.
+-- The RFC arc's single window declares the whole source; a windowed emission declares the span its copies actually read ('tightenToUsedSpan').
 data SourceSegmentSpan = SourceSegmentSpan
   { segmentSpanPosition :: !Offset
   , segmentSpanLength   :: !Length
@@ -437,8 +448,8 @@ data SourceSegmentSpan = SourceSegmentSpan
 -- | The declared segment's length as the position a window's own output begins at in @U@: zero for a self-contained window.
 -- Both the resolver's initial write head and the rebasing arithmetic read it, so the two cannot disagree about where the window region starts.
 sourcingSegmentLength :: WindowSourcing -> Length
-sourcingSegmentLength SelfContained                = Length 0
-sourcingSegmentLength (DrawsFromSource segmentSpan) = segmentSpanLength segmentSpan
+sourcingSegmentLength SelfContained                 = Length 0
+sourcingSegmentLength (DrawsOn _origin segmentSpan) = segmentSpanLength segmentSpan
 
 -- | Whether an emitted window carries the per-window Adler32 of its output (VCD_ADLER32, an xdelta3 extension).
 -- The RFC and core emissions always pass 'OmitWindowAdler32' — their windows have no slot for a checksum,
@@ -488,7 +499,7 @@ planWindow config source target cover = WindowPlan
     instructions = coverToInstructions target cover
     sourcing
       | any instructionCopies instructions =
-          DrawsFromSource (SourceSegmentSpan (Offset 0) (byteLength source))
+          DrawsOn FromSourceFile (SourceSegmentSpan (Offset 0) (byteLength source))
       | otherwise = SelfContained
     initialHere = lengthToOffset (sourcingSegmentLength sourcing)
 
@@ -499,47 +510,50 @@ instructionCopies = \case
   Add _    -> False
   Run _ _  -> False
 
--- | Plan one xdelta3 window: instructions from its cover, the declared source segment tightened to the span those instructions read,
+-- | Plan one windowed-emission window: instructions from its cover, the declared segment tightened to the span those instructions read,
 -- addresses rebased to match, then COPY modes resolved against the cache the declared segment implies —
 -- the write head starting at the declared span's length, exactly where the decoder's will.
-planTightenedWindow :: AddressCacheConfig -> Length -> ByteString -> Cover -> WindowPlan
-planTightenedWindow config sourceLength windowSlice cover = WindowPlan
+-- The 'SegmentOrigin' names the side a surviving segment is cut from, and with it the external space the cover addressed:
+-- the whole source for a source-arm window, the produced target below the window's base for a target-arm one.
+planTightenedWindow :: AddressCacheConfig -> SegmentOrigin -> Length -> ByteString -> Cover -> WindowPlan
+planTightenedWindow config origin externalLength windowSlice cover = WindowPlan
   { planResolved = resolveInstructionAddresses config initialHere rebasedInstructions
   , planSourcing = sourcing
   }
   where
-    (sourcing, rebasedInstructions) =
-      tightenToUsedSourceSpan sourceLength (coverToInstructions windowSlice cover)
+    (usedSpan, rebasedInstructions) =
+      tightenToUsedSpan externalLength (coverToInstructions windowSlice cover)
+    sourcing    = maybe SelfContained (DrawsOn origin) usedSpan
     initialHere = lengthToOffset (sourcingSegmentLength sourcing)
 
--- | Tighten a window's declared source segment to the span its source-region copies actually read, rebasing every copy address to match.
--- Addresses arrive against @whole source ++ window@ (the matcher's world) and leave against @declared segment ++ window@ (the wire's):
--- a source-region address shifts down by the span's start, a window-region address by the whole source's length less the span's.
--- A window with no source-region copies declares no segment at all.
+-- | Tighten a window's declared segment to the span its external copies actually read, rebasing every copy address to match.
+-- Addresses arrive against @external space ++ window@ (the matcher's world) and leave against @declared segment ++ window@ (the wire's):
+-- an external address shifts down by the span's start, a window-region address by the external space's length less the span's.
+-- A window with no external copies gets no span at all; the caller wraps a surviving span in its arm's 'SegmentOrigin'.
 -- Runs before 'resolveInstructionAddresses' on purpose: the cache state the resolver threads depends on the numeric addresses,
 -- so the decoder — which sees only wire addresses — rebuilds exactly the cache the encoder selected modes against.
-tightenToUsedSourceSpan :: Length -> [VCDIFFInstruction] -> (WindowSourcing, [VCDIFFInstruction])
-tightenToUsedSourceSpan (Length sourceLength) instructions = case sourceReadBounds of
-    []     -> (SelfContained, map (rebaseCopyAddress 0 0) instructions)
+tightenToUsedSpan :: Length -> [VCDIFFInstruction] -> (Maybe SourceSegmentSpan, [VCDIFFInstruction])
+tightenToUsedSpan (Length externalLength) instructions = case externalReadBounds of
+    []     -> (Nothing, map (rebaseCopyAddress 0 0) instructions)
     bounds ->
       let spanStart  = minimum (map fst bounds)
           spanLength = maximum (map snd bounds) - spanStart
-      in ( DrawsFromSource (SourceSegmentSpan (Offset spanStart) (Length spanLength))
+      in ( Just (SourceSegmentSpan (Offset spanStart) (Length spanLength))
          , map (rebaseCopyAddress spanStart spanLength) instructions )
   where
-    -- Each source-region copy's read interval; a copy never crosses the
-    -- source's end (core invariant 2, which the matcher's reach cap upholds),
-    -- so the interval ends are source positions and the span they union to
-    -- is entirely inside the source.
-    sourceReadBounds =
+    -- Each external copy's read interval; a copy never crosses the
+    -- external space's end (core invariant 2, which the matcher's reach
+    -- cap upholds), so the interval ends are positions in that space and
+    -- the span they union to lies entirely inside it.
+    externalReadBounds =
       [ (address, address + unLength copyLength)
       | Copy copyLength (Offset address) <- instructions
-      , address < sourceLength ]
+      , address < externalLength ]
 
     rebaseCopyAddress spanStart spanLength = \case
       Copy copyLength (Offset address)
-        | address < sourceLength -> Copy copyLength (Offset (address - spanStart))
-        | otherwise              -> Copy copyLength (Offset (address - sourceLength + spanLength))
+        | address < externalLength -> Copy copyLength (Offset (address - spanStart))
+        | otherwise                -> Copy copyLength (Offset (address - externalLength + spanLength))
       instruction -> instruction
 
 -- | The groundwork of one emitted window: its slice of the target, how it sources its copies, and its three sections, laid out but not yet carried.
@@ -602,11 +616,12 @@ encodeWindowBytes checksumEmission plannedWindow carriages = builderBytes window
         .|. carriageCompressionBit vcdInstCompBit (instructionCarriage carriages)
         .|. carriageCompressionBit vcdAddrCompBit (addressCarriage carriages)
 
-    -- The Win_Indicator and (for a source-drawing window) the source-segment varints, which precede the delta-encoding-length on the wire.
+    -- The Win_Indicator and (for a segment-declaring window) the segment varints, which precede the delta-encoding-length on the wire.
+    -- The varints are origin-blind — which side the segment is cut from lives in the indicator bit alone.
     windowIndicatorAndSegment =
       word8 (windowIndicator (plannedSourcing plannedWindow) checksumEmission)
         <> case plannedSourcing plannedWindow of
-             DrawsFromSource segmentSpan ->
+             DrawsOn _origin segmentSpan ->
                   varintOfLength (segmentSpanLength segmentSpan)
                <> putVcdiffVarint (fromIntegral (unOffset (segmentSpanPosition segmentSpan)))
              SelfContained -> mempty
@@ -659,7 +674,7 @@ emitDefaultPatch source target cover =
       layoutPlannedWindow (denseOpcodes Table.defaultCodeTable) target
         (planWindow defaultAddressCacheConfig source target cover)
 
--- | Emit an xdelta3 patch: the target sliced into 'XDelta3WindowSize' windows and each covered against the source
+-- | Emit an xdelta3 patch: the target sliced into 'EmissionWindowSize' windows and each covered against the source
 -- ('Slap.VCDIFF.FFI.vcdiffWindowedCovers' — a window's copies reach the source and its own slice, never an earlier window's output),
 -- on the default table always (xdelta3 rejects custom ones),
 -- every window carrying the Adler32 of its own slice when verification is included,
@@ -672,7 +687,7 @@ emitDefaultPatch source target cover =
 -- the same explicit gate 'emitConsideringCustomTable' holds its candidate to,
 -- catching the edge where the sections shrink by no more than the one extra header byte (the compressor id) the declaration costs.
 emitXDelta3Patch
-  :: WindowChecksumEmission -> WindowCompressionEmission -> Maybe ByteString -> XDelta3WindowSize
+  :: WindowChecksumEmission -> WindowCompressionEmission -> Maybe ByteString -> EmissionWindowSize
   -> ByteString -> ByteString -> ByteString
 emitXDelta3Patch checksumEmission compressionEmission maybeAppHeader windowSize source target =
   case compressionEmission of
@@ -684,7 +699,7 @@ emitXDelta3Patch checksumEmission compressionEmission maybeAppHeader windowSize 
   where
     plannedWindows =
       [ layoutPlannedWindow (denseOpcodes Table.defaultCodeTable) windowSlice
-          (planTightenedWindow defaultAddressCacheConfig (byteLength source) windowSlice cover)
+          (planTightenedWindow defaultAddressCacheConfig FromSourceFile (byteLength source) windowSlice cover)
       | (windowSlice, cover) <-
           windowSlicesForCovers target
             (vcdiffWindowedCovers windowSize (InputFileContents source) (OutputFileContents target)) ]
@@ -757,6 +772,114 @@ xdelta3HeaderFor maybeAppHeader sectionCompression =
         (bit vcdAppHeaderBit, varintOfLength (byteLength headerBytes) <> byteString headerBytes)
       Nothing -> (0x00, mempty)
 
+-- | Emit a windowed RFC patch: the target sliced into 'EmissionWindowSize' windows, each covered twice and shipped once,
+-- under the same custom-table consideration the single-window emission weighs.
+-- The per-window compete ('chooseWindowArms') settles each window's arm first, under the default table;
+-- the candidate is then designed over every settled window's resolved stream ('windowedCandidatePatchForConfig'),
+-- geometry grown as ever, and the default-table patch ships unless a candidate beats it outright —
+-- the gate 'emitConsideringCustomTable' holds its single window to, held here to the whole window run.
+-- On the default table, with no checksum and no compression, a run of windows that all settle on the source arm
+-- parses back as 'Slap.VCDIFF.Types.PatchCoreOnly'; the first window that wins on VCD_TARGET — or a custom table paying —
+-- makes the patch 'Slap.VCDIFF.Types.PatchRFC'.
+emitWindowedRFCPatch :: EmissionWindowSize -> ByteString -> ByteString -> ByteString
+emitWindowedRFCPatch windowSize source target
+  | ByteString.length grownCandidate < ByteString.length defaultTablePatch = grownCandidate
+  | otherwise                                                              = defaultTablePatch
+  where
+    chosenArms = chooseWindowArms windowSize source target
+    defaultTablePatch =
+      assemblePatch (word8 noHeaderFeatures)
+        (ByteString.concat (map chosenDefaultTableBytes chosenArms))
+    grownCandidate = grownCacheCandidate (windowedCandidatePatchForConfig chosenArms)
+
+-- | One window's settled choice from the per-window compete: the arm that won,
+-- everything needed to re-plan it under another cache geometry, and its wire bytes under the default table
+-- (the compete's own encoding, reused verbatim by the default-table patch).
+-- A window with no external copies still records the arm it settled on;
+-- its plan re-derives 'SelfContained' from the cover under any geometry.
+data ChosenWindowArm = ChosenWindowArm
+  { chosenOrigin            :: !SegmentOrigin
+  , chosenExternalLength    :: !Length
+  , chosenSlice             :: !ByteString
+  , chosenCover             :: !Cover
+  , chosenDefaultTableBytes :: !ByteString
+  }
+
+-- | Run the per-window compete: cover each window twice, encode both arms under the default table, keep the smaller.
+-- The source arm covers a window against the source file ('vcdiffWindowedCovers', VCD_SOURCE on the wire);
+-- the target arm covers it against the output of the windows before it ('vcdiffProducedTargetCovers', VCD_TARGET) —
+-- the two copy sources a window may declare, one at a time, never both (RFC 3284 §4.2).
+-- The source arm takes ties, the way SELF takes address ties in 'selectCopyAddressMode':
+-- the plain reading is the default, and the fancy one must win outright.
+-- Window 0 has no produced output below its base, so its target arm is self-contained at best
+-- and VCD_TARGET can never mark the first window.
+chooseWindowArms :: EmissionWindowSize -> ByteString -> ByteString -> [ChosenWindowArm]
+chooseWindowArms windowSize source target
+  -- Both matchers chunk the target by the same window size, so the two cover runs pair one-to-one;
+  -- a disagreement is a matcher bug, surfaced as a loud 'error' the way the other must-hold seams here are.
+  | length sourceArmWindows == length targetArmCovers =
+      zipWith3 betterArm producedBeforeWindow sourceArmWindows targetArmCovers
+  | otherwise =
+      error ("Slap.VCDIFF.Create: the two matchers disagree on the window partition: "
+              <> show (length sourceArmWindows) <> " source-arm windows, "
+              <> show (length targetArmCovers) <> " target-arm covers")
+  where
+    opcodeResolver = denseOpcodes Table.defaultCodeTable
+
+    sourceArmWindows =
+      windowSlicesForCovers target
+        (vcdiffWindowedCovers windowSize (InputFileContents source) (OutputFileContents target))
+    targetArmCovers =
+      NonEmpty.toList (vcdiffProducedTargetCovers windowSize (OutputFileContents target))
+
+    -- The produced-target length below each window's base: what the target arm's copies may draw on,
+    -- and the external length its addresses arrive against.
+    producedBeforeWindow =
+      scanl (<>) mempty [byteLength windowSlice | (windowSlice, _cover) <- sourceArmWindows]
+
+    betterArm producedBefore (windowSlice, sourceCover) targetCover
+      | ByteString.length (chosenDefaultTableBytes targetArm)
+          < ByteString.length (chosenDefaultTableBytes sourceArm) = targetArm
+      | otherwise                                                 = sourceArm
+      where
+        sourceArm = armOf FromSourceFile     (byteLength source) windowSlice sourceCover
+        targetArm = armOf FromProducedTarget producedBefore      windowSlice targetCover
+
+    armOf origin externalLength windowSlice cover = ChosenWindowArm
+      { chosenOrigin            = origin
+      , chosenExternalLength    = externalLength
+      , chosenSlice             = windowSlice
+      , chosenCover             = cover
+      , chosenDefaultTableBytes =
+          encodeWindowBytes OmitWindowAdler32 plannedWindow (plainCarriages (plannedSections plannedWindow))
+      }
+      where
+        plannedWindow =
+          layoutPlannedWindow opcodeResolver windowSlice
+            (planTightenedWindow defaultAddressCacheConfig origin externalLength windowSlice cover)
+
+-- | The windowed custom-table patch for one cache geometry, or 'Nothing' when no sound table fits the config's modes into the donor pool.
+-- Every window's settled arm is re-planned under @config@ — address resolution steers by the cache geometry, so re-planning is not optional —
+-- and the design pools the windows' resolved streams ('donorMints' reads them per window).
+-- The windowed reading of 'candidatePatchForConfig', with the same soundness:
+-- the windows' addresses are resolved under the very geometry the shipped table declares, so the decoder's mode check accepts every mint.
+windowedCandidatePatchForConfig :: [ChosenWindowArm] -> AddressCacheConfig -> Maybe ByteString
+windowedCandidatePatchForConfig chosenArms config =
+    fmap assembleUnderDesignedTable (donorMints (map planResolved plans))
+  where
+    plans =
+      [ planTightenedWindow config (chosenOrigin arm) (chosenExternalLength arm)
+          (chosenSlice arm) (chosenCover arm)
+      | arm <- chosenArms ]
+    assembleUnderDesignedTable assignments =
+      let candidate      = Table.codeTableWithEntriesReplaced Table.defaultCodeTable assignments
+          opcodeResolver = denseOpcodes candidate
+      in assemblePatch (word8 customCodeTableHeader <> framedCustomTableData config candidate)
+           (ByteString.concat
+             [ encodeWindowBytes OmitWindowAdler32 plannedWindow (plainCarriages (plannedSections plannedWindow))
+             | (arm, plan) <- zip chosenArms plans
+             , let plannedWindow = layoutPlannedWindow opcodeResolver (chosenSlice arm) plan ])
+
 -- | Emit a cover as a patch, weighing custom code tables against the default and shipping whichever is smallest.
 -- The candidate is grown from the default cache geometry up to where a larger cache stops shrinking the patch
 -- ('grownCacheCandidate'), its table designed afresh under each config probed, then gated against the no-custom-table default patch.
@@ -769,7 +892,7 @@ emitConsideringCustomTable source target cover
   | ByteString.length grownCandidate < ByteString.length defaultPatch = grownCandidate
   | otherwise                                                         = defaultPatch
   where
-    grownCandidate = grownCacheCandidate source target cover
+    grownCandidate = grownCacheCandidate (candidatePatchForConfig source target cover)
     defaultPatch   = emitDefaultPatch source target cover
 
 -- | The custom-table patch for one cache geometry, or 'Nothing' when no sound table fits the config's modes into the donor pool.
@@ -780,7 +903,7 @@ emitConsideringCustomTable source target cover
 -- The default geometry is always feasible: it admits no mode past the default nine, all named by the default table.
 candidatePatchForConfig :: ByteString -> ByteString -> Cover -> AddressCacheConfig -> Maybe ByteString
 candidatePatchForConfig source target cover config =
-  fmap assembleUnderDesignedTable (donorMints (planResolved plan))
+  fmap assembleUnderDesignedTable (donorMints [planResolved plan])
   where
     plan = planWindow config source target cover
     assembleUnderDesignedTable assignments =
@@ -799,18 +922,19 @@ probePatchSize :: CacheProbe -> Int
 probePatchSize = ByteString.length . probePatchBytes
 
 -- | Grow the cache geometry from the default to where a larger cache stops paying, returning the smallest custom-table candidate found.
+-- @candidateAt@ assembles the custom-table patch bytes for one geometry ('Nothing' where no sound table fits);
+-- the single-window and windowed emissions each hand in their own ('candidatePatchForConfig', 'windowedCandidatePatchForConfig'),
+-- and the grow itself is theirs to share.
 -- A larger cache only ever shrinks the address section (the near cache holds a strict superset of recent addresses, the same cache collides less),
 -- so each dimension grows cleanly: bump it a slot while the assembled patch strictly shrinks,
 -- stop when a slot buys nothing (or the bumped config is infeasible).
 -- Near is grown first, then same from there; the two interact, so the order can nudge where it lands,
 -- which is fine, more slots never hurt the address section either way.
 -- The patch's own diminishing returns are the stopping rule: no threshold, no cap beyond the one-byte wire ceiling on each cache size.
-grownCacheCandidate :: ByteString -> ByteString -> Cover -> ByteString
-grownCacheCandidate source target cover =
+grownCacheCandidate :: (AddressCacheConfig -> Maybe ByteString) -> ByteString
+grownCacheCandidate candidateAt =
     probePatchBytes (growWhilePaying growSameBlock (growWhilePaying growNearSlot defaultProbe))
   where
-    candidateAt = candidatePatchForConfig source target cover
-
     -- The default geometry admits no mode past the default nine, so its candidate is always feasible:
     -- the 'fromMaybe' marks an unreachable branch, since 'candidateAt' never returns 'Nothing' for this config.
     defaultProbe = CacheProbe defaultAddressCacheConfig
@@ -846,30 +970,36 @@ maxCacheDimension :: Int
 maxCacheDimension = 255
 
 -- | Assemble the custom-table patch for a designed candidate under a cache geometry:
--- the header declares VCD_CODETABLE and carries the code-table data behind its length varint
--- (the two cache-size bytes @s_near@, @s_same@ from @config@, then the inner delta), and the window is the cover packed under the candidate.
--- The inner delta is @default-image -> candidate-image@ through the default-only core ('emitDefaultPatch'),
--- so the table the decoder rebuilds is exactly the one this window was packed against;
--- and @config@ is the geometry the window's addresses were resolved under ('planWindow'),
+-- the header declares VCD_CODETABLE and carries the framed table data ('framedCustomTableData'),
+-- and the window is the cover packed under the candidate,
+-- so the table the decoder rebuilds is exactly the one this window was packed against.
+-- @config@ is the geometry the window's addresses were resolved under ('planWindow'),
 -- so the cache the decoder rebuilds matches the cache the encoder selected modes against.
--- The inner delta itself stays on the default geometry, RFC 3284 §7c requiring it, which the default-only 'emitDefaultPatch' provides.
 assembleCustomTablePatch
   :: AddressCacheConfig -> ByteString -> WindowPlan -> Table.CodeTable -> ByteString
 assembleCustomTablePatch config target plan candidate =
-  assemblePatch (word8 customCodeTableHeader <> framedCodeTableData)
+  assemblePatch (word8 customCodeTableHeader <> framedCustomTableData config candidate)
                 (encodeWindowBytes OmitWindowAdler32 plannedWindow
                    (plainCarriages (plannedSections plannedWindow)))
   where
     plannedWindow = layoutPlannedWindow (denseOpcodes candidate) target plan
-    framedCodeTableData = varintOfLength (byteLength codeTableData) <> byteString codeTableData
-    codeTableData       = builderBytes (cacheSizeHeader <> byteString innerDelta)
-    cacheSizeHeader     = word8 (fromIntegral (unNearSlotCount  (nearSlotCount  config)))
-                       <> word8 (fromIntegral (unSameBlockCount (sameBlockCount config)))
-    innerDelta          = emitDefaultPatch defaultImage candidateImage
-                            (vcdiffCover (InputFileContents defaultImage)
-                                         (OutputFileContents candidateImage))
-    defaultImage        = Table.serializeCodeTable Table.defaultCodeTable
-    candidateImage      = Table.serializeCodeTable candidate
+
+-- | The code-table data a custom-table patch's header carries behind VCD_CODETABLE, framed behind its length varint:
+-- the two cache-size bytes (@s_near@, @s_same@ from @config@), then the inner delta.
+-- The inner delta is @default-image -> candidate-image@ through the default-only core ('emitDefaultPatch'),
+-- and itself stays on the default table and geometry, RFC 3284 §7c requiring it, which the default-only core provides.
+framedCustomTableData :: AddressCacheConfig -> Table.CodeTable -> Builder
+framedCustomTableData config candidate =
+  varintOfLength (byteLength codeTableData) <> byteString codeTableData
+  where
+    codeTableData   = builderBytes (cacheSizeHeader <> byteString innerDelta)
+    cacheSizeHeader = word8 (fromIntegral (unNearSlotCount  (nearSlotCount  config)))
+                   <> word8 (fromIntegral (unSameBlockCount (sameBlockCount config)))
+    innerDelta      = emitDefaultPatch defaultImage candidateImage
+                        (vcdiffCover (InputFileContents defaultImage)
+                                     (OutputFileContents candidateImage))
+    defaultImage    = Table.serializeCodeTable Table.defaultCodeTable
+    candidateImage  = Table.serializeCodeTable candidate
 
 ----------------------------------------------------------------------------
 -- Candidate code-table design
@@ -882,36 +1012,39 @@ assembleCustomTablePatch config target plan candidate =
 -- Whatever it produces, the window is packed against the very table shipped,
 -- so the round-trip is correct regardless of how good the design is; the gate, not the design, decides a table pays.
 designCandidateTable :: [ResolvedInstruction] -> Maybe Table.CodeTable
-designCandidateTable resolved = case donorMints resolved of
+designCandidateTable resolved = case donorMints [resolved] of
   Just assignments
     | not (null assignments) ->
         Just (Table.codeTableWithEntriesReplaced Table.defaultCodeTable assignments)
   _ -> Nothing
 
--- | The donor-opcode reassignments a resolved stream wants, and whether the soundness-required ones all fit.
+-- | The donor-opcode reassignments a patch's resolved streams want, and whether the soundness-required ones all fit.
+-- One stream per window: adjacencies and shapes are read within each stream and the tallies pooled,
+-- so a window boundary never counts as a combinable pair, while a shape repeating across windows
+-- earns its mint from the whole patch — the table ships once, its opcodes amortized over every window.
 -- Two kinds of shape draw a donor:
 --
---   * /required/: a coded-size COPY opcode for each cache mode the stream uses that the default table cannot name.
+--   * /required/: a coded-size COPY opcode for each cache mode any stream uses that the default table cannot name.
 --     A grown cache admits modes past the default nine, and 'selectCopyAddressMode' may pick one; without an opcode the packer could not emit it.
 --     Frequency-independent (one use still needs it), placed first so they win donors over the savings mints.
---     A stream whose required mints outrun the donor pool has no sound table: 'donorMints' is 'Nothing', and the grow declines it.
+--     Streams whose required mints outrun the donor pool have no sound table: 'donorMints' is 'Nothing', and the grow declines them.
 --   * /savings/: the ADD+COPY and COPY+ADD adjacencies ('combinablePairs') and the lone fixed-size ADD and COPY shapes ('singleInstructionShapes')
---     the default cannot name and this stream repeats, most frequent first
+--     the default cannot name and these streams repeat, most frequent first
 --     (@count >= 2@; a shape seen once cannot repay even the leanest table edit).
 --     Pairs and singles pool into one tally, their entry shapes disjoint, a pair carrying two real templates, a single a trailing 'Table.Noop'.
 --
--- Every minted COPY mode is one the resolved stream selected,
--- so it lies within the geometry that stream was resolved under and the decoder's mode check accepts it.
+-- Every minted COPY mode is one a resolved stream selected,
+-- so it lies within the geometry the streams were resolved under and the decoder's mode check accepts it.
 -- 'Nothing' is the infeasible verdict (the required mints outran the donor pool);
 -- 'Just []' is feasible with no mints (the default table suffices); 'Just' a non-empty list is the custom table's reassignments.
-donorMints :: [ResolvedInstruction] -> Maybe [(Table.Opcode, Table.CodeTableEntry)]
-donorMints resolved
+donorMints :: [[ResolvedInstruction]] -> Maybe [(Table.Opcode, Table.CodeTableEntry)]
+donorMints resolvedPerWindow
   | length requiredCopyModeEntries <= length donorOpcodes = Just (zip donorOpcodes mintEntries)
   | otherwise                                             = Nothing
   where
     defaultDense = denseOpcodes Table.defaultCodeTable
-    pairs        = combinablePairs resolved
-    singles      = singleInstructionShapes resolved
+    pairs        = concatMap combinablePairs resolvedPerWindow
+    singles      = concatMap singleInstructionShapes resolvedPerWindow
 
     requiredCopyModeEntries :: [Table.CodeTableEntry]
     requiredCopyModeEntries =
@@ -922,7 +1055,7 @@ donorMints resolved
 
     distinctCopyModes :: [Table.CopyAddressMode]
     distinctCopyModes =
-      Map.keys (Map.fromList [ (mode, ()) | ResolvedCopy _ mode _ <- resolved ])
+      Map.keys (Map.fromList [ (mode, ()) | ResolvedCopy _ mode _ <- concat resolvedPerWindow ])
 
     savingsMints :: [Table.CodeTableEntry]
     savingsMints =
@@ -1013,14 +1146,16 @@ customCodeTableHeader :: Word8
 customCodeTableHeader = 0x02
 
 -- | A window's Win_Indicator, composed from what the window carries:
--- VCD_SOURCE when its COPYs address the source segment the two following varints name
--- (a self-contained window sets neither copy-source bit and omits both varints), VCD_ADLER32 when its checksum follows the section lengths.
+-- the copy-source bit its segment's origin names — VCD_SOURCE for the source file, VCD_TARGET for earlier windows' output —
+-- when its COPYs address the segment the two following varints describe
+-- (a self-contained window sets neither copy-source bit and omits both varints), and VCD_ADLER32 when its checksum follows the section lengths.
 windowIndicator :: WindowSourcing -> WindowChecksumEmission -> Word8
 windowIndicator sourcing checksumEmission = sourcingBits .|. checksumBits
   where
     sourcingBits = case sourcing of
-      DrawsFromSource _segmentSpan -> bit vcdSourceBit
-      SelfContained                -> 0x00
+      DrawsOn FromSourceFile     _segmentSpan -> bit vcdSourceBit
+      DrawsOn FromProducedTarget _segmentSpan -> bit vcdTargetBit
+      SelfContained                           -> 0x00
     checksumBits = case checksumEmission of
       CarryWindowAdler32 -> bit vcdAdler32Bit
       OmitWindowAdler32  -> 0x00
