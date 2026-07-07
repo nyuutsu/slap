@@ -26,8 +26,8 @@
 //!   encoder in this tier almost permanently, which also keeps the
 //!   emitted streams regular — and regular streams are what the
 //!   secondary compressor flattens.
-//! * **Discovery** — a hash chain over [`ANCHOR_LENGTH`]-byte windows,
-//!   probed when pursuit comes up short. A discovered candidate pays
+//! * **Discovery** — a hash chain over the [`ANCHOR_LENGTH`]-byte
+//!   tiling, probed when pursuit comes up short. A discovered candidate pays
 //!   its real address arithmetic plus [`ADDRESS_NOISE_MARGIN`], so a
 //!   relocation must be long enough to earn its address before it
 //!   displaces literals — and it must also beat what lockstep already
@@ -44,13 +44,14 @@
 //! world is exactly `source ++ its own slice`, so a copy into an
 //! earlier window's output — the cross-window self-reference an
 //! xdelta3 window cannot express — is never found, rather than found
-//! and filtered. Source anchors are indexed in reverse so each bucket
-//! leads with run-start, cheapest-address candidates; window anchors
-//! are indexed lazily, only for positions the parse has settled, so a
+//! and filtered. Source tiles are indexed in reverse so each bucket
+//! leads with run-start, cheapest-address candidates; window tiles
+//! are indexed lazily, only where the parse has settled, so a
 //! candidate at or past the write head is never in the table at all.
-//! Chain cells hold positions at the width the pair's size selects
-//! (`u32` whenever `U` fits, `u64` beyond), so the matcher stays total
-//! without paying eight-byte cells on ordinary inputs.
+//! Chain cells hold tile ordinals at the width the tile count selects
+//! (`u32` through tens of gigabytes of indexed bytes, `u64` beyond),
+//! so the matcher stays total without paying eight-byte cells on
+//! ordinary inputs.
 //!
 //! [`ProducedTargetMatcher`] is the second engine under the same
 //! pricing, serving the VCD_TARGET arm of RFC-flavor windowed
@@ -87,10 +88,16 @@ const PURSUIT_ENCODED_COST: usize = 4;
 /// margin, not a rounding error.
 const ADDRESS_NOISE_MARGIN: usize = 4;
 
-/// The window a chain anchor covers. Wide enough that the table never
-/// holds runs shorter than any priced acceptance could take (every
-/// acceptable discovered match is longer than the anchor), narrow
-/// enough to hash as one register.
+/// The window a chain anchor covers, and the stride anchors are filed
+/// at: the indexed space is tiled by contiguous anchor-sized blocks,
+/// one filed card per tile. Wide enough that the table never holds
+/// runs shorter than any priced acceptance could take, narrow enough
+/// to hash as one register. The tiling is what keeps the index a
+/// fixed fraction of the input at any size — and any run of
+/// 2×ANCHOR_LENGTH−1 bytes contains a whole tile, so it is
+/// discoverable at every alignment; the parse advances byte by byte
+/// through unmatched territory, so a query meets a tile's alignment
+/// within ANCHOR_LENGTH−1 steps.
 const ANCHOR_LENGTH: usize = 8;
 
 /// How many chain entries one probe walks before giving up. Bounds the
@@ -120,11 +127,9 @@ impl<'pair> HashChainMatcher<'pair> {
     /// largest window a session will bring. Done once per create,
     /// however many windows follow.
     pub fn build(source: &'pair [u8], largest_window_length: usize) -> Self {
-        let superstring_ceiling = source
-            .len()
-            .checked_add(largest_window_length)
-            .expect("vcdiff matcher: source + window overflows usize");
-        let engine = if superstring_ceiling < u32::MAX as usize {
+        let widest_ordinal =
+            tile_count_of(source.len()).max(tile_count_of(largest_window_length));
+        let engine = if widest_ordinal < u32::MAX as usize {
             EngineWidth::Narrow(Engine::build(source, largest_window_length))
         } else {
             EngineWidth::Wide(Engine::build(source, largest_window_length))
@@ -179,7 +184,7 @@ impl<'target> ProducedTargetMatcher<'target> {
     /// Size the index for the whole target. Done once per create,
     /// however many windows follow.
     pub fn build(target: &'target [u8]) -> Self {
-        let engine = if target.len() < u32::MAX as usize {
+        let engine = if tile_count_of(target.len()) < u32::MAX as usize {
             ProducedTargetWidth::Narrow(ProducedTargetEngine::build(target))
         } else {
             ProducedTargetWidth::Wide(ProducedTargetEngine::build(target))
@@ -281,63 +286,66 @@ struct Engine<'pair, Cell> {
     /// The current session's window; empty until the first
     /// `begin_window`.
     window: &'pair [u8],
-    /// The source index, built once: newest anchor per bucket, and
-    /// per-source-position next-older-anchor links.
+    /// The source index, built once: newest tile per bucket, and
+    /// per-tile next-older-tile links, keyed by tile ordinal
+    /// (position = ordinal × ANCHOR_LENGTH, recomputed at the probe).
     source_bucket_heads: Vec<Cell>,
     source_chain_links: Vec<Cell>,
     source_hash_shift: u32,
     /// The window index, reset per session: heads refilled, links
-    /// overwritten as positions settle. Links are indexed by window
-    /// position; a candidate's `U` offset is `source.len() +` that.
+    /// overwritten as tiles settle. Keyed by tile ordinal within the
+    /// window; a candidate's `U` offset is `source.len() +` its position.
     window_bucket_heads: Vec<Cell>,
     window_chain_links: Vec<Cell>,
     window_hash_shift: u32,
-    /// First window position whose anchor is not yet in the table; the
-    /// lazy indexing high-water mark.
+    /// First window tile start not yet in the table; the lazy indexing
+    /// high-water mark, advancing a tile at a time.
     next_window_anchor: usize,
     pursuit: Option<Pursuit>,
 }
 
 impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
     fn build(source: &'pair [u8], largest_window_length: usize) -> Self {
-        let source_bucket_bits = bucket_bits_for(source.len());
-        let window_bucket_bits = bucket_bits_for(largest_window_length);
+        let source_tile_count = tile_count_of(source.len());
+        let window_tile_count = tile_count_of(largest_window_length);
+        let source_bucket_bits = bucket_bits_for(source_tile_count);
+        let window_bucket_bits = bucket_bits_for(window_tile_count);
         let mut engine = Engine {
             source,
             window: &[],
             source_bucket_heads: vec![Cell::CHAIN_END; 1 << source_bucket_bits],
-            source_chain_links: vec![Cell::CHAIN_END; source.len()],
+            source_chain_links: vec![Cell::CHAIN_END; source_tile_count],
             source_hash_shift: u64::BITS - source_bucket_bits,
             window_bucket_heads: vec![Cell::CHAIN_END; 1 << window_bucket_bits],
-            window_chain_links: vec![Cell::CHAIN_END; largest_window_length],
+            window_chain_links: vec![Cell::CHAIN_END; window_tile_count],
             window_hash_shift: u64::BITS - window_bucket_bits,
             next_window_anchor: 0,
             pursuit: None,
         };
-        // Anchors never span the source's end: a copy starting in the
-        // source segment may not cross it (core invariant 2), so a
-        // spanning window could only describe copies no window may make.
+        // Tiles never span the source's end ('tile_count_of' counts only
+        // whole ones): a copy starting in the source segment may not
+        // cross it (core invariant 2), so a spanning tile could only
+        // describe copies no window may make.
         //
         // Built in reverse: prepending walks each bucket newest-first, so
         // reverse order leaves the lowest positions at the front — for
-        // repeated content (a padding run hashing every window into one
+        // repeated content (a padding run hashing every tile into one
         // bucket) those are the run-start candidates with the longest
         // reach and the cheapest SELF addresses, and the probe cap then
         // trims the tail of the run, not its head.
-        if source.len() >= ANCHOR_LENGTH {
-            for anchor_start in (0..=source.len() - ANCHOR_LENGTH).rev() {
-                engine.insert_source_anchor(
-                    anchor_start,
-                    &source[anchor_start..anchor_start + ANCHOR_LENGTH],
-                );
-            }
+        for tile_ordinal in (0..source_tile_count).rev() {
+            let tile_start = tile_ordinal * ANCHOR_LENGTH;
+            engine.insert_source_anchor(
+                tile_ordinal,
+                &source[tile_start..tile_start + ANCHOR_LENGTH],
+            );
         }
         engine
     }
 
     fn begin_window(&mut self, window: &'pair [u8]) {
         debug_assert!(
-            window.len() <= self.window_chain_links.len(),
+            tile_count_of(window.len()) <= self.window_chain_links.len(),
             "vcdiff matcher: a window longer than the largest the build sized for"
         );
         self.window = window;
@@ -367,7 +375,7 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
         found
     }
 
-    /// Feed the table every window anchor the parse has settled: anchor
+    /// Feed the table every window tile the parse has settled: tile
     /// starts strictly before `position` whose span lies inside the
     /// window. Nothing at or past the write head is ever inserted, so
     /// the table cannot answer with a copy no window may make.
@@ -375,12 +383,12 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
         while self.next_window_anchor < position
             && self.next_window_anchor + ANCHOR_LENGTH <= self.window.len()
         {
-            let anchor_start = self.next_window_anchor;
+            let tile_start = self.next_window_anchor;
             self.insert_window_anchor(
-                anchor_start,
-                &self.window[anchor_start..anchor_start + ANCHOR_LENGTH],
+                tile_start / ANCHOR_LENGTH,
+                &self.window[tile_start..tile_start + ANCHOR_LENGTH],
             );
-            self.next_window_anchor += 1;
+            self.next_window_anchor += ANCHOR_LENGTH;
         }
     }
 
@@ -420,9 +428,10 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
             if source_cursor.is_chain_end() {
                 break;
             }
-            let candidate = source_cursor.as_index();
+            let tile_ordinal = source_cursor.as_index();
+            let candidate = tile_ordinal * ANCHOR_LENGTH;
             best = fold_priced_candidate(best, candidate, self.extend(candidate, position), here);
-            source_cursor = self.source_chain_links[candidate];
+            source_cursor = self.source_chain_links[tile_ordinal];
         }
 
         let mut window_cursor =
@@ -431,55 +440,43 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
             if window_cursor.is_chain_end() {
                 break;
             }
-            let window_position = window_cursor.as_index();
-            let candidate = self.source.len() + window_position;
+            let tile_ordinal = window_cursor.as_index();
+            let candidate = self.source.len() + tile_ordinal * ANCHOR_LENGTH;
             best = fold_priced_candidate(best, candidate, self.extend(candidate, position), here);
-            window_cursor = self.window_chain_links[window_position];
+            window_cursor = self.window_chain_links[tile_ordinal];
         }
 
         best
     }
 
-    /// The matched run length at a candidate: byte-wise agreement
-    /// between `window[position..]` and `U[candidate..]`, capped at the
-    /// window bytes still to be produced and, for a source-anchored
-    /// candidate, at the source's end (core invariant 2). A
-    /// window-anchored candidate may run past the write head — the
-    /// self-referential overlap the format blesses — and comparing
-    /// against the final window bytes is exact there, because that
-    /// overlapped copy reproduces those very bytes.
+    /// The matched run length at a candidate: byte agreement between
+    /// `window[position..]` and `U[candidate..]`, capped at the window
+    /// bytes still to be produced and, for a source-anchored candidate,
+    /// at the source's end (core invariant 2). A window-anchored
+    /// candidate may run past the write head — the self-referential
+    /// overlap the format blesses — and comparing against the final
+    /// window bytes is exact there, because that overlapped copy
+    /// reproduces those very bytes.
     fn extend(&self, candidate: usize, position: usize) -> usize {
-        let mut reach = self.window.len() - position;
+        let query = &self.window[position..];
         if candidate < self.source.len() {
-            reach = reach.min(self.source.len() - candidate);
-        }
-        let mut length = 0;
-        while length < reach
-            && self.byte_in_superstring(candidate + length) == self.window[position + length]
-        {
-            length += 1;
-        }
-        length
-    }
-
-    fn byte_in_superstring(&self, u_offset: usize) -> u8 {
-        if u_offset < self.source.len() {
-            self.source[u_offset]
+            let reach = query.len().min(self.source.len() - candidate);
+            common_prefix_length(&self.source[candidate..candidate + reach], &query[..reach])
         } else {
-            self.window[u_offset - self.source.len()]
+            common_prefix_length(&self.window[candidate - self.source.len()..], query)
         }
     }
 
-    fn insert_source_anchor(&mut self, source_position: usize, window_bytes: &[u8]) {
-        let bucket = bucket_for(window_bytes, self.source_hash_shift);
-        self.source_chain_links[source_position] = self.source_bucket_heads[bucket];
-        self.source_bucket_heads[bucket] = Cell::from_index(source_position);
+    fn insert_source_anchor(&mut self, tile_ordinal: usize, tile_bytes: &[u8]) {
+        let bucket = bucket_for(tile_bytes, self.source_hash_shift);
+        self.source_chain_links[tile_ordinal] = self.source_bucket_heads[bucket];
+        self.source_bucket_heads[bucket] = Cell::from_index(tile_ordinal);
     }
 
-    fn insert_window_anchor(&mut self, window_position: usize, window_bytes: &[u8]) {
-        let bucket = bucket_for(window_bytes, self.window_hash_shift);
-        self.window_chain_links[window_position] = self.window_bucket_heads[bucket];
-        self.window_bucket_heads[bucket] = Cell::from_index(window_position);
+    fn insert_window_anchor(&mut self, tile_ordinal: usize, tile_bytes: &[u8]) {
+        let bucket = bucket_for(tile_bytes, self.window_hash_shift);
+        self.window_chain_links[tile_ordinal] = self.window_bucket_heads[bucket];
+        self.window_bucket_heads[bucket] = Cell::from_index(tile_ordinal);
     }
 }
 
@@ -487,14 +484,16 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
 
 struct ProducedTargetEngine<'target, Cell> {
     target: &'target [u8],
-    /// One index over the whole target: bucket heads, and
-    /// per-target-position next-older-anchor links.
+    /// One index over the whole target: bucket heads, and per-tile
+    /// next-older-tile links, keyed by tile ordinal
+    /// (position = ordinal × ANCHOR_LENGTH, recomputed at the probe).
     bucket_heads: Vec<Cell>,
     chain_links: Vec<Cell>,
     hash_shift: u32,
-    /// First target position whose anchor is not yet in the table: the
-    /// lazy high-water mark. Never reset — the settled positions of
-    /// earlier windows are exactly what a VCD_TARGET window draws on.
+    /// First target tile start not yet in the table: the lazy
+    /// high-water mark, advancing a tile at a time. Never reset — the
+    /// settled tiles of earlier windows are exactly what a VCD_TARGET
+    /// window draws on.
     next_anchor: usize,
     /// The current session's window, as its bounds in the target.
     window_base: usize,
@@ -504,11 +503,12 @@ struct ProducedTargetEngine<'target, Cell> {
 
 impl<'target, Cell: ChainCell> ProducedTargetEngine<'target, Cell> {
     fn build(target: &'target [u8]) -> Self {
-        let bucket_bits = bucket_bits_for(target.len());
+        let tile_count = tile_count_of(target.len());
+        let bucket_bits = bucket_bits_for(tile_count);
         ProducedTargetEngine {
             target,
             bucket_heads: vec![Cell::CHAIN_END; 1 << bucket_bits],
-            chain_links: vec![Cell::CHAIN_END; target.len()],
+            chain_links: vec![Cell::CHAIN_END; tile_count],
             hash_shift: u64::BITS - bucket_bits,
             next_anchor: 0,
             window_base: 0,
@@ -549,21 +549,21 @@ impl<'target, Cell: ChainCell> ProducedTargetEngine<'target, Cell> {
         found
     }
 
-    /// Feed the table every position the parse has settled: anchor
-    /// starts strictly before the write head whose span lies inside
-    /// the target. Nothing at or past the head is ever inserted, so
-    /// the table cannot answer with a copy no window may make — and
-    /// nothing is ever removed, so the mark only rises, across windows.
+    /// Feed the table every tile the parse has settled: tile starts
+    /// strictly before the write head whose span lies inside the
+    /// target. Nothing at or past the head is ever inserted, so the
+    /// table cannot answer with a copy no window may make — and nothing
+    /// is ever removed, so the mark only rises, across windows.
     fn index_settled_anchors(&mut self, write_head: usize) {
         while self.next_anchor < write_head
             && self.next_anchor + ANCHOR_LENGTH <= self.target.len()
         {
-            let anchor_start = self.next_anchor;
+            let tile_start = self.next_anchor;
             self.insert_anchor(
-                anchor_start,
-                &self.target[anchor_start..anchor_start + ANCHOR_LENGTH],
+                tile_start / ANCHOR_LENGTH,
+                &self.target[tile_start..tile_start + ANCHOR_LENGTH],
             );
-            self.next_anchor += 1;
+            self.next_anchor += ANCHOR_LENGTH;
         }
     }
 
@@ -596,18 +596,19 @@ impl<'target, Cell: ChainCell> ProducedTargetEngine<'target, Cell> {
             if cursor.is_chain_end() {
                 break;
             }
-            let candidate = cursor.as_index();
+            let tile_ordinal = cursor.as_index();
+            let candidate = tile_ordinal * ANCHOR_LENGTH;
             best = fold_priced_candidate(best, candidate, self.extend(candidate, position), write_head);
-            cursor = self.chain_links[candidate];
+            cursor = self.chain_links[tile_ordinal];
         }
         best
     }
 
-    /// The matched run length at a candidate: byte-wise agreement
-    /// between `window[position..]` and `target[candidate..]`, capped
-    /// at the window bytes still to be produced and, for a candidate
-    /// before the window base, at the base itself — a copy starting in
-    /// the segment may not cross its end (core invariant 2), and the
+    /// The matched run length at a candidate: byte agreement between
+    /// `window[position..]` and `target[candidate..]`, capped at the
+    /// window bytes still to be produced and, for a candidate before
+    /// the window base, at the base itself — a copy starting in the
+    /// segment may not cross its end (core invariant 2), and the
     /// declared segment can reach no further than the output produced
     /// before this window. A candidate at or past the base may run past
     /// the write head: the self-referential overlap, exact against the
@@ -618,19 +619,16 @@ impl<'target, Cell: ChainCell> ProducedTargetEngine<'target, Cell> {
         if candidate < self.window_base {
             reach = reach.min(self.window_base - candidate);
         }
-        let mut length = 0;
-        while length < reach
-            && self.target[candidate + length] == self.target[write_head + length]
-        {
-            length += 1;
-        }
-        length
+        common_prefix_length(
+            &self.target[candidate..candidate + reach],
+            &self.target[write_head..write_head + reach],
+        )
     }
 
-    fn insert_anchor(&mut self, target_position: usize, anchor_bytes: &[u8]) {
-        let bucket = bucket_for(anchor_bytes, self.hash_shift);
-        self.chain_links[target_position] = self.bucket_heads[bucket];
-        self.bucket_heads[bucket] = Cell::from_index(target_position);
+    fn insert_anchor(&mut self, tile_ordinal: usize, tile_bytes: &[u8]) {
+        let bucket = bucket_for(tile_bytes, self.hash_shift);
+        self.chain_links[tile_ordinal] = self.bucket_heads[bucket];
+        self.bucket_heads[bucket] = Cell::from_index(tile_ordinal);
     }
 }
 
@@ -703,13 +701,42 @@ fn bucket_for(window_bytes: &[u8], hash_shift: u32) -> usize {
     (folded.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> hash_shift) as usize
 }
 
-/// Bucket-count bits for an indexed length: roughly one bucket per
-/// position, held between 16 Ki buckets (below which even tiny inputs
-/// would chain needlessly) and 8 Mi (above which the head table's own
-/// memory stops paying).
-fn bucket_bits_for(indexed_length: usize) -> u32 {
-    let wanted = usize::BITS - indexed_length.max(1).leading_zeros();
-    wanted.clamp(14, 23)
+/// Bucket-count bits for a tile count: one bucket per tile, rounded up
+/// to a power of two, so the table's load stays at or under one and a
+/// bucket's chain holds only true repeats and hash collisions —
+/// 'PROBE_CAP' bounds repetition, never reach. No ceiling: a capped
+/// table saturates on large inputs and buries deep positions below the
+/// probe cap. The two-tile floor only keeps the hash shift legal.
+fn bucket_bits_for(tile_count: usize) -> u32 {
+    tile_count.max(2).next_power_of_two().trailing_zeros()
+}
+
+/// How many whole anchor tiles an indexed space holds: one per
+/// ANCHOR_LENGTH bytes, counting only tiles that fit entirely.
+fn tile_count_of(indexed_length: usize) -> usize {
+    indexed_length / ANCHOR_LENGTH
+}
+
+/// The byte length of the common prefix of two slices, compared a
+/// register at a time. Behaviorally the byte loop it replaces —
+/// including on overlapping slices of one buffer, where both sides
+/// read the same final bytes either way.
+fn common_prefix_length(left: &[u8], right: &[u8]) -> usize {
+    let limit = left.len().min(right.len());
+    let mut length = 0;
+    while length + 8 <= limit {
+        let left_word = u64::from_le_bytes(left[length..length + 8].try_into().unwrap());
+        let right_word = u64::from_le_bytes(right[length..length + 8].try_into().unwrap());
+        let disagreement = left_word ^ right_word;
+        if disagreement != 0 {
+            return length + (disagreement.trailing_zeros() / 8) as usize;
+        }
+        length += 8;
+    }
+    while length < limit && left[length] == right[length] {
+        length += 1;
+    }
+    length
 }
 
 /// The bytes a VCDIFF varint spends on a value: one per 7-bit group.
@@ -860,20 +887,20 @@ mod tests {
 
     #[test]
     fn a_copy_from_the_produced_target_stops_at_the_window_base() {
-        // target[12..20], [20..28], and [28..36] are the same eight
-        // bytes, so byte agreement at window 1's opening runs sixteen
-        // deep from position 12 — but a copy starting before the base
-        // may not cross it, so the offer must stop at eight.
-        let run = pseudo_random_bytes(0x82, 8);
+        // target[12..36], [36..60], and [60..84] are the same 24 bytes,
+        // so byte agreement from the tile at position 16 runs all the
+        // way to the end of the target — but a copy starting before the
+        // base may not cross it, so the offer must stop at the base.
+        let run = pseudo_random_bytes(0x82, 24);
         let mut target = pseudo_random_bytes(0x83, 12);
         for _ in 0..3 {
             target.extend_from_slice(&run);
         }
         let mut matcher = ProducedTargetMatcher::build(&target);
-        matcher.begin_window(0, 20);
-        matcher.begin_window(20, 16);
-        let capped = matcher.match_at(0).expect("the run before the base is offered");
-        assert_eq!((capped.superstring_offset, capped.length), (12, 8));
+        matcher.begin_window(0, 36);
+        matcher.begin_window(36, 48);
+        let capped = matcher.match_at(4).expect("the run before the base is offered");
+        assert_eq!((capped.superstring_offset, capped.length), (16, 20));
     }
 
     #[test]

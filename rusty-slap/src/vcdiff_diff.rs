@@ -290,15 +290,18 @@ mod tests {
         // over the source, trading compressible literals for address
         // noise. The cover must be the boring one: a one-byte literal
         // and an aligned copy per flip, every copy in lockstep, nothing
-        // reaching across the file.
+        // reaching across the file. The first flip sits one stride in,
+        // not at position 0: this test is about lockstep, which is
+        // pursuit's story, and a flip at the very start would instead
+        // measure cold discovery meeting the tile alignment.
         let source = pseudo_random_bytes(0x77, 1 << 18);
         let flip_stride = 4096;
         let mut target = source.clone();
-        for spot in (0..target.len()).step_by(flip_stride) {
+        for spot in (flip_stride..target.len()).step_by(flip_stride) {
             target[spot] ^= 0x5a;
         }
         let cover = vcdiff_cover(&source, &target);
-        assert_eq!(cover.len(), 2 * (target.len() / flip_stride));
+        assert_eq!(cover.len(), 2 * (target.len() / flip_stride) - 1);
         let mut output_cursor = 0u64;
         for segment in &cover {
             match segment.kind {
@@ -308,7 +311,9 @@ mod tests {
                         segment.offset, output_cursor,
                         "a copy left lockstep at output position {output_cursor}",
                     );
-                    assert_eq!(segment.length, (flip_stride - 1) as u64);
+                    let expected_length =
+                        if output_cursor == 0 { flip_stride } else { flip_stride - 1 };
+                    assert_eq!(segment.length, expected_length as u64);
                 }
             }
             output_cursor += segment.length;
