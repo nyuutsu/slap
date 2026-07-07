@@ -23,7 +23,7 @@ import qualified Data.ByteString as ByteString
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Word (Word8)
-import Foreign.C.Types (CSize(..), CInt(..))
+import Foreign.C.Types (CSize(..))
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Ptr (Ptr)
 import System.IO.Unsafe (unsafePerformIO)
@@ -42,7 +42,7 @@ foreign import ccall unsafe "rusty_vcdiff_cover"
     -> Ptr (Ptr Word8) -> Ptr CSize    -- offsets
     -> Ptr (Ptr Word8) -> Ptr CSize    -- lengths
     -> Ptr (Ptr Word8) -> Ptr CSize    -- per-window segment counts
-    -> IO CInt
+    -> IO ()
 
 foreign import ccall unsafe "rusty_vcdiff_produced_target_cover"
   rustyVCDIFFProducedTargetCover
@@ -52,7 +52,7 @@ foreign import ccall unsafe "rusty_vcdiff_produced_target_cover"
     -> Ptr (Ptr Word8) -> Ptr CSize    -- offsets
     -> Ptr (Ptr Word8) -> Ptr CSize    -- lengths
     -> Ptr (Ptr Word8) -> Ptr CSize    -- per-window segment counts
-    -> IO CInt
+    -> IO ()
 
 -- | One cover spanning the whole target: the single-window reading of 'vcdiffWindowedCovers',
 -- what the RFC arc's one-window emission and the custom-table inner delta run on.
@@ -80,20 +80,19 @@ vcdiffProducedTargetCovers windowSize (OutputFileContents target) =
     alloca $ \lengthsLengthPointer  ->
     alloca $ \countsAddressPointer  ->
     alloca $ \countsLengthPointer   -> do
-      _ <- rustyVCDIFFProducedTargetCover
-             targetPointer targetLength
-             (fromIntegral (unEmissionWindowSize windowSize))
-             kindsAddressPointer   kindsLengthPointer
-             offsetsAddressPointer offsetsLengthPointer
-             lengthsAddressPointer lengthsLengthPointer
-             countsAddressPointer  countsLengthPointer
+      rustyVCDIFFProducedTargetCover
+        targetPointer targetLength
+        (fromIntegral (unEmissionWindowSize windowSize))
+        kindsAddressPointer   kindsLengthPointer
+        offsetsAddressPointer offsetsLengthPointer
+        lengthsAddressPointer lengthsLengthPointer
+        countsAddressPointer  countsLengthPointer
       kindBytes   <- readByteString kindsAddressPointer   kindsLengthPointer
       offsetBytes <- readByteString offsetsAddressPointer offsetsLengthPointer
       lengthBytes <- readByteString lengthsAddressPointer lengthsLengthPointer
       countBytes  <- readByteString countsAddressPointer  countsLengthPointer
       pure (decodeWindowedCovers "rusty_vcdiff_produced_target_cover" countBytes kindBytes offsetBytes lengthBytes)
 
--- | The Rust matcher cannot fail, so its return code is ignored.
 coversOfWindowLength :: Int -> InputFileContents -> OutputFileContents -> NonEmpty Cover
 coversOfWindowLength windowLength (InputFileContents source) (OutputFileContents target) =
   unsafePerformIO $
@@ -107,14 +106,14 @@ coversOfWindowLength windowLength (InputFileContents source) (OutputFileContents
     alloca $ \lengthsLengthPointer  ->
     alloca $ \countsAddressPointer  ->
     alloca $ \countsLengthPointer   -> do
-      _ <- rustyVCDIFFCover
-             sourcePointer sourceLength
-             targetPointer targetLength
-             (fromIntegral windowLength)
-             kindsAddressPointer   kindsLengthPointer
-             offsetsAddressPointer offsetsLengthPointer
-             lengthsAddressPointer lengthsLengthPointer
-             countsAddressPointer  countsLengthPointer
+      rustyVCDIFFCover
+        sourcePointer sourceLength
+        targetPointer targetLength
+        (fromIntegral windowLength)
+        kindsAddressPointer   kindsLengthPointer
+        offsetsAddressPointer offsetsLengthPointer
+        lengthsAddressPointer lengthsLengthPointer
+        countsAddressPointer  countsLengthPointer
       kindBytes   <- readByteString kindsAddressPointer   kindsLengthPointer
       offsetBytes <- readByteString offsetsAddressPointer offsetsLengthPointer
       lengthBytes <- readByteString lengthsAddressPointer lengthsLengthPointer

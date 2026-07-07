@@ -1,15 +1,9 @@
 -- | xdelta1 differ binding to rusty-slap.
 --
--- The Rust side ('rusty-slap/src/xdelta1_diff.rs') owns the rolling-
--- checksum index over source, the byte-by-byte target walk, and the
--- bidirectional match extension. This module is the seam: it
--- assembles the FFI call, decodes the parallel-array instruction
--- buffers back into a typed '[XDelta1Instruction]', and lifts the
--- narrow Rust-side cause into 'SlapError' via 'XDelta1DiffFailed'.
+-- The Rust side (@rusty-slap/src/xdelta1_diff.rs@) owns the source index, the target walk, and the end-of-walk offset-mode observation;
+-- this module is the seam: it assembles the FFI call and decodes the parallel-array instruction buffers back into '[XDelta1Instruction]'.
 --
--- The FFI module has one downstream caller ('Slap.XDelta1.Create'),
--- so the narrower 'Slap.Status.XDelta1DiffCause' is wrapped here
--- rather than being threaded further out.
+-- The one downstream caller is 'Slap.XDelta1.Create', so the narrow Rust-side cause widens to 'SlapError' ('XDelta1DiffFailed') here.
 {-# LANGUAGE OverloadedStrings #-}
 
 module Slap.XDelta1.FFI

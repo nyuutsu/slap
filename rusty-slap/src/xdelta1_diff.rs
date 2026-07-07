@@ -36,8 +36,8 @@ pub enum InstructionTarget {
     /// The patch's inline data segment — bytes accumulated from
     /// target positions that didn't match any source span.
     DataSource,
-    /// The user's external source ROM — bytes the differ matched
-    /// against the source suffix-array index.
+    /// The user's external source ROM — bytes the differ matched to a
+    /// source span.
     FileSource,
 }
 

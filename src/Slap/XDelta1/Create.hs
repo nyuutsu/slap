@@ -2,40 +2,24 @@
 
 -- | xdelta1 patch creation.
 --
--- The wire encoder ('encodeXDelta1') is the round-trip partner of
--- 'Slap.XDelta1.Parse.parseControl' /
--- 'Slap.XDelta1.Parse.parseVersion1Point1': given an 'XDelta1Patch'
--- value, it produces wire bytes that 'Slap.XDelta1.Parse.parseXDelta1'
--- reads back to an equal patch. 'createXDelta1' chains the rsync-
--- style differ in "Slap.XDelta1.FFI" (kernel in
--- @rusty-slap\/src\/xdelta1_diff.rs@) onto the encoder: the differ
--- owns the rolling-checksum index over source, the byte-by-byte
--- target walk, and the per-source sequential-mode tracking; this
--- module owns the MD5s, the 'VerificationInclusion' wiring, the
--- 'XDelta1PatchCompression' wiring, and 'XDelta1Patch' assembly.
+-- The wire encoder ('encodeXDelta1') is the round-trip partner of 'Slap.XDelta1.Parse.parseControl' / 'Slap.XDelta1.Parse.parseVersion1Point1':
+-- given an 'XDelta1Patch' value, it produces wire bytes that 'Slap.XDelta1.Parse.parseXDelta1' reads back to an equal patch.
+-- 'createXDelta1' chains the differ in "Slap.XDelta1.FFI" onto the encoder;
+-- this module owns the MD5s, the 'VerificationInclusion' wiring, the 'XDelta1PatchCompression' wiring, and 'XDelta1Patch' assembly.
 --
 -- == @FLAG_PATCH_COMPRESSED@
 --
--- Gated by the porcelain's 'Slap.MetadataInclusion.CompressionInclusion',
--- mapped at the front door onto the wire-level posture
--- 'Slap.XDelta1.Types.XDelta1PatchCompression'. Under 'CompressedPatch'
--- (default) the bit is set and the data and control segments are
--- gzip-deflated independently before placement. Under
--- 'UncompressedPatch' (set by @slap create --no-compress@) the bit
--- stays clear and the segments are emitted raw. Both shapes are
--- spec-conformant; canonical xdelta-1.x emits compressed by default.
+-- Gated by 'Slap.MetadataInclusion.CompressionInclusion', mapped onto the wire posture 'Slap.XDelta1.Types.XDelta1PatchCompression'.
+-- Under 'CompressedPatch' (default) the bit is set and the data and control segments are gzip-deflated independently before placement;
+-- under 'UncompressedPatch' (@slap create --no-compress@) the bit stays clear and the segments are emitted raw.
+-- Both shapes are spec-conformant; canonical xdelta-1.x emits compressed by default.
 --
 -- == @FLAG_NO_VERIFY@
 --
--- Gated by 'Slap.MetadataInclusion.VerificationInclusion', threaded
--- in from the porcelain. Under 'IncludeVerification' (default) the
--- bit stays clear, real MD5s are computed and written for the
--- target, the data source, and the file source. Under
--- 'OmitVerification' (set by @slap create --omit-verification@) the bit is
--- set, the patch's verification posture is
--- 'CreatorOptedOutOfVerification', and the sentinel
--- ('xdelta1EmptyInputMD5Sentinel') is written into every MD5 slot
--- — matching what canonical xdelta's @--noverify@ produces.
+-- Gated by 'Slap.MetadataInclusion.VerificationInclusion'.
+-- Under 'IncludeVerification' (default) the bit stays clear and real MD5s are written for the target, the data source, and the file source.
+-- Under 'OmitVerification' (@slap create --omit-verification@) the bit is set and the posture is 'CreatorOptedOutOfVerification';
+-- the sentinel ('xdelta1EmptyInputMD5Sentinel') fills every MD5 slot, matching what canonical xdelta's @--noverify@ produces.
 module Slap.XDelta1.Create
   ( createXDelta1
   , narrowXDelta1ControlOffset

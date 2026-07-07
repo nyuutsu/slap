@@ -135,11 +135,6 @@ pub unsafe extern "C" fn rusty_adler32(input_address: *const u8, input_length: u
 /// Compute the BPS action stream for a (source, target) pair. Rust
 /// allocates the output; caller frees with [`rusty_free`].
 ///
-/// Returns 0 unconditionally — the BPS diff itself is total. The `i32`
-/// slot mirrors the FFI status-code shape used by every other rusty
-/// function; keeping it uniform means the Haskell side imports every
-/// FFI export with the same return-type discipline.
-///
 /// # Safety
 /// - `source_address` must point to `source_length` readable bytes (or
 ///   may be null when `source_length == 0`).
@@ -155,12 +150,11 @@ pub unsafe extern "C" fn rusty_bps_diff(
     target_length:          usize,
     output_address_pointer: *mut *mut u8,
     output_length_pointer:  *mut usize,
-) -> i32 {
+) {
     let source = unsafe { view_caller_buffer(source_address, source_length) };
     let target = unsafe { view_caller_buffer(target_address, target_length) };
     let action_stream = bps_diff::bps_diff(source, target);
     unsafe { surface_buffer_to_caller(action_stream, output_address_pointer, output_length_pointer) };
-    0
 }
 
 // ── bsdiff diff FFI ───────────────────────────────────────────────────
@@ -354,10 +348,6 @@ fn split_to_parallel_arrays(
 /// length (or more). Rust allocates the four output arrays; the caller
 /// frees each with [`rusty_free`].
 ///
-/// Returns 0 unconditionally — the covers are total (every input
-/// yields them). The `i32` slot keeps the FFI return-type discipline
-/// uniform with [`rusty_bps_diff`].
-///
 /// The covers cross as three parallel homogeneous arrays sharing the
 /// total segment count N — one `kind` byte per segment (0 = literal,
 /// 1 = copy); one `u64` LE `offset` per segment (window-relative: a
@@ -385,7 +375,7 @@ pub unsafe extern "C" fn rusty_vcdiff_cover(
     lengths_length_pointer:        *mut usize,
     window_counts_address_pointer: *mut *mut u8,
     window_counts_length_pointer:  *mut usize,
-) -> i32 {
+) {
     let source = unsafe { view_caller_buffer(source_address, source_length) };
     let target = unsafe { view_caller_buffer(target_address, target_length) };
     let covers = vcdiff_diff::vcdiff_windowed_covers(source, target, window_length);
@@ -396,15 +386,14 @@ pub unsafe extern "C" fn rusty_vcdiff_cover(
         surface_buffer_to_caller(lengths,       lengths_address_pointer,       lengths_length_pointer);
         surface_buffer_to_caller(window_counts, window_counts_address_pointer, window_counts_length_pointer);
     }
-    0
 }
 
 /// Compute the per-window produced-target VCDIFF covers for a target —
 /// the greedy segmentation of each `window_length`-byte slice against
 /// the output of the windows before it, for the VCD_TARGET arm of
-/// RFC-flavor windowed creation. Buffer protocol, cover encoding, and
-/// totality are [`rusty_vcdiff_cover`]'s; the covers themselves, and
-/// the coordinate space their offsets live in, are
+/// RFC-flavor windowed creation. Buffer protocol and cover encoding
+/// are [`rusty_vcdiff_cover`]'s; the covers themselves, and the
+/// coordinate space their offsets live in, are
 /// [`vcdiff_diff::vcdiff_produced_target_covers`]'s.
 ///
 /// # Safety
@@ -423,7 +412,7 @@ pub unsafe extern "C" fn rusty_vcdiff_produced_target_cover(
     lengths_length_pointer:        *mut usize,
     window_counts_address_pointer: *mut *mut u8,
     window_counts_length_pointer:  *mut usize,
-) -> i32 {
+) {
     let target = unsafe { view_caller_buffer(target_address, target_length) };
     let covers = vcdiff_diff::vcdiff_produced_target_covers(target, window_length);
     let (kinds, offsets, lengths, window_counts) = split_covers_to_parallel_arrays(&covers);
@@ -433,7 +422,6 @@ pub unsafe extern "C" fn rusty_vcdiff_produced_target_cover(
         surface_buffer_to_caller(lengths,       lengths_address_pointer,       lengths_length_pointer);
         surface_buffer_to_caller(window_counts, window_counts_address_pointer, window_counts_length_pointer);
     }
-    0
 }
 
 /// Project per-window covers into three parallel homogeneous byte

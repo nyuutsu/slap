@@ -107,8 +107,7 @@ struct Pursuit {
 
 impl<'src> SourceHashChainMatcher<'src> {
     /// Index the source. Fails when the source is longer than
-    /// xdelta1's wire offsets can name (32-bit), the same ceiling the
-    /// suffix-array index enforced before it.
+    /// xdelta1's wire offsets can name (32-bit).
     pub fn build(source: &'src [u8]) -> Result<Self, String> {
         if source.len() >= u32::MAX as usize {
             return Err(format!(
