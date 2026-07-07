@@ -761,7 +761,11 @@ xdelta3HeaderFor maybeAppHeader sectionCompression =
 -- under the same custom-table consideration the single-window emission weighs.
 -- The per-window compete ('chooseWindowArms') settles each window's arm first, under the default table;
 -- the candidate is then designed over every settled window's resolved stream ('windowedCandidatePatchForConfig'),
--- geometry grown as ever, and the default-table patch ships unless a candidate beats it outright —
+-- geometry grown as ever.
+-- A designed table can flip which arm encodes smaller, so once the geometry settles the arms are re-competed
+-- under a judging table built for both ('recompeteArmsUnderCandidateTable'),
+-- and a flip earns one re-design over the flipped winners, kept only where it beats the settled candidate.
+-- The default-table patch ships unless a candidate beats it outright —
 -- the gate 'emitConsideringCustomTable' holds its single window to, held here to the whole window run.
 -- On the default table, with no checksum and no compression, a run of windows that all settle on the source arm
 -- parses back as 'Slap.VCDIFF.Types.PatchCoreOnly'; the first window that wins on VCD_TARGET — or a custom table paying —
@@ -771,11 +775,19 @@ emitWindowedRFCPatch windowSize source target
   | ByteString.length grownCandidate < ByteString.length defaultTablePatch = grownCandidate
   | otherwise                                                              = defaultTablePatch
   where
-    chosenArms = chooseWindowArms windowSize source target
+    competes   = chooseWindowArms windowSize source target
+    chosenArms = map competeWinner competes
     defaultTablePatch =
       assemblePatch (word8 noHeaderFeatures)
         (ByteString.concat (map chosenDefaultTableBytes chosenArms))
-    grownCandidate = grownCacheCandidate (windowedCandidatePatchForConfig chosenArms)
+    grownProbe = grownCacheCandidate (windowedCandidatePatchForConfig chosenArms)
+    grownCandidate = case flippedCandidate of
+      Just flippedBytes
+        | ByteString.length flippedBytes < probePatchSize grownProbe -> flippedBytes
+      _ -> probePatchBytes grownProbe
+    flippedCandidate = do
+      flippedArms <- recompeteArmsUnderCandidateTable (probeGeometry grownProbe) competes
+      windowedCandidatePatchForConfig flippedArms (probeGeometry grownProbe)
 
 -- | One window's settled choice from the per-window compete: the arm that won,
 -- everything needed to re-plan it under another cache geometry, and its wire bytes under the default table
@@ -790,7 +802,15 @@ data ChosenWindowArm = ChosenWindowArm
   , chosenDefaultTableBytes :: !ByteString
   }
 
--- | Run the per-window compete: cover each window twice, encode both arms under the default table, keep the smaller.
+-- | One window's per-window compete, both arms kept: the default-table winner the emission builds on,
+-- and the runner-up, retained for the re-compete under a designed table ('recompeteArmsUnderCandidateTable'),
+-- where the judging changes and the runner-up may earn the window after all.
+data WindowArmCompete = WindowArmCompete
+  { competeWinner   :: !ChosenWindowArm
+  , competeRunnerUp :: !ChosenWindowArm
+  }
+
+-- | Run the per-window compete: cover each window twice, encode both arms under the default table, and rank them.
 -- The source arm covers a window against the source file ('vcdiffWindowedCovers', VCD_SOURCE on the wire);
 -- the target arm covers it against the output of the windows before it ('vcdiffProducedTargetCovers', VCD_TARGET) —
 -- the two copy sources a window may declare, one at a time, never both (RFC 3284 §4.2).
@@ -798,12 +818,12 @@ data ChosenWindowArm = ChosenWindowArm
 -- the plain reading is the default, and the fancy one must win outright.
 -- Window 0 has no produced output below its base, so its target arm is self-contained at best
 -- and VCD_TARGET can never mark the first window.
-chooseWindowArms :: EmissionWindowSize -> ByteString -> ByteString -> [ChosenWindowArm]
+chooseWindowArms :: EmissionWindowSize -> ByteString -> ByteString -> [WindowArmCompete]
 chooseWindowArms windowSize source target
   -- Both matchers chunk the target by the same window size, so the two cover runs pair one-to-one;
   -- a disagreement is a matcher bug, surfaced as a loud 'error' the way the other must-hold seams here are.
   | length sourceArmWindows == length targetArmCovers =
-      zipWith3 betterArm producedBeforeWindow sourceArmWindows targetArmCovers
+      zipWith3 competeArms producedBeforeWindow sourceArmWindows targetArmCovers
   | otherwise =
       error ("Slap.VCDIFF.Create: the two matchers disagree on the window partition: "
               <> show (length sourceArmWindows) <> " source-arm windows, "
@@ -822,10 +842,12 @@ chooseWindowArms windowSize source target
     producedBeforeWindow =
       scanl (<>) mempty [byteLength windowSlice | (windowSlice, _cover) <- sourceArmWindows]
 
-    betterArm producedBefore (windowSlice, sourceCover) targetCover
+    competeArms producedBefore (windowSlice, sourceCover) targetCover
       | ByteString.length (chosenDefaultTableBytes targetArm)
-          < ByteString.length (chosenDefaultTableBytes sourceArm) = targetArm
-      | otherwise                                                 = sourceArm
+          < ByteString.length (chosenDefaultTableBytes sourceArm) =
+          WindowArmCompete { competeWinner = targetArm, competeRunnerUp = sourceArm }
+      | otherwise =
+          WindowArmCompete { competeWinner = sourceArm, competeRunnerUp = targetArm }
       where
         sourceArm = armOf FromSourceFile     (byteLength source) windowSlice sourceCover
         targetArm = armOf FromProducedTarget producedBefore      windowSlice targetCover
@@ -842,6 +864,48 @@ chooseWindowArms windowSize source target
         plannedWindow =
           layoutPlannedWindow OmitWindowAdler32 opcodeResolver windowSlice
             (planTightenedWindow defaultAddressCacheConfig origin externalLength windowSlice cover)
+
+-- | Re-run the per-window compete once under the grown geometry, judged by a designed table rather than the default:
+-- the flip 'emitWindowedRFCPatch' grants the runner-up arms after the geometry settles.
+-- The judge is built the way a shipped table is ('donorMints'), but over both arms' streams,
+-- so every COPY mode either arm selects has an opcode and no arm is judged under a table that cannot express it.
+-- It only measures and is never emitted: the flipped winners earn their own design afterwards,
+-- and the byte gate above decides whether the flip actually paid.
+-- 'Nothing' when no sound judge fits the donor pool, and when the rematch flips nothing —
+-- either way the settled arms stand, and no re-design runs that could only reproduce the settled candidate.
+-- The incumbent keeps ties, the way the source arm takes them in 'chooseWindowArms':
+-- the settled reading is the default, and the flip must win outright.
+recompeteArmsUnderCandidateTable :: AddressCacheConfig -> [WindowArmCompete] -> Maybe [ChosenWindowArm]
+recompeteArmsUnderCandidateTable config competes =
+    judgeCompetes
+      =<< donorMints [ planResolved plan | (_arm, plan) <- concatMap bothPlanned plannedCompetes ]
+  where
+    plannedCompetes =
+      [ (plannedArm (competeWinner compete), plannedArm (competeRunnerUp compete))
+      | compete <- competes ]
+    bothPlanned (winner, runnerUp) = [winner, runnerUp]
+    plannedArm arm =
+      ( arm
+      , planTightenedWindow config (chosenOrigin arm) (chosenExternalLength arm)
+          (chosenSlice arm) (chosenCover arm) )
+
+    judgeCompetes assignments =
+      let judgeOpcodes =
+            denseOpcodes (Table.codeTableWithEntriesReplaced Table.defaultCodeTable assignments)
+          judgedLength (arm, plan) =
+            let plannedWindow = layoutPlannedWindow OmitWindowAdler32 judgeOpcodes (chosenSlice arm) plan
+            in ByteString.length
+                 (encodeWindowBytes plannedWindow (plainCarriages (plannedSections plannedWindow)))
+          rematchedArms =
+            [ if judgedLength runnerUp < judgedLength winner then fst runnerUp else fst winner
+            | (winner, runnerUp) <- plannedCompetes ]
+          -- A compete's two arms are one per 'SegmentOrigin' ('chooseWindowArms' builds one of each),
+          -- so a rematch winner flipped exactly when its origin differs from the settled winner's.
+          anyWindowFlipped =
+            or (zipWith (\compete rematchedArm ->
+                           chosenOrigin rematchedArm /= chosenOrigin (competeWinner compete))
+                        competes rematchedArms)
+      in if anyWindowFlipped then Just rematchedArms else Nothing
 
 -- | The windowed custom-table patch for one cache geometry, or 'Nothing' when no sound table fits the config's modes into the donor pool.
 -- Every window's settled arm is re-planned under @config@ — address resolution steers by the cache geometry, so re-planning is not optional —
@@ -877,7 +941,7 @@ emitConsideringCustomTable source target cover
   | ByteString.length grownCandidate < ByteString.length defaultPatch = grownCandidate
   | otherwise                                                         = defaultPatch
   where
-    grownCandidate = grownCacheCandidate (candidatePatchForConfig source target cover)
+    grownCandidate = probePatchBytes (grownCacheCandidate (candidatePatchForConfig source target cover))
     defaultPatch   = emitDefaultPatch source target cover
 
 -- | The custom-table patch for one cache geometry, or 'Nothing' when no sound table fits the config's modes into the donor pool.
@@ -906,7 +970,8 @@ data CacheProbe = CacheProbe
 probePatchSize :: CacheProbe -> Int
 probePatchSize = ByteString.length . probePatchBytes
 
--- | Grow the cache geometry from the default to where a larger cache stops paying, returning the smallest custom-table candidate found.
+-- | Grow the cache geometry from the default to where a larger cache stops paying,
+-- returning the winning probe: the geometry the grow stopped at, and the smallest custom-table candidate found there.
 -- @candidateAt@ assembles the custom-table patch bytes for one geometry ('Nothing' where no sound table fits);
 -- the single-window and windowed emissions each hand in their own ('candidatePatchForConfig', 'windowedCandidatePatchForConfig'),
 -- and the grow itself is theirs to share.
@@ -916,9 +981,9 @@ probePatchSize = ByteString.length . probePatchBytes
 -- Near is grown first, then same from there; the two interact, so the order can nudge where it lands,
 -- which is fine, more slots never hurt the address section either way.
 -- The patch's own diminishing returns are the stopping rule: no threshold, no cap beyond the one-byte wire ceiling on each cache size.
-grownCacheCandidate :: (AddressCacheConfig -> Maybe ByteString) -> ByteString
+grownCacheCandidate :: (AddressCacheConfig -> Maybe ByteString) -> CacheProbe
 grownCacheCandidate candidateAt =
-    probePatchBytes (growWhilePaying growSameBlock (growWhilePaying growNearSlot defaultProbe))
+    growWhilePaying growSameBlock (growWhilePaying growNearSlot defaultProbe)
   where
     -- The default geometry admits no mode past the default nine, so its candidate is always feasible:
     -- the 'fromMaybe' marks an unreachable branch, since 'candidateAt' never returns 'Nothing' for this config.
