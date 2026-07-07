@@ -56,7 +56,7 @@ import Slap.VCDIFF.CodeTable (CodeTableEntry(..), InstructionTemplate(..),
 import Slap.VCDIFF.Parse (parseVCDIFF, decodeCopyAddress, freshAddressCache,
                           firstSameMode, defaultAddressCacheConfig,
                           AddressCache, CopyAddressReading(..))
-import Slap.VCDIFF.Types (VCDIFFPatch(..), XDelta3Header(..), XDelta3Window(..))
+import Slap.VCDIFF.Types (VCDIFFPatch(..), XDelta3Header(..), XDelta3Window(..), patchWindows)
 import Slap.VCDIFF.Apply (applyVCDIFF)
 
 import Data.Bits (shiftL, (.|.))
@@ -214,6 +214,8 @@ specConformanceTests = testGroup "SpecConformance"
               test_vcdiffDataSectionUnconsumedBytes
           , testCase "unconsumed-address-section-bytes-rejected"
               test_vcdiffAddressSectionUnconsumedBytes
+          , testCase "trailing-remnant-consumed-and-noted"
+              test_vcdiffTrailingRemnantNoted
           ]
       , testGroup "address-cache"
           [ testCase "near-cache-round-robin-overwrites-oldest"
@@ -1763,6 +1765,25 @@ test_vcdiffBothSourceBitsStillMalformed =
     --   | inst [COPY mode0 size4] | addr [0]
     patch = vcdiffPatch
       [0x03, 0x04, 0x00, 0x07, 0x04, 0x00, 0x00, 0x01, 0x01, 0x14, 0x00]
+
+-- | The one recognized trailing shape is consumed whole and surfaced as its note,
+-- the window before it intact; 'VCDIFFTrailingRemnant' has the shape's story.
+test_vcdiffTrailingRemnantNoted :: Assertion
+test_vcdiffTrailingRemnantNoted =
+  case parseVCDIFF patch of
+    Left parseError -> assertFailureT ("parse: " <> renderSlapError parseError)
+    Right (Parsed decoded notes) -> do
+      assertEqual "window survives the remnant" 1 (Vector.length (patchWindows decoded))
+      assertBool "remnant note carried"
+        (VCDIFFTrailingRemnant (Length 7) `elem` notes)
+  where
+    -- one ADD-"A" window (win 00 | deltaEncLen 07 | target 01
+    --   | deltaInd 00 | A 01 I 01 C 00 | data "A" | inst [ADD1]),
+    --   then the recognized trailer: the 0xFF marker and three bytes of zero padding,
+    --   seven bytes in all.
+    patch = vcdiffPatch
+      ([0x00, 0x07, 0x01, 0x00, 0x01, 0x01, 0x00, 0x41, 0x02]
+        ++ [0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00])
 
 -- | A self-contained window that writes one byte then COPYs four bytes
 -- from address 0 — a read that trails the write, so it expands the

@@ -11,5 +11,10 @@
 # pokesta2-debug-lzma is the first compressed row, keeping this
 # header's old promise: a wild LZMA patch (8 windows, 64 MB output)
 # against the stadium2 fixture base.
+#
+# pokesta2-debug-fgk is converted provenance:
+# the same debug-menu change re-encoded by the reference tool (xdelta3 -S fgk) —
+# the one compressor no wild patch in the collection carries.
 
 test/data/stadium2/base.z64 | test/data/stadium2/debug-menu/patch.xdelta | pokesta2-debug-lzma
+test/data/stadium2/base.z64 | test/data/stadium2/debug-menu-fgk/patch.xdelta | pokesta2-debug-fgk

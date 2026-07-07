@@ -24,6 +24,7 @@ import qualified Slap.BSDiff.Parse as BSDiff
 import qualified Slap.Text as SlapText
 import qualified Data.Text as Text
 import qualified Slap.XDelta1.Parse as XDelta1
+import qualified Slap.VCDIFF.Parse as VCDIFF
 
 import Slap.Status (CreateResult(..), renderSlapError)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
@@ -52,8 +53,7 @@ truncationTests = testGroup "Truncation"
   , testProperty "APS-N64" prop_apsN64Trunc
   , testProperty "APS-GBA" prop_apsGbaTrunc
   , testProperty "GDIFF"   prop_gdiffTrunc
-  -- VCDIFF is mid-reimplementation; its truncation property returns
-  -- when the rebuilt parser lands.
+  , testProperty "VCDIFF"  prop_vcdiffTrunc
   , testProperty "BSDiff"  prop_bsdiffTrunc
   , testProperty "XDelta1" prop_xdelta1Trunc
   ]
@@ -149,6 +149,9 @@ prop_gdiffTrunc = forAll genPair $ \(source, target) ->
     Right (CreateResult patch _) -> truncated GDIFF.parseGDIFF patch
 
 -- Consume-only formats: truncation on real test data
+
+prop_vcdiffTrunc :: Property
+prop_vcdiffTrunc = truncatedFile VCDIFF.parseVCDIFF "test/data/dm4y/patch.vcdiff"
 
 prop_bsdiffTrunc :: Property
 prop_bsdiffTrunc = truncatedFile BSDiff.parseBSDiff "test/data/dm4y/patch.bsdiff"

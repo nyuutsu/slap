@@ -87,8 +87,8 @@ cliTests tier = do
       requireExternalTool Unzip $ \_ ->
         pure (map WillRun (archiveTests dm4yBase dm4yIps dm4yBps dm4yUps))
 
-    -- Codetable tests are slap-only (no dm4y dependency).
-    let codetableMaybes = map WillRun customCodetableTests
+    -- Codetable and VCD_TARGET tests are slap-only (committed fixtures; no ROM gate).
+    let codetableMaybes = map WillRun (customCodetableTests ++ vcdTargetTests)
 
     -- Explain-mode tests use dm4y paths but degrade to "no --with"
     -- mode when the base ROM is missing. They register
@@ -514,13 +514,97 @@ ipsTruncateTests base =
           _ -> assertFailure "create failed"
   ]
 
--- | VCDIFF custom-code-table info/apply coverage. Empty while the
--- VCDIFF family is mid-reimplementation (the format's parse and apply
--- are stubbed out); the cases — info naming the custom table and apply
--- producing "AABBCCDDEE" from a custom-table patch — return when the
--- rebuilt family lands, and will build on 'Slap.VCDIFF.CodeTable'.
+-- | VCDIFF custom-code-table coverage. No oracle can cross-validate these;
+-- the expected outputs come from the fixtures' @generate.py@, which has the story.
 customCodetableTests :: [TestTree]
-customCodetableTests = []
+customCodetableTests =
+  [ testCase "custom-codetable/info names the custom table" $
+      expectOk ["info", customTableFixture "fixtureA-identity.vcdiff"]
+        "custom-codetable/info" "custom (RFC 3284"
+
+  , testCase "custom-codetable/identity applies through the custom table" $
+      withTempFile "slap-out" $ \out -> do
+        removeIfExists out
+        expectOk [ "apply", customTableFixture "fixtureA-identity.vcdiff"
+                 , customTableFixture "sourceA.bin", "-o", out ]
+          "custom-codetable/identity" "applied"
+        decoded <- ByteString.readFile out
+        assertEqual "decoded output" "HELLO" decoded
+
+  , testCase "custom-codetable/nested table refused" $
+      expectFail [ "apply", customTableFixture "fixtureB-nested.vcdiff"
+                 , customTableFixture "sourceA.bin", "-o", "/dev/null" ]
+        "custom-codetable/nested" "nested custom code tables"
+
+  , testCase "custom-codetable/invalid entry refused with context" $
+      expectFail [ "apply", customTableFixture "fixtureC-invalid-entry.vcdiff"
+                 , customTableFixture "sourceA.bin", "-o", "/dev/null" ]
+        "custom-codetable/invalid-entry" "invalid instruction type"
+
+  , testCase "custom-codetable/do-nothing entry applies with a note" $
+      withTempFile "slap-out" $ \out -> do
+        removeIfExists out
+        expectOk [ "apply", customTableFixture "fixtureD-noop-noop.vcdiff"
+                 , customTableFixture "sourceD.bin", "-o", out ]
+          "custom-codetable/noop-noop" "do-nothing"
+        decoded <- ByteString.readFile out
+        assertEqual "decoded output" "HELLO" decoded
+
+  , testCase "custom-codetable/declared cache sizes steer decode" $
+      withTempFile "slap-out" $ \out -> do
+        removeIfExists out
+        expectOk [ "apply", customTableFixture "fixtureE-larger-near-cache.vcdiff"
+                 , customTableFixture "sourceE.bin", "-o", out ]
+          "custom-codetable/larger-near-cache" "applied"
+        decoded <- ByteString.readFile out
+        assertEqual "decoded output" "3456" decoded
+
+  , testCase "custom-codetable/mode past the declared caches refused" $
+      expectFail [ "apply", customTableFixture "fixtureF-mode-out-of-range.vcdiff"
+                 , customTableFixture "sourceA.bin", "-o", "/dev/null" ]
+        "custom-codetable/mode-out-of-range" "reach only mode 8"
+  ]
+  where
+    customTableFixture name = "test/data/vcdiff-custom-table/" ++ name
+
+-- | VCD_TARGET apply coverage. No oracle can cross-validate these;
+-- the expected outputs come from the fixtures' @generate.py@, which has the story.
+vcdTargetTests :: [TestTree]
+vcdTargetTests =
+  [ testCase "vcd-target/window copies an earlier window's output" $
+      withTempFile "slap-empty-source" $ \emptySource ->
+      withTempFile "slap-out" $ \out -> do
+        ByteString.writeFile emptySource ""
+        removeIfExists out
+        expectOk [ "apply", vcdTargetFixture "fixture1-cross-window.vcdiff"
+                 , emptySource, "-o", out ]
+          "vcd-target/cross-window" "applied"
+        decoded <- ByteString.readFile out
+        assertEqual "decoded output" "ABCDEFGHCDEF" decoded
+
+  , testCase "vcd-target/info reads the RFC flavor" $
+      expectOk ["info", vcdTargetFixture "fixture1-cross-window.vcdiff"]
+        "vcd-target/info" "RFC 3284"
+
+  , testCase "vcd-target/empty segment applies with a note" $
+      withTempFile "slap-empty-source" $ \emptySource ->
+      withTempFile "slap-out" $ \out -> do
+        ByteString.writeFile emptySource ""
+        removeIfExists out
+        expectOk [ "apply", vcdTargetFixture "fixture2-empty-segment.vcdiff"
+                 , emptySource, "-o", out ]
+          "vcd-target/empty-segment" "empty source segment"
+        decoded <- ByteString.readFile out
+        assertEqual "decoded output" "" decoded
+
+  , testCase "vcd-target/VCD_TARGET with a window Adler32 is neither dialect" $
+      withTempFile "slap-empty-source" $ \emptySource ->
+        expectFail [ "apply", vcdTargetFixture "fixture3-target-plus-adler.vcdiff"
+                   , emptySource, "-o", "/dev/null" ]
+          "vcd-target/neither-dialect" "neither a conformant"
+  ]
+  where
+    vcdTargetFixture name = "test/data/vcdiff-vcd-target/" ++ name
 
 -- | NINJA1 source-verification CLI coverage. The first two cases just
 -- exercise the create+info+apply happy path on dm4y; the last two are

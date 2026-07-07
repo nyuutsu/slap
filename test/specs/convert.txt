@@ -38,6 +38,13 @@ ppf2       | aps-n64 | test/data/dm4y/patch.ppf2               | test/data/dm4y/
 bps        | ips32   | test/data/stadium2/fair-heavy/patch.bps     | test/data/stadium2/base.z64     | f3b9f582c97d644c023622973ca04ef3b5a87dfc | accept |  | --with
 #
 # ============================================================================
+# VCDIFF via --with (dm4y): the family as a source, and both create arcs as targets
+# ============================================================================
+vcdiff     | bps        | test/data/dm4y/patch.vcdiff             | test/data/dm4y/base.gbc         | b460119b0fbd80cecba3ded57fa11a16370dd43e | accept |  | --with
+vcdiff     | xdelta3    | test/data/dm4y/patch.vcdiff             | test/data/dm4y/base.gbc         | b460119b0fbd80cecba3ded57fa11a16370dd43e | accept |  | --with
+bps        | rfc-vcdiff | test/data/dm4y/patch.bps                | test/data/dm4y/base.gbc         | b460119b0fbd80cecba3ded57fa11a16370dd43e | accept |  | --with
+#
+# ============================================================================
 # Size-change via --with (stadium2, 64→128 MB)
 # ============================================================================
 bps        | ips     | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     |          | reject:exceeds maximum offset    |  | --with
