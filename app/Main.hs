@@ -131,29 +131,32 @@ main = do
 
 -- | Read a user-supplied input file, turning its two interesting IO failure modes into typed 'SlapError' values on slap's normal error channel:
 -- the path is absent ('MissingInputFile'), or present but unopenable ('UnreadableInputFile').
--- The bytes arrive memory-mapped, so a large input costs address space and page cache rather than heap,
--- paged in as slap touches it.
--- The in-place apply and undo overwrite the very file mapped here; that is sound because each writes
--- only a fully materialized output and reads nothing from the input afterwards —
+-- A mapped input is live pages rather than a snapshot, so an outside process truncating the file mid-run
+-- is outside slap's contract; slap's own in-place apply and undo stay clear of the hazard
+-- because each writes only a fully materialized output and reads nothing from the input afterwards —
 -- 'applyAndWriteTo' and 'undoAndWriteTo' own that ordering.
 readInputFile :: FilePath -> IO ByteString
 readInputFile path = do
-  result <- try (mapWholeFile path)
+  result <- try (readWholeFile path)
   case result of
     Right fileBytes -> pure fileBytes
     Left ioErr
       | isDoesNotExistError ioErr -> bailError (MissingInputFile path)
       | otherwise                 -> bailError (UnreadableInputFile path (ioeGetErrorString ioErr))
 
--- | Map a whole file as an immutable 'ByteString'.
--- An empty file skips the map — there is no zero-length mapping — and reads as the empty 'ByteString' it is;
--- the size probe also surfaces the not-a-readable-file failures ('readInputFile' types them) before any mapping happens.
-mapWholeFile :: FilePath -> IO ByteString
-mapWholeFile path = do
-  byteCount <- withFile path ReadMode hFileSize
-  if byteCount == 0
-    then pure ByteString.empty
-    else mmapFileByteString path Nothing
+-- | Read a whole input into memory, mapped when the file's shape allows it.
+-- A regular file with a real size arrives memory-mapped: address space and evictable page cache rather than a heap copy,
+-- paged in as slap touches it.
+-- Everything else streams through 'ByteString.readFile', which answers every shape a mapping cannot:
+-- pipes and devices (the size probe refuses them), proc-style files whose reported size is zero despite content,
+-- and the truly empty file. A probe failure decides nothing by itself —
+-- the streaming read then produces the authoritative bytes or the authoritative error for 'readInputFile' to type.
+readWholeFile :: FilePath -> IO ByteString
+readWholeFile path = do
+  probedSize <- try (withFile path ReadMode hFileSize) :: IO (Either IOError Integer)
+  case probedSize of
+    Right byteCount | byteCount > 0 -> mmapFileByteString path Nothing
+    _                               -> ByteString.readFile path
 
 -- | Read a file, transparently unwrapping single-entry archives.
 readUnwrap :: FilePath -> IO ByteString
