@@ -318,37 +318,32 @@ lzmaSectionCompressor = SectionCompressor SecondaryLZMA lzmaKindCarriages
 djwSectionCompressor :: SectionCompressor
 djwSectionCompressor = SectionCompressor SecondaryDJW (map (carriageKeepingSmaller djwCompress))
 
--- | The carriages one kind's sections ride out on under LZMA: the participating sections compressed as one continuous stream
+-- | The carriages one kind's sections ride out on under LZMA: the non-empty sections compressed as one continuous stream
 -- ('Slap.Compression.Stream.lzmaCompressSections'), each window's piece framed behind its decompressed-size varint.
--- A section participates only while its framed piece is smaller than its plain bytes;
--- when one stops paying it drops to plain and the remaining participants re-encode,
--- because a later piece leaned on the dropped section's dictionary and the stream must be rebuilt without it.
--- Each drop shrinks the participant run, so the settling terminates —
--- and a section that does not pay is rare enough that the first pass is normally the only pass.
+-- The kind keeps or drops the compression whole, judged by the run's total framed bytes against its total plain bytes:
+-- the gathered stream shares one dictionary, so the early piece that fails to shrink on its own
+-- is often what makes the later, near-identical pieces nearly free —
+-- judging pieces one by one would drop the dictionary's teacher, and with it, piece by piece, the whole run.
+-- Small per-window sections are exactly where the sharing pays.
 -- An empty section never participates: nothing compresses to nothing, and the read side refuses a compressed section declaring zero output.
 lzmaKindCarriages :: [ByteString] -> [SectionCarriage]
-lzmaKindCarriages plainSections =
-    settleParticipants
-      [ numbered | numbered@(_, sectionBytes) <- numberedSections
-                 , not (ByteString.null sectionBytes) ]
+lzmaKindCarriages plainSections
+  | null participants = map CarriedPlain plainSections
+  | kindPaysWhole =
+      [ maybe (CarriedPlain plainBytes) CarriedCompressed (Map.lookup windowIndex framedByWindow)
+      | (windowIndex, plainBytes) <- numberedSections ]
+  | otherwise = map CarriedPlain plainSections
   where
     numberedSections = zip [0 :: Int ..] plainSections
+    participants     = [ numbered | numbered@(_, sectionBytes) <- numberedSections
+                                  , not (ByteString.null sectionBytes) ]
 
-    settleParticipants :: [(Int, ByteString)] -> [SectionCarriage]
-    settleParticipants [] = map CarriedPlain plainSections
-    settleParticipants participants =
-      let framedByWindow = framedPiecesFor participants
-          stillPaying    = [ numbered
-                           | numbered@(windowIndex, plainBytes) <- participants
-                           , Just framed <- [Map.lookup windowIndex framedByWindow]
-                           , ByteString.length framed < ByteString.length plainBytes ]
-      in if map fst stillPaying == map fst participants
-           then [ maybe (CarriedPlain plainBytes) CarriedCompressed (Map.lookup windowIndex framedByWindow)
-                | (windowIndex, plainBytes) <- numberedSections ]
-           else settleParticipants stillPaying
+    kindPaysWhole =
+      sum (map ByteString.length (Map.elems framedByWindow))
+        < sum [ ByteString.length plainBytes | (_, plainBytes) <- participants ]
 
-    framedPiecesFor :: [(Int, ByteString)] -> Map Int ByteString
-    framedPiecesFor participants =
+    framedByWindow :: Map Int ByteString
+    framedByWindow =
       let sectionStream = lzmaCompressSections (map snd participants)
           pieceBounds   = zip (0 : lzmaPieceEndOffsets sectionStream) (lzmaPieceEndOffsets sectionStream)
           pieceAt (pieceStart, pieceEnd) =
