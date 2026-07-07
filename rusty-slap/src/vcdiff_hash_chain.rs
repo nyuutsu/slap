@@ -225,11 +225,12 @@ impl<'target> ProducedTargetMatcher<'target> {
 
 // ── Chain cells ──────────────────────────────────────────────────────
 
-/// An integer wide enough to hold a `U` position in the bucket heads
-/// and chain links. Two impls: `u32` for pairs up to 4 GB, `u64`
-/// beyond; `build` chooses once. Each type's `MAX` stays free as the
-/// end-of-chain sentinel — the dispatcher caps the narrow path's input
-/// strictly below it.
+/// An integer wide enough to hold a tile ordinal in the bucket heads
+/// and chain links. Two impls: `u32` while the tile count stays below
+/// `u32::MAX` (tens of gigabytes of indexed bytes), `u64` beyond;
+/// `build` chooses once. Each type's `MAX` stays free as the
+/// end-of-chain sentinel — the dispatchers cap the narrow path's tile
+/// counts strictly below it.
 trait ChainCell: Copy {
     const CHAIN_END: Self;
     fn from_index(index: usize) -> Self;

@@ -339,7 +339,7 @@ chooseSubstitute encoder
 -- Always succeeds. Returns the decoded 'EncodedText' paired with one 'SubstitutedByteSequence' notice per substitution event (each carrying the byte offset where the offending sequence began); a clean decode yields an empty notice list.
 --
 -- Each encoding plugs its own strict-decode primitive into the shared 'recoveringDecode' walk: 'EncodingUtf8' uses 'TextEncoding.decodeUtf8'', 'EncodingNamed' uses the resolved encoder's 'Encoding.decodeStrictByteStringExplicit'.
--- The walk is O(n) on the clean path (one strict decode); the recovery path is O(n²), one extra decode per undecodable byte.
+-- The walk is O(n) on the clean path (one strict decode).
 decodeTextLenient :: EncodingName -> ByteString -> (EncodedText, [LossNotice])
 decodeTextLenient EncodingUtf8 bytes =
   let (text, notices) = recoveringDecode TextEncoding.decodeUtf8' bytes
