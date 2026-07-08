@@ -52,7 +52,10 @@
 //! from the last copy is a byte or two. Newest-first order is the
 //! point — recency is proximity, and proximity is what makes a short
 //! repeat cheap — so this table takes the natural prepend order the
-//! long table's source half deliberately reverses.
+//! long table's source half deliberately reverses. It remembers
+//! [`SHORT_REACH_HORIZON`] bytes back, a ring rather than the whole
+//! output, so its footprint stays flat however large the output
+//! grows.
 
 use crate::bps_diff::{encode_delta, varint_cost};
 
@@ -89,6 +92,16 @@ const SHORT_PROBE_CAP: usize = 16;
 /// repeat saves at most its few bytes minus a delta, so once the other
 /// probes clear this, nothing the short table holds can win.
 const SHORT_REPEAT_CEILING_NET: i64 = 8;
+
+/// How far back the short table remembers: the widest delta a
+/// sub-anchor copy can strictly pay for beside a pending literal is
+/// [`ANCHOR_LENGTH`]−4 varint bytes, and this is the last zigzag
+/// distance that fits them (pinned to the emitter's arithmetic by
+/// test). Rarer configurations could in theory pay from farther — no
+/// literal pending, a cursor parked far from the write position, a
+/// longer repeat the long table's tiles straddle — and that value
+/// stays on the table.
+const SHORT_REACH_HORIZON: usize = 135_274_559;
 
 // ── Public surface ───────────────────────────────────────────────────
 
@@ -134,10 +147,10 @@ impl<'pair> HashChainMatcher<'pair> {
     /// Build the finder for a `(source, target)` pair. An empty target
     /// has no positions to query and skips indexing entirely.
     pub fn build(source: &'pair [u8], target: &'pair [u8]) -> Self {
-        // Narrow cells must hold both the long table's tile ordinals
-        // and the short table's target byte positions.
+        // Narrow cells hold the long table's tile ordinals; the short
+        // table's ring is u32 at any size.
         let total_tile_count = tile_count_of(source.len()) + tile_count_of(target.len());
-        let engine = if total_tile_count < u32::MAX as usize && target.len() < u32::MAX as usize {
+        let engine = if total_tile_count < u32::MAX as usize {
             EngineWidth::Narrow(Engine::build(source, target))
         } else {
             EngineWidth::Wide(Engine::build(source, target))
@@ -172,13 +185,12 @@ impl<'pair> HashChainMatcher<'pair> {
 
 // ── Chain cells ──────────────────────────────────────────────────────
 
-/// An integer wide enough for both jobs a cell does here: long-table
-/// cells hold tile ordinals, short-table cells hold target byte
-/// positions. Two impls: `u32` while the total tile count and the
-/// target's byte length both stay below it, `u64` beyond; `build`
-/// chooses once. Each type's `MAX` stays free as the end-of-chain
-/// sentinel — the dispatcher caps the narrow path's inputs strictly
-/// below it.
+/// An integer wide enough to hold a long-table tile ordinal in the
+/// bucket heads and chain links. Two impls: `u32` while the total tile
+/// count stays below it (tens of gigabytes of indexed bytes), `u64`
+/// beyond; `build` chooses once. Each type's `MAX` stays free as the
+/// end-of-chain sentinel — the dispatcher caps the narrow path's tile
+/// count strictly below it.
 trait ChainCell: Copy {
     const CHAIN_END: Self;
     fn from_index(index: usize) -> Self;
@@ -245,10 +257,15 @@ struct Engine<'pair, Cell> {
     /// Right-shift turning a folded anchor's hash into a bucket index.
     hash_shift: u32,
     /// The short table (see the module's short-table note): newest
-    /// anchor per bucket over settled output, and per-target-position
-    /// links. Target-only, so links index target positions directly.
-    short_bucket_heads: Vec<Cell>,
-    short_chain_links: Vec<Cell>,
+    /// anchor per bucket over settled output, and a ring of links
+    /// spanning [`SHORT_REACH_HORIZON`]. Cells hold the low half of
+    /// absolute target positions; the probe verifies each by distance,
+    /// so a cell the ring has reused — or the one-in-four-billion
+    /// position whose low half collides with the sentinel — merely
+    /// ends the walk early.
+    short_bucket_heads: Vec<u32>,
+    short_chain_links: Vec<u32>,
+    short_ring_mask: usize,
     short_hash_shift: u32,
     /// First target position whose anchors are not yet in the tables;
     /// the lazy indexing high-water mark, shared by both.
@@ -278,6 +295,7 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
                 hash_shift: u64::BITS,
                 short_bucket_heads: Vec::new(),
                 short_chain_links: Vec::new(),
+                short_ring_mask: 0,
                 short_hash_shift: u64::BITS,
                 next_target_anchor: 0,
             };
@@ -286,6 +304,11 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
         let total_tile_count = source_tile_count + tile_count_of(target.len());
         let bucket_bits = bucket_bits_for(total_tile_count);
         let short_bucket_bits = short_bucket_bits_for(target.len());
+        // The ring must outlast the horizon — a card may only be
+        // overwritten once no probe could still profit from it — and a
+        // target shorter than the horizon gets a ring it can never
+        // wrap: the bounded memory changes nothing below that size.
+        let short_ring_slots = target.len().min(SHORT_REACH_HORIZON + 1).next_power_of_two();
         let mut engine = Engine {
             source,
             target,
@@ -293,8 +316,9 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
             chain_links: vec![Cell::CHAIN_END; total_tile_count],
             source_tile_count,
             hash_shift: u64::BITS - bucket_bits,
-            short_bucket_heads: vec![Cell::CHAIN_END; 1 << short_bucket_bits],
-            short_chain_links: vec![Cell::CHAIN_END; target.len()],
+            short_bucket_heads: vec![u32::MAX; 1 << short_bucket_bits],
+            short_chain_links: vec![u32::MAX; short_ring_slots],
+            short_ring_mask: short_ring_slots - 1,
             short_hash_shift: u64::BITS - short_bucket_bits,
             next_target_anchor: 0,
         };
@@ -480,13 +504,22 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
         let mut best: Option<RankedCandidate> = None;
         let mut cursor = self.short_bucket_heads[bucket];
         for _ in 0..SHORT_PROBE_CAP {
-            if cursor.is_chain_end() {
+            if cursor == u32::MAX {
                 break;
             }
-            let file_position = cursor.as_index();
+            // Cells hold the low half of a position; the distance says
+            // whether this one is still the position it claims. Past
+            // the horizon or at zero it is a reused or aliased cell,
+            // and the chain ends here; the beyond-the-start arm cannot
+            // fire, and exists only to keep the reconstruction total.
+            let distance = (position as u32).wrapping_sub(cursor) as usize;
+            if distance == 0 || distance > SHORT_REACH_HORIZON || distance > position {
+                break;
+            }
+            let file_position = position - distance;
             let candidate = self.target_candidate(file_position, position, last_target_copy_end);
             best = best_of([best, candidate]);
-            cursor = self.short_chain_links[file_position];
+            cursor = self.short_chain_links[file_position & self.short_ring_mask];
         }
         best
     }
@@ -605,8 +638,9 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
 
     fn insert_short_anchor(&mut self, target_position: usize, window: &[u8]) {
         let bucket = bucket_for_short(window, self.short_hash_shift);
-        self.short_chain_links[target_position] = self.short_bucket_heads[bucket];
-        self.short_bucket_heads[bucket] = Cell::from_index(target_position);
+        self.short_chain_links[target_position & self.short_ring_mask] =
+            self.short_bucket_heads[bucket];
+        self.short_bucket_heads[bucket] = target_position as u32;
     }
 
     fn bucket_of(&self, window: &[u8]) -> usize {
@@ -700,7 +734,7 @@ fn tile_count_of(indexed_length: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{HashChainMatcher, MatchSide};
+    use super::{HashChainMatcher, MatchSide, ANCHOR_LENGTH, SHORT_REACH_HORIZON};
 
     /// SplitMix64, matching the house pseudo-random helper.
     fn pseudo_random_bytes(seed: u64, length: usize) -> Vec<u8> {
@@ -715,6 +749,27 @@ mod tests {
                 mixed as u8
             })
             .collect()
+    }
+
+    #[test]
+    fn the_short_reach_horizon_sits_on_the_wire_frontier() {
+        // The widest delta a sub-anchor copy can strictly pay for
+        // beside a pending literal: length ANCHOR_LENGTH−1 against the
+        // gate's header, strict-improvement, and flush bytes leaves
+        // ANCHOR_LENGTH−4 varint bytes, and the horizon is the last
+        // backward zigzag distance that fits them. If the varint, the
+        // zigzag, or the anchor width ever moves, this pins the
+        // constant to the arithmetic it was derived from.
+        use crate::bps_diff::{encode_delta, varint_cost};
+        let widest_paying_delta_bytes = ANCHOR_LENGTH - 4;
+        assert_eq!(
+            varint_cost(encode_delta(SHORT_REACH_HORIZON, 0)),
+            widest_paying_delta_bytes,
+        );
+        assert_eq!(
+            varint_cost(encode_delta(SHORT_REACH_HORIZON + 1, 0)),
+            widest_paying_delta_bytes + 1,
+        );
     }
 
     #[test]
