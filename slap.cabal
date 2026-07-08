@@ -3,7 +3,7 @@ name:          slap
 version:       0.1.0.0
 synopsis:      Multi-format ROM patching tool
 description:
-  Apply, create, and convert ROM patches.
+  Apply, create, convert, and examine ROM patches.
   See README for the full list.
 
 license:       MIT

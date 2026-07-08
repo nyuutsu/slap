@@ -6,10 +6,7 @@ rusty-slap/target/
 *.dyn_hi
 *.dyn_o
 
-# Per-machine cabal override: `make` writes the rusty-slap link path here
-# (extra-lib-dirs, derived from the checkout location) so every cabal
-# invocation -- not just make -- can link rusty_slap. Regenerated when the
-# path changes; never committed.
+# Per-machine cabal override; `make` writes the rusty-slap link path here
 cabal.project.local
 
 # Claude Code local config
@@ -20,14 +17,15 @@ NEXT.md
 homework.md
 planned-formats.md
 
-# Per-test integration CSV (one file per run)
+# No surprises here
 test-results/
 
-# External reference tools (moved in, not tracked)
-tools/
+# External stuff
 roms/
+scratch/
+tools/
 
-# Large ROM files (test ROMs placed by user)
+# Things I cannot legally distribute
 *.z64
 *.gba
 *.sfc
@@ -40,6 +38,3 @@ roms/
 *.iso
 *.img
 *.cue
-
-# Local scratch directory for ad-hoc material; not used by the build
-scratch/

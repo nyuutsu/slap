@@ -2,34 +2,25 @@ RUSTY_LIB := $(CURDIR)/rusty-slap/target/release
 RUSTY_A   := $(RUSTY_LIB)/librusty_slap.a
 PREFIX    ?= $(HOME)/.local
 
-# Match system make.conf: compile Rust for the host CPU so crc32fast
-# picks up CLMUL/PCLMULQDQ at compile time.
+# Match system make.conf: compile Rust for the host CPU,
+# so crc32fast picks up CLMUL/PCLMULQDQ at compile time.
 export RUSTFLAGS += -C target-cpu=native
 
-.PHONY: all rusty-slap cabal install test test-onecore haddock clean
+.PHONY: all rusty-slap cabal install test haddock clean
 
 all: rusty-slap cabal
 
-# The lzma-rust2 fork rides as a submodule; a fresh clone needs it before
-# cargo can see the path dependency. Only initialize when it's absent, so
-# a checkout you're working in never gets yanked back to the pinned commit.
+# The lzma-rust2 fork rides as a submodule;
+# a fresh clone needs it before cargo can see the path dependency.
 rusty-slap:
 	@if [ ! -f rusty-slap/vendor/lzma-rust2/Cargo.toml ]; then \
 	  git submodule update --init rusty-slap/vendor/lzma-rust2; \
 	fi
 	cd rusty-slap && cargo build --release
 
-# Point cabal at the rusty-slap staticlib via a gitignored
-# cabal.project.local derived from $(CURDIR). A project-local file -- not a
-# LIBRARY_PATH that only make sets -- means *every* cabal invocation (cabal
-# run/test/install, not just make) can link rusty_slap, so a bare `cabal
-# run slap` right after a source edit doesn't fail to find it. Rewritten
-# only when the path changes, so it never triggers a spurious reconfigure.
-#
-# Separately: an external .a pulled in via extra-libraries isn't one of the
-# source inputs cabal tracks to decide what to rebuild, so when only the
-# Rust side changes cabal sees no reason to relink. A stamp plus cabal
-# clean is the only reliable way to pick up a freshly built static library.
+# Write cabal.project.local so cabal finds the staticlib.
+# cabal doesn't track the .a as an input, so a Rust-only change won't relink on its own.
+# .rusty-stamp forces a clean when the .a is newer.
 cabal: rusty-slap
 	@desired='extra-lib-dirs: $(RUSTY_LIB)'; \
 	 if [ ! -f cabal.project.local ] || [ "$$(cat cabal.project.local)" != "$$desired" ]; then \
@@ -40,10 +31,8 @@ cabal: rusty-slap
 	fi
 	cabal build
 
-# Install the built binary onto your PATH. PREFIX defaults to ~/.local;
-# override it (e.g. PREFIX=/usr/local, which may need sudo). The Rust core
-# is statically baked in, so this is a plain copy of a self-contained
-# binary: no relink, which is why it just rides on the `cabal` target.
+# Copy the built binary onto your PATH. PREFIX defaults to ~/.local;
+# override it (PREFIX=/usr/local may need sudo).
 install: cabal
 	mkdir -p "$(DESTDIR)$(PREFIX)/bin"
 	cp "$$(cabal -v0 list-bin slap)" "$(DESTDIR)$(PREFIX)/bin/slap"
@@ -51,17 +40,11 @@ install: cabal
 
 SLAP_TEST_RESULTS ?= test-results
 
-# Run all the tests.
+# Run all the tests. Done using one core so as to actually track per-test execution time.
 test: cabal
 	@mkdir -p $(SLAP_TEST_RESULTS)
 	cabal test props
-	cabal test integration --test-options="--stats=$(SLAP_TEST_RESULTS)/test-$$(date +%Y%m%d-%H%M%S).csv"
-
-# Run all the tests using one CPU core, thus revealing how long each thing actually needs to take.
-test-onecore: cabal
-	@mkdir -p $(SLAP_TEST_RESULTS)
-	cabal test props
-	cabal test integration --test-options="--num-threads=1 --stats=$(SLAP_TEST_RESULTS)/test-onecore-$$(date +%Y%m%d-%H%M%S).csv"
+	cabal test integration --test-options="--num-threads=1 --stats=$(SLAP_TEST_RESULTS)/test-$$(date +%Y%m%d-%H%M%S).csv"
 
 # Generate Haddock, if you're into that sort of thing.
 haddock: cabal
