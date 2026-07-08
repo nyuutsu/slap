@@ -17,7 +17,7 @@
 //! side in `Slap.XDelta1.FFI` reassembles the output and feeds it to
 //! `Slap.XDelta1.Create.assemblePatch`.
 
-use crate::xdelta1_hash_chain::SourceHashChainMatcher;
+use crate::xdelta1_hash_chain::{SourceHashChainMatcher, SourceMatch};
 
 // ── Public surface ─────────────────────────────────────────────────────
 
@@ -88,11 +88,9 @@ pub fn xdelta1_diff(source: &[u8], target: &[u8]) -> Result<XDelta1DiffOutput, S
     let mut matcher = SourceHashChainMatcher::build(source)?;
     let mut state   = EncoderState::initial();
     while state.target_position < target.len() {
-        match matcher.match_at(target, state.target_position) {
-            Some(found) =>
-                state.emit_file_match(target, found.source_offset as u64, found.length as u64),
-            None =>
-                state.accumulate_literal_byte(),
+        match matcher.match_at(target, state.target_position, state.pending_literal_floor()) {
+            Some(found) => state.emit_file_match(target, found),
+            None        => state.accumulate_literal_byte(),
         }
     }
     state.flush_pending_literal(target);
@@ -159,17 +157,25 @@ impl EncoderState {
         self.target_position += 1;
     }
 
+    /// Where the pending literal run began, or the current position when
+    /// none is pending — the floor an accepted match may reach back to.
+    fn pending_literal_floor(&self) -> usize {
+        self.literal_run_start.unwrap_or(self.target_position)
+    }
+
     /// Record a file-source match. Any pending literal run is flushed
-    /// first so the data-source instruction lands before the match
-    /// in emission order.
-    fn emit_file_match(&mut self, target: &[u8], source_offset: u64, match_length: u64) {
+    /// first — shortened by the bytes the match reached back to absorb,
+    /// and dropped whole when it absorbed them all — so the data-source
+    /// instruction lands before the match in emission order.
+    fn emit_file_match(&mut self, target: &[u8], found: SourceMatch) {
+        let match_start = self.target_position - found.starts_earlier_by;
         if let Some(literal_run_start) = self.literal_run_start.take() {
-            if self.target_position > literal_run_start {
-                self.flush_literal_run(&target[literal_run_start..self.target_position]);
+            if match_start > literal_run_start {
+                self.flush_literal_run(&target[literal_run_start..match_start]);
             }
         }
-        self.record_emit(InstructionTarget::FileSource, source_offset, match_length);
-        self.target_position += match_length as usize;
+        self.record_emit(InstructionTarget::FileSource, found.source_offset as u64, found.length as u64);
+        self.target_position = match_start + found.length;
     }
 
     /// Append `literal_bytes` to the data segment and emit one

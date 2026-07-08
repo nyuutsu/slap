@@ -9,9 +9,7 @@
 //! copy-from-produced-target, so this finder needs no target-side
 //! index and no per-window session: it indexes the source once and
 //! answers "the longest run of source that prefixes `target[pos..]`",
-//! nothing more. That makes it the leanest of slap's three hash-chain
-//! matchers (the VCDIFF and BPS ones both carry a second, output-side
-//! index for self-reference).
+//! nothing more.
 //!
 //! ## Two tiers, biased toward staying in lockstep
 //!
@@ -23,19 +21,24 @@
 //!   offset mode encodes for free (every per-instruction offset varint
 //!   becomes a zero), so the bias toward pursuit shrinks the patch as
 //!   well as the work.
-//! * **Discovery** — a hash chain over [`ANCHOR_LENGTH`]-byte source
-//!   windows, probed when pursuit falls short of [`MIN_MATCH_LENGTH`].
-//!   Source anchors are indexed in reverse, so each bucket leads with
-//!   its lowest source offset: among equal-length matches the finder
-//!   keeps the smallest offset, which packs into the fewest varint
-//!   bytes under the absolute offset mode. A discovery must also beat
-//!   staying aligned — the pursuit match here, or a literal byte and
-//!   the pursuit match one position on — or a coincidental short match
-//!   in a large source would splinter an aligned run at every edit and,
-//!   since one far offset forces the whole patch out of sequential
-//!   mode, balloon every offset varint. A substitution edit thus stays
-//!   one literal byte between two long aligned runs, not a scatter of
-//!   spurious far copies.
+//! * **Discovery** — a hash chain over the [`ANCHOR_LENGTH`]-byte
+//!   tiling of the source, probed when pursuit falls short of
+//!   [`MIN_MATCH_LENGTH`]. Tiles are indexed in reverse, so each
+//!   bucket leads with its lowest source offset: among equal-length
+//!   candidates the finder keeps the smallest offset in view — tile
+//!   alignment decides which of a run's duplicates that is. A
+//!   discovery must also beat staying aligned — the pursuit match
+//!   here, or a literal byte and the pursuit match one position on —
+//!   or a coincidental short match in a large source would splinter an
+//!   aligned run at every edit and, since one far offset forces the
+//!   whole patch out of sequential mode, balloon every offset varint.
+//!   A substitution edit thus stays one literal byte between two long
+//!   aligned runs, not a scatter of spurious far copies.
+//!
+//! An accepted match reaches backward into the pending literal while
+//! the preceding bytes agree, reclaiming the true start a tile-aligned
+//! landing can sit a few bytes past — and with it the offset-exact
+//! resumption sequential mode needs.
 //!
 //! [`MIN_MATCH_LENGTH`] is the floor both tiers accept from — the
 //! shortest run xdelta1 spends a file-source instruction on. Below it
@@ -54,8 +57,16 @@ const MIN_MATCH_LENGTH: usize = 8;
 /// wherever an edit truly moved a run.
 const GOOD_ENOUGH_PURSUIT_LENGTH: usize = 64;
 
-/// The window a chain anchor covers. Equal to [`MIN_MATCH_LENGTH`]: no
-/// shorter run is worth offering, and eight bytes hash as one register.
+/// The window a chain anchor covers, and the stride anchors are filed
+/// at: the source is tiled by contiguous anchor-sized blocks, one
+/// filed card per tile, so the index stays a fixed fraction of the
+/// source at any size. Equal to [`MIN_MATCH_LENGTH`] — no shorter run
+/// is worth offering, and eight bytes hash as one register. Any run of
+/// 2×ANCHOR_LENGTH−1 bytes contains a whole tile and is discoverable
+/// at every alignment; the walk advances byte by byte through
+/// unmatched territory, so a query meets a tile's alignment within
+/// seven steps, and backward extension reclaims what a late landing
+/// skipped.
 const ANCHOR_LENGTH: usize = 8;
 
 /// How many chain entries one probe walks before giving up. Bounds the
@@ -66,14 +77,18 @@ const PROBE_CAP: usize = 32;
 // ── Public surface ───────────────────────────────────────────────────
 
 /// A source match the finder stands behind: where it begins in the
-/// source and how many bytes it runs. Both fit `u32` — the differ
-/// rejects a source past the `u32`-addressable range xdelta1's wire
-/// offsets (32-bit EDSIO varints) can name — but ride as `usize` here,
-/// the walk's natural width.
+/// source, how many bytes it runs, and how far it reached back into
+/// the pending literal — the match begins `starts_earlier_by` bytes
+/// before the query position, absorbing bytes the literal would have
+/// carried. Offsets and lengths fit `u32` — the differ rejects a
+/// source past the `u32`-addressable range xdelta1's wire offsets
+/// (32-bit EDSIO varints) can name — but ride as `usize` here, the
+/// walk's natural width.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub struct SourceMatch {
-    pub source_offset: usize,
-    pub length:        usize,
+    pub source_offset:     usize,
+    pub length:            usize,
+    pub starts_earlier_by: usize,
 }
 
 /// A longest-source-run index over the source ROM, asked one query per
@@ -81,18 +96,21 @@ pub struct SourceMatch {
 /// match becomes the next pursuit base.
 pub struct SourceHashChainMatcher<'src> {
     source:       &'src [u8],
-    /// Newest anchor per bucket; `CHAIN_END` for an untouched bucket.
+    /// Newest anchor per bucket, as a tile ordinal; `CHAIN_END` for an
+    /// untouched bucket.
     bucket_heads: Vec<u32>,
-    /// Per-source-position next-older-anchor link, same bucket.
+    /// Per-tile next-older-anchor link, same bucket, keyed by tile
+    /// ordinal (position = ordinal × ANCHOR_LENGTH, recomputed at the
+    /// probe).
     chain_links:  Vec<u32>,
     /// Right-shift turning a folded anchor's hash into a bucket index.
     hash_shift:   u32,
     pursuit:      Option<Pursuit>,
 }
 
-/// The end-of-chain sentinel. The differ caps the source strictly
-/// below `u32::MAX`, so the largest real source position is below it
-/// and this value stays free.
+/// The end-of-chain sentinel. Tile ordinals run an eighth of the
+/// source's byte length, and the differ caps the source strictly below
+/// `u32::MAX`, so every real ordinal sits far below this value.
 const CHAIN_END: u32 = u32::MAX;
 
 /// The pursuit base: the last accepted match, as the alignment it
@@ -106,8 +124,8 @@ struct Pursuit {
 }
 
 impl<'src> SourceHashChainMatcher<'src> {
-    /// Index the source. Fails when the source is longer than
-    /// xdelta1's wire offsets can name (32-bit).
+    /// Index the source, one anchor per tile. Fails when the source is
+    /// longer than xdelta1's wire offsets can name (32-bit).
     pub fn build(source: &'src [u8]) -> Result<Self, String> {
         if source.len() >= u32::MAX as usize {
             return Err(format!(
@@ -117,11 +135,12 @@ impl<'src> SourceHashChainMatcher<'src> {
                 u32::MAX - 1,
             ));
         }
-        let bucket_bits = bucket_bits_for(source.len());
+        let tile_count = tile_count_of(source.len());
+        let bucket_bits = bucket_bits_for(tile_count);
         let mut matcher = SourceHashChainMatcher {
             source,
             bucket_heads: vec![CHAIN_END; 1 << bucket_bits],
-            chain_links:  vec![CHAIN_END; source.len()],
+            chain_links:  vec![CHAIN_END; tile_count],
             hash_shift:   u64::BITS - bucket_bits,
             pursuit:      None,
         };
@@ -130,47 +149,49 @@ impl<'src> SourceHashChainMatcher<'src> {
         // front — the smallest-offset preference among equal-length
         // matches, and the front of a repetitive run ahead of the probe
         // cap.
-        if source.len() >= ANCHOR_LENGTH {
-            for anchor_start in (0..=source.len() - ANCHOR_LENGTH).rev() {
-                matcher.insert_anchor(anchor_start);
-            }
+        for tile_ordinal in (0..tile_count).rev() {
+            matcher.insert_anchor(tile_ordinal);
         }
         Ok(matcher)
     }
 
     /// The best source match for `target[position..]`, or `None` when
-    /// nothing reaches [`MIN_MATCH_LENGTH`]. An accepted match updates
-    /// the pursuit base.
-    pub fn match_at(&mut self, target: &[u8], position: usize) -> Option<SourceMatch> {
+    /// nothing reaches [`MIN_MATCH_LENGTH`]. `literal_floor` is where
+    /// the pending literal run began — an accepted match may reach back
+    /// that far ('SourceMatch::starts_earlier_by'), never further. An
+    /// accepted match updates the pursuit base.
+    pub fn match_at(&mut self, target: &[u8], position: usize, literal_floor: usize) -> Option<SourceMatch> {
         if target.len() - position < MIN_MATCH_LENGTH {
             return None;
         }
         let pursued = self.pursue(target, position);
-        if let Some(found) = pursued {
-            if found.length >= GOOD_ENOUGH_PURSUIT_LENGTH {
-                return Some(self.adopt(found, position));
+        let best = match pursued {
+            Some(found) if found.length >= GOOD_ENOUGH_PURSUIT_LENGTH => found,
+            _ => {
+                // A discovery is taken only when it beats the lockstep
+                // hold, so a coincidental short far match never
+                // displaces an aligned run.
+                let hold = self.lockstep_hold_length(target, position, pursued);
+                let discovered = self
+                    .probe(target, position)
+                    .filter(|found| found.length > hold);
+                // Pursuit wins ties: staying in source alignment keeps
+                // the emit order ascending, and sequential mode with it.
+                match (pursued, discovered) {
+                    (None, None) => return None,
+                    (Some(found), None) => found,
+                    (None, Some(found)) => found,
+                    (Some(pursued_match), Some(discovered_match)) =>
+                        if discovered_match.length > pursued_match.length {
+                            discovered_match
+                        } else {
+                            pursued_match
+                        },
+                }
             }
-        }
-        // A discovery is taken only when it beats the lockstep hold, so a
-        // coincidental short far match never displaces an aligned run.
-        let hold = self.lockstep_hold_length(target, position, pursued);
-        let discovered = self
-            .probe(target, position)
-            .filter(|found| found.length > hold);
-        // Pursuit wins ties: staying in source alignment keeps the
-        // emit order ascending, and sequential mode with it.
-        let best = match (pursued, discovered) {
-            (None, None) => return None,
-            (Some(found), None) => found,
-            (None, Some(found)) => found,
-            (Some(pursued_match), Some(discovered_match)) =>
-                if discovered_match.length > pursued_match.length {
-                    discovered_match
-                } else {
-                    pursued_match
-                },
         };
-        Some(self.adopt(best, position))
+        let reaching = self.extend_backward(best, target, position, literal_floor);
+        Some(self.adopt(reaching, position - reaching.starts_earlier_by))
     }
 
     /// The run length staying aligned already earns without a discovery:
@@ -187,12 +208,40 @@ impl<'src> SourceHashChainMatcher<'src> {
     }
 
     /// Record an accepted match as the new pursuit base and hand it back.
-    fn adopt(&mut self, found: SourceMatch, position: usize) -> SourceMatch {
+    /// The base is the match's own start, so a backward-reaching match
+    /// records the same alignment its forward continuation will pursue.
+    fn adopt(&mut self, found: SourceMatch, match_start_position: usize) -> SourceMatch {
         self.pursuit = Some(Pursuit {
             source_offset:   found.source_offset,
-            target_position: position,
+            target_position: match_start_position,
         });
         found
+    }
+
+    /// Reach an accepted match backward into the pending literal run:
+    /// while the byte before the match agrees with the byte before the
+    /// query, both step back, and the copy absorbs what the literal
+    /// would have carried. Bounded by the literal floor (everything
+    /// earlier is already covered) and by the source's start.
+    fn extend_backward(
+        &self,
+        found: SourceMatch,
+        target: &[u8],
+        position: usize,
+        literal_floor: usize,
+    ) -> SourceMatch {
+        let limit = (position - literal_floor).min(found.source_offset);
+        let mut backset = 0;
+        while backset < limit
+            && self.source[found.source_offset - backset - 1] == target[position - backset - 1]
+        {
+            backset += 1;
+        }
+        SourceMatch {
+            source_offset:     found.source_offset - backset,
+            length:            found.length + backset,
+            starts_earlier_by: backset,
+        }
     }
 
     /// The pursuit-tier candidate: continue the last accepted match's
@@ -206,7 +255,8 @@ impl<'src> SourceHashChainMatcher<'src> {
             return None;
         }
         let length = self.extend(candidate, target, position);
-        (length >= MIN_MATCH_LENGTH).then_some(SourceMatch { source_offset: candidate, length })
+        (length >= MIN_MATCH_LENGTH)
+            .then_some(SourceMatch { source_offset: candidate, length, starts_earlier_by: 0 })
     }
 
     /// The discovery tier: walk the query anchor's chain and keep the
@@ -224,14 +274,15 @@ impl<'src> SourceHashChainMatcher<'src> {
             if cursor == CHAIN_END {
                 break;
             }
-            let candidate = cursor as usize;
+            let tile_ordinal = cursor as usize;
+            let candidate = tile_ordinal * ANCHOR_LENGTH;
             let length = self.extend(candidate, target, position);
             if length >= MIN_MATCH_LENGTH
                 && best.is_none_or(|incumbent| length > incumbent.length)
             {
-                best = Some(SourceMatch { source_offset: candidate, length });
+                best = Some(SourceMatch { source_offset: candidate, length, starts_earlier_by: 0 });
             }
-            cursor = self.chain_links[candidate];
+            cursor = self.chain_links[tile_ordinal];
         }
         best
     }
@@ -247,10 +298,11 @@ impl<'src> SourceHashChainMatcher<'src> {
         )
     }
 
-    fn insert_anchor(&mut self, source_position: usize) {
-        let bucket = self.bucket_of(&self.source[source_position..source_position + ANCHOR_LENGTH]);
-        self.chain_links[source_position] = self.bucket_heads[bucket];
-        self.bucket_heads[bucket] = source_position as u32;
+    fn insert_anchor(&mut self, tile_ordinal: usize) {
+        let tile_start = tile_ordinal * ANCHOR_LENGTH;
+        let bucket = self.bucket_of(&self.source[tile_start..tile_start + ANCHOR_LENGTH]);
+        self.chain_links[tile_ordinal] = self.bucket_heads[bucket];
+        self.bucket_heads[bucket] = tile_ordinal as u32;
     }
 
     /// Fold the anchor window into one register and Fibonacci-hash it
@@ -287,13 +339,20 @@ fn matched_length(left: &[u8], right: &[u8]) -> usize {
     length
 }
 
-/// Bucket-count bits for a source length: roughly one bucket per
-/// position, held between 16 Ki buckets (below which even tiny sources
-/// would chain needlessly) and 8 Mi (above which the head table's own
-/// memory stops paying).
-fn bucket_bits_for(source_length: usize) -> u32 {
-    let wanted = usize::BITS - source_length.max(1).leading_zeros();
-    wanted.clamp(14, 23)
+/// Bucket-count bits for a tile count: one bucket per tile, rounded up
+/// to a power of two, so the table's load stays at or under one and a
+/// bucket's chain holds only true repeats and hash collisions —
+/// [`PROBE_CAP`] bounds repetition, never reach. No ceiling: a capped
+/// table saturates on large inputs and buries deep positions below the
+/// probe cap. The two-tile floor only keeps the hash shift legal.
+fn bucket_bits_for(tile_count: usize) -> u32 {
+    tile_count.max(2).next_power_of_two().trailing_zeros()
+}
+
+/// How many whole anchor tiles the source holds: one per
+/// [`ANCHOR_LENGTH`] bytes, counting only tiles that fit entirely.
+fn tile_count_of(source_length: usize) -> usize {
+    source_length / ANCHOR_LENGTH
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -321,24 +380,53 @@ mod tests {
     fn identical_source_is_one_long_pursuit() {
         let source = pseudo_random_bytes(0x11, 4096);
         let mut matcher = SourceHashChainMatcher::build(&source).expect("builds");
-        let found = matcher.match_at(&source, 0).expect("identical bytes match");
+        let found = matcher.match_at(&source, 0, 0).expect("identical bytes match");
         assert_eq!((found.source_offset, found.length), (0, 4096));
     }
 
     #[test]
-    fn a_relocated_run_is_discovered_at_its_smallest_offset() {
-        // The same 40-byte run planted at two source offsets; the target
-        // is that run, so discovery must find it and prefer the lower
-        // offset (fewer varint bytes on the wire).
+    fn a_relocated_run_is_discovered_at_its_smallest_visible_offset() {
+        // The same 40-byte run planted at two tile-aligned source
+        // offsets; the target is that run, so discovery must find it
+        // and prefer the lower offset (fewer varint bytes on the wire).
+        // Tile alignment decides which of a run's duplicates the index
+        // can see at all — visibility of the aligned plants is the part
+        // this test owns.
         let mut source = pseudo_random_bytes(0x21, 4096);
         let run = pseudo_random_bytes(0x22, 40);
-        source[500..540].copy_from_slice(&run);
+        source[496..536].copy_from_slice(&run);
         source[3000..3040].copy_from_slice(&run);
         let target = run;
         let mut matcher = SourceHashChainMatcher::build(&source).expect("builds");
-        let found = matcher.match_at(&target, 0).expect("the planted run matches");
-        assert_eq!(found.source_offset, 500);
+        let found = matcher.match_at(&target, 0, 0).expect("the planted run matches");
+        assert_eq!(found.source_offset, 496);
         assert!(found.length >= 40);
+    }
+
+    #[test]
+    fn a_misaligned_run_is_reclaimed_by_backward_extension() {
+        // A 40-byte run planted off tile alignment: the first whole tile
+        // inside it sits four bytes past its start, so discovery lands
+        // there — and backward extension walks the match back through
+        // the pending literal to the run's true beginning.
+        let mut source = pseudo_random_bytes(0x71, 4096);
+        let run = pseudo_random_bytes(0x72, 40);
+        source[500..540].copy_from_slice(&run);
+        let target = run;
+        let mut matcher = SourceHashChainMatcher::build(&source).expect("builds");
+        for early_position in 0..4 {
+            assert_eq!(
+                matcher.match_at(&target, early_position, 0),
+                None,
+                "no whole tile is visible at {early_position}",
+            );
+        }
+        let found = matcher.match_at(&target, 4, 0).expect("the tile at 504 is visible");
+        assert_eq!(
+            (found.source_offset, found.length, found.starts_earlier_by),
+            (500, 40, 4),
+            "the copy reaches back to the run's true start",
+        );
     }
 
     #[test]
@@ -348,7 +436,7 @@ mod tests {
         let mut target = pseudo_random_bytes(0x32, 64);
         target[10..17].copy_from_slice(&source[100..107]);
         let mut matcher = SourceHashChainMatcher::build(&source).expect("builds");
-        assert_eq!(matcher.match_at(&target, 10), None);
+        assert_eq!(matcher.match_at(&target, 10, 0), None);
     }
 
     #[test]
@@ -360,11 +448,12 @@ mod tests {
         let mut target = source.clone();
         target[2000] ^= 0x5a;
         let mut matcher = SourceHashChainMatcher::build(&source).expect("builds");
-        let opening = matcher.match_at(&target, 0).expect("the unedited prefix matches");
+        let opening = matcher.match_at(&target, 0, 0).expect("the unedited prefix matches");
         assert_eq!((opening.source_offset, opening.length), (0, 2000));
-        assert_eq!(matcher.match_at(&target, 2000), None, "the flipped byte alone");
-        let resumed = matcher.match_at(&target, 2001).expect("pursuit resumes past the edit");
+        assert_eq!(matcher.match_at(&target, 2000, 2000), None, "the flipped byte alone");
+        let resumed = matcher.match_at(&target, 2001, 2000).expect("pursuit resumes past the edit");
         assert_eq!(resumed.source_offset, 2001);
+        assert_eq!(resumed.starts_earlier_by, 0, "the flipped byte stays a literal");
     }
 
     #[test]
@@ -382,12 +471,14 @@ mod tests {
         }
         let mut matcher = SourceHashChainMatcher::build(&source).expect("builds");
         let mut position = 0;
+        let mut literal_floor = 0;
         let mut matches = Vec::new();
         while position < target.len() {
-            match matcher.match_at(&target, position) {
+            match matcher.match_at(&target, position, literal_floor) {
                 Some(found) => {
                     matches.push(found);
-                    position += found.length;
+                    position = position - found.starts_earlier_by + found.length;
+                    literal_floor = position;
                 }
                 None => position += 1,
             }
@@ -412,7 +503,7 @@ mod tests {
         let target = pseudo_random_bytes(0x51, 64);
         let mut matcher = SourceHashChainMatcher::build(&[]).expect("builds");
         for position in 0..target.len() {
-            assert_eq!(matcher.match_at(&target, position), None);
+            assert_eq!(matcher.match_at(&target, position, 0), None);
         }
     }
 }
