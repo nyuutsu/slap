@@ -29,9 +29,10 @@
 //! bucket leads with run-start candidates (the probe cap then trims a
 //! padding run's tail, not its head), and target tiles indexed lazily
 //! as the walk settles output, so a candidate in the not-yet-written
-//! zone is never in the table at all. One filed card per tile keeps
-//! the index a fixed fraction of the pair at any size and the bucket
-//! table scaled to its load; a query meets a tile's alignment within
+//! zone is never in the table at all. One filed card per tile — an
+//! eighth of a per-position index's cards — keeps the index scaling
+//! with the pair and the bucket table scaled to its load; a query
+//! meets a tile's alignment within
 //! seven steps of byte-by-byte advance, and an accepted match then
 //! reaches backward into the pending literal while the preceding
 //! bytes agree, reclaiming the true start a tile-aligned landing can

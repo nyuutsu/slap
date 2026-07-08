@@ -59,8 +59,8 @@ const GOOD_ENOUGH_PURSUIT_LENGTH: usize = 64;
 
 /// The window a chain anchor covers, and the stride anchors are filed
 /// at: the source is tiled by contiguous anchor-sized blocks, one
-/// filed card per tile, so the index stays a fixed fraction of the
-/// source at any size. Equal to [`MIN_MATCH_LENGTH`] — no shorter run
+/// filed card per tile — an eighth of a per-position index's cards.
+/// Equal to [`MIN_MATCH_LENGTH`] — no shorter run
 /// is worth offering, and eight bytes hash as one register. Any run of
 /// 2×ANCHOR_LENGTH−1 bytes contains a whole tile and is discoverable
 /// at every alignment; the walk advances byte by byte through

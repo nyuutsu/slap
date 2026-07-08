@@ -6,13 +6,19 @@
 //! `bsdiff.cc`), which Percival endorses over his original reference.
 //! The typed decomposition and the structured emission are slap's.
 //!
-//! The walk holds a settled boundary and its source alignment, scans
-//! forward keeping a running count of how many probed bytes the
-//! settled alignment still explains, and asks the seeder
-//! (`bsdiff_hash_chain`) at each position. It breaks either when the
-//! discovery is exactly the aligned continuation — an unedited run
-//! resumed; the scan fast-forwards past it and emits nothing — or when
-//! a discovery out-explains the settled alignment by
+//! The walk holds a settled boundary and its source alignment, and
+//! carries two continuations as its own knowledge, each at one
+//! decrement per step: how far the settled alignment keeps explaining
+//! target bytes, and how far the current rival candidate keeps
+//! running. The seeder (`bsdiff_hash_chain`) is asked at each position
+//! only for fresh rivals — its tiled index answers at tile alignments,
+//! and the carried continuations answer everywhere in between, which
+//! the resumption break and the near-stationary escape both rely on.
+//! Scanning forward, the walk keeps a running count of how many probed
+//! bytes the settled alignment still explains, and breaks either when
+//! the best answer is exactly the aligned continuation — an unedited
+//! run resumed; the scan fast-forwards past it and emits nothing — or
+//! when a rival out-explains the settled alignment by
 //! [`REALIGNMENT_MARGIN`], which ends the region: extend the settled
 //! side forward and the new seed backward, split the contested bytes,
 //! and emit one instruction. The add region's bytes enter the diff
@@ -25,7 +31,7 @@
 //! `Slap.BSDiff.Create` owns every wire byte (sign-magnitude fields,
 //! bzip2 sections, the 32-byte header).
 
-use crate::bsdiff_hash_chain::SourceHashChainMatcher;
+use crate::bsdiff_hash_chain::{SourceHashChainMatcher, ANCHOR_LENGTH};
 
 /// A discovery must out-explain the settled alignment by this many
 /// bytes before the walk re-aligns. Opening a region spends a 24-byte
@@ -88,12 +94,16 @@ pub fn bsdiff_diff(source: &[u8], target: &[u8]) -> Result<BSDiffOutput, String>
 
     while scan < target.len() {
         // A fresh probe window: fast-forward past the region just
-        // settled (or the resumed run just recognized) and start the
-        // aligned tally empty.
+        // settled (or the resumed run just recognized), start the
+        // aligned tally empty, and take up the aligned continuation
+        // from here; the rival carry starts cold.
         scan += discovered_length;
         let mut aligned_tally_end = scan;
         let mut aligned_byte_count: u64 = 0;
         let mut near_stationary_probes: u32 = 0;
+        let mut aligned_continuation = aligned_run_length(source, target, &settled, scan);
+        let mut carried_rival_start: usize = 0;
+        let mut carried_rival_length: usize = 0;
 
         while scan < target.len() {
             let previous = ProbeSnapshot {
@@ -101,16 +111,36 @@ pub fn bsdiff_diff(source: &[u8], target: &[u8]) -> Result<BSDiffOutput, String>
                 aligned_byte_count,
                 discovered_source_start,
             };
-            match matcher.longest_source_match(target, scan, settled.alignment() + scan as i64) {
-                Some(found) => {
-                    discovered_length       = found.length;
-                    discovered_source_start = found.source_start;
-                }
-                None => {
-                    discovered_length       = 0;
-                    discovered_source_start = 0;
-                }
+            // The rival on offer: the seeder's fresh discovery where
+            // one exists, otherwise the carried remainder of the last
+            // one. The carried value is a floor on the truth — the
+            // same run, one byte along — and fresh discoveries refresh
+            // it at every tile alignment.
+            let (rival_start, rival_length) =
+                match matcher.longest_source_match(target, scan, settled.alignment() + scan as i64) {
+                    Some(found) if found.length >= carried_rival_length => {
+                        (found.source_start, found.length)
+                    }
+                    _ => (carried_rival_start, carried_rival_length),
+                };
+            // The longer explanation stands, the aligned continuation
+            // taking ties — it is the side that spends no seek. Both
+            // qualify from the seeder's own floor up, so a carried
+            // answer stands exactly where a discovered one would.
+            if rival_length >= ANCHOR_LENGTH && rival_length > aligned_continuation {
+                discovered_length       = rival_length;
+                discovered_source_start = rival_start;
+            } else if aligned_continuation >= ANCHOR_LENGTH {
+                discovered_length       = aligned_continuation;
+                discovered_source_start = settled
+                    .aligned_source_index(scan, source.len())
+                    .expect("bsdiff differ: a nonzero aligned continuation names an in-range source index");
+            } else {
+                discovered_length       = 0;
+                discovered_source_start = 0;
             }
+            carried_rival_start  = rival_start;
+            carried_rival_length = rival_length;
 
             // Extend the tally's right edge across the probe window,
             // counting bytes the settled alignment also explains. The
@@ -166,6 +196,21 @@ pub fn bsdiff_diff(source: &[u8], target: &[u8]) -> Result<BSDiffOutput, String>
                 break;
             }
             scan += 1;
+            // Both carries step with the scan. The aligned one is
+            // recomputed where it runs out — an unedited run costs one
+            // pass, a disagreeing byte one comparison; the rival one
+            // simply drains until a fresh discovery replaces it.
+            aligned_continuation = if aligned_continuation > 1 {
+                aligned_continuation - 1
+            } else {
+                aligned_run_length(source, target, &settled, scan)
+            };
+            if carried_rival_length > 1 {
+                carried_rival_start += 1;
+                carried_rival_length -= 1;
+            } else {
+                carried_rival_length = 0;
+            }
         }
 
         // Emit unless the walk broke for a resumed aligned run mid-
@@ -237,6 +282,48 @@ impl SettledBoundary {
         let source_index = target_position as i64 + self.alignment();
         (0 <= source_index && source_index < source_length as i64).then(|| source_index as usize)
     }
+}
+
+/// How far the settled alignment keeps explaining target bytes from
+/// `from` — the walk's own carried continuation. Compared a register
+/// at a time; the walk recomputes this only where the previous carry
+/// ran out, so each byte is visited once.
+fn aligned_run_length(
+    source: &[u8],
+    target: &[u8],
+    settled: &SettledBoundary,
+    from: usize,
+) -> usize {
+    let Some(source_index) = settled.aligned_source_index(from, source.len()) else {
+        return 0;
+    };
+    let reach = (source.len() - source_index).min(target.len() - from);
+    matched_prefix_length(&source[source_index..source_index + reach], &target[from..from + reach])
+}
+
+/// Length of the common prefix of two slices, compared a register at a
+/// time, the shorter's length its ceiling.
+fn matched_prefix_length(left: &[u8], right: &[u8]) -> usize {
+    let limit = left.len().min(right.len());
+    // A first-byte disagreement is the usual answer at a recompute
+    // point; take it with one load before the word loop reads sixteen.
+    if limit == 0 || left[0] != right[0] {
+        return 0;
+    }
+    let mut length = 0;
+    while length + 8 <= limit {
+        let left_word = u64::from_le_bytes(left[length..length + 8].try_into().unwrap());
+        let right_word = u64::from_le_bytes(right[length..length + 8].try_into().unwrap());
+        let disagreement = left_word ^ right_word;
+        if disagreement != 0 {
+            return length + (disagreement.trailing_zeros() / 8) as usize;
+        }
+        length += 8;
+    }
+    while length < limit && left[length] == right[length] {
+        length += 1;
+    }
+    length
 }
 
 // ── The near-stationary escape ─────────────────────────────────────────
@@ -609,6 +696,65 @@ mod tests {
             target[shifted..shifted + 4096].copy_from_slice(&content);
         }
         assert_round_trip(&source, &target);
+    }
+
+    #[test]
+    fn a_misaligned_resumption_fast_forwards() {
+        // One flipped byte whose unedited run resumes off tile
+        // alignment: the seeder cannot see the resumption for up to
+        // seven bytes, so the walk's own carried continuation is what
+        // fast-forwards the run — a handful of probes, not one per
+        // byte. The observable is completion at test speed on a
+        // multi-megabyte run, and the one-edit shape staying a couple
+        // of regions.
+        let source = pseudo_random_bytes(0x90, 4 << 20);
+        let mut target = source.clone();
+        target[5003] ^= 0x5A;
+        let output = assert_round_trip(&source, &target);
+        assert!(
+            output.instructions.len() <= 3,
+            "one edit should stay a couple of regions, got {}",
+            output.instructions.len()
+        );
+    }
+
+    #[test]
+    fn a_near_duplicate_block_completes_quickly() {
+        // A long block differing from its alignment by fewer flipped
+        // bytes than the re-alignment margin, while an exact copy sits
+        // later in the source: the rogue copy out-explains the settled
+        // alignment by less than the margin at every position, so only
+        // the near-stationary escape frees the walk — and the escape
+        // needs an answer at every position, which the carried
+        // continuations supply where the tiled seeder cannot.
+        let clean = pseudo_random_bytes(0x91, 2 << 20);
+        let mut with_flips = clean.clone();
+        for spot in [4096usize, 500_000, 1_000_000, 1_500_000] {
+            with_flips[spot] ^= 0x5A;
+        }
+        let mut source = with_flips;
+        source.extend_from_slice(&clean);
+        let target = clean;
+        assert_round_trip(&source, &target);
+    }
+
+    #[test]
+    fn a_small_relocation_after_a_misaligned_edit_still_realigns() {
+        // A 12-byte relocation from a tile-aligned source spot clears
+        // the re-alignment margin on its own; an unrelated misaligned
+        // flip earlier in the walk must not inflate that margin with
+        // stale aligned credit and swallow the relocation into the
+        // diff stream.
+        let source = pseudo_random_bytes(0x92, 1 << 17);
+        let mut target = source.clone();
+        target[5000] ^= 0x5A;
+        target[60000..60012].copy_from_slice(&source[8192..8204]);
+        let output = assert_round_trip(&source, &target);
+        assert!(
+            output.instructions.len() >= 3,
+            "the relocation should open its own region, got {} instructions",
+            output.instructions.len()
+        );
     }
 
     #[test]
