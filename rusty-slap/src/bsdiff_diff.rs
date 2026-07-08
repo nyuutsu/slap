@@ -142,6 +142,17 @@ pub fn bsdiff_diff(source: &[u8], target: &[u8]) -> Result<BSDiffOutput, String>
             carried_rival_start  = rival_start;
             carried_rival_length = rival_length;
 
+            // The tally may never describe bytes the window no longer
+            // covers: after a stretch of empty probes its right edge
+            // sits behind the scan, and sweeping forward from there
+            // would bank agreements the scan has already passed —
+            // credit the left-edge drop below can never reclaim, which
+            // would hold the resumption equality off for the rest of
+            // the window. Restart the count at the scan instead.
+            if aligned_tally_end < scan {
+                aligned_tally_end = scan;
+                aligned_byte_count = 0;
+            }
             // Extend the tally's right edge across the probe window,
             // counting bytes the settled alignment also explains. The
             // sweep stops at the first position whose aligned source
@@ -216,8 +227,9 @@ pub fn bsdiff_diff(source: &[u8], target: &[u8]) -> Result<BSDiffOutput, String>
         // Emit unless the walk broke for a resumed aligned run mid-
         // target: there the settled alignment already explains
         // everything scanned, and the fast-forward above is the whole
-        // response. (A force-break always lands here — the resumption
-        // test ran first, so its equality cannot hold.)
+        // response. A force-break usually lands here as well; when the
+        // left-edge drop has just restored the equality, the emission
+        // defers to a later break instead, losing nothing.
         if discovered_length as u64 != aligned_byte_count || scan == target.len() {
             let settled_forward_reach = forward_extension(source, target, &settled, scan);
             let seed_backward_reach = if scan < target.len() {
@@ -755,6 +767,28 @@ mod tests {
             "the relocation should open its own region, got {} instructions",
             output.instructions.len()
         );
+    }
+
+    #[test]
+    fn a_replaced_block_before_a_long_run_still_resumes() {
+        // The phantom-credit trap: sweeping the tally forward after a
+        // dark stretch once banked coincidental agreements from bytes
+        // the scan had already passed — credit the left-edge drop can
+        // never reclaim — so the resumption equality never fired again
+        // and the walk crawled the rest of every window byte by byte.
+        // The tally restart at the scan is what this pins; the
+        // observable is completion at test speed, the replaced block
+        // landing as diff-stream deltas rather than pinning the walk
+        // into a byte-by-byte crawl.
+        let source = pseudo_random_bytes(0xA1, 48 << 20);
+        let mut target = source.clone();
+        let replacement = pseudo_random_bytes(0xA2, 256 * 1024);
+        let replace_start = (8 << 20) + 5;
+        target[replace_start..replace_start + 256 * 1024].copy_from_slice(&replacement);
+        for spot in ((16 << 20)..target.len()).step_by(16 << 20) {
+            target[spot + 3] ^= 0x5A;
+        }
+        assert_round_trip(&source, &target);
     }
 
     #[test]
