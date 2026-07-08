@@ -24,14 +24,22 @@
 //!   zero delta), and the walk hands both cursors in with each query.
 //!
 //! When the free probes come up short, discovery walks a hash chain
-//! over [`ANCHOR_LENGTH`]-byte windows: source anchors indexed once at
-//! build, in reverse so each bucket leads with run-start candidates
-//! (the probe cap then trims a padding run's tail, not its head), and
-//! target anchors indexed lazily as the walk settles output, so a
-//! candidate in the not-yet-written zone is never in the table at all.
-//! Chain cells hold positions at the width the pair's size selects
-//! (`u32` whenever it fits, `u64` beyond), so the finder stays total
-//! without paying eight-byte cells on ordinary inputs.
+//! over the [`ANCHOR_LENGTH`]-byte tiling of source and settled
+//! target: source tiles indexed once at build, in reverse so each
+//! bucket leads with run-start candidates (the probe cap then trims a
+//! padding run's tail, not its head), and target tiles indexed lazily
+//! as the walk settles output, so a candidate in the not-yet-written
+//! zone is never in the table at all. One filed card per tile keeps
+//! the index a fixed fraction of the pair at any size and the bucket
+//! table scaled to its load; a query meets a tile's alignment within
+//! seven steps of byte-by-byte advance, and an accepted match then
+//! reaches backward into the pending literal while the preceding
+//! bytes agree, reclaiming the true start a tile-aligned landing can
+//! sit a few bytes past. Chain cells hold tile ordinals — source
+//! tiles first, then target tiles, no tile spanning the seam — at the
+//! width the pair selects (`u32` whenever it fits, `u64` beyond), so
+//! the finder stays total without paying eight-byte cells on ordinary
+//! inputs.
 //!
 //! ## The short table
 //!
@@ -47,10 +55,12 @@
 
 use crate::bps_diff::{encode_delta, varint_cost};
 
-/// The window a chain anchor covers: wide enough to hash as one
-/// register, and no wider than the shortest match discovery should
-/// bother with — anything shorter only ever pays from the free probes'
-/// cheap offsets, which don't go through the table.
+/// The window a chain anchor covers, and the stride long-table anchors
+/// are filed at: source and settled target are tiled by contiguous
+/// anchor-sized blocks, one filed card per tile. Wide enough to hash
+/// as one register, and no wider than the shortest match discovery
+/// should bother with — anything shorter only ever pays from the free
+/// probes' cheap offsets or the short table, which don't tile.
 const ANCHOR_LENGTH: usize = 8;
 
 /// How many chain entries one probe walks before giving up. Bounds the
@@ -91,14 +101,18 @@ pub enum MatchSide {
 }
 
 /// The best candidate the finder can offer at one output position: the
-/// side it reads from, the file-relative position it starts at, and how
-/// many bytes it matches. The emit gate prices it against the pending
-/// literal; the finder never emits.
+/// side it reads from, the file-relative position it starts at, how
+/// many bytes it matches, and how far it reached back into the pending
+/// literal — the match begins `starts_earlier_by` bytes before the
+/// query position, absorbing bytes the literal would have carried. The
+/// emit gate prices it against the pending literal; the finder never
+/// emits.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub struct FoundMatch {
     pub side: MatchSide,
     pub file_position: usize,
     pub length: usize,
+    pub starts_earlier_by: usize,
 }
 
 /// A candidate index over a `(source, target)` pair, asked one query
@@ -119,11 +133,10 @@ impl<'pair> HashChainMatcher<'pair> {
     /// Build the finder for a `(source, target)` pair. An empty target
     /// has no positions to query and skips indexing entirely.
     pub fn build(source: &'pair [u8], target: &'pair [u8]) -> Self {
-        let combined_length = source
-            .len()
-            .checked_add(target.len())
-            .expect("bps matcher: source + target overflows usize");
-        let engine = if combined_length < u32::MAX as usize {
+        // Narrow cells must hold both the long table's tile ordinals
+        // and the short table's target byte positions.
+        let total_tile_count = tile_count_of(source.len()) + tile_count_of(target.len());
+        let engine = if total_tile_count < u32::MAX as usize && target.len() < u32::MAX as usize {
             EngineWidth::Narrow(Engine::build(source, target))
         } else {
             EngineWidth::Wide(Engine::build(source, target))
@@ -133,20 +146,24 @@ impl<'pair> HashChainMatcher<'pair> {
 
     /// The best candidate at `position`, ranked by matched length minus
     /// the delta bytes its offset would spend from the given copy
-    /// cursors, or `None` when nothing matches even one byte. The emit
-    /// gate makes the final worth-it call.
+    /// cursors, or `None` when nothing matches even one byte.
+    /// `literal_floor` is where the pending literal run began — the
+    /// accepted candidate may reach back that far
+    /// ('FoundMatch::starts_earlier_by'), never further. The emit gate
+    /// makes the final worth-it call.
     pub fn match_at(
         &mut self,
         position: usize,
+        literal_floor: usize,
         last_source_copy_end: usize,
         last_target_copy_end: usize,
     ) -> Option<FoundMatch> {
         match &mut self.engine {
             EngineWidth::Narrow(engine) => {
-                engine.match_at(position, last_source_copy_end, last_target_copy_end)
+                engine.match_at(position, literal_floor, last_source_copy_end, last_target_copy_end)
             }
             EngineWidth::Wide(engine) => {
-                engine.match_at(position, last_source_copy_end, last_target_copy_end)
+                engine.match_at(position, literal_floor, last_source_copy_end, last_target_copy_end)
             }
         }
     }
@@ -154,11 +171,13 @@ impl<'pair> HashChainMatcher<'pair> {
 
 // ── Chain cells ──────────────────────────────────────────────────────
 
-/// An integer wide enough to hold a combined-buffer position in the
-/// bucket heads and chain links. Two impls: `u32` for pairs up to 4 GB,
-/// `u64` beyond; `build` chooses once. Each type's `MAX` stays free as
-/// the end-of-chain sentinel — the dispatcher caps the narrow path's
-/// input strictly below it.
+/// An integer wide enough for both jobs a cell does here: long-table
+/// cells hold tile ordinals, short-table cells hold target byte
+/// positions. Two impls: `u32` while the total tile count and the
+/// target's byte length both stay below it, `u64` beyond; `build`
+/// chooses once. Each type's `MAX` stays free as the end-of-chain
+/// sentinel — the dispatcher caps the narrow path's inputs strictly
+/// below it.
 trait ChainCell: Copy {
     const CHAIN_END: Self;
     fn from_index(index: usize) -> Self;
@@ -212,12 +231,16 @@ impl ChainCell for u64 {
 struct Engine<'pair, Cell> {
     source: &'pair [u8],
     target: &'pair [u8],
-    /// Newest anchor per bucket; `CHAIN_END` for an untouched bucket.
+    /// Newest anchor per bucket, as a tile ordinal; `CHAIN_END` for an
+    /// untouched bucket.
     bucket_heads: Vec<Cell>,
-    /// Per-combined-position next-older-anchor link, same bucket.
-    /// Source anchors sit at their source position; target anchors at
-    /// `source.len() + target position`.
+    /// Per-tile next-older-anchor link, same bucket, keyed by tile
+    /// ordinal: source tiles first (position = ordinal × ANCHOR_LENGTH),
+    /// then target tiles (position = (ordinal − source_tile_count) ×
+    /// ANCHOR_LENGTH), recomputed at the probe.
     chain_links: Vec<Cell>,
+    /// Where target tile ordinals begin in `chain_links`.
+    source_tile_count: usize,
     /// Right-shift turning a folded anchor's hash into a bucket index.
     hash_shift: u32,
     /// The short table (see the module's short-table note): newest
@@ -250,6 +273,7 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
                 target,
                 bucket_heads: Vec::new(),
                 chain_links: Vec::new(),
+                source_tile_count: 0,
                 hash_shift: u64::BITS,
                 short_bucket_heads: Vec::new(),
                 short_chain_links: Vec::new(),
@@ -257,14 +281,16 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
                 next_target_anchor: 0,
             };
         }
-        let combined_length = source.len() + target.len();
-        let bucket_bits = bucket_bits_for(combined_length);
-        let short_bucket_bits = bucket_bits_for(target.len());
+        let source_tile_count = tile_count_of(source.len());
+        let total_tile_count = source_tile_count + tile_count_of(target.len());
+        let bucket_bits = bucket_bits_for(total_tile_count);
+        let short_bucket_bits = short_bucket_bits_for(target.len());
         let mut engine = Engine {
             source,
             target,
             bucket_heads: vec![Cell::CHAIN_END; 1 << bucket_bits],
-            chain_links: vec![Cell::CHAIN_END; combined_length],
+            chain_links: vec![Cell::CHAIN_END; total_tile_count],
+            source_tile_count,
             hash_shift: u64::BITS - bucket_bits,
             short_bucket_heads: vec![Cell::CHAIN_END; 1 << short_bucket_bits],
             short_chain_links: vec![Cell::CHAIN_END; target.len()],
@@ -273,14 +299,13 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
         };
         // Built in reverse: prepending walks each bucket newest-first, so
         // reverse order leaves the lowest positions at the front — for
-        // repeated content (a padding run hashing every window into one
+        // repeated content (a padding run hashing every tile into one
         // bucket) those are the run-start candidates with the longest
         // reach, and the probe cap then trims the tail of the run, not
         // its head.
-        if source.len() >= ANCHOR_LENGTH {
-            for anchor_start in (0..=source.len() - ANCHOR_LENGTH).rev() {
-                engine.insert_anchor(anchor_start, &source[anchor_start..anchor_start + ANCHOR_LENGTH]);
-            }
+        for tile_ordinal in (0..source_tile_count).rev() {
+            let tile_start = tile_ordinal * ANCHOR_LENGTH;
+            engine.insert_long_anchor(tile_ordinal, &source[tile_start..tile_start + ANCHOR_LENGTH]);
         }
         engine
     }
@@ -288,40 +313,114 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
     fn match_at(
         &mut self,
         position: usize,
+        literal_floor: usize,
         last_source_copy_end: usize,
         last_target_copy_end: usize,
     ) -> Option<FoundMatch> {
         self.index_settled_target_anchors(position);
 
         let identity = self.source_candidate(position, position, last_source_copy_end);
-        if let Some(aligned) = identity {
-            if aligned.found.length >= GOOD_ENOUGH_ALIGNED_LENGTH {
-                return Some(aligned.found);
+        let winner = match identity {
+            Some(aligned) if aligned.found.length >= GOOD_ENOUGH_ALIGNED_LENGTH => aligned,
+            _ => {
+                let at_source_cursor =
+                    self.source_candidate(last_source_copy_end, position, last_source_copy_end);
+                let at_target_cursor =
+                    self.target_candidate(last_target_copy_end, position, last_target_copy_end);
+                let free_probes = best_of([identity, at_source_cursor, at_target_cursor]);
+                match free_probes {
+                    Some(cheap) if cheap.found.length >= GOOD_ENOUGH_ALIGNED_LENGTH => cheap,
+                    _ => {
+                        let mut discovered =
+                            self.probe(position, last_source_copy_end, last_target_copy_end);
+                        if discovered.map_or(true, |held| held.net < SHORT_REPEAT_CEILING_NET) {
+                            discovered =
+                                best_of([discovered, self.probe_short(position, last_target_copy_end)]);
+                        }
+                        // A discovered candidate must also beat the lockstep
+                        // alternative — a one-byte literal with the offset-free
+                        // SourceRead resuming at the next position — or a
+                        // repeated region would spend a delta one byte before
+                        // alignment comes back for free.
+                        let discovered = discovered
+                            .filter(|ranked| ranked.net > self.lockstep_hold_net(position));
+                        best_of([free_probes, discovered])?
+                    }
+                }
             }
-        }
-        let at_source_cursor =
-            self.source_candidate(last_source_copy_end, position, last_source_copy_end);
-        let at_target_cursor =
-            self.target_candidate(last_target_copy_end, position, last_target_copy_end);
-        let free_probes = best_of([identity, at_source_cursor, at_target_cursor]);
-        if let Some(cheap) = free_probes {
-            if cheap.found.length >= GOOD_ENOUGH_ALIGNED_LENGTH {
-                return Some(cheap.found);
-            }
-        }
+        };
+        Some(self.extend_backward(
+            winner.found,
+            position,
+            literal_floor,
+            last_source_copy_end,
+            last_target_copy_end,
+        ))
+    }
 
-        let mut discovered =
-            self.probe(position, last_source_copy_end, last_target_copy_end);
-        if discovered.map_or(true, |held| held.net < SHORT_REPEAT_CEILING_NET) {
-            discovered = best_of([discovered, self.probe_short(position, last_target_copy_end)]);
+    /// Reach an accepted candidate backward into the pending literal
+    /// run — the copy absorbs bytes the literal would have carried —
+    /// and settle where the reach nets best, priced in the same wire
+    /// bytes as every other candidate: each step back saves a literal
+    /// byte, may widen the copy's cursor delta, and absorbing the run
+    /// whole saves its flush. Ties keep the shorter reach. Bounded by
+    /// the literal floor (everything earlier is already covered) and by
+    /// the candidate's own region's start. The next cursor position is
+    /// unchanged — the moved-back start and the grown length cancel.
+    fn extend_backward(
+        &self,
+        found: FoundMatch,
+        position: usize,
+        literal_floor: usize,
+        last_source_copy_end: usize,
+        last_target_copy_end: usize,
+    ) -> FoundMatch {
+        let limit = (position - literal_floor).min(found.file_position);
+        // The offset-free SourceRead stays offset-free as both ends
+        // slide together, so its reach never widens a delta.
+        let offset_free =
+            found.side == MatchSide::FromSource && found.file_position == position;
+        let cursor = match found.side {
+            MatchSide::FromSource => last_source_copy_end,
+            MatchSide::FromWrittenTarget => last_target_copy_end,
+        };
+        let delta_cost = |file_position: usize| {
+            if offset_free {
+                0
+            } else {
+                varint_cost(encode_delta(cursor, file_position)) as i64
+            }
+        };
+        let whole_run_flush_credit =
+            |backset: usize| i64::from(backset > 0 && backset == position - literal_floor);
+        let mut best_backset = 0;
+        let mut best_net = -delta_cost(found.file_position);
+        let mut backset = 0;
+        while backset < limit
+            && self.byte_on_side(found.side, found.file_position - backset - 1)
+                == self.target[position - backset - 1]
+        {
+            backset += 1;
+            let net = backset as i64 + whole_run_flush_credit(backset)
+                - delta_cost(found.file_position - backset);
+            if net > best_net {
+                best_net = net;
+                best_backset = backset;
+            }
         }
-        // A discovered candidate must also beat the lockstep alternative
-        // — a one-byte literal with the offset-free SourceRead resuming
-        // at the next position — or a repeated region would spend a
-        // delta one byte before alignment comes back for free.
-        let discovered = discovered
-            .filter(|ranked| ranked.net > self.lockstep_hold_net(position));
-        best_of([free_probes, discovered]).map(|ranked| ranked.found)
+        FoundMatch {
+            side: found.side,
+            file_position: found.file_position - best_backset,
+            length: found.length + best_backset,
+            starts_earlier_by: best_backset,
+        }
+    }
+
+    fn byte_on_side(&self, side: MatchSide, file_position: usize) -> u8 {
+        match side {
+            MatchSide::FromSource => self.source[file_position],
+            MatchSide::FromWrittenTarget => self.target[file_position],
+        }
     }
 
     /// What lockstep earns without any discovery: the identity
@@ -338,17 +437,18 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
     /// starts strictly before `position` whose window lies inside the
     /// target. Nothing at or past the output position is ever inserted,
     /// so neither table can answer from the not-yet-written zone. The
-    /// target's last few positions fit a short anchor after the long
-    /// one no longer fits, so the long insert carries its own width
-    /// check inside the shared walk.
+    /// short table takes every settled position — recency is its job —
+    /// while the long table files only tile-aligned starts whose whole
+    /// tile fits, one card per settled tile, inside the same per-byte
+    /// walk.
     fn index_settled_target_anchors(&mut self, position: usize) {
         while self.next_target_anchor < position
             && self.next_target_anchor + SHORT_ANCHOR_LENGTH <= self.target.len()
         {
             let anchor_start = self.next_target_anchor;
-            if anchor_start + ANCHOR_LENGTH <= self.target.len() {
-                self.insert_anchor(
-                    self.source.len() + anchor_start,
+            if anchor_start % ANCHOR_LENGTH == 0 && anchor_start + ANCHOR_LENGTH <= self.target.len() {
+                self.insert_long_anchor(
+                    self.source_tile_count + anchor_start / ANCHOR_LENGTH,
                     &self.target[anchor_start..anchor_start + ANCHOR_LENGTH],
                 );
             }
@@ -391,8 +491,8 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
     }
 
     /// Walk the query anchor's chain and keep the best-net candidate.
-    /// Anything the chain holds is legal (source anchors wholly within
-    /// source, target anchors only from settled output), so ranking is
+    /// Anything the chain holds is legal (source tiles wholly within
+    /// source, target tiles only from settled output), so ranking is
     /// the only judgment made here.
     fn probe(
         &self,
@@ -410,18 +510,18 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
             if cursor.is_chain_end() {
                 break;
             }
-            let combined_position = cursor.as_index();
-            let candidate = if combined_position < self.source.len() {
-                self.source_candidate(combined_position, position, last_source_copy_end)
+            let tile_ordinal = cursor.as_index();
+            let candidate = if tile_ordinal < self.source_tile_count {
+                self.source_candidate(tile_ordinal * ANCHOR_LENGTH, position, last_source_copy_end)
             } else {
                 self.target_candidate(
-                    combined_position - self.source.len(),
+                    (tile_ordinal - self.source_tile_count) * ANCHOR_LENGTH,
                     position,
                     last_target_copy_end,
                 )
             };
             best = best_of([best, candidate]);
-            cursor = self.chain_links[combined_position];
+            cursor = self.chain_links[tile_ordinal];
         }
         best
     }
@@ -457,6 +557,7 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
                 side: MatchSide::FromSource,
                 file_position,
                 length,
+                starts_earlier_by: 0,
             },
             net: length as i64 - delta_bytes as i64,
         })
@@ -489,15 +590,16 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
                 side: MatchSide::FromWrittenTarget,
                 file_position,
                 length,
+                starts_earlier_by: 0,
             },
             net: length as i64 - delta_bytes as i64,
         })
     }
 
-    fn insert_anchor(&mut self, combined_position: usize, window: &[u8]) {
+    fn insert_long_anchor(&mut self, tile_ordinal: usize, window: &[u8]) {
         let bucket = bucket_for(window, self.hash_shift);
-        self.chain_links[combined_position] = self.bucket_heads[bucket];
-        self.bucket_heads[bucket] = Cell::from_index(combined_position);
+        self.chain_links[tile_ordinal] = self.bucket_heads[bucket];
+        self.bucket_heads[bucket] = Cell::from_index(tile_ordinal);
     }
 
     fn insert_short_anchor(&mut self, target_position: usize, window: &[u8]) {
@@ -565,13 +667,32 @@ fn matched_length(left: &[u8], right: &[u8]) -> usize {
     length
 }
 
-/// Bucket-count bits for a pair's combined size: roughly one bucket per
-/// indexed position, held between 16 Ki buckets (below which even tiny
-/// inputs would chain needlessly) and 8 Mi (above which the head
-/// table's own memory stops paying).
-fn bucket_bits_for(combined_length: usize) -> u32 {
-    let wanted = usize::BITS - combined_length.max(1).leading_zeros();
+/// Bucket-count bits for the long table's tile count: one bucket per
+/// tile, rounded up to a power of two, so the table's load stays at or
+/// under one and a bucket's chain holds only true repeats and hash
+/// collisions — [`PROBE_CAP`] bounds repetition, never reach. No
+/// ceiling: a capped table saturates on large inputs and buries deep
+/// positions below the probe cap. The two-tile floor only keeps the
+/// hash shift legal.
+fn bucket_bits_for(tile_count: usize) -> u32 {
+    tile_count.max(2).next_power_of_two().trailing_zeros()
+}
+
+/// Bucket-count bits for the short table's per-byte anchors over the
+/// target: roughly one bucket per position, held between 16 Ki buckets
+/// (below which even tiny targets would chain needlessly) and 8 Mi
+/// (above which the head table's own memory stops paying — recency is
+/// the short table's job, and [`SHORT_PROBE_CAP`] reads only a bucket's
+/// newest few anyway).
+fn short_bucket_bits_for(target_length: usize) -> u32 {
+    let wanted = usize::BITS - target_length.max(1).leading_zeros();
     wanted.clamp(14, 23)
+}
+
+/// How many whole anchor tiles an indexed span holds: one per
+/// [`ANCHOR_LENGTH`] bytes, counting only tiles that fit entirely.
+fn tile_count_of(indexed_length: usize) -> usize {
+    indexed_length / ANCHOR_LENGTH
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -599,7 +720,7 @@ mod tests {
     fn identity_alignment_needs_no_table() {
         let source = pseudo_random_bytes(0x51, 500);
         let mut matcher = HashChainMatcher::build(&source, &source);
-        let found = matcher.match_at(0, 0, 0).expect("identical buffers match");
+        let found = matcher.match_at(0, 0, 0, 0).expect("identical buffers match");
         assert_eq!(found.side, MatchSide::FromSource);
         assert_eq!((found.file_position, found.length), (0, 500));
     }
@@ -610,10 +731,67 @@ mod tests {
         let mut target = pseudo_random_bytes(0x53, 1024);
         target[500..564].copy_from_slice(&source[2000..2064]);
         let mut matcher = HashChainMatcher::build(&source, &target);
-        let found = matcher.match_at(500, 0, 0).expect("a 64-byte relocation is findable");
+        let found = matcher.match_at(500, 500, 0, 0).expect("a 64-byte relocation is findable");
         assert_eq!(found.side, MatchSide::FromSource);
         assert_eq!(found.file_position, 2000);
         assert!(found.length >= 64);
+    }
+
+    #[test]
+    fn a_misaligned_relocation_is_reclaimed_by_backward_extension() {
+        // A 64-byte block copied from a source position off tile
+        // alignment: the first whole source tile inside it sits seven
+        // bytes past its start, so discovery lands there — and backward
+        // extension walks the match back through the pending literal to
+        // the block's true beginning.
+        let mut source = pseudo_random_bytes(0x58, 4096);
+        let mut target = pseudo_random_bytes(0x59, 1024);
+        target[501..565].copy_from_slice(&source[2001..2065]);
+        source[2000] = 0xAA;
+        target[500] = 0x55;
+        source[2065] = 0x01;
+        target[565] = 0x02;
+        let mut matcher = HashChainMatcher::build(&source, &target);
+        let found = matcher
+            .match_at(508, 501, 0, 0)
+            .expect("the tile at source 2008 is visible");
+        assert_eq!(found.side, MatchSide::FromSource);
+        assert_eq!(
+            (found.file_position, found.length, found.starts_earlier_by),
+            (2001, 64, 7),
+            "the copy reaches back to the block's true start",
+        );
+    }
+
+    #[test]
+    fn a_backward_reach_that_buys_nothing_stays_put() {
+        // One agreeing byte sits before the block, but reaching for it
+        // pushes the cursor delta across a varint boundary: the reach
+        // saves one literal byte and spends one delta byte, a wash the
+        // pricing must decline. The cursor parks at 3031 so the
+        // unextended delta (back 63, zigzag 127) is one byte and the
+        // extended one (back 64, zigzag 129) is two.
+        let mut source = pseudo_random_bytes(0x77, 4096);
+        let mut target = pseudo_random_bytes(0x88, 512);
+        let block = pseudo_random_bytes(0x99, 32);
+        source[2968..3000].copy_from_slice(&block);
+        target[300..332].copy_from_slice(&block);
+        source[2967] = 0xAB;
+        target[299] = 0xAB;
+        source[2966] = 0xFF;
+        target[298] = 0x00;
+        source[3000] = 0x01;
+        target[332] = 0x02;
+        let mut matcher = HashChainMatcher::build(&source, &target);
+        let found = matcher
+            .match_at(300, 298, 3031, 0)
+            .expect("the planted block matches");
+        assert_eq!(found.side, MatchSide::FromSource);
+        assert_eq!(
+            (found.file_position, found.length, found.starts_earlier_by),
+            (2968, 32, 0),
+            "a wash is not worth leaving the one-byte delta for",
+        );
     }
 
     #[test]
@@ -627,7 +805,7 @@ mod tests {
         source[3000..3032].copy_from_slice(&block);
         let target = block;
         let mut matcher = HashChainMatcher::build(&source, &target);
-        let found = matcher.match_at(0, 3000, 0).expect("the planted block matches");
+        let found = matcher.match_at(0, 0, 3000, 0).expect("the planted block matches");
         assert_eq!(found.side, MatchSide::FromSource);
         assert_eq!(found.file_position, 3000);
     }
@@ -637,14 +815,18 @@ mod tests {
         // A four-byte fragment repeating 60 bytes after its first
         // appearance, in otherwise unrelated bytes: below the long
         // anchor, invisible to the free probes, and worth one byte of
-        // delta once the copy cursor sits nearby.
+        // delta once the copy cursor sits nearby. The bytes just before
+        // the two appearances are forced apart so the reach-back stays
+        // out of this test's frame.
         let source = pseudo_random_bytes(0x56, 2048);
         let mut target = pseudo_random_bytes(0x57, 256);
         let fragment = [0xAA, 0xBB, 0xCC, 0xDD];
         target[40..44].copy_from_slice(&fragment);
         target[100..104].copy_from_slice(&fragment);
+        target[39] = 0x00;
+        target[99] = 0xFF;
         let mut matcher = HashChainMatcher::build(&source, &target);
-        let found = matcher.match_at(100, 0, 44).expect("the nearby repeat is worth its delta");
+        let found = matcher.match_at(100, 44, 0, 44).expect("the nearby repeat is worth its delta");
         assert_eq!(found.side, MatchSide::FromWrittenTarget);
         assert_eq!(found.file_position, 40);
         assert!(found.length >= 4);
@@ -659,9 +841,9 @@ mod tests {
         let target: Vec<u8> = b"abcabcabcabcabcabc".to_vec();
         let mut matcher = HashChainMatcher::build(&[], &target);
         for position in 0..3 {
-            assert_eq!(matcher.match_at(position, 0, 0), None, "nothing settled at {position}");
+            assert_eq!(matcher.match_at(position, 0, 0, 0), None, "nothing settled at {position}");
         }
-        let found = matcher.match_at(3, 0, 0).expect("the period-3 run recurs from the start");
+        let found = matcher.match_at(3, 0, 0, 0).expect("the period-3 run recurs from the start");
         assert_eq!(found.side, MatchSide::FromWrittenTarget);
         assert_eq!((found.file_position, found.length), (0, 15));
     }

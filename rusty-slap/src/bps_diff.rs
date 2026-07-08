@@ -57,7 +57,9 @@ impl BpsAction {
 /// Encoder state threaded through the main loop.
 struct EncoderState {
     /// Position into the target buffer where the next action will be
-    /// written. Advances by `length` on emit, by 1 on no-match.
+    /// written. Advances to the emission's end on emit — the emission's
+    /// start may reach back into the pending literal — and by 1 on
+    /// no-match.
     output_position: usize,
     /// End position of the previous `SourceCopy` action's read region in
     /// source. Starts at 0; the next `SourceCopy`'s offset is encoded as
@@ -90,6 +92,13 @@ impl EncoderState {
         }
         self.output_position += 1;
     }
+
+    /// Where the pending `TargetRead` began, or the current position
+    /// when none is pending — the floor an accepted match may reach
+    /// back to.
+    fn pending_literal_floor(&self) -> usize {
+        self.pending_target_read_start.unwrap_or(self.output_position)
+    }
 }
 
 /// A finder candidate classified into a concrete BPS action and carried
@@ -98,12 +107,17 @@ impl EncoderState {
 #[derive(Copy, Clone)]
 struct MatchEmission {
     action: BpsAction,
-    /// File-relative position. For `SourceRead` this equals the current
-    /// `output_position`. For `SourceCopy`/`TargetCopy` it is the read
-    /// offset into source/target. `TargetRead` does not appear here —
-    /// it is the literal-byte fallback, never classified as a match.
+    /// File-relative position. For `SourceRead` this equals the
+    /// emission's own start. For `SourceCopy`/`TargetCopy` it is the
+    /// read offset into source/target. `TargetRead` does not appear
+    /// here — it is the literal-byte fallback, never classified as a
+    /// match.
     file_position: usize,
     length: usize,
+    /// How many bytes the match reached back into the pending
+    /// `TargetRead`: the emission begins this many bytes before the
+    /// query position, and the flush shortens to match.
+    starts_earlier_by: usize,
 }
 
 /// What the encoder decided to do at the current output position.
@@ -136,6 +150,7 @@ pub fn bps_diff(source: &[u8], target: &[u8]) -> Vec<u8> {
     while state.output_position < target.len() {
         let step = match matcher.match_at(
             state.output_position,
+            state.pending_literal_floor(),
             state.last_source_copy_end,
             state.last_target_copy_end,
         ) {
@@ -149,7 +164,8 @@ pub fn bps_diff(source: &[u8], target: &[u8]) -> Vec<u8> {
         }
     }
 
-    flush_pending_target_read(&mut out, &mut state, target);
+    let final_flush_end = state.output_position;
+    flush_pending_target_read_before(&mut out, &mut state, target, final_flush_end);
     out
 }
 
@@ -167,19 +183,22 @@ fn classify_and_decide(found: FoundMatch, state: &EncoderState) -> LoopStep {
 }
 
 /// Name the BPS action a candidate would ride out as: a written-target
-/// candidate is a `TargetCopy`; a source candidate at exactly the
-/// output position is the offset-free `SourceRead`, and anywhere else a
-/// `SourceCopy`.
+/// candidate is a `TargetCopy`; a source candidate that reads exactly
+/// where the emission begins is the offset-free `SourceRead`, and
+/// anywhere else a `SourceCopy`. Backward reach slides the read and the
+/// emission start together, so it never flips this classification.
 fn classify_match(found: FoundMatch, output_position: usize) -> MatchEmission {
+    let emission_start = output_position - found.starts_earlier_by;
     let action = match found.side {
         MatchSide::FromWrittenTarget => BpsAction::TargetCopy,
-        MatchSide::FromSource if found.file_position == output_position => BpsAction::SourceRead,
+        MatchSide::FromSource if found.file_position == emission_start => BpsAction::SourceRead,
         MatchSide::FromSource => BpsAction::SourceCopy,
     };
     MatchEmission {
         action,
         file_position: found.file_position,
         length: found.length,
+        starts_earlier_by: found.starts_earlier_by,
     }
 }
 
@@ -210,7 +229,8 @@ fn match_byte_cost(action: BpsAction, file_position: usize, state: &EncoderState
 /// * `action_byte_cost` covers the action header byte plus the
 ///   offset payload (zero for `SourceRead`); see [`match_byte_cost`].
 /// * `pending_flush_cost` (0 or 1) pays for the `TargetRead` flush
-///   varint that emitting would force.
+///   varint that emitting would still force — absent when the match's
+///   backward reach absorbs the pending run whole.
 /// * `single_byte_tiebreaker` (0 or 1) adds one when `length == 1`,
 ///   breaking ties against emitting the smallest possible action.
 /// * The leading `+ 1`, combined with the `>=` comparison, makes
@@ -218,7 +238,12 @@ fn match_byte_cost(action: BpsAction, file_position: usize, state: &EncoderState
 ///   the match strictly saves bytes, never when it merely ties.
 fn match_beats_literal(emission: &MatchEmission, state: &EncoderState) -> bool {
     let action_byte_cost = match_byte_cost(emission.action, emission.file_position, state);
-    let pending_flush_cost = usize::from(state.pending_target_read_start.is_some());
+    let emission_start = state.output_position - emission.starts_earlier_by;
+    let pending_flush_cost = usize::from(
+        state
+            .pending_target_read_start
+            .is_some_and(|literal_run_start| emission_start > literal_run_start),
+    );
     let single_byte_tiebreaker = usize::from(emission.length == 1);
     let break_even_length = 1 + action_byte_cost + pending_flush_cost + single_byte_tiebreaker;
     emission.length >= break_even_length
@@ -226,17 +251,19 @@ fn match_beats_literal(emission: &MatchEmission, state: &EncoderState) -> bool {
 
 // ── Emission ───────────────────────────────────────────────────────────
 
-/// Emit a classified match: flush any pending `TargetRead`, write the
-/// action header and (for copy actions) the offset payload, advance the
-/// encoder state to the next output position, and update the relevant
-/// last-copy-end cursor.
+/// Emit a classified match: flush any pending `TargetRead` up to the
+/// emission's start (a run the backward reach absorbed whole flushes
+/// nothing), write the action header and (for copy actions) the offset
+/// payload, advance the encoder state to the emission's end, and update
+/// the relevant last-copy-end cursor.
 fn emit_match(
     out: &mut Vec<u8>,
     state: &mut EncoderState,
     target: &[u8],
     emission: MatchEmission,
 ) {
-    flush_pending_target_read(out, state, target);
+    let emission_start = state.output_position - emission.starts_earlier_by;
+    flush_pending_target_read_before(out, state, target, emission_start);
     let offset_payload = match emission.action {
         BpsAction::SourceRead | BpsAction::TargetRead => None,
         BpsAction::SourceCopy => Some(encode_delta(
@@ -258,7 +285,7 @@ fn emit_match(
         }
         BpsAction::SourceRead | BpsAction::TargetRead => {}
     }
-    state.output_position += emission.length;
+    state.output_position = emission_start + emission.length;
 }
 
 /// Emit the byuu-varint header for `action` of `length` bytes, then the
@@ -278,14 +305,23 @@ fn encode_action_header(action: BpsAction, length: usize) -> u64 {
     ((length as u64 - 1) << ACTION_TAG_BIT_WIDTH) | action.wire_tag()
 }
 
-/// If a pending `TargetRead` is in progress, emit it and clear the
-/// pending start. A no-op when nothing is pending. Called before any
-/// non-`TargetRead` emission and once at the end of the main loop.
-fn flush_pending_target_read(out: &mut Vec<u8>, state: &mut EncoderState, target: &[u8]) {
+/// If a pending `TargetRead` is in progress, emit the bytes it still
+/// owns — up to `flush_end` — and clear the pending start. A run the
+/// emission absorbed whole clears without emitting. Called with the
+/// emission's start before any match, and with the final output
+/// position once at the end of the main loop.
+fn flush_pending_target_read_before(
+    out: &mut Vec<u8>,
+    state: &mut EncoderState,
+    target: &[u8],
+    flush_end: usize,
+) {
     if let Some(literal_run_start) = state.pending_target_read_start.take() {
-        let literal_run_length = state.output_position - literal_run_start;
-        emit_action(out, BpsAction::TargetRead, literal_run_length, None);
-        out.extend_from_slice(&target[literal_run_start..state.output_position]);
+        if flush_end > literal_run_start {
+            let literal_run_length = flush_end - literal_run_start;
+            emit_action(out, BpsAction::TargetRead, literal_run_length, None);
+            out.extend_from_slice(&target[literal_run_start..flush_end]);
+        }
     }
 }
 
