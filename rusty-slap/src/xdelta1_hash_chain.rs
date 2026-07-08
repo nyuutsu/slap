@@ -236,16 +236,15 @@ impl<'src> SourceHashChainMatcher<'src> {
         best
     }
 
-    /// The matched run length at a source candidate: byte-wise agreement
+    /// The matched run length at a source candidate: byte agreement
     /// between `target[position..]` and `source[candidate..]`, capped at
     /// the source's end and the target's end.
     fn extend(&self, candidate: usize, target: &[u8], position: usize) -> usize {
         let reach = (self.source.len() - candidate).min(target.len() - position);
-        let mut length = 0;
-        while length < reach && self.source[candidate + length] == target[position + length] {
-            length += 1;
-        }
-        length
+        matched_length(
+            &self.source[candidate..candidate + reach],
+            &target[position..position + reach],
+        )
     }
 
     fn insert_anchor(&mut self, source_position: usize) {
@@ -257,12 +256,35 @@ impl<'src> SourceHashChainMatcher<'src> {
     /// Fold the anchor window into one register and Fibonacci-hash it
     /// down to a bucket index.
     fn bucket_of(&self, window: &[u8]) -> usize {
-        let mut folded = 0u64;
-        for &byte in window {
-            folded = folded << 8 | byte as u64;
-        }
+        let folded =
+            u64::from_be_bytes(window.try_into().expect("xdelta1 differ: an anchor window is eight bytes"));
         (folded.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> self.hash_shift) as usize
     }
+}
+
+/// Length of the common prefix of two slices, compared a register at a
+/// time.
+fn matched_length(left: &[u8], right: &[u8]) -> usize {
+    let limit = left.len().min(right.len());
+    // A first-byte disagreement is the usual answer on a failed probe;
+    // take it with one load before the word loop reads sixteen.
+    if limit == 0 || left[0] != right[0] {
+        return 0;
+    }
+    let mut length = 0;
+    while length + 8 <= limit {
+        let left_word = u64::from_le_bytes(left[length..length + 8].try_into().unwrap());
+        let right_word = u64::from_le_bytes(right[length..length + 8].try_into().unwrap());
+        let disagreement = left_word ^ right_word;
+        if disagreement != 0 {
+            return length + (disagreement.trailing_zeros() / 8) as usize;
+        }
+        length += 8;
+    }
+    while length < limit && left[length] == right[length] {
+        length += 1;
+    }
+    length
 }
 
 /// Bucket-count bits for a source length: roughly one bucket per

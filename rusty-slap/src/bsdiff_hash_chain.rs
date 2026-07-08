@@ -242,20 +242,34 @@ fn seek_distance(source_start: usize, aligned_source_start: i64) -> u64 {
 /// Fold an anchor window into one register and Fibonacci-hash it down
 /// to a bucket index under the given shift.
 fn bucket_for(window: &[u8], hash_shift: u32) -> usize {
-    let mut folded = 0u64;
-    for &byte in window {
-        folded = folded << 8 | byte as u64;
-    }
+    let folded =
+        u64::from_be_bytes(window.try_into().expect("bsdiff matcher: an anchor window is eight bytes"));
     (folded.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> hash_shift) as usize
 }
 
 /// Length of the common prefix of two slices, the shorter's length its
-/// ceiling.
+/// ceiling, compared a register at a time.
 fn matched_length(left: &[u8], right: &[u8]) -> usize {
-    left.iter()
-        .zip(right)
-        .take_while(|(left_byte, right_byte)| left_byte == right_byte)
-        .count()
+    let limit = left.len().min(right.len());
+    // A first-byte disagreement is the usual answer on a failed probe;
+    // take it with one load before the word loop reads sixteen.
+    if limit == 0 || left[0] != right[0] {
+        return 0;
+    }
+    let mut length = 0;
+    while length + 8 <= limit {
+        let left_word = u64::from_le_bytes(left[length..length + 8].try_into().unwrap());
+        let right_word = u64::from_le_bytes(right[length..length + 8].try_into().unwrap());
+        let disagreement = left_word ^ right_word;
+        if disagreement != 0 {
+            return length + (disagreement.trailing_zeros() / 8) as usize;
+        }
+        length += 8;
+    }
+    while length < limit && left[length] == right[length] {
+        length += 1;
+    }
+    length
 }
 
 /// Bucket-count bits for a source's size: roughly one bucket per

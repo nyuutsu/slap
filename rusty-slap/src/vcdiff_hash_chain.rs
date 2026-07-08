@@ -793,10 +793,8 @@ fn prefetch_for_write<Cell>(head: *const Cell) {
 /// Fold an anchor window into one register and Fibonacci-hash it down
 /// to a bucket index under the given shift.
 fn bucket_for(window_bytes: &[u8], hash_shift: u32) -> usize {
-    let mut folded = 0u64;
-    for &byte in window_bytes {
-        folded = folded << 8 | byte as u64;
-    }
+    let folded =
+        u64::from_be_bytes(window_bytes.try_into().expect("vcdiff matcher: an anchor tile is eight bytes"));
     (folded.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> hash_shift) as usize
 }
 
@@ -822,6 +820,11 @@ fn tile_count_of(indexed_length: usize) -> usize {
 /// read the same final bytes either way.
 fn common_prefix_length(left: &[u8], right: &[u8]) -> usize {
     let limit = left.len().min(right.len());
+    // A first-byte disagreement is the usual answer on a failed probe;
+    // take it with one load before the word loop reads sixteen.
+    if limit == 0 || left[0] != right[0] {
+        return 0;
+    }
     let mut length = 0;
     while length + 8 <= limit {
         let left_word = u64::from_le_bytes(left[length..length + 8].try_into().unwrap());

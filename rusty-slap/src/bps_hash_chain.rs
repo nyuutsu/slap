@@ -372,7 +372,7 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
         if position + SHORT_ANCHOR_LENGTH > self.target.len() {
             return None;
         }
-        let bucket = bucket_for(
+        let bucket = bucket_for_short(
             &self.target[position..position + SHORT_ANCHOR_LENGTH],
             self.short_hash_shift,
         );
@@ -476,9 +476,10 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
             return None;
         }
         let reach = self.target.len() - position;
-        let length = (0..reach)
-            .take_while(|&step| self.target[file_position + step] == self.target[position + step])
-            .count();
+        let length = matched_length(
+            &self.target[file_position..file_position + reach],
+            &self.target[position..position + reach],
+        );
         if length == 0 {
             return None;
         }
@@ -500,7 +501,7 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
     }
 
     fn insert_short_anchor(&mut self, target_position: usize, window: &[u8]) {
-        let bucket = bucket_for(window, self.short_hash_shift);
+        let bucket = bucket_for_short(window, self.short_hash_shift);
         self.short_chain_links[target_position] = self.short_bucket_heads[bucket];
         self.short_bucket_heads[bucket] = Cell::from_index(target_position);
     }
@@ -510,14 +511,19 @@ impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
     }
 }
 
-/// Fold an anchor window into one register and Fibonacci-hash it down
-/// to a bucket index under the given shift.
+/// Fold a long-table anchor window into one register and
+/// Fibonacci-hash it down to a bucket index under the given shift.
 fn bucket_for(window: &[u8], hash_shift: u32) -> usize {
-    let mut folded = 0u64;
-    for &byte in window {
-        folded = folded << 8 | byte as u64;
-    }
+    let folded =
+        u64::from_be_bytes(window.try_into().expect("bps matcher: a long anchor window is eight bytes"));
     (folded.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> hash_shift) as usize
+}
+
+/// The short table's fold: four bytes, same hash.
+fn bucket_for_short(window: &[u8], hash_shift: u32) -> usize {
+    let folded =
+        u32::from_be_bytes(window.try_into().expect("bps matcher: a short anchor window is four bytes"));
+    (u64::from(folded).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> hash_shift) as usize
 }
 
 /// The best-net candidate among some options, earliest winning a tie —
@@ -533,12 +539,30 @@ fn best_of<const N: usize>(candidates: [Option<RankedCandidate>; N]) -> Option<R
     best
 }
 
-/// Length of the common prefix of two equal-length slices.
+/// Length of the common prefix of two slices, compared a register at a
+/// time — exact on overlapping slices of one buffer, where both sides
+/// read the same final bytes either way.
 fn matched_length(left: &[u8], right: &[u8]) -> usize {
-    left.iter()
-        .zip(right)
-        .take_while(|(left_byte, right_byte)| left_byte == right_byte)
-        .count()
+    let limit = left.len().min(right.len());
+    // A first-byte disagreement is the usual answer on a failed probe;
+    // take it with one load before the word loop reads sixteen.
+    if limit == 0 || left[0] != right[0] {
+        return 0;
+    }
+    let mut length = 0;
+    while length + 8 <= limit {
+        let left_word = u64::from_le_bytes(left[length..length + 8].try_into().unwrap());
+        let right_word = u64::from_le_bytes(right[length..length + 8].try_into().unwrap());
+        let disagreement = left_word ^ right_word;
+        if disagreement != 0 {
+            return length + (disagreement.trailing_zeros() / 8) as usize;
+        }
+        length += 8;
+    }
+    while length < limit && left[length] == right[length] {
+        length += 1;
+    }
+    length
 }
 
 /// Bucket-count bits for a pair's combined size: roughly one bucket per
