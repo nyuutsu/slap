@@ -206,12 +206,10 @@ newtype AdvisoryExpectedBytes = AdvisoryExpectedBytes
 -- File size is the one verification check whose severity varies by format, so the severity rides on the value here rather than on which field carries it.
 data FileSizeCheck
   = AdvisorySize !FileSize
-    -- ^ The format has a stronger integrity gate (e.g. a CRC32), so a
-    -- size mismatch only warns; the stronger check catches real
-    -- corruption.
+    -- ^ The format has a stronger integrity gate (e.g. a CRC32), so a size mismatch only warns; the stronger check catches real corruption.
   | RequiredSize !FileSize
-    -- ^ The declared size is the format's only integrity gate, so a
-    -- mismatch fails the apply unless @--no-verify@ is set.
+    -- ^ The format treats the declared size as a hard precondition of apply, so a mismatch fails unless @--no-verify@ is set.
+    -- DPS's size is its only integrity gate; xdelta1's reference applier refuses a wrong-length from file even with MD5s present.
   deriving (Show, Eq)
 
 noVerification :: Verification
@@ -996,12 +994,16 @@ parseSomePatchFromGDIFF patchContents = do
 parseSomePatchFromXDelta1 :: EncodingName -> PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromXDelta1 metadataEncoding patchContents = do
   Parsed patch parseAdvisories <- XDelta1.parseXDelta1 metadataEncoding patchContents
-  let xdeltaVerification = case XDelta1.xdelta1Verification patch of
+  let md5Verification = case XDelta1.xdelta1Verification patch of
         XDelta1.VerifyAgainstStoredMD5s targetMD5 -> noVerification
           { verifySourceMD5 = XDelta1.xdelta1SourceMD5 patch
           , verifyTargetMD5 = Just targetMD5
           }
         XDelta1.CreatorOptedOutOfVerification -> noVerification
+      -- The from-file length gate sits outside the posture split:
+      -- canonical xdelta refuses a wrong-length from file before any hashing, @FLAG_NO_VERIFY@ or not.
+      xdeltaVerification = md5Verification
+        { verifyFileSize = Just (RequiredSize (XDelta1.xdelta1SourceLength patch)) }
       -- The data-record-name is a display label, not anything apply
       -- consults, so its divergence is routed to the notice lane
       -- rather than the warning lane.

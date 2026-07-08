@@ -37,7 +37,8 @@ import Slap.FileContents
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.SomePatch
   (parseSome, patchKind, patchFormat, patchAdvisories
-  , patchVerification, verifySourceMD5, verifyTargetMD5, PatchKind(..))
+  , patchVerification, verifySourceMD5, verifyTargetMD5, verifyFileSize
+  , FileSizeCheck(..), PatchKind(..))
 import Slap.XDelta1.Parse
   ( parseControl
   , parseXDelta1
@@ -781,18 +782,13 @@ xdelta1ShapeRejectionTests =
 -- xdelta1 FLAG_NO_VERIFY: parse-side posture honored
 ----------------------------------------------------------------------------
 
--- | Three tests covering the parse-time encoding of xdelta1's
--- @FLAG_NO_VERIFY@ (bit 0 of the header's flags word) as the
--- 'XDelta1VerificationPosture' sum:
+-- | Three tests pinning how xdelta1's @FLAG_NO_VERIFY@ (bit 0 of the header's flags word) parses into the 'XDelta1VerificationPosture' sum:
 --
---   1. With the bit flipped on in an in-memory copy of a real
---      patch, 'parseXDelta1' produces 'CreatorOptedOutOfVerification'
+--   1. With the bit flipped on in an in-memory copy of a real patch, 'parseXDelta1' produces 'CreatorOptedOutOfVerification'
 --      and emits 'VerificationOptedOutByCreator LabelXDelta1'.
---   2. With the bit flipped on, 'parseSome' wires both
---      'verifySourceMD5' and 'verifyTargetMD5' to 'Nothing' and
---      passes the warning through 'patchAdvisories'.
---   3. Regression: the unflipped fixture parses with
---      'VerifyAgainstStoredMD5s' posture, no opt-out warning fires.
+--   2. With the bit flipped on, 'parseSome' wires both 'verifySourceMD5' and 'verifyTargetMD5' to 'Nothing',
+--      passes the warning through 'patchAdvisories', and keeps the posture-independent from-file length gate.
+--   3. Regression: the unflipped fixture parses with 'VerifyAgainstStoredMD5s' posture, no opt-out warning fires.
 xdelta1NoVerifyTests :: FilePath -> [TestTree]
 xdelta1NoVerifyTests fixturePath =
   [ testCase "xdelta1/FLAG_NO_VERIFY honored at parse" $ do
@@ -808,7 +804,7 @@ xdelta1NoVerifyTests fixturePath =
           assertBool "XDelta1NoVerifyWithDivergentSentinel warning is present"
             (XDelta1NoVerifyWithDivergentSentinel `elem` warnings)
 
-  , testCase "xdelta1/FLAG_NO_VERIFY zeroes SomePatch verification fields" $ do
+  , testCase "xdelta1/FLAG_NO_VERIFY zeroes the MD5s but keeps the length gate" $ do
       originalBytes <- ByteString.readFile fixturePath
       let flippedBytes = flipNoVerifyBit originalBytes
       case parseSome noDialectsRequested EncodingUtf8 (PatchFileContents flippedBytes) of
@@ -817,6 +813,10 @@ xdelta1NoVerifyTests fixturePath =
           let verification = patchVerification somePatch
           assertEqual "verifySourceMD5 is Nothing" Nothing (verifySourceMD5 verification)
           assertEqual "verifyTargetMD5 is Nothing" Nothing (verifyTargetMD5 verification)
+          case verifyFileSize verification of
+            Just (RequiredSize _) -> pure ()
+            other -> assertFailure
+              ("expected the posture-independent RequiredSize gate, got: " ++ show other)
           assertBool "VerificationOptedOutByCreator LabelXDelta1 reaches patchAdvisories"
             (VerificationOptedOutByCreator LabelXDelta1 `elem` patchAdvisories somePatch)
           assertBool "XDelta1NoVerifyWithDivergentSentinel reaches patchAdvisories"

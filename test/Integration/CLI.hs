@@ -54,10 +54,11 @@ cliTests tier = do
                                   ++ warningTests repo)
 
   subprocessMaybes <- requireSlapBinary $ \_slap -> do
-    let dm4yBase = repo </> "test/data/dm4y/base.gbc"
-        dm4yBps  = repo </> "test/data/dm4y/patch.bps"
-        dm4yIps  = repo </> "test/data/dm4y/patch.ips"
-        dm4yUps  = repo </> "test/data/dm4y/patch.ups"
+    let dm4yBase    = repo </> "test/data/dm4y/base.gbc"
+        dm4yBps     = repo </> "test/data/dm4y/patch.bps"
+        dm4yIps     = repo </> "test/data/dm4y/patch.ips"
+        dm4yUps     = repo </> "test/data/dm4y/patch.ups"
+        dm4yXdelta1 = repo </> "test/data/dm4y/patch.xdelta1"
 
     -- Most subprocess tests need the dm4y base ROM. Bundle them under
     -- one fixture gate so a missing ROM produces a single bucket of
@@ -75,6 +76,7 @@ cliTests tier = do
       , metadataRejectionTests dm4yBase dm4yBps
       , bpsConvertMetadataTests dm4yBase dm4yBps
       , undoCliTests dm4yBase dm4yUps
+      , xdelta1SourceLengthTests dm4yBase dm4yXdelta1
       , onlyAtFull tier (forceTests dm4yBase dm4yUps)
       , onlyAtFull tier (noverifyTests dm4yBase dm4yBps)
       ]
@@ -131,6 +133,29 @@ corruptTests =
       case parseSome noDialectsRequested EncodingUtf8 (PatchFileContents truncatedBPS) of
         Left _ -> pure ()
         Right _ -> assertFailure "expected parse failure for truncated BPS"
+  ]
+
+-- | The from-file length gate:
+-- canonical xdelta refuses a wrong-length from file in both verification postures, so slap enforces the declared length as a 'RequiredSize'.
+xdelta1SourceLengthTests :: FilePath -> FilePath -> [TestTree]
+xdelta1SourceLengthTests base xdelta1 =
+  [ testCase "xdelta1-length/refuses a wrong-length source" $
+      withTempFile "slap-lengthened" $ \lengthened ->
+      withTempFile "slap-out" $ \out -> do
+        baseBytes <- ByteString.readFile base
+        ByteString.writeFile lengthened (baseBytes <> ByteString.pack [0x00])
+        removeIfExists out
+        expectFail ["apply", xdelta1, lengthened, "-o", out]
+          "xdelta1-length/refuses a wrong-length source" "file size mismatch"
+
+  , testCase "xdelta1-length/--no-verify downgrades the gate to a warning" $
+      withTempFile "slap-lengthened" $ \lengthened ->
+      withTempFile "slap-out" $ \out -> do
+        baseBytes <- ByteString.readFile base
+        ByteString.writeFile lengthened (baseBytes <> ByteString.pack [0x00])
+        removeIfExists out
+        expectOk ["apply", xdelta1, lengthened, "-o", out, "--no-verify"]
+          "xdelta1-length/--no-verify downgrades the gate" "applied"
   ]
 
 forceTests :: FilePath -> FilePath -> [TestTree]
