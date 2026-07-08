@@ -70,8 +70,6 @@ Application can be modified in these ways:
 
 `--verbose` or `-v`: Have slap narrate each record it modifies as it applies the patch.
 
-`--dry-run`: *Don't* apply the patch. Check whether the patch can be parsed, print the would-be output path, and, check the source checksum if one is present.
-
 `--raw`: Handle a polymorphic input-patch: tell slap the patch-argument *is* a patch and *isn't* an archive, and so does *not* need to be rummaged through like one.
 
 ## Creating 🏗️

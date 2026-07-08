@@ -52,13 +52,13 @@ import qualified Data.Text.IO as TextIO
 import Slap.Archive.Types (detectArchive, EntryName(unEntryName))
 import Slap.Binary (crc16, md5, sha1, viewBytesInRange)
 import Slap.Checksum (CRC32(..), CRC16, Adler32(..),
-                      ExpectedCRC32(..), ActualCRC32(..), showCRC32)
+                      ExpectedCRC32(..), ActualCRC32(..))
 import Slap.FFI (crc32, adler32)
 import Slap.Status (SlapError(..), SlapAdvisory(..), CreateResult(..), Outcome(..),
                    VerificationSide(..), HashAlgorithm(..),
                    ExpectedAdler32(..), ActualAdler32(..), ByteCheckLabel(..),
                    emitAdvisories, bail, bailError, orBail)
-import Slap.Display.Glyph (checkMark, ballotX, emDash, spacePaddedRightwardsArrow)
+import Slap.Display.Glyph (emDash, spacePaddedRightwardsArrow)
 import Slap.FormatLabel (formatLabelName)
 
 import CLI
@@ -93,7 +93,6 @@ import qualified Data.ByteString as ByteString
 import Control.Exception (try)
 import Control.Monad (when, forM_)
 import System.Directory (copyFile, doesFileExist)
-import System.Exit (exitSuccess)
 import System.FilePath (dropExtension, replaceExtension, takeBaseName, takeExtension)
 import System.IO (IOMode(ReadMode), hFileSize, hSetEncoding, stderr, stdout, withFile)
 import System.IO.MMap (mmapFileByteString)
@@ -284,15 +283,6 @@ doApply parsedCommand = do
         TextIO.putStrLn (renderActionLine "applied" (patchInfo parsed) outputPath)
 
   case applyOutput parsedCommand of
-    ApplyDryRun -> do
-      let reportedPath = deriveOutput (applyPatch parsedCommand) (applySource parsedCommand)
-      TextIO.putStrLn (renderActionLine "would apply" (patchInfo parsed) reportedPath)
-      case verifySourceCRC32 verification of
-        Just expected -> do
-          sourceBytes <- readMaybeUnwrap (applyFileReading parsedCommand) (applySource parsedCommand)
-          TextIO.putStrLn (renderCrcCheck "input CRC" expected (crc32 sourceBytes))
-        Nothing -> pure ()
-      exitSuccess
     ApplyInPlace backupBehavior -> do
       case backupBehavior of
         WriteBackup -> do
@@ -340,15 +330,6 @@ doUndo parsedCommand = do
             TextIO.putStrLn (renderActionLine "reverted" (patchInfo parsed) outputPath)
 
       case undoOutput parsedCommand of
-        UndoDryRun -> do
-          let reportedPath = deriveUndoOutput (undoSource parsedCommand)
-          TextIO.putStrLn (renderActionLine "would revert" (patchInfo parsed) reportedPath)
-          case verifyTargetCRC32 verification of
-            Just expected -> do
-              modifiedBytes <- readMaybeUnwrap (undoFileReading parsedCommand) (undoSource parsedCommand)
-              TextIO.putStrLn (renderCrcCheck "output CRC" expected (crc32 modifiedBytes))
-            Nothing -> pure ()
-          exitSuccess
         UndoInPlace backupBehavior -> do
           case backupBehavior of
             WriteBackup -> do
@@ -674,16 +655,6 @@ noteSourceBytes label checkOffset expectedData sourceBytes =
   let actual = viewBytesInRange checkOffset (Length (ByteString.length expectedData)) sourceBytes
   in when (actual /= expectedData) $
        noteMismatch (VerificationSourceBytesMismatch label checkOffset)
-
-formatCRC :: CRC32 -> Text
-formatCRC crcValue = "0x" <> showCRC32 crcValue
-
-renderCrcCheck :: Text -> CRC32 -> CRC32 -> Text
-renderCrcCheck label expected actual =
-  label <> ": " <> formatCRC actual
-    <> if actual == expected
-         then Text.pack [' ', checkMark]
-         else Text.pack [' ', ballotX] <> " (expected " <> formatCRC expected <> ")"
 
 -- | Render the full per-record analysis to stderr, gated on 'Verbose'.
 emitVerboseAnalysis :: Verbosity -> SomePatch -> IO ()

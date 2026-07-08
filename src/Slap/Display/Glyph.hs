@@ -13,22 +13,19 @@ module Slap.Display.Glyph
 import Data.Text (Text)
 import qualified Data.Text as Text
 
--- The codepoints below are domain symbols in slap's CLI output
--- (output redirection, verification status, range separators,
--- sentence-internal pause).  Naming them once means call sites
--- read as the meaning they carry rather than as a numeric escape.
+-- The codepoints below are domain symbols in slap's CLI output (output redirection, verification status, range separators, sentence-internal pause).
+-- Naming them once means call sites read as the meaning they carry rather than as a numeric escape.
 
 -- | U+2192 (→).  Output redirection in CLI status lines, e.g.
 -- @applied 23 records → output.bin@.
 rightwardsArrow :: Char
 rightwardsArrow = '\8594'
 
--- | U+2713 (✓).  Verification success in dry-run output.
+-- | U+2713 (✓).  Marks a verification check that passed.
 checkMark :: Char
 checkMark = '\10003'
 
--- | U+2717 (✗).  Verification failure in dry-run output, paired
--- with the expected value.
+-- | U+2717 (✗).  Marks a verification check that failed.
 ballotX :: Char
 ballotX = '\10007'
 

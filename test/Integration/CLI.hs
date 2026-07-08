@@ -63,8 +63,7 @@ cliTests tier = do
     -- one fixture gate so a missing ROM produces a single bucket of
     -- skips rather than scattering them.
     dm4yGated <- requireFixture dm4yBase $ \_ -> pure $ map WillRun $ concat
-      [ dryrunTests dm4yBase dm4yBps
-      , inplaceTests dm4yBase dm4yIps
+      [ inplaceTests dm4yBase dm4yIps
       , collisionTests dm4yBase dm4yIps
       , verboseTests dm4yBase dm4yIps
       , undoErrorTests dm4yBase dm4yIps dm4yBps
@@ -132,25 +131,6 @@ corruptTests =
       case parseSome noDialectsRequested EncodingUtf8 (PatchFileContents truncatedBPS) of
         Left _ -> pure ()
         Right _ -> assertFailure "expected parse failure for truncated BPS"
-  ]
-
-dryrunTests :: FilePath -> FilePath -> [TestTree]
-dryrunTests base bps =
-  [ testCase "dryrun/reports action" $
-      expectOk ["apply", bps, base, "--dry-run"]
-        "dryrun/reports action" "would apply"
-
-  , testCase "dryrun/shows CRC" $
-      expectOk ["apply", bps, base, "--dry-run"]
-        "dryrun/shows CRC" "input CRC"
-
-  , testCase "dryrun/rejects conflicting --output" $
-      expectFail ["apply", bps, base, "-o", "/tmp/slap-unreachable", "--dry-run"]
-        "dryrun/rejects conflicting --output" "usage"
-
-  , testCase "dryrun/rejects conflicting --in-place" $
-      expectFail ["apply", bps, base, "--in-place", "--dry-run"]
-        "dryrun/rejects conflicting --in-place" "usage"
   ]
 
 forceTests :: FilePath -> FilePath -> [TestTree]
@@ -252,24 +232,9 @@ compoundTests base ips bps =
         expectOk ["apply", ips, work, "--in-place", "--verbose", "--no-backup"]
           "compound/IPS" "applied"
 
-  , testCase "compound/dry-run+verbose shows both" $ do
-      run <- runExternal SlapBinary
-        ["apply", ips, base, "--dry-run", "--verbose"] Nothing ""
-      let combined = externalRunStdout run ++ externalRunStderr run
-      assertBool "missing 'would apply'" ("would apply" `isInfixOf` combined)
-      assertBool "missing 'Write'" ("Write" `isInfixOf` combined)
-
-  , testCase "compound/rejects --in-place with --dry-run" $
-      expectFail ["apply", bps, base, "--in-place", "--dry-run"]
-        "compound/rejects --in-place with --dry-run" "usage"
-
   , testCase "compound/rejects --force with --in-place" $
       expectFail ["apply", bps, base, "--in-place", "--force"]
         "compound/rejects --force with --in-place" "usage"
-
-  , testCase "compound/rejects --force with --dry-run" $
-      expectFail ["apply", bps, base, "--dry-run", "--force"]
-        "compound/rejects --force with --dry-run" "usage"
 
   , testCase "compound/explicit -o creates file" $
       withTempFile "slap-out" $ \out -> do
@@ -406,13 +371,9 @@ archiveTests base ips bps ups =
         expectFail ["info", multiZip] "archive/multi" "candidate"
   ]
 
--- | CLI-surface tests for undo's asymmetric paths: the derived-filename
--- default lane and the dry-run branch (both unique to 'doUndo'),
--- and the three verification cases (fatal default, --no-verify
--- downgrade, happy-path round-trip).  The lane plumbing literally
--- shared with apply's 'writingLane' (plain @-o FILE@ success,
--- positional @OUTPUT@ alternative, @--force@ against an existing
--- target) is covered by apply's own 'cliTests' and not duplicated here.
+-- | CLI-surface tests for undo's asymmetric paths: the derived-filename default lane (unique to 'doUndo'),
+-- and the three verification cases (fatal default, --no-verify downgrade, happy-path round-trip).
+-- The lane plumbing literally shared with apply's 'writingLane' is covered by apply's own 'cliTests' and not duplicated here.
 undoCliTests :: FilePath -> FilePath -> [TestTree]
 undoCliTests base ups =
   [ testCase "undo/derived path leaves input untouched" $
@@ -431,21 +392,6 @@ undoCliTests base ups =
         baseSha    <- sha1Hex <$> ByteString.readFile base
         derivedSha <- sha1Hex <$> ByteString.readFile derivedPath
         assertEqual "derived output should match base bytes" baseSha derivedSha
-
-  , testCase "undo/--dry-run prints would-revert and writes nothing" $
-      withTempDir "slap-undo" $ \workingDirectory -> do
-        let modifiedFile = workingDirectory </> "patched.bin"
-            derivedPath  = workingDirectory </> "patched [reverted].bin"
-        ByteString.readFile base >>= ByteString.writeFile modifiedFile
-        _ <- runExternal SlapBinary
-          ["apply", ups, modifiedFile, "--in-place", "--no-backup"] Nothing ""
-        modifiedShaBefore <- sha1Hex <$> ByteString.readFile modifiedFile
-        expectOk ["undo", "--dry-run", ups, modifiedFile]
-          "undo/--dry-run" "would revert"
-        modifiedShaAfter <- sha1Hex <$> ByteString.readFile modifiedFile
-        assertEqual "dry-run should not modify input" modifiedShaBefore modifiedShaAfter
-        derivedExists <- doesFileExist derivedPath
-        assertBool "dry-run should not create derived output" (not derivedExists)
 
   , testCase "undo/verification refuses mismatched modified file" $
       withTempDir "slap-undo" $ \workingDirectory -> do

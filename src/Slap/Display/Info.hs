@@ -1,10 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | The cheap-path display carrier: 'PatchInfo'. Populated by every
--- 'parseSomePatchFrom\<Format\>' helper in 'Slap.SomePatch' at parse
--- time, without any per-record analytical work. Consumed by 'doInfo'
--- (via 'patchInfo' on a parsed 'SomePatch') for @slap info@, and by
--- 'doApply' for the announcement line on apply success and dry-run.
+-- | The cheap-path display carrier: 'PatchInfo'.
+-- Populated by every 'parseSomePatchFrom\<Format\>' helper in 'Slap.SomePatch' at parse time, without any per-record analytical work.
+-- Consumed by 'doInfo' (via 'patchInfo') for @slap info@, and by 'doApply' and 'doUndo' for their action announcement lines.
 module Slap.Display.Info
   ( -- * The cheap-path carrier
     PatchInfo(..)
@@ -62,7 +60,7 @@ renderPatchInfo depth info =
       Just range -> [ renderInfoLine (InfoLine "range" (renderOffsetRange range)) ]
 
 -- | Render a one-line action announcement: @"\<verb\> \<count and bytes\> → \<path\>"@.
--- Used by 'doApply' for both the success path (@"applied"@) and dry-run (@"would apply"@).
+-- Used by 'doApply' (@"applied"@) and 'doUndo' (@"reverted"@).
 renderActionLine :: Text -> PatchInfo -> FilePath -> Text
 renderActionLine actionVerb info outputPath =
   let tally       = infoTally info

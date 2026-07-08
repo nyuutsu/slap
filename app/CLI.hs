@@ -97,7 +97,7 @@ data ExplainVerbosity
   deriving (Show, Eq)
 
 -- | What to do with an applied patch's output bytes.
--- The four variants are mutually exclusive CLI lanes;
+-- The three variants are mutually exclusive CLI lanes;
 -- the parser rejects a command line that mixes distinguishing flags from more than one (see 'applyOutputParser').
 --
 -- 'ApplyInPlace' overwrites the source file, carrying a 'BackupBehavior' for an optional @.bak@ copy.
@@ -105,13 +105,11 @@ data ExplainVerbosity
 -- The path is @-o FILE@ or, equivalently, a bare third positional @OUTPUT@; both at once is a parse error.
 -- 'ApplyToDerivedFile' writes to a path derived from the source name — the default lane.
 -- The 'OverwritePolicy' those two carry guards @--force@;
--- it is a sub-flag of the two file-writing lanes because clobbering is meaningless in place or on a dry run.
--- 'ApplyDryRun' writes nothing and reports against the derived-default destination, since it accepts no lane-modifying flags.
+-- it is a sub-flag of the two file-writing lanes because clobbering is meaningless in place.
 data ApplyOutput
   = ApplyInPlace BackupBehavior
   | ApplyToExplicitFile FilePath OverwritePolicy
   | ApplyToDerivedFile OverwritePolicy
-  | ApplyDryRun
   deriving (Show, Eq)
 
 -- | Whether in-place apply should make a @.bak@ copy before writing.
@@ -129,7 +127,6 @@ data UndoOutput
   = UndoInPlace BackupBehavior
   | UndoToExplicitFile FilePath OverwritePolicy
   | UndoToDerivedFile OverwritePolicy
-  | UndoDryRun
   deriving (Show, Eq)
 
 -- | Where convert writes the produced patch bytes.
@@ -383,23 +380,18 @@ verbosityParser :: Parser Verbosity
 verbosityParser = flag Quiet Verbose
   (long "verbose" <> short 'v' <> help "Print each record as it's applied")
 
--- | Parser for the four mutually exclusive output lanes.
+-- | Parser for the three mutually exclusive output lanes.
 -- 'asum' tries each in turn; a combination spanning lanes is rejected at parse time rather than resolved by precedence.
 -- The two writing lanes share one 'writingLane' parser so @--force@ has a single home in the parser tree.
 -- Split across lanes, a bare @--force@ would partially match the explicit-file lane (flag consumed, path missing),
 -- and optparse-applicative would then prefer that partial match's error over the derived-file lane's success.
--- @--in-place@ and @--dry-run@ commit to their own lanes, so a @--force@ paired with either is left unconsumed and errors.
+-- @--in-place@ commits to its own lane, so a @--force@ paired with it is left unconsumed and errors.
 applyOutputParser :: Parser ApplyOutput
 applyOutputParser = asum
-  [ dryRunLane
-  , inPlaceLane
+  [ inPlaceLane
   , writingLane
   ]
   where
-    dryRunLane :: Parser ApplyOutput
-    dryRunLane = ApplyDryRun <$
-      flag' () (long "dry-run" <> help "Show what would happen without writing any files")
-
     inPlaceLane :: Parser ApplyOutput
     inPlaceLane = ApplyInPlace
       <$> (flag' () (long "in-place" <> short 'i'
@@ -455,19 +447,14 @@ undoParser = do
       , undoDialects           = dialects
       }
 
--- | Parser for the four mutually exclusive undo output lanes.
+-- | Parser for the three mutually exclusive undo output lanes.
 -- Mirror of 'applyOutputParser'; the same 'asum' \/ 'writingLane' shape, so its @--force@ discipline carries over.
 undoOutputParser :: Parser UndoOutput
 undoOutputParser = asum
-  [ dryRunLane
-  , inPlaceLane
+  [ inPlaceLane
   , writingLane
   ]
   where
-    dryRunLane :: Parser UndoOutput
-    dryRunLane = UndoDryRun <$
-      flag' () (long "dry-run" <> help "Show what would happen without writing any files")
-
     inPlaceLane :: Parser UndoOutput
     inPlaceLane = UndoInPlace
       <$> (flag' () (long "in-place" <> short 'i'
