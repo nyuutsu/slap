@@ -49,10 +49,10 @@ import Slap.Text (EncodedText)
 data DPSStability = DPSStable | DPSUnstable
   deriving (Show, Eq)
 
-toDPSStability :: Word8 -> Either String DPSStability
-toDPSStability 0 = Right DPSStable
-toDPSStability 1 = Right DPSUnstable
-toDPSStability flagByte = Left ("unknown stability flag: " ++ show flagByte)
+toDPSStability :: Word8 -> Maybe DPSStability
+toDPSStability 0 = Just DPSStable
+toDPSStability 1 = Just DPSUnstable
+toDPSStability _ = Nothing
 
 fromDPSStability :: DPSStability -> Word8
 fromDPSStability DPSStable   = 0

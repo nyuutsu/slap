@@ -19,7 +19,7 @@ import Slap.Status (SlapError(..), SlapAdvisory, Parsed(..), ByteParserError(..)
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, remaining,
+import Slap.ByteParser (ByteParser, runFormatParser, flattenParse, getByte, getBytes, remaining,
                         throwByteParserError)
 import qualified Slap.ByteParser as ByteParser
 import Slap.Measure (Length(..), offsetFromParsed,
@@ -80,10 +80,9 @@ parseDPS metadataEncoding (PatchFileContents input)
   | ByteString.length input < dpsMinimumFileSize = Left (InputTooShort LabelDPS (RequiredLength (Length dpsMinimumFileSize)) (ActualLength (byteLength input)))
   | Left versionError <- toDPSFormatVersion (ByteString.index input dpsVersionOffset)
     = Left versionError
-  | otherwise = case runByteParser (parseDPSBody metadataEncoding) input of
-      Left parserError                  -> Left (ParseError LabelDPS parserError)
-      Right (Left slapError)            -> Left slapError
-      Right (Right (patch, advisories)) -> Right (Parsed patch advisories)
+  | otherwise = do
+      (patch, advisories) <- flattenParse (runFormatParser LabelDPS (parseDPSBody metadataEncoding) input)
+      Right (Parsed patch advisories)
 
 -- | Decode one 64-byte metadata field under the chosen metadata
 -- encoding. Lenient: substitution events surface as
@@ -101,14 +100,13 @@ parseDPSBody metadataEncoding = do
   (version, versionAdvisories) <- parseMetadataField metadataEncoding FieldVersion
   flagByte <- getByte
   case toDPSStability flagByte of
-    Left errorMessage -> fail errorMessage
-    Right stability -> do
+    Nothing        -> pure (Left (UnknownFlag LabelDPS FieldStability (RawFlagByte flagByte)))
+    Just stability -> do
       _ <- getByte  -- version byte (validated by parseDPS guard)
       originalSize  <- dpsSourceSizeFromParsed <$> ByteParser.word32LE
       recordsResult <- parseRecords firstAction
-      pure $ case recordsResult of
-        Left slapError -> Left slapError
-        Right records  -> Right
+      pure $ fmap
+        (\records ->
           ( DPSPatch
               { dpsName          = name
               , dpsAuthor        = author
@@ -119,7 +117,8 @@ parseDPSBody metadataEncoding = do
               , dpsRecords       = records
               }
           , nameAdvisories ++ authorAdvisories ++ versionAdvisories
-          )
+          ))
+        recordsResult
 
 parseRecords :: ActionIndex -> ByteParser (Either SlapError [DPSRecord])
 parseRecords recordIndex = do

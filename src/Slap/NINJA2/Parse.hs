@@ -14,7 +14,7 @@ import Slap.Status (SlapError(..), SlapAdvisory, Parsed(..), ByteParserError(..)
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.ByteParser (ByteParser, runByteParser, throwByteParserError,
+import Slap.ByteParser (ByteParser, runFormatParser, flattenParse, throwByteParserError,
                         getByte, getBytes, atEnd)
 import Slap.Measure (Length(..), Offset(unOffset), offsetFromParsed, FileSize(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
@@ -29,6 +29,7 @@ import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Except (ExceptT, runExceptT, throwE)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import Data.Bifunctor (first)
 import Data.Int (Int64)
 
 ----------------------------------------------------------------------------
@@ -118,13 +119,10 @@ parseNINJA2 metadataEncoding (PatchFileContents input)
       Left (BadMagic LabelNINJA2 (ActualMagic (ByteString.take 6 input)))
   | byteLength input < headerSize =
       Left (InputTooShort LabelNINJA2 (RequiredLength headerSize) (ActualLength (byteLength input)))
-  | otherwise = case toTextMode (ByteString.index input 6) of
-      Left unrecognizedByte -> Left (NINJA2UnrecognizedTextMode unrecognizedByte)
-      Right textMode -> case runByteParser (parseNINJA2Body textMode) input of
-        Left parserError -> Left (ParseError LabelNINJA2 parserError)
-        Right (Left slapError) -> Left slapError
-        Right (Right (patch, headerAdvisories)) ->
-          Right (Parsed patch headerAdvisories)
+  | otherwise = do
+      textMode <- first NINJA2UnrecognizedTextMode (toTextMode (ByteString.index input 6))
+      (patch, headerAdvisories) <- flattenParse (runFormatParser LabelNINJA2 (parseNINJA2Body textMode) input)
+      Right (Parsed patch headerAdvisories)
   where
     parseNINJA2Body :: TextMode -> ByteParser (Either SlapError (NINJA2Patch, [SlapAdvisory]))
     parseNINJA2Body textMode = do

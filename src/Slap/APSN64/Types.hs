@@ -12,6 +12,7 @@ module Slap.APSN64.Types
   , APSN64Country(..)
   , toAPSPatchType
   , fromAPSPatchType
+  , toAPSEncodingMethod
   , toAPSImageFormat
   , fromAPSImageFormat
   , toAPSN64Country
@@ -69,6 +70,13 @@ toAPSPatchType byte = Left (APSN64UnknownPatchType byte)
 fromAPSPatchType :: APSPatchType -> Word8
 fromAPSPatchType APSSimple       = 0
 fromAPSPatchType APSN64Specific  = 1
+
+-- | Validate the encoding-method byte (BYTE 6). slap decodes only
+-- encoding 0; any other value names a record stream slap can't read,
+-- so it is refused rather than misparsed as encoding 0.
+toAPSEncodingMethod :: Word8 -> Either APSN64HeaderMalformation ()
+toAPSEncodingMethod 0    = Right ()
+toAPSEncodingMethod byte = Left (APSN64UnsupportedEncoding byte)
 
 data APSImageFormat = V64Format | Z64Format | UnknownImageFormat Word8
   deriving (Show, Eq)

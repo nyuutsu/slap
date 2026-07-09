@@ -14,7 +14,7 @@ import Slap.PMSR.Types (PMSRPatch(..), PMSRRecord(..), pmsrMagicBytes)
 import Slap.Status (SlapError(..), Parsed(..), ByteParserError(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.ByteParser (ByteParser, runByteParser, throwByteParserError,
+import Slap.ByteParser (ByteParser, runFormatParser, throwByteParserError,
                         getBytes, skip, remaining)
 import qualified Slap.ByteParser as ByteParser
 import Slap.Measure (Length(..), offsetFromParsed,
@@ -22,6 +22,7 @@ import Slap.Measure (Length(..), offsetFromParsed,
                      ActualMagic(..), ActionIndex, firstAction, nextAction,
                      byteLength)
 
+import Control.Monad (when)
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 
@@ -31,9 +32,9 @@ parsePMSR :: PatchFileContents -> Either SlapError (Parsed PMSRPatch)
 parsePMSR (PatchFileContents input)
   | ByteString.length input < 4 = Left (InputTooShort LabelPMSR (RequiredLength (Length 4)) (ActualLength (byteLength input)))
   | ByteString.take 4 input /= pmsrMagicBytes = Left (BadMagic LabelPMSR (ActualMagic (ByteString.take 4 input)))
-  | otherwise = case runByteParser parsePMSRBody input of
-      Left parserError -> Left (ParseError LabelPMSR parserError)
-      Right result -> Right (Parsed result [])
+  | otherwise = do
+      result <- runFormatParser LabelPMSR parsePMSRBody input
+      Right (Parsed result [])
 
 parsePMSRBody :: ByteParser PMSRPatch
 parsePMSRBody = do
@@ -48,13 +49,12 @@ parseRecordStream recordIndex count accumulated = do
   offset <- offsetFromParsed <$> ByteParser.word32BE
   dataLength <- fromIntegral <$> ByteParser.word32BE
   available <- remaining
-  if dataLength > unLength available
-    then throwByteParserError (ByteParserTruncatedRecord recordIndex
-           (RequiredLength (lengthWithRecordHeader (Length dataLength)))
-           (RemainingLength (lengthWithRecordHeader available)))
-    else do
-      payload <- getBytes (Length dataLength)
-      parseRecordStream (nextAction recordIndex) (count - 1) (PMSRRecord offset payload : accumulated)
+  when (dataLength > unLength available) $
+    throwByteParserError (ByteParserTruncatedRecord recordIndex
+      (RequiredLength (lengthWithRecordHeader (Length dataLength)))
+      (RemainingLength (lengthWithRecordHeader available)))
+  payload <- getBytes (Length dataLength)
+  parseRecordStream (nextAction recordIndex) (count - 1) (PMSRRecord offset payload : accumulated)
   where
     -- Restate a byte count "as if" the 8-byte record header (4-byte
     -- offset, 4-byte length) had not been consumed yet, so the error

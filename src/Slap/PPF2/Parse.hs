@@ -21,7 +21,7 @@ import Slap.Status (SlapError(..), SlapAdvisory, Parsed(..), ByteParserError(..)
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.ByteParser (ByteParser, runByteParser, throwByteParserError,
+import Slap.ByteParser (ByteParser, runFormatParser, throwByteParserError,
                         getByte, getBytes, remaining, skip, word32LE)
 import Slap.Measure (Offset, offsetFromParsed, Length(..),
                      EncodingMethodByte(..),
@@ -34,7 +34,6 @@ import Slap.Text (EncodedText, EncodingName(..),
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import Data.Bifunctor (first)
 
 -- | Intermediate result of running the PPF2 header parser. Reshaped
 -- by 'parsePPF2' into the final 'PPF2Patch' once the trailing record
@@ -56,9 +55,8 @@ parsePPF2 metadataEncoding (PatchFileContents input)
   | otherwise = do
       () <- checkEncodingByte input
       let fileIdSplit = splitFileIdTrailer metadataEncoding ppf2HeaderLength input
-      header <- first (ParseError LabelPPF2) (runByteParser parsePPF2Header input)
-      records <- first (ParseError LabelPPF2)
-                       (runByteParser (parsePPF2Records firstAction) (ppf2SplitRecordBody fileIdSplit))
+      header <- runFormatParser LabelPPF2 parsePPF2Header input
+      records <- runFormatParser LabelPPF2 (parsePPF2Records firstAction) (ppf2SplitRecordBody fileIdSplit)
       pure (Parsed
         PPF2Patch
           { ppf2Description     = ppf2HeaderDescription header

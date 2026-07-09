@@ -17,7 +17,7 @@ import Slap.Checksum (CRC16(..))
 import Slap.Status (SlapError(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.ByteParser (ByteParser, runByteParser, getBytes, skip, remaining, word16LE, word32LE)
+import Slap.ByteParser (ByteParser, runFormatParser, getBytes, skip, remaining, word16LE, word32LE)
 import Slap.Measure (Length(..), FileSize(..), offsetFromParsed,
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      byteLength)
@@ -45,10 +45,9 @@ parseAPSGBA (PatchFileContents input)
       Left (InputTooShort LabelAPSGBA (RequiredLength (Length 4)) (ActualLength (byteLength input)))
   | ByteString.take 4 input /= apsGbaMagicBytes =
       Left (BadMagic LabelAPSGBA (ActualMagic (ByteString.take 4 input)))
-  | otherwise =
-      case runByteParser parseGBA input of
-        Left parserError -> Left (ParseError LabelAPSGBA parserError)
-        Right patch -> Right (Parsed patch [])
+  | otherwise = do
+      patch <- runFormatParser LabelAPSGBA parseGBA input
+      Right (Parsed patch [])
 
 parseGBA :: ByteParser APSGBAPatch
 parseGBA = do

@@ -30,7 +30,7 @@ import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser
   ( ByteParser
-  , runByteParser
+  , runFormatParser
   , getByte
   , getBytes
   , skip
@@ -59,6 +59,7 @@ import Slap.Measure
   , TrailerMarker(..)
   )
 
+import Control.Monad (when)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
@@ -99,11 +100,8 @@ parseIPS (PatchFileContents inputBytes)
     runVariantParser variant =
       let bodyAfterMagic =
             ByteString.drop (unLength ipsMagicLength) inputBytes
-      in case runByteParser (parseIPSBody variant) bodyAfterMagic of
-           Left parserError ->
-             Left (ParseError (labelForIPSVariant variant) parserError)
-           Right bodyShape ->
-             finalizeBodyShape variant bodyShape
+      in runFormatParser (labelForIPSVariant variant) (parseIPSBody variant) bodyAfterMagic
+           >>= finalizeBodyShape variant
 
 ----------------------------------------------------------------------------
 -- Body-level shape — clean EOF vs truncated
@@ -397,12 +395,11 @@ validateRecordList variant = walkAt firstAction
       let recordEndOffset =
             advance (ipsRecordOffset currentRecord)
                     (recordPayloadLength currentRecord)
-      in if unOffset recordEndOffset > unOffset maxRecordEnd
-           then Left (RecordExceedsAddressableRange variantLabel
-                        currentIndex
-                        (ActualOffset recordEndOffset)
-                        (MaxOffset maxRecordEnd))
-           else Right ()
+      in when (unOffset recordEndOffset > unOffset maxRecordEnd) $
+           Left (RecordExceedsAddressableRange variantLabel
+                   currentIndex
+                   (ActualOffset recordEndOffset)
+                   (MaxOffset maxRecordEnd))
 
 ----------------------------------------------------------------------------
 -- Post-validation structural warnings — overlap and unsorted records

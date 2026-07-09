@@ -17,10 +17,11 @@ import Slap.FieldName (FieldName(..))
 import Slap.FFI (crc32)
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.ByteParser (ByteParser, runByteParser, getUntilByte, byuuVarint, atEnd)
+import Slap.ByteParser (ByteParser, runFormatParser, getUntilByte, byuuVarint, atEnd)
 import Slap.Measure (Length(..), FileSize(..),
                      RequiredLength(..), ActualLength(..),
                      ActualMagic(..), ParsedSizeValue(..), byteLength)
+import Control.Monad (when)
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 
@@ -41,33 +42,29 @@ parseUPS (PatchFileContents input)
           magicLength    = unLength upsMagicLength
           storedPatchCRC = CRC32 (getWord32LE (inputLength - crcLength) input)
           actualPatchCRC = crc32 (ByteString.take (inputLength - crcLength) input)
-      if storedPatchCRC /= actualPatchCRC
-        then Left (PatchCRCMismatch LabelUPS (ExpectedCRC32 storedPatchCRC) (ActualCRC32 actualPatchCRC))
-        else pure ()
+      when (storedPatchCRC /= actualPatchCRC) $
+        Left (PatchCRCMismatch LabelUPS (ExpectedCRC32 storedPatchCRC) (ActualCRC32 actualPatchCRC))
       let sourceCRC = CRC32 (getWord32LE (inputLength - footerLength) input)
           targetCRC = CRC32 (getWord32LE (inputLength - 2 * crcLength) input)
           -- Parse body between magic and footer
           bodyBytes = ByteString.take (inputLength - overheadLength) (ByteString.drop magicLength input)
-      case runByteParser parseUPSBody bodyBytes of
-        Left parserError -> Left (ParseError LabelUPS parserError)
-        Right body
-          | unFileSize (upsBodySourceSize body) < 0 ->
-              Left (NegativeSize LabelUPS FieldSourceSize
-                (ParsedSizeValue (unFileSize (upsBodySourceSize body))))
-          | unFileSize (upsBodyTargetSize body) < 0 ->
-              Left (NegativeSize LabelUPS FieldTargetSize
-                (ParsedSizeValue (unFileSize (upsBodyTargetSize body))))
-          | otherwise ->
-              Right (Parsed
-                UPSPatch
-                  { upsSourceSize = upsBodySourceSize body
-                  , upsTargetSize = upsBodyTargetSize body
-                  , upsBlocks     = upsBodyBlocks body
-                  , upsSourceCRC  = sourceCRC
-                  , upsTargetCRC  = targetCRC
-                  , upsPatchCRC   = storedPatchCRC
-                  }
-                [])
+      body <- runFormatParser LabelUPS parseUPSBody bodyBytes
+      when (unFileSize (upsBodySourceSize body) < 0) $
+        Left (NegativeSize LabelUPS FieldSourceSize
+          (ParsedSizeValue (unFileSize (upsBodySourceSize body))))
+      when (unFileSize (upsBodyTargetSize body) < 0) $
+        Left (NegativeSize LabelUPS FieldTargetSize
+          (ParsedSizeValue (unFileSize (upsBodyTargetSize body))))
+      Right (Parsed
+        UPSPatch
+          { upsSourceSize = upsBodySourceSize body
+          , upsTargetSize = upsBodyTargetSize body
+          , upsBlocks     = upsBodyBlocks body
+          , upsSourceCRC  = sourceCRC
+          , upsTargetCRC  = targetCRC
+          , upsPatchCRC   = storedPatchCRC
+          }
+        [])
 
 parseUPSBody :: ByteParser UPSBody
 parseUPSBody = do

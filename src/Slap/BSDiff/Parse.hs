@@ -10,6 +10,7 @@ module Slap.BSDiff.Parse
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Bits ((.&.), (.|.), shiftL, testBit)
+import Data.Bifunctor (first)
 import Data.Int (Int64)
 import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffInstruction(..), bsdiffMagicBytes, bsdiffInstructionSize)
 import Slap.Compression.Stream (bzip2Decompress)
@@ -44,9 +45,8 @@ getSignMagnitude64 offset input =
 
 safeDecompressBZip :: BSDiffSection -> ByteString -> Either SlapError ByteString
 safeDecompressBZip _       compressed | ByteString.null compressed = Right ByteString.empty
-safeDecompressBZip section compressed = case bzip2Decompress compressed of
-  Left cause         -> Left (DecompressionFailed (BSDiffSectionFailed section cause))
-  Right decompressed -> Right decompressed
+safeDecompressBZip section compressed =
+  first (DecompressionFailed . BSDiffSectionFailed section) (bzip2Decompress compressed)
 
 ----------------------------------------------------------------------------
 -- Parsing

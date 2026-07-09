@@ -16,11 +16,12 @@ import Slap.FieldName (FieldName(..))
 import Slap.FFI (crc32)
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.ByteParser (ByteParser, runByteParser, getBytes, byuuVarint, atEnd)
+import Slap.ByteParser (ByteParser, runFormatParser, getBytes, byuuVarint, atEnd)
 import Slap.Measure (Length(..), FileSize(..), Delta(..),
                      RequiredLength(..), ActualLength(..),
                      ActualMagic(..), ParsedSizeValue(..), byteLength)
 
+import Control.Monad (when)
 import Data.Bits ((.&.), shiftR)
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
@@ -42,39 +43,30 @@ parseBPS (PatchFileContents input)
           magicLength    = unLength bpsMagicLength
           storedPatchCRC = CRC32 (getWord32LE (inputLength - crcLength) input)
           actualPatchCRC = crc32 (ByteString.take (inputLength - crcLength) input)
-      if storedPatchCRC /= actualPatchCRC
-        then Left (PatchCRCMismatch LabelBPS (ExpectedCRC32 storedPatchCRC) (ActualCRC32 actualPatchCRC))
-        else pure ()
+      when (storedPatchCRC /= actualPatchCRC) $
+        Left (PatchCRCMismatch LabelBPS (ExpectedCRC32 storedPatchCRC) (ActualCRC32 actualPatchCRC))
       let sourceCRC = CRC32 (getWord32LE (inputLength - footerLength) input)
           targetCRC = CRC32 (getWord32LE (inputLength - 2 * crcLength) input)
           -- Parse body between magic and footer
           bodyBytes = ByteString.take (inputLength - overheadLength) (ByteString.drop magicLength input)
-      case runByteParser parseBPSBody bodyBytes of
-        Left parserError -> Left (ParseError LabelBPS parserError)
-        Right body
-          | unFileSize (bpsBodySourceSize body) < 0 ->
-              Left (NegativeSize LabelBPS FieldSourceSize
-                (ParsedSizeValue (unFileSize (bpsBodySourceSize body))))
-          | unFileSize (bpsBodyTargetSize body) < 0 ->
-              Left (NegativeSize LabelBPS FieldTargetSize
-                (ParsedSizeValue (unFileSize (bpsBodyTargetSize body))))
-          | otherwise ->
-              Right (Parsed
-                BPSPatch
-                  { bpsSourceSize = bpsBodySourceSize body
-                  , bpsTargetSize = bpsBodyTargetSize body
-                  , bpsMetadata   = bpsBodyMetadata body
-                  -- The parser builds the action stream as a list (cheap
-                  -- cons during 'parseActions'); we materialise it into
-                  -- one contiguous 'Vector' here at the boundary so the
-                  -- intermediate cons cells become collectable as soon as
-                  -- the BPSPatch escapes this scope.
-                  , bpsActions    = Vector.fromList (bpsBodyActions body)
-                  , bpsSourceCRC  = sourceCRC
-                  , bpsTargetCRC  = targetCRC
-                  , bpsPatchCRC   = storedPatchCRC
-                  }
-                (bpsBodyWarnings body))
+      body <- runFormatParser LabelBPS parseBPSBody bodyBytes
+      when (unFileSize (bpsBodySourceSize body) < 0) $
+        Left (NegativeSize LabelBPS FieldSourceSize
+          (ParsedSizeValue (unFileSize (bpsBodySourceSize body))))
+      when (unFileSize (bpsBodyTargetSize body) < 0) $
+        Left (NegativeSize LabelBPS FieldTargetSize
+          (ParsedSizeValue (unFileSize (bpsBodyTargetSize body))))
+      Right (Parsed
+        BPSPatch
+          { bpsSourceSize = bpsBodySourceSize body
+          , bpsTargetSize = bpsBodyTargetSize body
+          , bpsMetadata   = bpsBodyMetadata body
+          , bpsActions    = Vector.fromList (bpsBodyActions body)
+          , bpsSourceCRC  = sourceCRC
+          , bpsTargetCRC  = targetCRC
+          , bpsPatchCRC   = storedPatchCRC
+          }
+        (bpsBodyWarnings body))
 
 parseBPSBody :: ByteParser BPSBody
 parseBPSBody = do

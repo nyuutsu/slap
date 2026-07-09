@@ -10,7 +10,7 @@ import Slap.GDIFF.Types (GDiffPatch(..), GDiffCommand(..), gdiffMagicBytes)
 import Slap.Status (SlapError(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.ByteParser (runByteParser, getByte, getBytes, word16BE, word32BE, int64BE)
+import Slap.ByteParser (runFormatParser, getByte, getBytes, word16BE, word32BE, int64BE)
 import Slap.Measure (Length(..), Offset(..),
                      RequiredLength(..), ActualLength(..),
                      ActualMagic(..), FoundVersion(..), byteLength)
@@ -22,9 +22,9 @@ parseGDIFF (PatchFileContents input)
   | ByteString.length input < 5 = Left (InputTooShort LabelGDIFF (RequiredLength (Length 5)) (ActualLength (byteLength input)))
   | ByteString.take 4 input /= gdiffMagicBytes = Left (BadMagic LabelGDIFF (ActualMagic (ByteString.take 4 input)))
   | ByteString.index input 4 /= 4 = Left (BadVersion LabelGDIFF (FoundVersion (ByteString.index input 4)))
-  | otherwise = case runByteParser (do { _ <- getBytes (Length 5); parseCommands [] }) input of
-      Left parserError -> Left (ParseError LabelGDIFF parserError)
-      Right patch -> Right (Parsed patch [])
+  | otherwise = do
+      patch <- runFormatParser LabelGDIFF (getBytes (Length 5) *> parseCommands []) input
+      Right (Parsed patch [])
   where
     parseCommands accumulated = do
       opcode <- getByte

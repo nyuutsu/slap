@@ -17,6 +17,8 @@
 module Slap.ByteParser
   ( ByteParser
   , runByteParser
+  , runFormatParser
+  , flattenParse
   , throwByteParserError
     -- * Primitives
   , getByte
@@ -29,6 +31,8 @@ module Slap.ByteParser
   , getInput
   , atEnd
   , remaining
+    -- * Combinators
+  , parseWhen
     -- * Fixed-width readers
   , word16LE
   , word32LE
@@ -65,7 +69,9 @@ import Slap.Status
   ( ByteParserError(..)
   , ByteParserOperation(..)
   , SlapAdvisory(..)
+  , SlapError(ParseError)
   )
+import Slap.FormatLabel (FormatLabel)
 
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Reader (ReaderT(..), ask)
@@ -74,6 +80,7 @@ import Control.Monad.Trans.State.Strict
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import Data.Bifunctor (first)
 import Data.Bits ((.&.), (.|.), shiftL, testBit)
 import Data.Int (Int64)
 import Data.Word (Word8, Word16, Word32)
@@ -100,6 +107,17 @@ instance MonadFail ByteParser where
 runByteParser :: ByteParser a -> ByteString -> Either ByteParserError a
 runByteParser (ByteParser parser) input =
   runReaderT (evalStateT parser (Position 0)) input
+
+-- | Run a format's body parser, tagging a parse failure as that format's 'ParseError'.
+runFormatParser :: FormatLabel -> ByteParser a -> ByteString -> Either SlapError a
+runFormatParser label parser input =
+  first (ParseError label) (runByteParser parser input)
+
+flattenParse :: Either SlapError (Either SlapError a) -> Either SlapError a
+flattenParse = either Left id
+
+parseWhen :: Bool -> ByteParser a -> ByteParser (Maybe a)
+parseWhen present parser = if present then Just <$> parser else pure Nothing
 
 ----------------------------------------------------------------------------
 -- Internal helpers

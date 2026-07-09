@@ -41,7 +41,7 @@ import Slap.VCDIFF.AddressCache
   , decodeCopyAddress, CopyAddressReading(..), AddressDecodeFailure(..) )
 import Slap.Binary (getVcdiffVarint, VarintResult(..), viewBytesInRange)
 import Slap.ByteParser
-  ( ByteParser, runByteParser, getByte, getBytes, skip, lookAhead
+  ( ByteParser, runFormatParser, parseWhen, getByte, getBytes, skip, lookAhead
   , vcdiffVarintReportingCanonicality
   , VcdiffVarintReading(..), nonCanonicalVcdiffVarintNote
   , word32BE, remaining, atEnd )
@@ -101,12 +101,10 @@ parseVCDIFFWith tablePolicy (PatchFileContents input)
               (ActualLength (byteLength input)))
   | ByteString.take magicLength input /= vcdiffMagicBytes =
       Left (BadMagic LabelVCDIFF (ActualMagic (ByteString.take magicLength input)))
-  | otherwise =
-      case runByteParser parseRawPatch (ByteString.drop magicLength input) of
-        Left parserError -> Left (ParseError LabelVCDIFF parserError)
-        Right rawPatch   -> do
-          (patch, decodeNotes) <- classifyAndDecode tablePolicy rawPatch
-          pure (Parsed patch (parseNotes rawPatch ++ decodeNotes))
+  | otherwise = do
+      rawPatch <- runFormatParser LabelVCDIFF parseRawPatch (ByteString.drop magicLength input)
+      (patch, decodeNotes) <- classifyAndDecode tablePolicy rawPatch
+      pure (Parsed patch (parseNotes rawPatch ++ decodeNotes))
   where
     magicLength = ByteString.length vcdiffMagicBytes
 
@@ -222,9 +220,7 @@ parseRawPatch = do
   headerIndicator  <- getByte
   if version == 0 && headerUsesOnlyRecognizedBits headerIndicator
     then do
-      compressorId  <- if testBit headerIndicator vcdDecompressBit
-                         then Just <$> getByte
-                         else pure Nothing
+      compressorId  <- parseWhen (testBit headerIndicator vcdDecompressBit) getByte
       (codeTableData, codeTableNote) <-
         if testBit headerIndicator vcdCodeTableBit
           then do (bytes, note) <- parseCodeTableData
@@ -247,21 +243,19 @@ headerUsesOnlyRecognizedBits :: Word8 -> Bool
 headerUsesOnlyRecognizedBits headerIndicator =
   headerIndicator .&. reservedIndicatorMask == 0
 
--- | The custom-code-table data's wire shape: a varint length, then that many bytes (docs/vcdiff/rfc-vcdiff/spec.md "Custom code tables").
--- Carried verbatim: the cache-size header and inner delta within them are peeled by 'buildCustomTable', not here. On the wire the field follows the compressor-id byte (RFC 3284 §4.1's header order) and precedes the application header.
-parseCodeTableData :: ByteParser (ByteString, Maybe SlapAdvisory)
-parseCodeTableData = do
+parseVarintLengthPrefixedField :: ByteParser (ByteString, Maybe SlapAdvisory)
+parseVarintLengthPrefixedField = do
   declaredLength <- vcdiffVarintReportingCanonicality
   bytes <- getBytes (Length (fromIntegral (vcdiffVarintValue declaredLength)))
   pure (bytes, vcdiffVarintAdvisory declaredLength)
 
--- | The application header's wire shape: a varint length, then that many opaque bytes (docs/vcdiff/xdelta3/spec.md "Application header").
--- On the wire the field follows the compressor-id byte and the code-table data (both read above when declared), so here it follows whichever of those preceded it.
+-- | The custom code table field (docs/vcdiff/rfc-vcdiff/spec.md "Custom code tables").
+parseCodeTableData :: ByteParser (ByteString, Maybe SlapAdvisory)
+parseCodeTableData = parseVarintLengthPrefixedField
+
+-- | The application header field (docs/vcdiff/xdelta3/spec.md "Application header").
 parseApplicationHeader :: ByteParser (ByteString, Maybe SlapAdvisory)
-parseApplicationHeader = do
-  declaredLength <- vcdiffVarintReportingCanonicality
-  bytes <- getBytes (Length (fromIntegral (vcdiffVarintValue declaredLength)))
-  pure (bytes, vcdiffVarintAdvisory declaredLength)
+parseApplicationHeader = parseVarintLengthPrefixedField
 
 -- | What 'parseRawWindows' finds where the next window would begin: input spent, the one trailing shape slap recognizes, or another window to frame.
 -- The collect loop's three outcomes as data, in the classify-then-dispatch shape, so the loop reads as policy and the looking lives in 'peekWindowStreamHead'.
@@ -333,10 +327,8 @@ parseRawWindow = do
   dataLength <- vcdiffVarintReportingCanonicality
   instLength <- vcdiffVarintReportingCanonicality
   addrLength <- vcdiffVarintReportingCanonicality
-  -- The per-window checksum, when present, sits between the section lengths and the data section: four bytes, big-endian, presence decided by the indicator bit alone (docs/vcdiff/xdelta3/spec.md "Per-window Adler32").
-  adlerChecksum <- if testBit windowIndicator vcdAdler32Bit
-                     then Just . Adler32 <$> word32BE
-                     else pure Nothing
+  -- The per-window Adler32 checksum (docs/vcdiff/xdelta3/spec.md "Per-window Adler32").
+  adlerChecksum <- parseWhen (testBit windowIndicator vcdAdler32Bit) (Adler32 <$> word32BE)
   dataSection <- getBytes (Length (fromIntegral (vcdiffVarintValue dataLength)))
   instSection <- getBytes (Length (fromIntegral (vcdiffVarintValue instLength)))
   addrSection <- getBytes (Length (fromIntegral (vcdiffVarintValue addrLength)))

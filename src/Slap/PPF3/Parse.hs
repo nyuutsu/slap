@@ -18,7 +18,7 @@ import Slap.Status (SlapError(..), SlapAdvisory, Parsed(..), ByteParserError(..)
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.ByteParser (ByteParser, runByteParser, throwByteParserError,
+import Slap.ByteParser (ByteParser, runFormatParser, parseWhen, throwByteParserError,
                         getByte, getBytes, remaining, skip, int64LE)
 import Slap.Measure (offsetFromParsed, Length(..), EncodingMethodByte(..),
                      RawFlagByte(..),
@@ -31,7 +31,6 @@ import Slap.Text (EncodedText, EncodingName(..),
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import Data.Bifunctor (first)
 import Data.Word (Word8)
 
 -- | Intermediate result of parsing the PPF3 fixed-header fields.
@@ -52,7 +51,7 @@ parsePPF3 metadataEncoding (PatchFileContents input)
               (ActualLength (byteLength input)))
   | otherwise = do
       () <- checkEncodingByte input
-      header <- first (ParseError LabelPPF3) (runByteParser parseHeader input)
+      header <- runFormatParser LabelPPF3 parseHeader input
       imageType <- case ppf3HeaderImageTypeByte header of
         0x00 -> Right BIN
         0x01 -> Right GI
@@ -61,9 +60,8 @@ parsePPF3 metadataEncoding (PatchFileContents input)
                            then ppf3MinHeaderLength <> ppf3ValidationSize
                            else ppf3MinHeaderLength
           fileIdSplit = splitFileIdTrailer metadataEncoding headerLength input
-      records <- first (ParseError LabelPPF3)
-                       (runByteParser (parsePPF3Records (ppf3HeaderHasUndo header) firstAction)
-                                      (ppf3SplitRecordBody fileIdSplit))
+      records <- runFormatParser LabelPPF3 (parsePPF3Records (ppf3HeaderHasUndo header) firstAction)
+                                           (ppf3SplitRecordBody fileIdSplit)
       pure (Parsed
         PPF3Patch
           { ppf3Description     = ppf3HeaderDescription header
@@ -85,9 +83,7 @@ parsePPF3 metadataEncoding (PatchFileContents input)
       hasBlockByte <- getByte
       hasUndoByte <- getByte
       skip (Length 1)
-      validationBlock <- if hasBlockByte /= 0
-        then Just . PPF3ValidationBlock <$> getBytes ppf3ValidationSize
-        else pure Nothing
+      validationBlock <- parseWhen (hasBlockByte /= 0) (PPF3ValidationBlock <$> getBytes ppf3ValidationSize)
       pure PPF3ParsedHeader
         { ppf3HeaderDescription           = descriptionText
         , ppf3HeaderDescriptionAdvisories = descriptionAdvisories

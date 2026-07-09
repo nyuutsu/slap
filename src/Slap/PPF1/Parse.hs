@@ -12,7 +12,7 @@ import Slap.Status (SlapError(..), SlapAdvisory, Parsed(..), ByteParserError(..)
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.ByteParser (ByteParser, runByteParser, throwByteParserError,
+import Slap.ByteParser (ByteParser, runFormatParser, throwByteParserError,
                         getByte, getBytes, remaining, skip, word32LE, word32BE)
 import Slap.Measure (Offset, offsetFromParsed, Length(..), EncodingMethodByte(..),
                      ActionIndex,
@@ -22,7 +22,6 @@ import Slap.Text (EncodedText, EncodingName(..), decodeFixedWidthTextField)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import Data.Bifunctor (first)
 
 -- | Intermediate result of running the PPF1 body parser,
 -- reshaped by 'parsePPF1' into the final 'PPF1Patch' and 'Parsed' envelope.
@@ -40,7 +39,7 @@ parsePPF1 origin metadataEncoding (PatchFileContents input)
               (ActualLength (byteLength input)))
   | otherwise = do
       () <- checkEncodingByte input
-      body <- first (ParseError LabelPPF1) (runByteParser parsePPF1Body input)
+      body <- runFormatParser LabelPPF1 parsePPF1Body input
       pure (Parsed
         PPF1Patch
           { ppf1Description = ppf1BodyDescription body

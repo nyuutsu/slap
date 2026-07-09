@@ -31,7 +31,7 @@ import Slap.Status (SlapError(..), DecompressionFailure(..), Parsed(..),
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.ByteParser (ByteParser, runByteParser, throwByteParserError,
+import Slap.ByteParser (ByteParser, runFormatParser, throwByteParserError,
                         getByte, getBytes, remaining)
 import Slap.Measure (Length(..), Offset(Offset), offsetFromParsed,
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
@@ -100,10 +100,11 @@ zlibDecompress compressed = case zlibInflate compressed of
 parseBinary :: NINJA1SubFormat -> PatchFileContents -> Either SlapError NINJA1Patch
 parseBinary format (PatchFileContents payload)
   | ByteString.length payload < 41 = Left (InputTooShort LabelNINJA1 (RequiredLength (Length 41)) (ActualLength (byteLength payload)))
-  | otherwise = case runByteParser (parseBinaryGet format) payload of
-      Left parserError                 -> Left (ParseError LabelNINJA1 parserError)
-      Right (EndedWithoutEOFFooter, _)  -> Left NINJA1BinaryMissingEOFFooter
-      Right (ReachedEOFFooter, patch)   -> Right patch
+  | otherwise = do
+      (termination, patch) <- runFormatParser LabelNINJA1 (parseBinaryGet format) payload
+      case termination of
+        EndedWithoutEOFFooter -> Left NINJA1BinaryMissingEOFFooter
+        ReachedEOFFooter      -> Right patch
 
 parseBinaryGet :: NINJA1SubFormat -> ByteParser (NINJA1BinaryTermination, NINJA1Patch)
 parseBinaryGet format = do

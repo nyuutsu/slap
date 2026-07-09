@@ -13,7 +13,7 @@ import Slap.Status (SlapError(..), SlapAdvisory, ByteParserError(..), Parsed(..)
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.ByteParser (ByteParser, runByteParser, throwByteParserError,
+import Slap.ByteParser (ByteParser, runFormatParser, throwByteParserError,
                         getByte, getBytes, skip, remaining, word32LE)
 import Slap.Measure (offsetFromParsed, Length(..),
                      RequiredLength(..), ActualLength(..), RemainingLength(..),
@@ -47,7 +47,7 @@ parsePPF4 metadataEncoding (PatchFileContents input)
               (RequiredLength minPPF4Length)
               (ActualLength (byteLength input)))
   | otherwise = do
-      body <- ppf4WrapError (runByteParser parsePPF4Body input)
+      body <- runFormatParser LabelPPF4 parsePPF4Body input
       (replaces, appends) <- partitionPhases (ppf4BodyWireRecords body)
       pure (Parsed
         PPF4Patch
@@ -76,9 +76,6 @@ parsePPF4 metadataEncoding (PatchFileContents input)
 -- the 6-byte preamble before reading anything.
 minPPF4Length :: Length
 minPPF4Length = ppf4PreambleLength
-
-ppf4WrapError :: Either ByteParserError a -> Either SlapError a
-ppf4WrapError = either (Left . ParseError LabelPPF4) Right
 
 -- | Parse PPF4 records (1-byte command, 4-byte offset, 1-byte
 -- count, N data bytes) in wire order, commands attached. Truncation

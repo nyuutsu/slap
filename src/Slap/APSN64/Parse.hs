@@ -11,21 +11,22 @@ module Slap.APSN64.Parse
 
 import Slap.APSN64.Types (APSN64Patch(..), APSN64Record(..), APSN64Header(..),
                            APSPatchType(..), N64CartId(..), N64ChecksumPair(..),
-                           toAPSPatchType, toAPSImageFormat,
+                           toAPSPatchType, toAPSEncodingMethod, toAPSImageFormat,
                            toAPSN64Country,
                            apsN64MagicBytes, apsN64DescriptionWidth,
                            apsN64RecordHeaderSize,
                            apsN64DestinationSizeFromParsed)
-import Slap.Status (SlapError(..), SlapAdvisory(..), Parsed(..), APSN64HeaderMalformation(..))
+import Slap.Status (SlapError(..), SlapAdvisory(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, skip, remaining, word32LE)
+import Slap.ByteParser (ByteParser, runFormatParser, getByte, getBytes, skip, remaining, word32LE)
 import Slap.Measure (Length(..), offsetFromParsed,
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      byteLength)
 import Slap.Text (EncodingName(..), decodeFixedWidthTextField)
 
+import Data.Bifunctor (first)
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 
@@ -50,18 +51,10 @@ parseAPSN64 metadataEncoding (PatchFileContents input)
              (RequiredLength (Length (magicLength + 2)))
              (ActualLength (byteLength input)))
   | otherwise = do
-      patchType <- case toAPSPatchType (ByteString.index input magicLength) of
-        Left malformation -> Left (MalformedAPSN64Header malformation)
-        Right validatedType -> Right validatedType
-      -- The encoding method (BYTE 6): slap decodes only encoding 0;
-      -- a different one means a record stream slap can't read, so reject rather than misparse it as encoding-0.
-      case ByteString.index input (magicLength + 1) of
-        0       -> Right ()
-        encByte -> Left (MalformedAPSN64Header (APSN64UnsupportedEncoding encByte))
-      case runByteParser (parseN64 metadataEncoding patchType) input of
-        Left parserError -> Left (ParseError LabelAPSN64 parserError)
-        Right walk ->
-          Right (Parsed (apsN64ParseWalkPatch walk) (apsN64ParseWalkWarnings walk))
+      patchType <- first MalformedAPSN64Header (toAPSPatchType (ByteString.index input magicLength))
+      first MalformedAPSN64Header (toAPSEncodingMethod (ByteString.index input (magicLength + 1)))
+      walk <- runFormatParser LabelAPSN64 (parseN64 metadataEncoding patchType) input
+      Right (Parsed (apsN64ParseWalkPatch walk) (apsN64ParseWalkWarnings walk))
   where
     magicLength = ByteString.length apsN64MagicBytes
 

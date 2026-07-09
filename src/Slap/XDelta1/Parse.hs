@@ -47,7 +47,7 @@ import Slap.Status (SlapError(..), DecompressionFailure(..), Parsed(..),
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, skip, edsioVarint, word32BE)
+import Slap.ByteParser (ByteParser, runFormatParser, getByte, getBytes, skip, edsioVarint, word32BE)
 import Slap.Measure (Length(..), FileSize(..), Offset(Offset), offsetFromParsed,
                      RequiredLength(..), ActualLength(..),
                      ActualMagic(..), ExpectedMagic(..),
@@ -56,6 +56,7 @@ import Slap.Compression.Stream (gzipInflate)
 import Slap.Text (EncodingName(..), decodeTextLenient, decodeLossAdvisories)
 
 import Control.Monad (unless)
+import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Bits ((.&.), shiftR)
@@ -199,11 +200,9 @@ parseVersion1Point1 metadataEncoding (PatchFileContents input) expectedMagic
     controlSegmentRaw = ByteString.take (trailerOffset - controlOffset) (ByteString.drop controlOffset input)
 
     safeDecompressGZip raw
-      | not compressed = Right raw
-      | ByteString.null raw    = Right ByteString.empty
-      | otherwise      = case gzipInflate raw of
-          Left cause   -> Left (DecompressionFailed (XDelta1Failed cause))
-          Right result -> Right result
+      | not compressed      = Right raw
+      | ByteString.null raw = Right ByteString.empty
+      | otherwise           = first (DecompressionFailed . XDelta1Failed) (gzipInflate raw)
 
 -- | An xdelta1 source record straight off the wire, with its two boolean flags still raw bytes.
 -- 'validateSourceFlags' decodes them into a 'ParsedSourceRecord', refusing a flag the format leaves undefined.
@@ -277,10 +276,7 @@ parseControl metadataEncoding noVerifyFlag compressionPosture controlSegment dat
   | ByteString.length controlBytes < 28 =
       Left (TruncatedRecord LabelXDelta1 0 (Length 28) (byteLength controlBytes))
   | otherwise = do
-      parsedBody <-
-        case runByteParser parseControlBody controlBytes of
-          Left parserError -> Left (ParseError LabelXDelta1 parserError)
-          Right result      -> Right result
+      parsedBody <- runFormatParser LabelXDelta1 parseControlBody controlBytes
       let toMD5        = parsedControlTargetMD5 parsedBody
           targetLength = parsedControlTargetLength parsedBody
           rawSources   = parsedControlSources parsedBody
@@ -445,10 +441,10 @@ validateSourceFlags raw = do
 -- any other count or ordering is off-spec and rejected at parse time.
 requireDataAndFileRecords :: [ParsedSourceRecord] -> Either SlapError ParsedSourcePair
 requireDataAndFileRecords sources = case sources of
-  [first, second] -> case (parsedSourceKind first, parsedSourceKind second) of
+  [firstSource, secondSource] -> case (parsedSourceKind firstSource, parsedSourceKind secondSource) of
     (ParsedDataKind, ParsedFileKind) -> Right ParsedSourcePair
-      { parsedDataRecord = first
-      , parsedFileRecord = second
+      { parsedDataRecord = firstSource
+      , parsedFileRecord = secondSource
       }
     (ParsedDataKind, ParsedDataKind) -> Left (UnsupportedXDelta1Shape XDelta1TwoDataSources)
     (ParsedFileKind, ParsedDataKind) -> Left (UnsupportedXDelta1Shape XDelta1ReversedDataFileOrder)
