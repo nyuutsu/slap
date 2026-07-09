@@ -79,10 +79,6 @@ encodeWriteRecord ehunk =
   <> byteString (encodedPayload ehunk)
 
 -- | Encode a PPF3 patch from pre-split, pre-narrowed records.
--- Each write payload ≤ @ppf3MaxRecordPayload@
--- (the offset is unbounded, Int64-shaped on the wire, so the convert pipeline narrows via 'Slap.Narrow.narrowHunksUnbounded').
--- Each undo payload ≤ @ppf3MaxRecordPayload@;
--- the parallel undo pipeline 'Slap.Measure.splitUndoHunks' → 'Slap.Narrow.narrowUndoHunksUnbounded' enforces this.
 encodePPF3 :: [EncodedHunk]
            -> EncodedText
            -> Maybe [EncodedUndoHunk]

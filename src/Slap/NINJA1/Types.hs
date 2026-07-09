@@ -19,6 +19,7 @@ module Slap.NINJA1.Types
   , ninja1SentinelOffset
   , ninja1BinaryEOFMarkerBytes
   , ninja1BinaryEOFMarkerWidth
+  , ninja1Limits
     -- * Source/target size-pair rule
   , ninja1RejectIncompatibleSizeChange
   ) where
@@ -31,6 +32,7 @@ import Data.Word (Word8)
 import Slap.Checksum (CRC32, MD5Hash, SHA1Hash)
 import Slap.Measure (Offset(..), SentinelOffset(..),
                      FileSize, ActualSize(..), ExpectedSize(..))
+import Slap.Narrow (EncodingLimits(..))
 import Slap.Status (SlapError(..), UnencodeabilityReason(..))
 import Slap.FormatLabel (FormatLabel(..))
 
@@ -170,6 +172,13 @@ ninja1BinaryEOFMarkerBytes = "EOF"
 -- A 3-byte offset width followed by 'ninja1BinaryEOFMarkerBytes' is the on-wire encoding of the binary-format footer.
 ninja1BinaryEOFMarkerWidth :: Int
 ninja1BinaryEOFMarkerWidth = 3
+
+-- | NINJA1's wire offset is unsigned; the maximum never binds, and narrowing rejects a negative offset ('Slap.Narrow.NegativeOffset').
+ninja1Limits :: EncodingLimits
+ninja1Limits = EncodingLimits
+  { maximumOffset = Offset maxBound
+  , formatLabel   = LabelNINJA1
+  }
 
 romTypeName :: NINJA1RomType -> Text
 romTypeName RomRAW            = "RAW"

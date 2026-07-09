@@ -62,7 +62,9 @@ encodeRecordBuilder ehunk =
        <> byteString lengthEncoded
        <> byteString recordPayload
 
--- | Encode an Int64 as minimal big-endian bytes (at least 1 byte).
+-- | Encode a non-negative 'Int64' as minimal big-endian bytes (at least one).
+-- Non-negative is a precondition: 'shiftR' sign-extends a negative value, so 'extractBytes' never hits its zero base case and loops forever.
+-- Narrowing ('Slap.NINJA1.Types.ninja1Limits') refuses a negative offset before it reaches here.
 encodeBigEndian :: Int64 -> ByteString
 encodeBigEndian 0 = ByteString.singleton 0
 encodeBigEndian value = ByteString.pack (extractBytes [] value)

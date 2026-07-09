@@ -1,7 +1,7 @@
 {-# LANGUAGE StrictData #-}
 
 -- | The narrowing layer: validate 'SplitHunk's and 'SplitUndoHunk's against per-format offset bounds,
--- producing 'EncodedHunk's and 'EncodedUndoHunk's that downstream encoders can write without silent truncation.
+-- producing 'EncodedHunk's and 'EncodedUndoHunk's that downstream encoders can write without silent truncation or a negative write position.
 -- Both pipelines compose: a write record passes through 'Slap.Measure.splitHunks' → 'narrowHunks' to reach 'EncodedHunk';
 -- a PPF3 undo record passes through 'Slap.Measure.splitUndoHunks' → 'narrowUndoHunks' to reach 'EncodedUndoHunk'.
 -- The discipline is type-enforced: removing either pass from any direct-format pipeline produces a type error.
@@ -17,12 +17,8 @@ module Slap.Narrow
   , NarrowingFailure(..)
   , narrowHunk
   , narrowHunks
-  , narrowHunkUnbounded
-  , narrowHunksUnbounded
   , narrowUndoHunk
   , narrowUndoHunks
-  , narrowUndoHunkUnbounded
-  , narrowUndoHunksUnbounded
   , narrowToWord32
   , narrowToWord16
   ) where
@@ -37,13 +33,8 @@ import Slap.Measure (Offset(..), SplitHunk, splitOffset, splitPayload,
                      splitUndoOriginal,
                      ActualOffset(..), MaxOffset(..))
 
--- | A 'SplitHunk' that has been validated against a format's
--- wire-format offset range (or had that validation explicitly waived
--- for a format whose encoding has no per-record bound — see
--- 'narrowHunkUnbounded'). The constructor is intentionally not
--- exported: every 'EncodedHunk' that exists in slap came from one of
--- the narrow* functions in this module, which in turn can only be
--- handed a 'SplitHunk' produced by the split pass in "Slap.Measure".
+-- | A 'SplitHunk' whose offset 'narrowHunk' has checked non-negative and within the format's maximum.
+-- The constructor is not exported, so every 'EncodedHunk' carries that guarantee.
 data EncodedHunk = EncodedHunk
   { encodedOffset  :: !Offset
   , encodedPayload :: !ByteString
@@ -125,26 +116,8 @@ narrowHunk limits hunk
 narrowHunks :: EncodingLimits -> [SplitHunk] -> Either NarrowingFailure [EncodedHunk]
 narrowHunks limits = traverse (narrowHunk limits)
 
--- | Lift a 'SplitHunk' to an 'EncodedHunk' without validation. Only
--- legitimate for formats whose wire encoding imposes no per-record
--- offset bound — currently NINJA1 (variable-width length-of-offset)
--- and PPF3 (Int64-shaped offset, which any 'Offset' on a 64-bit host
--- already fits).
-narrowHunkUnbounded :: SplitHunk -> EncodedHunk
-narrowHunkUnbounded hunk = EncodedHunk
-  { encodedOffset  = splitOffset hunk
-  , encodedPayload = splitPayload hunk
-  }
-
-narrowHunksUnbounded :: [SplitHunk] -> [EncodedHunk]
-narrowHunksUnbounded = map narrowHunkUnbounded
-
--- | A 'SplitUndoHunk' that has been validated against a format's
--- wire-format offset range (or had that validation explicitly waived
--- via 'narrowUndoHunkUnbounded'). Constructor private; the only way
--- to obtain one is to narrow a 'SplitUndoHunk', which itself can
--- only be obtained from one of the @split*@ functions in
--- "Slap.Measure". Parallel to 'EncodedHunk' for undo records.
+-- | The undo-record parallel of 'EncodedHunk': a 'SplitUndoHunk' whose offset 'narrowUndoHunk' has checked.
+-- Its constructor is private for the same reason.
 data EncodedUndoHunk = EncodedUndoHunk
   { encodedUndoOffset   :: !Offset
   , encodedUndoPayload  :: !ByteString
@@ -174,17 +147,3 @@ narrowUndoHunk limits hunk
 
 narrowUndoHunks :: EncodingLimits -> [SplitUndoHunk] -> Either NarrowingFailure [EncodedUndoHunk]
 narrowUndoHunks limits = traverse (narrowUndoHunk limits)
-
--- | Lift a 'SplitUndoHunk' to an 'EncodedUndoHunk' without
--- validation. Only legitimate for formats whose wire encoding
--- imposes no per-record offset bound — currently PPF3 alone, whose
--- Int64-shaped offset on the wire fits any 'Offset' on a 64-bit host.
-narrowUndoHunkUnbounded :: SplitUndoHunk -> EncodedUndoHunk
-narrowUndoHunkUnbounded hunk = EncodedUndoHunk
-  { encodedUndoOffset   = splitUndoOffset hunk
-  , encodedUndoPayload  = splitUndoPayload hunk
-  , encodedUndoOriginal = splitUndoOriginal hunk
-  }
-
-narrowUndoHunksUnbounded :: [SplitUndoHunk] -> [EncodedUndoHunk]
-narrowUndoHunksUnbounded = map narrowUndoHunkUnbounded

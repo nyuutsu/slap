@@ -25,6 +25,7 @@ module Slap.PPF3.Types
   , ppf3PostDescriptionLength
   , ppf3MinHeaderLength
   , ppf3MaxRecordPayload
+  , ppf3Limits
   , ppf3RecordHeaderLength
   , ppf3ValidationOffset
   , ppf3ValidationSize
@@ -43,7 +44,7 @@ import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Length(..), Offset(..), FileSize,
                      ActualSize(..), ExpectedSize(..))
-import Slap.Narrow (narrowToWord16)
+import Slap.Narrow (narrowToWord16, EncodingLimits(..))
 import Slap.Text (EncodedText, EncodingName(..),
                   encodedTextContent, encodeTextLenient)
 
@@ -149,6 +150,13 @@ ppf3MinHeaderLength =
 -- (and undo-payload) at @0xFF = 255@.
 ppf3MaxRecordPayload :: Length
 ppf3MaxRecordPayload = Length 255
+
+-- | PPF3's signed 8-byte offset fits slap's 'Int', so the maximum never binds; narrowing rejects a negative offset ('Slap.Narrow.NegativeOffset').
+ppf3Limits :: EncodingLimits
+ppf3Limits = EncodingLimits
+  { maximumOffset = Offset maxBound
+  , formatLabel   = LabelPPF3
+  }
 
 -- | Fixed per-record header: 8-byte LE offset + 1-byte payload count.
 ppf3RecordHeaderLength :: Length

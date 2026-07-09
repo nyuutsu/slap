@@ -60,7 +60,7 @@ import Slap.PPF2.Types (PPF2ValidationBlock(..),
                         ppf2RejectIncompatibleSizeChange)
 import qualified Slap.PPF3.Create as PPF3
 import Slap.PPF3.Types (PPF3ImageType(..), PPF3ValidationBlock(..),
-                        narrowPPF3FileId, ppf3MaxRecordPayload,
+                        narrowPPF3FileId, ppf3MaxRecordPayload, ppf3Limits,
                         ppf3ValidationOffset,
                         ppf3RejectIncompatibleSizeChange)
 import qualified Slap.PPF4.Create as PPF4
@@ -115,8 +115,7 @@ import Slap.Measure (FileSize(..), Length(..), Offset(..), Hunk(..),
                       splitHunks, splitHunksUnbounded, splitUndoHunks,
                       splitPayload, byteFileSize, byteLength)
 import Slap.Narrow (EncodedHunk, EncodingLimits(..),
-                    narrowHunks, narrowHunksUnbounded,
-                    narrowUndoHunksUnbounded)
+                    narrowHunks, narrowUndoHunks)
 import Slap.Constraint (Constraint(..))
 import Slap.Dialect (Dialect(..))
 import Slap.Status (SlapError(..), SlapAdvisory(..), UndoRecordCount(..), DroppedValue(..),
@@ -967,29 +966,24 @@ convertDirect contents (CreateDirect target) meta constraints dialects = do
         , resultAdvisories = notes ++ resultAdvisories encoded
         }
 
--- | Per-format wire-format offset bound, consulted by the @narrow@
--- helper inside 'encodeDirect'. Each 'Just' entry pairs the format's
--- maximum addressable offset with its 'FormatLabel' so an overflow
--- surfaces as 'NarrowingError' tagged with the right format. The
--- 'Nothing' entries name formats whose wire encoding has no per-record
--- offset cap; their arms in 'encodeDirect' route through
--- 'narrowHunksUnbounded' instead.
-encodingLimits :: DirectCreate -> Maybe EncodingLimits
-encodingLimits CreateIPS     = Just ipsLimits
-encodingLimits CreateIPS32   = Just ips32Limits
-encodingLimits CreateEBP     = Just ebpLimits
-encodingLimits CreateAPSN64  = Just APSN64.apsN64Limits
-encodingLimits CreatePMSR    = Just PMSR.pmsrLimits
-encodingLimits CreatePPF1    = Just ppf1Limits
-encodingLimits CreatePPF2    = Just ppf2Limits
-encodingLimits CreatePPF3    = Nothing  -- Int64-shaped offset, no per-record cap
-encodingLimits CreatePPF4    = Just ppf4Limits
-encodingLimits CreateNINJA1  = Nothing  -- variable-width length-of-offset, no per-record cap
+-- | The offset bound the @narrow@ helper checks each format's hunks against.
+-- Each pairs a maximum offset with a 'FormatLabel', so an out-of-range or negative offset surfaces as 'NarrowingError' naming the right format.
+encodingLimits :: DirectCreate -> EncodingLimits
+encodingLimits CreateIPS     = ipsLimits
+encodingLimits CreateIPS32   = ips32Limits
+encodingLimits CreateEBP     = ebpLimits
+encodingLimits CreateAPSN64  = APSN64.apsN64Limits
+encodingLimits CreatePMSR    = PMSR.pmsrLimits
+encodingLimits CreatePPF1    = ppf1Limits
+encodingLimits CreatePPF2    = ppf2Limits
+encodingLimits CreatePPF3    = ppf3Limits
+encodingLimits CreatePPF4    = ppf4Limits
+encodingLimits CreateNINJA1  = NINJA1.ninja1Limits
 
 -- | Validation (offset range, sentinel collision) runs after format-specific splitting,
 -- so split-induced sentinel collisions are caught.
 encodeDirect :: PatchContents -> InputFileContents -> DirectCreate -> RequestedPatchMetadata
-             -> Maybe EncodingLimits -> RequestedConstraints -> RequestedDialects
+             -> EncodingLimits -> RequestedConstraints -> RequestedDialects
              -> Either SlapError CreateResult
 encodeDirect contents source target meta limits constraints dialects = case target of
   CreateIPS -> do
@@ -1066,15 +1060,10 @@ encodeDirect contents source target meta limits constraints dialects = case targ
               , resultAdvisories = resultAdvisories ppf2Result ++ trailerAdvisories
               }
   CreatePPF3 -> do
-    -- PPF3's offset is Int64-shaped on the wire; the offset bound is
-    -- 'Nothing' in 'encodingLimits', so 'narrow' here delegates to
-    -- 'narrowHunksUnbounded'. Payload is still capped at
-    -- 'ppf3MaxRecordPayload'. The parallel undo pipeline shares that
-    -- "no offset cap" property, so the undo hunks narrow via
-    -- 'narrowUndoHunksUnbounded'.
     records <- narrow (splitHunks ppf3MaxRecordPayload (contentsRecords contents))
-    let undoEncoded = fmap narrowUndoHunksUnbounded (contentsUndoData contents)
-        ppfResult   = PPF3.encodePPF3 records descriptionTyped undoEncoded
+    undoEncoded <- traverse (first NarrowingError . narrowUndoHunks ppf3Limits)
+                            (contentsUndoData contents)
+    let ppfResult   = PPF3.encodePPF3 records descriptionTyped undoEncoded
                         (fmap PPF3ValidationBlock (contentsValidation contents))
                         imageType
     case effectiveFileIdDiz meta contents of
@@ -1111,8 +1100,7 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     resolvedRaw <- NINJA1.resolveSentinelCollisions LabelNINJA1
                      NINJA1.ninja1SentinelOffset source
                      (splitHunksUnbounded (contentsRecords contents))
-    -- Second pass is a no-op for NINJA1 (no per-record cap);
-    -- on the IPS arms it closes a real overflow hazard.
+    -- 'splitHunksUnbounded' skips only the payload cap; 'narrow' still checks the offset.
     records <- narrow (splitHunksUnbounded resolvedRaw)
     let crc      = fromMaybe (CRC32 0) (contentsSourceCRC32 contents)
         md5Hash  = fromMaybe (MD5Hash  (ByteString.replicate 16 0)) (contentsSourceMD5 contents)
@@ -1132,9 +1120,7 @@ encodeDirect contents source target meta limits constraints dialects = case targ
       Nothing -> Left (MissingRequiredField LabelAPSN64 FieldDestinationSize)
   where
     narrow :: [SplitHunk] -> Either SlapError [EncodedHunk]
-    narrow = case limits of
-      Nothing  -> Right . narrowHunksUnbounded
-      Just lim -> first NarrowingError . narrowHunks lim
+    narrow = first NarrowingError . narrowHunks limits
     resolveIPSSentinel :: FormatLabel -> IPSVariant -> [SplitHunk]
                        -> Either SlapError [Hunk]
     resolveIPSSentinel label variant =

@@ -649,11 +649,7 @@ splitHunk maxLength (Hunk startOffset payload)
 splitHunks :: Length -> [Hunk] -> [SplitHunk]
 splitHunks maxLength = concatMap (splitHunk maxLength)
 
--- | Lift a list of 'Hunk's to 'SplitHunk's without payload-bound
--- validation. Only legitimate for formats whose wire encoding
--- imposes no per-record payload cap — currently NINJA1 (variable-
--- width length-of-length, structurally unbounded). Documented
--- opt-out parallel to 'Slap.Narrow.narrowHunksUnbounded'.
+-- | Split hunks with no per-record payload cap, for NINJA1: it encodes each length in as many bytes as the value needs.
 splitHunksUnbounded :: [Hunk] -> [SplitHunk]
 splitHunksUnbounded = map (\h -> SplitHunk (hunkOffset h) (hunkPayload h))
 
