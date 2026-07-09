@@ -15,9 +15,13 @@ module Slap.Binary
   , getVcdiffVarint
   , minimalVcdiffVarintLength
     -- * Builders
+  , putWord16LE
   , putWord16BE
   , putWord32LE
+  , putWord32BE
+  , putInt64BE
   , word32LEBytes
+  , word32BEBytes
   , putByuuVarint
   , putVcdiffVarint
   , putEdsioVarint
@@ -34,11 +38,6 @@ module Slap.Binary
   , fillNewBuffer
     -- * Diff
   , diffHunks
-    -- * Additional builders
-  , putWord16LE
-  , putWord32BE
-  , word32BEBytes
-  , putInt64BE
   ) where
 
 import Control.Monad (when)
@@ -209,6 +208,11 @@ minimalVcdiffVarintLength value = groupsNeeded 1 (value `shiftR` 7)
 -- Builders
 ----------------------------------------------------------------------------
 
+putWord16LE :: Word16 -> Builder
+putWord16LE value =
+  word8 (fromIntegral (value .&. 0xFF))
+  <> word8 (fromIntegral ((value `shiftR` 8) .&. 0xFF))
+
 putWord16BE :: Word16 -> Builder
 putWord16BE value =
   word8 (fromIntegral (value `shiftR` 8))
@@ -221,17 +225,38 @@ putWord32LE value =
   <> word8 (fromIntegral ((value `shiftR` 16) .&. 0xFF))
   <> word8 (fromIntegral ((value `shiftR` 24) .&. 0xFF))
 
--- | Strict-ByteString sister to 'putWord32LE'. Useful when four bytes
--- need to be appended to an existing 'ByteString' without going through
--- the Builder machinery — e.g. computing a trailing CRC over a patch
--- body and appending the CRC bytes directly. See 'createBPS' and
--- 'createUPS' for callers.
+putWord32BE :: Word32 -> Builder
+putWord32BE value =
+  word8 (fromIntegral (value `shiftR` 24))
+  <> word8 (fromIntegral ((value `shiftR` 16) .&. 0xFF))
+  <> word8 (fromIntegral ((value `shiftR` 8) .&. 0xFF))
+  <> word8 (fromIntegral (value .&. 0xFF))
+
+putInt64BE :: Int64 -> Builder
+putInt64BE value =
+  word8 (fromIntegral (value `shiftR` 56))
+  <> word8 (fromIntegral ((value `shiftR` 48) .&. 0xFF))
+  <> word8 (fromIntegral ((value `shiftR` 40) .&. 0xFF))
+  <> word8 (fromIntegral ((value `shiftR` 32) .&. 0xFF))
+  <> word8 (fromIntegral ((value `shiftR` 24) .&. 0xFF))
+  <> word8 (fromIntegral ((value `shiftR` 16) .&. 0xFF))
+  <> word8 (fromIntegral ((value `shiftR` 8) .&. 0xFF))
+  <> word8 (fromIntegral (value .&. 0xFF))
+
 word32LEBytes :: Word32 -> ByteString
 word32LEBytes value = ByteString.pack
   [ fromIntegral (value .&. 0xFF)
   , fromIntegral ((value `shiftR`  8) .&. 0xFF)
   , fromIntegral ((value `shiftR` 16) .&. 0xFF)
   , fromIntegral ((value `shiftR` 24) .&. 0xFF)
+  ]
+
+word32BEBytes :: Word32 -> ByteString
+word32BEBytes value = ByteString.pack
+  [ fromIntegral ((value `shiftR` 24) .&. 0xFF)
+  , fromIntegral ((value `shiftR` 16) .&. 0xFF)
+  , fromIntegral ((value `shiftR`  8) .&. 0xFF)
+  , fromIntegral (value .&. 0xFF)
   ]
 
 -- | Encode a non-negative Int64 as a byuu-style varint.
@@ -439,47 +464,4 @@ diffHunks (InputFileContents original) (OutputFileContents modified) =
       where
         gapBetween   = distance (advance firstOffset (byteLength firstPayload)) nextOffset
         mergedLength = distance firstOffset (advance nextOffset (byteLength nextPayload))
-
-
-----------------------------------------------------------------------------
--- Additional builders
-----------------------------------------------------------------------------
-
-putWord16LE :: Word16 -> Builder
-putWord16LE value =
-  word8 (fromIntegral (value .&. 0xFF))
-  <> word8 (fromIntegral ((value `shiftR` 8) .&. 0xFF))
-
-putWord32BE :: Word32 -> Builder
-putWord32BE value =
-  word8 (fromIntegral (value `shiftR` 24))
-  <> word8 (fromIntegral ((value `shiftR` 16) .&. 0xFF))
-  <> word8 (fromIntegral ((value `shiftR` 8) .&. 0xFF))
-  <> word8 (fromIntegral (value .&. 0xFF))
-
--- | Strict-ByteString sister to 'putWord32BE'. The big-endian
--- counterpart to 'word32LEBytes'. Useful when four bytes need to be
--- appended to an existing 'ByteString' without going through the
--- 'Builder' machinery — e.g. writing an xdelta1 control-offset
--- pointer into the patch's trailer. See 'Slap.XDelta1.Create.encodeXDelta1'
--- for a caller.
-word32BEBytes :: Word32 -> ByteString
-word32BEBytes value = ByteString.pack
-  [ fromIntegral ((value `shiftR` 24) .&. 0xFF)
-  , fromIntegral ((value `shiftR` 16) .&. 0xFF)
-  , fromIntegral ((value `shiftR`  8) .&. 0xFF)
-  , fromIntegral (value .&. 0xFF)
-  ]
-
-putInt64BE :: Int64 -> Builder
-putInt64BE value =
-  word8 (fromIntegral (value `shiftR` 56))
-  <> word8 (fromIntegral ((value `shiftR` 48) .&. 0xFF))
-  <> word8 (fromIntegral ((value `shiftR` 40) .&. 0xFF))
-  <> word8 (fromIntegral ((value `shiftR` 32) .&. 0xFF))
-  <> word8 (fromIntegral ((value `shiftR` 24) .&. 0xFF))
-  <> word8 (fromIntegral ((value `shiftR` 16) .&. 0xFF))
-  <> word8 (fromIntegral ((value `shiftR` 8) .&. 0xFF))
-  <> word8 (fromIntegral (value .&. 0xFF))
-
 
