@@ -182,8 +182,8 @@ test_utf8LenientReplacesInvalidBytes = do
   assertBool  "loss notice surfaces the bad byte"
     (any isSubstitutedByteSequence notices)
   where
-    isSubstitutedByteSequence SubstitutedByteSequence{} = True
-    isSubstitutedByteSequence _                         = False
+    isSubstitutedByteSequence SubstitutedByteSequence = True
+    isSubstitutedByteSequence _                       = False
 
 -- | Valid UTF-8 bytes lenient-decode to the same string strict
 -- decode would produce.

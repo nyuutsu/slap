@@ -20,7 +20,8 @@
 -- The UTF-8 path routes through 'Data.Text.Encoding' — the @text@ package's native fast UTF-8 codec.
 -- Every other encoding routes through the @encoding@ library (@Data.Encoding@).
 -- @text@ ships a fast UTF-8 codec but only UTF-8;
--- @encoding@ ships the structured API that 'encodeTextLenient' and 'encodeTextBounded' need (per-character 'encodeable' predicate, exception-aware @Explicit@ variants, alias-table runtime lookup via 'encodingFromString').
+-- @encoding@ ships the structured API that 'encodeTextLenient' and 'encodeTextBounded' need:
+-- a per-character 'encodeable' predicate, exception-aware @Explicit@ variants, and alias-table lookup via 'encodingFromString'.
 --
 -- == Named-encoding resolution
 --
@@ -86,6 +87,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Char (toLower, toUpper)
 import Data.List (intercalate)
+import Data.Encoding (DynEncoding)
 import qualified Data.Encoding as Encoding
 import Data.Maybe (mapMaybe)
 import Data.Text (Text)
@@ -117,10 +119,11 @@ data EncodingName
 -- Constructable only through 'resolveEncodingName', so name and encoder can never disagree.
 --
 -- The type is identified by its name: the smart constructor makes the encoder a function of the name (equal names resolve to equal encoders),
--- so the hand-written 'Eq' over the name alone is exactly a derived 'Eq', and 'Show' reads as the encoding's name rather than dumping the library's internal 'Encoding.DynEncoding'.
+-- so the hand-written 'Eq' over the name alone is exactly a derived 'Eq',
+-- and 'Show' reads as the encoding's name rather than dumping the library's internal 'DynEncoding'.
 data NamedEncoding = NamedEncoding
   { namedEncodingDisplay  :: !Text
-  , namedEncodingResolved :: !Encoding.DynEncoding
+  , namedEncodingResolved :: !DynEncoding
   }
 
 instance Eq NamedEncoding where
@@ -142,7 +145,7 @@ encodingDisplayName EncodingUtf8          = Text.pack "utf8"
 encodingDisplayName (EncodingNamed named) = displayNamedEncoding named
 
 -- | The resolved @encoding@-library encoder a 'NamedEncoding' carries.
-useNamedEncoding :: NamedEncoding -> Encoding.DynEncoding
+useNamedEncoding :: NamedEncoding -> DynEncoding
 useNamedEncoding = namedEncodingResolved
 
 ----------------------------------------------------------------------------
@@ -196,38 +199,19 @@ data DecodeError = DecodeError
 -- Loss notices (lenient and bounded paths)
 ----------------------------------------------------------------------------
 
--- | What got lost when a lenient encode, lenient decode, or a
--- bounded encode finished without a 'Left'. Three cases:
+-- | What got lost when a lenient encode, lenient decode, or bounded encode finished without a 'Left'. Three cases:
 --
---   * 'SubstitutedCodepoint' — encode-side: a single codepoint in
---     the source was not representable in the target encoding and
---     was replaced with the encoding's substitute character (U+FFFD
---     when the target represents it, @\'?\'@ otherwise). The
---     'Char' is the original codepoint; the 'Int' is its 0-indexed
---     position in the source 'Text'.
+--   * 'SubstitutedCodepoint' — encode-side: a codepoint the target encoding cannot represent,
+--     replaced with its substitute (U+FFFD, or @\'?\'@ if the target lacks it).
+--   * 'SubstitutedByteSequence' — decode-side: a byte sequence the declared encoding cannot decode, replaced with U+FFFD.
+--   * 'TruncatedToFitBound' — bounded encoding stopped before a codepoint that would overflow the byte cap.
+--     The 'OriginalLength' and 'TruncatedLength' are the unbounded and written byte counts, the newtypes 'Slap.Status.FieldTruncated' carries.
 --
---   * 'SubstitutedByteSequence' — decode-side: a byte sequence in
---     the wire input was not decodeable under the declared
---     encoding and was replaced with U+FFFD in the resulting
---     'Text'. The 'Int' is the 0-indexed byte offset of the
---     offending sequence within the input 'ByteString'.
---
---   * 'TruncatedToFitBound' — bounded encoding cut the source
---     off because adding the next codepoint would have overflowed
---     the byte cap. The 'OriginalLength' is the byte count the
---     source would have produced without the bound; the
---     'TruncatedLength' is what actually fit. The newtypes are
---     the same ones 'Slap.Status.FieldTruncated' carries, so a
---     call site lifting this to an advisory hands the values
---     straight through with no re-wrapping.
---
--- Substitution notices report by position so a caller can
--- describe "event at position N"; truncation notices report by
--- byte count because the format-level concept is "the field was
--- N bytes, we wrote M".
+-- The substitution cases carry nothing; a caller only counts them.
+-- Truncation carries its byte counts, which the advisory reports.
 data LossNotice
-  = SubstitutedCodepoint !Char !Int
-  | SubstitutedByteSequence !Int
+  = SubstitutedCodepoint
+  | SubstitutedByteSequence
   | TruncatedToFitBound !OriginalLength !TruncatedLength
   deriving (Eq, Show)
 
@@ -262,7 +246,7 @@ encodeText (EncodingNamed named) text =
 -- library's own exceptions don't carry a stable position field
 -- across all encoders.
 findFirstUnencodeable
-  :: Encoding.DynEncoding -> [Char] -> Int -> Maybe (Char, Int)
+  :: DynEncoding -> [Char] -> Int -> Maybe (Char, Int)
 findFirstUnencodeable _ [] _ = Nothing
 findFirstUnencodeable enc (char : rest) position
   | Encoding.encodeable enc char = findFirstUnencodeable enc rest (position + 1)
@@ -308,49 +292,42 @@ encodeTextLenient (EncodingNamed named) text =
   where
     encoder = useNamedEncoding named
 
--- | Replace each character the encoder can't represent with the
--- encoder's substitute character, recording each replacement. The
--- positions in the returned notices index into the original source,
--- so a caller correlating notices back to the source 'Text' sees
--- the right offsets.
+-- | Replace each character the encoder can't represent with its substitute, one 'SubstitutedCodepoint' per replacement.
 substituteUnencodeable
-  :: Encoding.DynEncoding -> Char -> [Char] -> ([Char], [LossNotice])
-substituteUnencodeable encoder substitute = substituteFrom 0 [] []
+  :: DynEncoding -> Char -> [Char] -> ([Char], [LossNotice])
+substituteUnencodeable encoder substitute chars =
+  (map fst stepped, mapMaybe snd stepped)
   where
-    substituteFrom _ charsReversed noticesReversed [] =
-      (reverse charsReversed, reverse noticesReversed)
-    substituteFrom position charsReversed noticesReversed (char : rest)
-      | Encoding.encodeable encoder char =
-          substituteFrom (position + 1) (char : charsReversed) noticesReversed rest
-      | otherwise =
-          let notice = SubstitutedCodepoint char position
-          in substituteFrom (position + 1) (substitute : charsReversed) (notice : noticesReversed) rest
+    stepped = map substituteChar chars
+    substituteChar char
+      | Encoding.encodeable encoder char = (char, Nothing)
+      | otherwise                        = (substitute, Just SubstitutedCodepoint)
 
--- | Pick the substitute character for an encoding. U+FFFD is the
--- Unicode replacement character and is what every modern encoder
--- that can represent it uses; for ASCII-only targets that can't
--- represent U+FFFD, the conventional fallback is @\'?\'@.
-chooseSubstitute :: Encoding.DynEncoding -> Char
+-- | The Unicode replacement character (U+FFFD).
+replacementCharacter :: Char
+replacementCharacter = '\xFFFD'
+
+-- | The substitute character for an encoding: 'replacementCharacter' where the target can represent it, else @\'?\'@ for an ASCII-only target.
+chooseSubstitute :: DynEncoding -> Char
 chooseSubstitute encoder
-  | Encoding.encodeable encoder '\xFFFD' = '\xFFFD'
-  | otherwise                            = '?'
+  | Encoding.encodeable encoder replacementCharacter = replacementCharacter
+  | otherwise                                        = '?'
 
--- | Decode 'ByteString' under the declared encoding, substituting U+FFFD for any byte sequence that the encoding can't decode.
--- Always succeeds. Returns the decoded 'EncodedText' paired with one 'SubstitutedByteSequence' notice per substitution event (each carrying the byte offset where the offending sequence began); a clean decode yields an empty notice list.
+-- | Decode 'ByteString' under the declared encoding, substituting U+FFFD for any bytes it can't decode.
+-- Always succeeds: a clean decode yields no notices, and each substitution adds a 'SubstitutedByteSequence' the caller counts.
 --
--- Each encoding plugs its own strict-decode primitive into the shared 'recoveringDecode' walk: 'EncodingUtf8' uses 'TextEncoding.decodeUtf8'', 'EncodingNamed' uses the resolved encoder's 'Encoding.decodeStrictByteStringExplicit'.
--- The walk is O(n) on the clean path (one strict decode).
+-- 'EncodingUtf8' decodes leniently through the @text@ package; 'EncodingNamed' through 'recoverNamed'.
 decodeTextLenient :: EncodingName -> ByteString -> (EncodedText, [LossNotice])
-decodeTextLenient EncodingUtf8 bytes =
-  let (text, notices) = recoveringDecode TextEncoding.decodeUtf8' bytes
-  in (EncodedText EncodingUtf8 text, notices)
+decodeTextLenient EncodingUtf8 bytes = case TextEncoding.decodeUtf8' bytes of
+  Right text -> (EncodedText EncodingUtf8 text, [])
+  Left _     ->
+    -- Counts U+FFFD in the output, so an input that itself encodes one inflates the tally — harmless for a lossiness count.
+    let text          = TextEncoding.decodeUtf8Lenient bytes
+        substitutions = Text.count (Text.singleton replacementCharacter) text
+    in (EncodedText EncodingUtf8 text, replicate substitutions SubstitutedByteSequence)
 decodeTextLenient (EncodingNamed named) bytes =
-  let strictNamedDecode = fmap Text.pack
-                        . Encoding.decodeStrictByteStringExplicit encoder
-      (text, notices)   = recoveringDecode strictNamedDecode bytes
+  let (text, notices) = recoverNamed (useNamedEncoding named) bytes
   in (EncodedText (EncodingNamed named) text, notices)
-  where
-    encoder = useNamedEncoding named
 
 -- | Whether a run of opaque bytes reads as text under an encoding —
 -- decoded with no substitution — or does not. The decode half of the
@@ -369,48 +346,33 @@ readOpaqueField encoding bytes = case decodeTextLenient encoding bytes of
   (EncodedText _encoding text, []) -> OpaqueReadsAsText text
   (_decoded, _substitutions)       -> OpaqueNotText
 
--- | Lenient-decode primitive parameterised over the encoding's strict
--- decoder. On strict success the whole input decodes cleanly and the
--- notice list is empty; on strict failure the walk finds the largest
--- decodeable prefix, emits its decoded text followed by U+FFFD and
--- a 'SubstitutedByteSequence' carrying the offending byte's offset,
--- and recurses on the bytes past the offending byte. The
--- @strictDecode@ parameter's 'Either' failure type is left polymorphic
--- because each backend reports decode failures with its own exception
--- type; the walk only cares about success-vs-failure, not the
--- failure's shape.
-recoveringDecode
-  :: (ByteString -> Either failure Text)
-  -> ByteString
-  -> (Text, [LossNotice])
-recoveringDecode strictDecode = decodeFrom 0
+-- | Lenient decode for a named encoding, recovering over the @encoding@ library's strict, all-or-nothing decode.
+-- The walk is backward because no forward decode fits: @decodeChar@ loses ISO-2022-JP's charset state between characters,
+-- and driving the codec through @Data.Binary.Get@ reports a position but throws a bad byte as a pure exception, uncatchable as a value.
+-- Only a whole-buffer decode catches the bad byte, and it does not say where — so we probe for the boundary. O(n²).
+recoverNamed :: DynEncoding -> ByteString -> (Text, [LossNotice])
+recoverNamed encoder = recover
   where
-    decodeFrom offset bytes
+    strictDecode = fmap Text.pack . Encoding.decodeStrictByteStringExplicit encoder
+    recover bytes
       | ByteString.null bytes = (Text.empty, [])
       | otherwise = case strictDecode bytes of
-          Right text   -> (text, [])
-          Left _failure ->
-            let prefixLength = largestValidPrefix bytes
-                prefixBytes  = ByteString.take prefixLength bytes
-                remainingBytes = ByteString.drop (prefixLength + 1) bytes
-                prefixText   = either (const Text.empty) id
-                                      (strictDecode prefixBytes)
-                badByteOffset = offset + prefixLength
-                (restText, restNotices) =
-                  decodeFrom (badByteOffset + 1) remainingBytes
-            in ( prefixText <> Text.singleton '\xFFFD' <> restText
-               , SubstitutedByteSequence badByteOffset : restNotices )
+          Right text -> (text, [])
+          -- The exception names the bad byte but not where — nothing usable here, which is why we probe.
+          Left _ ->
+            let (prefixLength, prefixText) = longestDecodablePrefix bytes
+                -- Resume past the one undecodable byte (now U+FFFD); dropping it is the recursion's progress.
+                (restText, restNotices) = recover (ByteString.drop (prefixLength + 1) bytes)
+            in (prefixText <> Text.singleton replacementCharacter <> restText, SubstitutedByteSequence : restNotices)
 
-    -- Largest prefix length that decodes cleanly. Linear walk-back
-    -- from the full byte count; the empty prefix always succeeds, so
-    -- this always finds at least 0.
-    largestValidPrefix bytes = walkBack (ByteString.length bytes - 1)
+    -- The longest prefix that decodes, with its text; walked back a byte at a time from just under the full length.
+    longestDecodablePrefix bytes = walkBack (ByteString.length bytes - 1)
       where
         walkBack candidate
-          | candidate < 0 = 0
+          | candidate == 0 = (0, Text.empty)   -- walked to the front: no non-empty prefix decoded
           | otherwise = case strictDecode (ByteString.take candidate bytes) of
-              Right _ -> candidate
-              Left _  -> walkBack (candidate - 1)
+              Right text -> (candidate, text)
+              Left _     -> walkBack (candidate - 1)
 
 ----------------------------------------------------------------------------
 -- Bounded encoding
@@ -422,11 +384,8 @@ recoveringDecode strictDecode = decodeFrom 0
 -- valid bytes in the target encoding (no split codepoints) and is
 -- at most @cap@ bytes long.
 --
--- Substitution semantics from 'encodeTextLenient' apply: codepoints
--- the target can't represent become substitutes, with each
--- substitution reported as a 'SubstitutedCodepoint' notice.
--- Truncation, if it happens, surfaces as a 'TruncatedToFitBound' notice carrying the byte count the source would have produced without the cap (matching 'Slap.Measure.OriginalLength')
--- and the byte count actually written (matching 'TruncatedLength').
+-- Substitution works as in 'encodeTextLenient': an unrepresentable codepoint becomes a substitute with a 'SubstitutedCodepoint' notice.
+-- Truncation, when it happens, surfaces as a 'TruncatedToFitBound' notice carrying the unbounded and written byte counts.
 --
 -- The caller decides what to do about the notices — slap's create
 -- paths typically lift each one to a 'Slap.Status.FieldTruncated'
@@ -436,8 +395,7 @@ recoveringDecode strictDecode = decodeFrom 0
 -- encoding and truncation only.
 encodeTextBounded :: EncodingName -> Length -> Text -> (ByteString, [LossNotice])
 encodeTextBounded encodingName cap text =
-  let perCodepoint = zipWith (encodeSingleCodepoint encodingName)
-                             [0 ..] (Text.unpack text)
+  let perCodepoint = map (encodeSingleCodepoint encodingName) (Text.unpack text)
       (taken, remaining) = takeChunksUnderCap cap perCodepoint
       takenBytes         = ByteString.concat (map fst taken)
       substitutionNotes  = mapMaybe snd taken
@@ -451,22 +409,19 @@ encodeTextBounded encodingName cap text =
                     (TruncatedLength (Length writtenBytes))]
   in (takenBytes, substitutionNotes ++ truncationNotes)
 
--- | Encode a single codepoint under the target encoding, returning
--- the bytes plus an optional substitution notice. UTF-8 always
--- represents the codepoint and never substitutes; a named encoding
--- substitutes when its encoder can't represent the codepoint and
--- reports the substitution at the codepoint's source position.
+-- | Encode a single codepoint, with the bytes and a substitution notice if the target encoding can't represent it.
+-- UTF-8 represents every codepoint, so it never substitutes.
 encodeSingleCodepoint
-  :: EncodingName -> Int -> Char -> (ByteString, Maybe LossNotice)
-encodeSingleCodepoint EncodingUtf8 _position char =
+  :: EncodingName -> Char -> (ByteString, Maybe LossNotice)
+encodeSingleCodepoint EncodingUtf8 char =
   (TextEncoding.encodeUtf8 (Text.singleton char), Nothing)
-encodeSingleCodepoint (EncodingNamed named) position char =
+encodeSingleCodepoint (EncodingNamed named) char =
   let encoder = useNamedEncoding named
   in if Encoding.encodeable encoder char
        then (Encoding.encodeStrictByteString encoder [char], Nothing)
        else let substitute = chooseSubstitute encoder
                 bytes      = Encoding.encodeStrictByteString encoder [substitute]
-            in (bytes, Just (SubstitutedCodepoint char position))
+            in (bytes, Just SubstitutedCodepoint)
 
 -- | Walk a list of per-codepoint encoded chunks, accumulating until
 -- the next chunk would push the running byte count past the cap.
@@ -560,16 +515,12 @@ decodeFixedWidthTextField encoding label field bytes =
 -- Advisory adaptation
 ----------------------------------------------------------------------------
 
--- | Adapt the substitution notices a 'decodeTextLenient' call emitted
--- into 'SlapAdvisory' values tagged with the format and field. The
--- per-byte position detail is folded down to a single substitution
--- count: at the advisory layer the user wants to know that the field
--- had unrepresentable bytes and how many, not where each one sat.
--- A clean decode (empty notice list) yields an empty advisory list.
+-- | Adapt the substitution notices a 'decodeTextLenient' call emitted into 'SlapAdvisory' values tagged with the format and field.
+-- The advisory carries a count — the field had unrepresentable bytes, and how many — so a clean decode yields no advisory.
 decodeLossAdvisories
   :: FormatLabel -> FieldName -> [LossNotice] -> [SlapAdvisory]
 decodeLossAdvisories label field notices =
-  let substitutions = length [() | SubstitutedByteSequence{} <- notices]
+  let substitutions = length [() | SubstitutedByteSequence <- notices]
   in [FieldDecodedSubstituted label field (SubstitutionCount substitutions)
       | substitutions > 0]
 
@@ -582,7 +533,7 @@ decodeLossAdvisories label field notices =
 encodeLossAdvisories
   :: FormatLabel -> FieldName -> [LossNotice] -> [SlapAdvisory]
 encodeLossAdvisories label field notices =
-  let substitutions = length [() | SubstitutedCodepoint{} <- notices]
+  let substitutions = length [() | SubstitutedCodepoint <- notices]
       substitutionAdvisory =
         [FieldEncodedSubstituted label field (SubstitutionCount substitutions)
          | substitutions > 0]
@@ -616,7 +567,7 @@ resolveEncodingName name = case resolveEncoderByName (Text.unpack name) of
 -- that resolves wins; if all fail, returns 'Nothing'. Variants
 -- handle case differences, dash\/underscore variations, and the
 -- common Windows codepage names spelled as @CPnnnn@.
-resolveEncoderByName :: String -> Maybe Encoding.DynEncoding
+resolveEncoderByName :: String -> Maybe DynEncoding
 resolveEncoderByName name = foldr (<|>) Nothing
   [ Encoding.encodingFromStringExplicit variant
   | variant <- localeNameVariants name
@@ -650,28 +601,35 @@ localeNameVariants name =
 stripDashesUnderscores :: String -> String
 stripDashesUnderscores = filter (\c -> c /= '-' && c /= '_')
 
--- | Curated alias table mapping the locale-style names a user might supply (the names a Windows host or non-UTF-8 Unix locale spells) to a list of names to try against the @encoding@ library.
+-- | Curated alias table: the locale-style names a user might supply (what a Windows host or non-UTF-8 Unix locale spells),
+-- mapped to a list of names to try against the @encoding@ library.
 -- Three categories of entry:
 --
 --   * /Direct/ — the @encoding@ library ships an encoder under the mapped name.
---     The Windows codepage family, the DOS\/OEM codepages, Cyrillic KOI8-R\/U, the Japanese standards (Shift-JIS, ISO-2022-JP), and the Chinese GB18030 standard are in this category.
+--     The Windows codepage family, the DOS\/OEM codepages, Cyrillic KOI8-R\/U,
+--     the Japanese standards (Shift-JIS, ISO-2022-JP), and the Chinese GB18030 standard are in this category.
 --     Uses the library's own name, so the decode goes through the @encoding@ library's table for that codepage rather than a near-miss substitute.
 --
 --   * /Compatible superset/ — the @encoding@ library doesn't ship the exact codepage but does ship a strictly compatible superset.
 --     The library doesn't ship CP936 (Simplified Chinese), so it maps to GB18030, the standardized successor that extends GBK and GB2312.
 --     Microsoft's CP1250-1257 fall back to the matching ISO-8859 variant where the codepage entry isn't recognized;
---     the ISO cousins are ASCII-clean and differ only in upper-half glyphs (e.g. CP1252's @\\x80@ Euro sign vs ISO-8859-1's @\\x80@ control character).
+--     the ISO cousins are ASCII-clean and differ only in upper-half glyphs
+--     (e.g. CP1252's @\\x80@ Euro sign vs ISO-8859-1's @\\x80@ control character).
 --
 --   * /Documented gap/ — the @encoding@ library doesn't ship an encoder and there's no compatible superset in the library.
 --     The entry has an empty list, so the lookup fails and 'resolveEncodingName' returns 'Left' rather than mojibake from a near-miss decoder.
 --     Listed by name so a future-self reading the code sees the encoding was considered and the cost of closing it.
---     Korean Wansung (CP949), Big5 (CP950 and the bare-name variants), the EUC-* family, TIS-620 (Thai), VISCII and TCVN (Vietnamese), ARMSCII-8 (Armenian), and TSCII (Tamil) all sit here.
+--     Korean Wansung (CP949), Big5 (CP950 and the bare-name variants), the EUC-* family, TIS-620 (Thai),
+--     VISCII and TCVN (Vietnamese), ARMSCII-8 (Armenian), and TSCII (Tamil) all sit here.
 --     Closing any of them needs either a backend swap (@text-icu@ against ICU4C covers all of these) or a hand-rolled decoder.
 --
--- Mappings follow Microsoft codepage conventions and IANA charset names, and have not been exercised under each target locale on a real host: the documented-but-untested caveat.
--- The upper-half MS-vs-ISO drift noted under /Compatible superset/ is the failure mode to watch; ASCII and text whose upper-half characters are well-defined in the cousin round-trip.
+-- Mappings follow Microsoft codepage conventions and IANA charset names,
+-- and have not been exercised under each target locale on a real host: the documented-but-untested caveat.
+-- The upper-half MS-vs-ISO drift noted under /Compatible superset/ is the failure mode to watch;
+-- ASCII and text whose upper-half characters are well-defined in the cousin round-trip.
 --
--- The table is keyed on the @uppercase + dashes-and-underscores-stripped@ form of the locale name, so @cp1252@, @CP-1252@, @CP_1252@, @Shift_JIS@, @shift-jis@, and @SHIFTJIS@ all reach the same arm.
+-- The table is keyed on the @uppercase + dashes-and-underscores-stripped@ form of the locale name,
+-- so @cp1252@, @CP-1252@, @CP_1252@, @Shift_JIS@, @shift-jis@, and @SHIFTJIS@ all reach the same arm.
 documentedLocaleAliases :: String -> [String]
 documentedLocaleAliases name = case normalizeForLookup name of
 
@@ -738,7 +696,8 @@ documentedLocaleAliases name = case normalizeForLookup name of
   "GBK"       -> ["GB18030"]                   -- GBK ⊂ GB18030
   "GB2312"    -> ["GB18030"]                   -- GB2312 ⊂ GBK ⊂ GB18030
 
-  -- Documented gaps (see the header): no encoder, no compatible superset, so an empty list; the lookup fails and 'resolveEncodingName' returns 'Left'.
+  -- Documented gaps (see the header): no encoder, no compatible superset, so an empty list;
+  -- the lookup fails and 'resolveEncodingName' returns 'Left'.
   "CP949"     -> []                            -- CP949 (Windows Korean Wansung)
   "CP950"     -> []                            -- CP950 (Windows Big5)
   "EUCJP"     -> []                            -- EUC-JP (Japanese)
