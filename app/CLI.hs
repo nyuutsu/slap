@@ -17,6 +17,7 @@ module CLI
     -- The option and policy micro-types those payloads carry
   , ArchiveHandling(..)
   , FileReadingOptions(..)
+  , InputHeaderDirective(..)
   , ExplainVerbosity(..)
   , ApplyOutput(..)
   , BackupBehavior(..)
@@ -52,6 +53,7 @@ import Slap.PPF1.Types (PPF1Origin(..))
 import Slap.IPS.Types (SMCShapeRequirement(..))
 import Slap.PPF3.Types (PPF3ImageType(..))
 import Slap.PlatformType (PlatformType(..))
+import Slap.Header (ConsoleHeader, consoleHeaderToken)
 -- The parsers below wrap incoming 'String' as 'EncodedText' tagged 'EncodingUtf8' at the boundary:
 -- text slap writes is always UTF-8, with no write-side encoding choice.
 import Slap.Text (EncodedText(..), EncodingName(..), resolveEncodingName,
@@ -84,6 +86,17 @@ data ArchiveHandling
 data FileReadingOptions = FileReadingOptions
   { fileReadingArchiveHandling :: ArchiveHandling
   }
+  deriving (Show, Eq)
+
+-- | What the user said about the input's header relative to what the patch expects.
+-- The default is that they already agree; the two flags name a console,
+-- which is a friendly alias for how many bytes to put on or take off the front.
+data InputHeaderDirective
+  = TakeInputAsIs
+  | AddHeader ConsoleHeader
+    -- ^ @--add-header CONSOLE@: the patch expects a headered input and this one is bare.
+  | RemoveHeader ConsoleHeader
+    -- ^ @--remove-header CONSOLE@: the input wears a header and the patch expects the bytes beneath.
   deriving (Show, Eq)
 
 -- | How much detail 'slap explain' should emit.
@@ -221,6 +234,7 @@ data ApplyCommand = ApplyCommand
   , applyVerbosity          :: Verbosity
   , applyOutput             :: ApplyOutput
   , applyFileReading        :: FileReadingOptions
+  , applyHeaderDirective    :: InputHeaderDirective
   , applyPatch              :: FilePath
   , applySource             :: FilePath
   , applyDialects           :: RequestedDialects
@@ -358,6 +372,7 @@ applyParser = do
     verificationPolicy <- verificationPolicyParser
     verbosity          <- verbosityParser
     fileReadingOptions <- fileReadingOptionsParser
+    headerDirective    <- headerDirectiveParser
     patch              <- pathArgument (metavar "PATCH" <> help "Patch file")
     source             <- pathArgument (metavar "SOURCE" <> help "Source file to patch (not modified unless --in-place)")
     output             <- applyOutputParser
@@ -367,6 +382,7 @@ applyParser = do
       , applyVerbosity          = verbosity
       , applyOutput             = output
       , applyFileReading        = fileReadingOptions
+      , applyHeaderDirective    = headerDirective
       , applyPatch              = patch
       , applySource             = source
       , applyDialects           = dialects
@@ -375,6 +391,28 @@ applyParser = do
 verificationPolicyParser :: Parser VerificationPolicy
 verificationPolicyParser = flag EnforceVerification SkipVerification
   (long "no-verify" <> help "Skip checksum validation (mismatches become warnings)")
+
+-- | Parser for the three mutually exclusive header lanes; mixing the two flags errors at parse time.
+headerDirectiveParser :: Parser InputHeaderDirective
+headerDirectiveParser = asum
+  [ AddHeader    <$> consoleHeaderOption "add-header"    "Prepend a blank CONSOLE header to the input before applying"
+  , RemoveHeader <$> consoleHeaderOption "remove-header" "Remove the input's leading CONSOLE header before applying"
+  , pure TakeInputAsIs
+  ]
+  where
+    consoleHeaderOption flagName helpText =
+      option (eitherReader parseConsoleHeader)
+        (long flagName <> metavar "CONSOLE" <> completeWith consoleHeaderTokens <> help helpText)
+
+consoleHeaderTokens :: [String]
+consoleHeaderTokens = map consoleHeaderToken [minBound .. maxBound]
+
+parseConsoleHeader :: String -> Either String ConsoleHeader
+parseConsoleHeader input =
+  case lookup (map toLower input) [(consoleHeaderToken console, console) | console <- [minBound .. maxBound]] of
+    Just console -> Right console
+    Nothing      -> Left ("unknown console: " ++ input
+                       ++ "\n  expected: " ++ intercalate ", " consoleHeaderTokens)
 
 verbosityParser :: Parser Verbosity
 verbosityParser = flag Quiet Verbose

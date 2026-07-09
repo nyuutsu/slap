@@ -117,6 +117,7 @@ import Slap.Measure (Offset(..), Length(..), Position(..), FileSize(..),
                      RawFlagByte(..), EncodingMethodByte(..))
 import Slap.Narrow (NarrowingFailure(..))
 import Slap.FieldName (FieldName(..), fieldNameLabel)
+import Slap.Header (ConsoleHeader, consoleHeaderName, consoleHeaderLength)
 import Slap.Constraint (Constraint(..), constraintFlagName, constraintName)
 import Slap.Dialect (Dialect, dialectFlagName, dialectName)
 import Slap.MetadataField (MetadataField, metadataFieldFlagName, metadataFieldName)
@@ -473,6 +474,15 @@ data SlapError
   -- identified, and the 'UnwrapError' is which way it failed. Raised by
   -- @Archive.unwrapArchive@ and rendered at the boundary.
   | ArchiveUnwrapFailed FilePath ArchiveFormat UnwrapError
+
+  -- Header flags
+  -- | @--remove-header@ was asked to drop more bytes than the input has.
+  -- The 'ActualSize' is the input's size; the header's width comes from 'consoleHeaderLength'.
+  | HeaderRemovalExceedsInput ConsoleHeader ActualSize
+
+  -- | @--add-header@ and @--remove-header@ change the output's shape,
+  -- so they refuse @--in-place@ rather than replace the original with a differently-shaped file.
+  | HeaderDirectiveRequiresSeparateOutput
 
   -- Detection
   | UnrecognizedFormat
@@ -914,6 +924,12 @@ data SlapAdvisory
   -- Patch quality
   = EmptyPatch FormatLabel EmptyUnit
   | NoEOFMarker FormatLabel
+
+  -- Header flags
+  -- | Note: @--remove-header@ dropped the console's header from the input before applying.
+  | InputHeaderRemoved ConsoleHeader
+  -- | Note: @--add-header@ prepended a blank header to the input before applying.
+  | InputHeaderAdded ConsoleHeader
 
   -- | A PPF1/PPF2/PPF3 patch produced an output longer than the
   -- source at apply time. The format's wire vocabulary has no
@@ -1623,6 +1639,14 @@ renderSlapError (UnreadableInputFile path reason) =
 renderSlapError (ArchiveUnwrapFailed path format unwrapError) =
   renderUnwrapError path format unwrapError
 
+renderSlapError (HeaderRemovalExceedsInput console (ActualSize inputSize)) =
+  "cannot remove a " <> renderAsText (unLength (consoleHeaderLength console)) <> "-byte "
+  <> consoleHeaderName console <> " header from a "
+  <> renderAsText (unFileSize inputSize) <> "-byte input"
+
+renderSlapError HeaderDirectiveRequiresSeparateOutput =
+  "--add-header and --remove-header don't combine with --in-place: the output would replace the original with a differently-shaped file"
+
 renderSlapError UnrecognizedFormat =
   "unknown patch format"
 
@@ -2150,6 +2174,14 @@ renderSlapAdvisory (EmptyPatch _label unit) =
 
 renderSlapAdvisory (NoEOFMarker _label) =
   "no EOF marker (patch may be truncated)"
+
+renderSlapAdvisory (InputHeaderRemoved console) =
+  "removed the input's " <> renderAsText (unLength (consoleHeaderLength console)) <> "-byte "
+  <> consoleHeaderName console <> " header"
+
+renderSlapAdvisory (InputHeaderAdded console) =
+  "prepended a blank " <> renderAsText (unLength (consoleHeaderLength console)) <> "-byte "
+  <> consoleHeaderName console <> " header to the input"
 
 renderSlapAdvisory (PPFApplyGrewPastSource label (FileSize sourceSize) (Length overflow)) =
   formatLabelName label
@@ -2967,6 +2999,8 @@ slapAdvisorySeverity advisory = case advisory of
   -- truncations and encoding gaps that did happen but are reported
   -- so the reader knows rather than because anything needs fixing.
   EmptyPatch{}                         -> SeverityNote
+  InputHeaderRemoved{}                 -> SeverityNote
+  InputHeaderAdded{}                   -> SeverityNote
   ZeroCountRLERecord{}                 -> SeverityNote
   NegativeZeroInBPS                    -> SeverityNote
   NonCanonicalVCDIFFVarint{}           -> SeverityNote

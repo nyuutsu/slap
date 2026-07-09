@@ -77,6 +77,7 @@ cliTests tier = do
       , bpsConvertMetadataTests dm4yBase dm4yBps
       , undoCliTests dm4yBase dm4yUps
       , xdelta1SourceLengthTests dm4yBase dm4yXdelta1
+      , headerFlagTests dm4yBase dm4yIps dm4yBps
       , onlyAtFull tier (forceTests dm4yBase dm4yUps)
       , onlyAtFull tier (noverifyTests dm4yBase dm4yBps)
       ]
@@ -156,6 +157,63 @@ xdelta1SourceLengthTests base xdelta1 =
         removeIfExists out
         expectOk ["apply", xdelta1, lengthened, "-o", out, "--no-verify"]
           "xdelta1-length/--no-verify downgrades the gate" "applied"
+  ]
+
+-- | The --add-header and --remove-header flags: a console name aliases a byte quantity,
+-- and slap puts that many zero bytes on the front of the input, or takes that many off, before applying.
+headerFlagTests :: FilePath -> FilePath -> FilePath -> [TestTree]
+headerFlagTests base ips bps =
+  [ testCase "header/--remove-header applies a checksummed patch through a headered input" $
+      withTempFile "slap-headered" $ \headered ->
+      withTempFile "slap-out" $ \out ->
+      withTempFile "slap-plain-out" $ \plainOut -> do
+        baseBytes <- ByteString.readFile base
+        ByteString.writeFile headered (ByteString.replicate 512 0x00 <> baseBytes)
+        removeIfExists out
+        removeIfExists plainOut
+        expectOk ["apply", bps, headered, "-o", out, "--remove-header", "snes"]
+          "header/--remove-header applies" "applied"
+        expectOk ["apply", bps, base, "-o", plainOut]
+          "header/plain apply for comparison" "applied"
+        viaRemove <- sha1Hex <$> ByteString.readFile out
+        viaPlain  <- sha1Hex <$> ByteString.readFile plainOut
+        assertEqual "output should match a plain apply on the bare input" viaPlain viaRemove
+
+  , testCase "header/--add-header matches applying to a zero-padded input" $
+      withTempFile "slap-headered" $ \headered ->
+      withTempFile "slap-padded-out" $ \paddedOut ->
+      withTempFile "slap-added-out" $ \addedOut -> do
+        baseBytes <- ByteString.readFile base
+        ByteString.writeFile headered (ByteString.replicate 512 0x00 <> baseBytes)
+        removeIfExists paddedOut
+        removeIfExists addedOut
+        expectOk ["apply", ips, headered, "-o", paddedOut]
+          "header/apply to the padded input" "applied"
+        expectOk ["apply", ips, base, "-o", addedOut, "--add-header", "snes"]
+          "header/--add-header applies" "applied"
+        viaPadded <- sha1Hex <$> ByteString.readFile paddedOut
+        viaAdded  <- sha1Hex <$> ByteString.readFile addedOut
+        assertEqual "output should match applying to the padded input" viaPadded viaAdded
+
+  , testCase "header/--remove-header refuses an input shorter than the header" $
+      withTempFile "slap-tiny" $ \tiny ->
+      withTempFile "slap-out" $ \out -> do
+        ByteString.writeFile tiny (ByteString.replicate 100 0x00)
+        removeIfExists out
+        expectFail ["apply", bps, tiny, "-o", out, "--remove-header", "snes"]
+          "header/refuses a too-short input" "cannot remove"
+
+  , testCase "header/--in-place declines the header flags" $
+      withTempFile "slap-work" $ \work -> do
+        ByteString.readFile base >>= ByteString.writeFile work
+        expectFail ["apply", ips, work, "--in-place", "--remove-header", "snes"]
+          "header/--in-place declines" "don't combine with --in-place"
+
+  , testCase "header/unknown console names the roster" $
+      withTempFile "slap-out" $ \out -> do
+        removeIfExists out
+        expectFail ["apply", ips, base, "-o", out, "--remove-header", "n64"]
+          "header/unknown console" "unknown console"
   ]
 
 forceTests :: FilePath -> FilePath -> [TestTree]

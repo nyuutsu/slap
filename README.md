@@ -70,6 +70,10 @@ Application can be modified in these ways:
 
 `--verbose` or `-v`: Have slap narrate each record it modifies as it applies the patch.
 
+`--add-header `: Before applying, put a temporary header's worth of bytes in front of the in-memory copy of the rom. The flavors of header it knows about: `nes`, `fds`, `gb`, `snes`, `pce`, `lynx`, `a78`, and `nes-ffe`. The last one is for Front Fareast's uniquely-sized header.
+
+`--remove-header`: Before applying, remove a header's worth of bytes from the front of the in-memory copy of the rom. The flavors of header it knows about: `nes`, `fds`, `gb`, `snes`, `pce`, `lynx`, `a78`, and `nes-ffe`. The last one is for Front Fareast's uniquely-sized header.
+
 `--raw`: Handle a polymorphic input-patch: tell slap the patch-argument *is* a patch and *isn't* an archive, and so does *not* need to be rummaged through like one.
 
 ## Creating 🏗️
