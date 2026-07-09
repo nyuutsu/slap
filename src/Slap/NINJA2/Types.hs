@@ -20,8 +20,6 @@ module Slap.NINJA2.Types
   , fromNINJA2RomType
   , ninja2RomTypeNeedsNormalization
   , ninja2RomTypeName
-  , parsePackedInteger
-  , parsePackedByteString
   , encodeVariableLengthValue
   , variableLengthValueBytes
   , headerSize
@@ -54,14 +52,11 @@ module Slap.NINJA2.Types
 -- Cross-format conversion goes through 'Slap.PlatformType.PlatformType'.
 
 import Slap.Checksum (MD5Hash)
-import Slap.ByteParser (ByteParser, getByte, getBytes)
 import Slap.Measure (Length(..), Offset(..), FileSize(..))
-import Slap.Display.Primitives (padHex)
 import Slap.PlatformType (PlatformType)
 import Slap.Text (EncodedText)
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as ByteString
 import Data.ByteString.Builder (Builder, word8)
 import Data.Bits ((.&.), shiftR)
 import Data.Int (Int64)
@@ -80,10 +75,11 @@ import Data.Word (Word8)
 data OverflowMode = OverflowAppend | OverflowTruncate
   deriving (Show, Eq)
 
-toOverflowMode :: Word8 -> Either String OverflowMode
-toOverflowMode 0x41 = Right OverflowAppend
-toOverflowMode 0x4D = Right OverflowTruncate
-toOverflowMode byte = Left ("unknown overflow type: 0x" ++ Text.unpack (padHex 2 byte))
+-- | Resolve the overflow-type byte: @'A'@ (0x41) is append, @'M'@ (0x4D) truncate, anything else 'Nothing'.
+toOverflowMode :: Word8 -> Maybe OverflowMode
+toOverflowMode 0x41 = Just OverflowAppend
+toOverflowMode 0x4D = Just OverflowTruncate
+toOverflowMode _    = Nothing
 
 fromOverflowMode :: OverflowMode -> Word8
 fromOverflowMode OverflowAppend   = 0x41  -- 'A'
@@ -225,16 +221,9 @@ data NINJA2Info = NINJA2Info
   , ninja2Description :: Maybe EncodedText
   } deriving (Show)
 
--- | User-intent input for 'Slap.NINJA2.Create.createNINJA2'. Each
--- text field is 'EncodedText', so the value's encoding decision
--- travels with the text into the encoder; the per-patch
--- 'ninja2CreateTextMode' picks the target wire encoding (the
--- byte slap writes for @PATCH_ENC@), and 'createNINJA2' transcodes
--- each field's content under that target before writing it to the
--- fixed-width header slot. Platform is held as 'Maybe' 'PlatformType'
--- (not 'NINJA2RomType') so the lossy shared-to-NINJA2 translation,
--- and the warnings it produces for platforms NINJA2 cannot express,
--- both live inside 'createNINJA2'.
+-- | The create-side inputs for 'Slap.NINJA2.Create.createNINJA2'.
+-- The text fields arrive as 'EncodedText', but the encoding tag does not reach the wire:
+-- create always writes UTF-8, and 'ninja2CreateTextMode' only picks the @PATCH_ENC@ byte that declares it.
 data NINJA2CreateMetadata = NINJA2CreateMetadata
   { ninja2CreateMetadataAuthor      :: Maybe EncodedText
   , ninja2CreateMetadataVersion     :: Maybe EncodedText
@@ -260,25 +249,6 @@ data XorRecord = XorRecord
   { xorRecordOffset  :: !Offset
   , xorRecordPayload :: !ByteString
   } deriving (Show)
-
-----------------------------------------------------------------------------
--- VLV: Variable Length Value (1-byte length prefix, then N LE bytes)
-----------------------------------------------------------------------------
-
-parsePackedInteger :: ByteParser Int64
-parsePackedInteger = do
-  count <- fromIntegral <$> getByte
-  packedBytes <- getBytes (Length count)
-  -- Only interpret first 8 bytes (enough for Int64); extra bytes are
-  -- consumed from the stream but don't contribute to the value.
-  let clampedCount = min count 8
-  pure $ foldl' (\accumulated index ->
-    accumulated + fromIntegral (ByteString.index packedBytes index) * (256 ^ index)) 0 [0..clampedCount-1]
-
-parsePackedByteString :: ByteParser ByteString
-parsePackedByteString = do
-  dataLength <- fromIntegral <$> parsePackedInteger
-  getBytes (Length dataLength)
 
 -- | Wire-format magic prefix.
 ninja2MagicBytes :: ByteString

@@ -17,6 +17,8 @@ import Foreign.Ptr (plusPtr)
 import Data.Word (Word8)
 
 -- | Copy source, then overwrite at offsets.
+-- The writes and the 'outputSize' fold add offsets and lengths unchecked:
+-- parse already refused any record reaching past 'Int' ('Slap.NINJA1.Parse.rejectUnaddressableRecordEnds'), so the arithmetic here cannot wrap.
 applyNINJA1 :: NINJA1Patch -> InputFileContents -> Either SlapError OutputFileContents
 applyNINJA1 patch (InputFileContents source) = Right $ OutputFileContents $ unsafeCreate outputSize $ \outputPointer -> do
     copyRegion outputPointer (Offset 0) source (Offset 0) (Length (min sourceLength outputSize))

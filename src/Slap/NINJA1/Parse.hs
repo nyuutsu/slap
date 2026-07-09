@@ -6,7 +6,9 @@ module Slap.NINJA1.Parse
   , parseBinary
   , parseBinaryGet
   , decodeBigEndian
+  , decodeAddressableBigEndian
   , parseBinaryRecords
+  , rejectUnaddressableRecordEnds
   , parseText
   , parseTextHeader
   , parseTextRecord
@@ -24,14 +26,17 @@ import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..), NINJA1TextHeader(..
                            ninja1MagicBytes,
                            ninja1BinaryEOFMarkerBytes, ninja1BinaryEOFMarkerWidth)
 import Slap.Status (SlapError(..), DecompressionFailure(..), Parsed(..),
-                    NINJA1Malformation(..),
-                    LineText(..), OffsetTokenText(..))
+                    NINJA1Malformation(..), ByteParserError(..),
+                    LineText(..), OffsetTokenText(..), ChecksumTokenText(..))
+import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, remaining)
+import Slap.ByteParser (ByteParser, runByteParser, throwByteParserError,
+                        getByte, getBytes, remaining)
 import Slap.Measure (Length(..), Offset(Offset), offsetFromParsed,
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
-                     byteLength)
+                     ActionIndex, firstAction, nextAction,
+                     boundedWriteEnd, byteLength)
 import Slap.Compression.Stream (zlibInflate)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 
@@ -39,10 +44,8 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString8
 import Data.Char (digitToInt, isHexDigit)
-import Data.Int (Int64)
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Data.Word (Word32)
 import Numeric (readHex)
 
 parseNINJA1 :: PatchFileContents -> Either SlapError (Parsed NINJA1Patch)
@@ -58,7 +61,24 @@ parseNINJA1 (PatchFileContents input)
   where
     subFormatIdentifier = ByteString.take 2 (ByteString.drop 6 input)
     payload             = ByteString.drop 8 input
-    wrapParsed          = fmap (\patch -> Parsed patch [])
+    wrapParsed parseResult = do
+      patch <- parseResult
+      rejectUnaddressableRecordEnds (ninja1Records patch)
+      pure (Parsed patch [])
+
+-- | Refuse a record whose write end — offset plus payload length — overflows the 'Int' slap carries positions in.
+-- The per-field ceilings bound each offset and length alone;
+-- this catches the sum that overflows though both addends fit, once at parse so no downstream fold has to.
+rejectUnaddressableRecordEnds :: [NINJA1Record] -> Either SlapError ()
+rejectUnaddressableRecordEnds = walkRecords firstAction
+  where
+    walkRecords _ [] = Right ()
+    walkRecords recordIndex (record : rest) =
+      case boundedWriteEnd (ninja1RecordOffset record) (byteLength (ninja1RecordData record)) of
+        Just _writeEnd -> walkRecords (nextAction recordIndex) rest
+        Nothing        -> Left (RecordEndExceedsAddressableRange LabelNINJA1 recordIndex
+                                  (ninja1RecordOffset record)
+                                  (byteLength (ninja1RecordData record)))
 
 -- | PHP gzcompress = RFC 1950 zlib format.
 zlibDecompress :: ByteString -> Either SlapError ByteString
@@ -104,10 +124,20 @@ parseBinaryGet format = do
     , ninja1Records    = records
     })
 
--- | Decode an unsigned big-endian byte sequence as any 'Num' result type,
--- so each call site picks the width it needs (the 4-byte header CRC as 'Word32', a record offset or length as 'Int') without a per-width helper.
+-- | Decode an unsigned big-endian byte sequence at whatever 'Num' the call site needs —
+-- 'Word32' for the header CRC, 'Integer' inside 'decodeAddressableBigEndian' where the ceiling check lives.
 decodeBigEndian :: Num a => ByteString -> a
 decodeBigEndian = ByteString.foldl' (\accumulated byte -> accumulated * 256 + fromIntegral byte) 0
+
+-- | Decode an unsigned big-endian record field into 'Int', refusing a value past 'maxBound' rather than wrapping.
+-- The width prefix is unbounded, so the wire can spell a value no 'Int' holds; decoding at 'Integer' keeps the comparison exact.
+decodeAddressableBigEndian :: ActionIndex -> FieldName -> ByteString -> ByteParser Int
+decodeAddressableBigEndian recordIndex field fieldBytes
+  | decoded > toInteger (maxBound :: Int) =
+      throwByteParserError (ByteParserFieldExceedsAddressableRange recordIndex field)
+  | otherwise = pure (fromInteger decoded)
+  where
+    decoded = decodeBigEndian fieldBytes :: Integer
 
 -- | What the binary record walk reads at the cursor on each
 -- iteration. Unlike its peers ('Slap.IPS.Parse''s marker peek,
@@ -131,26 +161,26 @@ data NINJA1BinaryStreamHead
 data NINJA1BinaryTermination = ReachedEOFFooter | EndedWithoutEOFFooter
 
 parseBinaryRecords :: ByteParser (NINJA1BinaryTermination, [NINJA1Record])
-parseBinaryRecords = parseLoop []
+parseBinaryRecords = parseLoop firstAction []
   where
-    parseLoop accumulated = do
-      streamHead <- readBinaryStreamHead
+    parseLoop recordIndex accumulated = do
+      streamHead <- readBinaryStreamHead recordIndex
       case streamHead of
         EndsWithoutMarker -> pure (EndedWithoutEOFFooter, reverse accumulated)
         EOFMarkerFound    -> pure (ReachedEOFFooter, reverse accumulated)
         RecordAt recordOffset -> do
           dataWidth    <- fromIntegral <$> getByte :: ByteParser Int
           dataLenBytes <- getBytes (Length dataWidth)
-          let dataLength = decodeBigEndian dataLenBytes :: Int
+          dataLength   <- decodeAddressableBigEndian recordIndex FieldRecordLength dataLenBytes
           payload <- getBytes (Length dataLength)
-          parseLoop (NINJA1Record recordOffset payload : accumulated)
+          parseLoop (nextAction recordIndex) (NINJA1Record recordOffset payload : accumulated)
 
     -- | Read as far into the next offset field as the verdict
     -- requires, and classify. The reads are sequenced — the offset
     -- bytes cannot be read before the width byte says how many —
     -- which is why this reads rather than peeks.
-    readBinaryStreamHead :: ByteParser NINJA1BinaryStreamHead
-    readBinaryStreamHead = do
+    readBinaryStreamHead :: ActionIndex -> ByteParser NINJA1BinaryStreamHead
+    readBinaryStreamHead recordIndex = do
       remainingLength <- remaining
       if unLength remainingLength < 1
         then pure EndsWithoutMarker
@@ -160,10 +190,11 @@ parseBinaryRecords = parseLoop []
             then pure EndsWithoutMarker
             else do
               offsetBytes <- getBytes (Length offsetWidth)
-              pure $ if offsetWidth == ninja1BinaryEOFMarkerWidth
-                          && offsetBytes == ninja1BinaryEOFMarkerBytes
-                       then EOFMarkerFound
-                       else RecordAt (Offset (decodeBigEndian offsetBytes))
+              if offsetWidth == ninja1BinaryEOFMarkerWidth
+                   && offsetBytes == ninja1BinaryEOFMarkerBytes
+                then pure EOFMarkerFound
+                else RecordAt . Offset
+                       <$> decodeAddressableBigEndian recordIndex FieldRecordOutputOffset offsetBytes
 
 ----------------------------------------------------------------------------
 -- Textual format: line-based, # comments, header + hex records
@@ -194,45 +225,84 @@ parseText format (PatchFileContents payload) = do
   where
     isSkippable line = ByteString.null line || ByteString8.head line == '#'
 
--- | Decode the single textual NINJA1 header line. The ROM type token is the
--- only mandatory field; an unrecognized name is kept (see 'romTypeFromName'),
--- and only a line with no tokens at all is refused ('NINJA1MalformedTextRecord').
--- CRC32, MD5, and SHA1 are optional and tolerate the spec's @"unk"@/@"unk."@
--- placeholders.
+-- | Decode the textual NINJA1 header line: a ROM-type name, then up to three checksum slots.
+-- The ROM-type token is mandatory — an unrecognized name is kept ('romTypeFromName'), an empty line refused.
+-- Each checksum slot is read by 'parseChecksumSlot'.
 parseTextHeader :: ByteString -> Either SlapError NINJA1TextHeader
-parseTextHeader line = do
-  romType <- case tokens of
-    (formatNameToken:_) -> Right (romTypeFromName (Text.pack (ByteString8.unpack formatNameToken)))
-    _                   -> Left (MalformedNINJA1Content (NINJA1MalformedTextRecord (LineText (Text.pack (ByteString8.unpack line)))))
-  Right NINJA1TextHeader
-    { ninja1TextRomType    = romType
-    , ninja1TextSourceCRC  = parsedCRC
-    , ninja1TextSourceMD5  = parsedMD5
-    , ninja1TextSourceSHA1 = parsedSHA1
-    }
+parseTextHeader line = case ByteString8.words line of
+  [] -> Left (MalformedNINJA1Content (NINJA1MalformedTextRecord (LineText (asText line))))
+  (formatNameToken : checksumTokens) -> do
+    sourceCRC  <- parseChecksumSlot FieldSourceCRC  decodeCRCToken  (checksumTokens `atIndex` 0)
+    sourceMD5  <- parseChecksumSlot FieldSourceMD5  decodeMD5Token  (checksumTokens `atIndex` 1)
+    sourceSHA1 <- parseChecksumSlot FieldSourceSHA1 decodeSHA1Token (checksumTokens `atIndex` 2)
+    Right NINJA1TextHeader
+      { ninja1TextRomType    = romTypeFromName (asText formatNameToken)
+      , ninja1TextSourceCRC  = sourceCRC
+      , ninja1TextSourceMD5  = sourceMD5
+      , ninja1TextSourceSHA1 = sourceSHA1
+      }
   where
-    tokens = ByteString8.words line
-    isUnknown token = token == "unk" || token == "unk."
-    parsedCRC = case tokens of
-      (_:crcToken:_) | not (isUnknown crcToken) -> case (readHex (ByteString8.unpack crcToken) :: [(Word32, String)]) of
-        [(value, "")] -> Just (CRC32 value)
-        _             -> Nothing
-      _ -> Nothing
-    nonEmpty bytes = if ByteString.null bytes then Nothing else Just bytes
-    parsedMD5 = case tokens of
-      (_:_:md5Token:_) | not (isUnknown md5Token) -> MD5Hash <$> nonEmpty (hexToBytes md5Token)
-      _ -> Nothing
-    parsedSHA1 = case tokens of
-      (_:_:_:sha1Token:_) | not (isUnknown sha1Token) -> SHA1Hash <$> nonEmpty (hexToBytes sha1Token)
-      _ -> Nothing
+    asText = Text.pack . ByteString8.unpack
+    atIndex tokens position = case drop position tokens of
+      (token : _) -> Just token
+      []          -> Nothing
 
+-- | Classify one textual checksum slot: an absent token or @"unk"@\/@"unk."@ declares no checksum,
+-- a token the decoder accepts is that checksum, and one it rejects is a malformed patch named by its slot.
+-- The 'Nothing' returned means "no checksum here", never "unreadable" — a malformed token is a 'Left'.
+parseChecksumSlot
+  :: FieldName
+  -> (ByteString -> Maybe a)
+  -> Maybe ByteString
+  -> Either SlapError (Maybe a)
+parseChecksumSlot _     _      Nothing      = Right Nothing
+parseChecksumSlot field decode (Just token)
+  | token == "unk" || token == "unk." = Right Nothing
+  | otherwise = case decode token of
+      Just value -> Right (Just value)
+      Nothing    -> Left (MalformedNINJA1Content
+                            (NINJA1MalformedChecksum field
+                               (ChecksumTokenText (Text.pack (ByteString8.unpack token)))))
+
+-- | A CRC-32 token: hex naming a value that fits 32 bits, any case — an unpadded @beef@ and a padded @0000beef@ are the same number.
+-- Read at 'Integer', so more than 32 bits, or trailing non-hex, is refused rather than wrapped.
+decodeCRCToken :: ByteString -> Maybe CRC32
+decodeCRCToken token = case readHex (ByteString8.unpack token) :: [(Integer, String)] of
+  [(value, "")] | value <= 0xFFFFFFFF -> Just (CRC32 (fromInteger value))
+  _                                   -> Nothing
+
+-- | An MD5 token: exactly 32 hex digits — a 128-bit digest — any case.
+decodeMD5Token :: ByteString -> Maybe MD5Hash
+decodeMD5Token = fmap MD5Hash . decodeFixedWidthDigest 16
+
+-- | A SHA1 token: exactly 40 hex digits — a 160-bit digest — any case.
+decodeSHA1Token :: ByteString -> Maybe SHA1Hash
+decodeSHA1Token = fmap SHA1Hash . decodeFixedWidthDigest 20
+
+-- | Decode a hex token of exactly @byteWidth@ bytes: all hex digits, and exactly @2 * byteWidth@ of them.
+-- A digest's width is part of what it is, so a short, long, or non-hex token is no digest of that width.
+decodeFixedWidthDigest :: Int -> ByteString -> Maybe ByteString
+decodeFixedWidthDigest byteWidth token
+  | ByteString.length token == 2 * byteWidth
+  , ByteString8.all isHexDigit token = Just (hexToBytes token)
+  | otherwise                        = Nothing
+
+-- | Decode one textual record line: a hex offset, then the payload as hex.
+-- The offset is read at 'Integer', since textual offsets have no width limit.
+-- A value past 'maxBound' :: 'Int' is refused ('NINJA1UnaddressableOffsetInTextRecord'), not wrapped.
 parseTextRecord :: ByteString -> Either SlapError NINJA1Record
 parseTextRecord line = case ByteString8.words line of
   (offsetToken : dataParts@(_:_)) ->
-    case (readHex (ByteString8.unpack offsetToken) :: [(Int64, String)]) of
-      [(offset, "")] -> Right (NINJA1Record (offsetFromParsed offset) (hexToBytes (ByteString.concat dataParts)))
-      _ -> Left (MalformedNINJA1Content (NINJA1InvalidOffsetInTextRecord (OffsetTokenText (Text.pack (ByteString8.unpack offsetToken)))))
+    case (readHex (ByteString8.unpack offsetToken) :: [(Integer, String)]) of
+      [(offset, "")]
+        | offset > toInteger (maxBound :: Int) ->
+            Left (MalformedNINJA1Content (NINJA1UnaddressableOffsetInTextRecord (offsetTokenOf offsetToken)))
+        | otherwise ->
+            Right (NINJA1Record (offsetFromParsed offset) (hexToBytes (ByteString.concat dataParts)))
+      _ -> Left (MalformedNINJA1Content (NINJA1InvalidOffsetInTextRecord (offsetTokenOf offsetToken)))
   _ -> Left (MalformedNINJA1Content (NINJA1MalformedTextRecord (LineText (Text.pack (ByteString8.unpack line)))))
+  where
+    offsetTokenOf = OffsetTokenText . Text.pack . ByteString8.unpack
 
 -- | Decode a run of ASCII hex pairs into their bytes.
 -- A lone trailing nibble, or any non-hex character, ends the decode at the last whole pair before it.

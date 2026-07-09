@@ -20,6 +20,7 @@ data FieldName
   | FieldDescription
   | FieldVersion
   | FieldPatchName
+  | FieldFileName
   | FieldGenre
   | FieldLanguage
   | FieldDate
@@ -28,6 +29,7 @@ data FieldName
   | FieldRomType
   | FieldImageType
   | FieldTextMode
+  | FieldOverflowMode
   | FieldStability
   | FieldPatchType
   | FieldImageFormat
@@ -40,6 +42,8 @@ data FieldName
   | FieldDestinationSize
   -- Checksums
   | FieldSourceCRC
+  | FieldSourceMD5
+  | FieldSourceSHA1
   | FieldTargetCRC
   | FieldPatchCRC
   -- Record fields
@@ -48,6 +52,7 @@ data FieldName
   | FieldRecordOutputOffset
   | FieldRecordSourceOffset
   | FieldRecordLength
+  | FieldOverflowData
   -- Trailer / count fields
   | FieldFileIdDiz
   | FieldFileIdDizLength
@@ -65,6 +70,7 @@ fieldNameLabel FieldAuthor           = "author"
 fieldNameLabel FieldDescription      = "description"
 fieldNameLabel FieldVersion          = "version"
 fieldNameLabel FieldPatchName        = "name"
+fieldNameLabel FieldFileName         = "file name"
 fieldNameLabel FieldGenre            = "genre"
 fieldNameLabel FieldLanguage         = "language"
 fieldNameLabel FieldDate             = "date"
@@ -72,6 +78,7 @@ fieldNameLabel FieldWebsite          = "website"
 fieldNameLabel FieldRomType          = "ROM type"
 fieldNameLabel FieldImageType        = "image type"
 fieldNameLabel FieldTextMode         = "NINJA2 text mode"
+fieldNameLabel FieldOverflowMode     = "overflow mode"
 fieldNameLabel FieldStability        = "stability flag"
 fieldNameLabel FieldPatchType        = "patch type"
 fieldNameLabel FieldImageFormat      = "image format"
@@ -82,6 +89,8 @@ fieldNameLabel FieldSourceSize       = "source size"
 fieldNameLabel FieldTargetSize       = "target size"
 fieldNameLabel FieldDestinationSize  = "destination size"
 fieldNameLabel FieldSourceCRC        = "source CRC"
+fieldNameLabel FieldSourceMD5        = "source MD5"
+fieldNameLabel FieldSourceSHA1       = "source SHA1"
 fieldNameLabel FieldTargetCRC        = "target CRC"
 fieldNameLabel FieldPatchCRC         = "patch CRC"
 fieldNameLabel FieldRLERunLength     = "RLE run length"
@@ -89,6 +98,7 @@ fieldNameLabel FieldRecordMode       = "record mode"
 fieldNameLabel FieldRecordOutputOffset = "record output offset"
 fieldNameLabel FieldRecordSourceOffset = "record source offset"
 fieldNameLabel FieldRecordLength       = "record length"
+fieldNameLabel FieldOverflowData       = "overflow data"
 fieldNameLabel FieldFileIdDiz        = "file_id.diz"
 fieldNameLabel FieldFileIdDizLength  = "file_id.diz length"
 fieldNameLabel FieldRecordCount      = "record count"

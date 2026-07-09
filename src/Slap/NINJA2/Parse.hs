@@ -18,14 +18,39 @@ import Slap.ByteParser (ByteParser, runByteParser, throwByteParserError,
                         getByte, getBytes, atEnd)
 import Slap.Measure (Length(..), Offset(unOffset), offsetFromParsed, FileSize(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
+                     RawFlagByte(..),
                      ActionIndex, firstAction, nextAction,
                      byteLength)
 import Slap.Text (EncodedText, EncodingName(..), decodeFixedWidthTextField,
                   encodedTextContent)
 import qualified Data.Text as Text
 
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Except (ExceptT, runExceptT, throwE)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import Data.Int (Int64)
+
+----------------------------------------------------------------------------
+-- Variable-length values
+----------------------------------------------------------------------------
+
+-- | Decode a variable-length value: a one-byte count, then that many little-endian bytes.
+-- A value wider than an 'Int' is refused ('ByteParserFieldExceedsAddressableRange'), not folded to a wrong low-byte one.
+parsePackedInteger :: ActionIndex -> FieldName -> ByteParser Int64
+parsePackedInteger commandIndex field = do
+  count       <- fromIntegral <$> getByte
+  packedBytes <- getBytes (Length count)
+  let value = ByteString.foldr (\byte accumulated -> toInteger byte + 256 * accumulated) 0 packedBytes
+  if value > toInteger (maxBound :: Int)
+    then throwByteParserError (ByteParserFieldExceedsAddressableRange commandIndex field)
+    else pure (fromInteger value)
+
+-- | Decode a length-prefixed byte string: a VLV count, then that many bytes.
+parsePackedByteString :: ActionIndex -> FieldName -> ByteParser ByteString
+parsePackedByteString commandIndex field = do
+  dataLength <- fromIntegral <$> parsePackedInteger commandIndex field
+  getBytes (Length dataLength)
 
 ----------------------------------------------------------------------------
 -- Fixed header (2048 bytes)
@@ -97,15 +122,17 @@ parseNINJA2 metadataEncoding (PatchFileContents input)
       Left unrecognizedByte -> Left (NINJA2UnrecognizedTextMode unrecognizedByte)
       Right textMode -> case runByteParser (parseNINJA2Body textMode) input of
         Left parserError -> Left (ParseError LabelNINJA2 parserError)
-        Right (patch, headerAdvisories) ->
+        Right (Left slapError) -> Left slapError
+        Right (Right (patch, headerAdvisories)) ->
           Right (Parsed patch headerAdvisories)
   where
-    parseNINJA2Body :: TextMode -> ByteParser (NINJA2Patch, [SlapAdvisory])
+    parseNINJA2Body :: TextMode -> ByteParser (Either SlapError (NINJA2Patch, [SlapAdvisory]))
     parseNINJA2Body textMode = do
       headerBytes <- getBytes headerSize
       let (info, headerAdvisories) = parseFixedHeader metadataEncoding textMode headerBytes
-      patch <- parseCommands firstAction (emptyPatch info textMode)
-      pure (patch { ninja2Records = reverse (ninja2Records patch) }, headerAdvisories)
+      runExceptT $ do
+        patch <- parseCommands firstAction (emptyPatch info textMode)
+        pure (patch { ninja2Records = reverse (ninja2Records patch) }, headerAdvisories)
 
     emptyPatch info textMode = NINJA2Patch
       { ninja2Header = info, ninja2Records = [], ninja2Overflow = Nothing
@@ -113,36 +140,38 @@ parseNINJA2 metadataEncoding (PatchFileContents input)
       , ninja2TextMode = textMode
       }
 
-parseCommands :: ActionIndex -> NINJA2Patch -> ByteParser NINJA2Patch
+-- | The walk runs over an 'ExceptT' 'SlapError' channel so a format-semantic refusal within a command — an unknown overflow mode — surfaces as itself.
+-- Byte-level framing failures (an unknown command code, a short read) stay on the parser's own 'ByteParserError'.
+parseCommands :: ActionIndex -> NINJA2Patch -> ExceptT SlapError ByteParser NINJA2Patch
 parseCommands commandIndex patch = do
-  done <- atEnd
+  done <- lift atEnd
   if done then pure patch
   else do
-    code <- getByte
+    code <- lift getByte
     case code of
-      0x01 -> parseFileCommand patch >>= parseCommands (nextAction commandIndex)
-      0x02 -> parseXorRecord patch >>= parseCommands (nextAction commandIndex)
+      0x01 -> parseFileCommand commandIndex patch     >>= parseCommands (nextAction commandIndex)
+      0x02 -> lift (parseXorRecord commandIndex patch) >>= parseCommands (nextAction commandIndex)
       0x00 -> pure patch
-      _    -> throwByteParserError (ByteParserUnknownCommandByte commandIndex code)
+      _    -> lift (throwByteParserError (ByteParserUnknownCommandByte commandIndex code))
 
--- | The OPEN_NEW_FILE command.
-parseFileCommand :: NINJA2Patch -> ByteParser NINJA2Patch
-parseFileCommand patch = do
-  _filename <- parsePackedByteString
-  romTypeByte <- getByte
-  sourceSize <- FileSize . fromIntegral <$> parsePackedInteger
-  targetSize <- FileSize . fromIntegral <$> parsePackedInteger
-  sourceMD5 <- MD5Hash <$> getBytes (Length 16)
-  targetMD5 <- MD5Hash <$> getBytes (Length 16)
-  (overflowType, overflowData) <- if sourceSize /= targetSize
-    then do
-      typeByte <- getByte
+-- | The OPEN_NEW_FILE command. An unknown overflow-mode byte is refused as 'UnknownFlag'.
+parseFileCommand :: ActionIndex -> NINJA2Patch -> ExceptT SlapError ByteParser NINJA2Patch
+parseFileCommand commandIndex patch = do
+  _filename   <- lift (parsePackedByteString commandIndex FieldFileName)
+  romTypeByte <- lift getByte
+  sourceSize  <- FileSize . fromIntegral <$> lift (parsePackedInteger commandIndex FieldSourceSize)
+  targetSize  <- FileSize . fromIntegral <$> lift (parsePackedInteger commandIndex FieldTargetSize)
+  sourceMD5   <- MD5Hash <$> lift (getBytes (Length 16))
+  targetMD5   <- MD5Hash <$> lift (getBytes (Length 16))
+  (overflowType, overflowData) <- if sourceSize == targetSize
+    then pure (Nothing, Nothing)
+    else do
+      typeByte <- lift getByte
       case toOverflowMode typeByte of
-        Left errorMessage -> fail errorMessage
-        Right mode -> do
-          payload <- parsePackedByteString
+        Nothing   -> throwE (UnknownFlag LabelNINJA2 FieldOverflowMode (RawFlagByte typeByte))
+        Just mode -> do
+          payload <- lift (parsePackedByteString commandIndex FieldOverflowData)
           pure (Just mode, Just payload)
-    else pure (Nothing, Nothing)
   pure patch { ninja2OpenNewFile  = Just NINJA2OpenNewFile
                  { openNewFileSourceMD5  = sourceMD5
                  , openNewFileTargetMD5  = targetMD5
@@ -155,8 +184,8 @@ parseFileCommand patch = do
              }
 
 -- | The XOR-record command.
-parseXorRecord :: NINJA2Patch -> ByteParser NINJA2Patch
-parseXorRecord patch = do
-  recordOffset <- offsetFromParsed <$> parsePackedInteger
-  xorPayload <- parsePackedByteString
+parseXorRecord :: ActionIndex -> NINJA2Patch -> ByteParser NINJA2Patch
+parseXorRecord commandIndex patch = do
+  recordOffset <- offsetFromParsed <$> parsePackedInteger commandIndex FieldRecordOutputOffset
+  xorPayload <- parsePackedByteString commandIndex FieldRecordLength
   pure patch { ninja2Records = NINJA2Record recordOffset xorPayload : ninja2Records patch }

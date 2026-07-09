@@ -74,6 +74,7 @@ module Slap.Status
   , BPSMetadataDivergence(..)
   , LineText(..)
   , OffsetTokenText(..)
+  , ChecksumTokenText(..)
   , ByteParserError(..)
   , ByteParserOperation(..)
   , DroppedDescriptionText(..)
@@ -533,6 +534,11 @@ data SlapError
   -- records that name a position the format cannot represent on
   -- the wire, before they can flow through to the apply layer.
   | RecordExceedsAddressableRange FormatLabel ActionIndex ActualOffset MaxOffset
+
+  -- | A parsed record's write end — offset plus payload length — exceeds 'maxBound' :: 'Int'.
+  -- Both fit the carrier alone; only their sum overflows, so they are carried separately and the renderer adds them in 'Integer'.
+  -- Distinct from 'RecordExceedsAddressableRange', whose ceiling is the format's own wire maximum, not slap's carrier.
+  | RecordEndExceedsAddressableRange FormatLabel ActionIndex Offset Length
 
   -- | A parsed record carries a structurally malformed field — for
   -- example an RLE record whose run length is zero, or any other
@@ -1555,6 +1561,11 @@ renderByteParserError (ByteParserUnknownCommandByte recordIndex commandByte) =
   "record " <> renderAsText (unActionIndex recordIndex)
   <> ": unknown command byte 0x" <> padHex 2 commandByte
 
+renderByteParserError (ByteParserFieldExceedsAddressableRange recordIndex field) =
+  "record " <> renderAsText (unActionIndex recordIndex)
+  <> ": " <> fieldNameLabel field <> " past the "
+  <> renderAsText (maxBound :: Int) <> "-byte limit slap can address"
+
 renderByteParserError (ByteParserTerminatorNotFound terminatorByte (Position cursor)) =
   "getUntilByte: terminator 0x" <> padHex 2 terminatorByte
   <> " not found from offset " <> renderAsText cursor
@@ -1705,6 +1716,15 @@ renderSlapError (RecordExceedsAddressableRange label recordIndex (ActualOffset e
   <> ", exceeding the variant's maximum addressable end 0x"
   <> renderHexAsText (unOffset maxEndOffset)
 
+renderSlapError (RecordEndExceedsAddressableRange label recordIndex offset payloadLength) =
+  formatLabelName label <> ": record " <> renderAsText (unActionIndex recordIndex)
+  <> " writes at offset " <> renderAsText (unOffset offset)
+  <> " plus " <> renderAsText (unLength payloadLength)
+  <> " bytes, reaching "
+  <> renderAsText (toInteger (unOffset offset) + toInteger (unLength payloadLength))
+  <> " — past the " <> renderAsText (maxBound :: Int)
+  <> "-byte limit slap can address"
+
 renderSlapError (MalformedRecordField label recordIndex name) =
   formatLabelName label <> ": record " <> renderAsText (unActionIndex recordIndex)
   <> " has malformed " <> fieldNameLabel name
@@ -1740,6 +1760,11 @@ renderSlapError (MalformedNINJA1Content malformation) =
   formatLabelName LabelNINJA1 <> ": malformed text: " <> case malformation of
     NINJA1EmptyTextualPatch                          -> "empty textual patch"
     NINJA1InvalidOffsetInTextRecord (OffsetTokenText t) -> "invalid offset in text record: " <> t
+    NINJA1UnaddressableOffsetInTextRecord (OffsetTokenText t) ->
+      "offset " <> t <> " in text record is past the "
+      <> renderAsText (maxBound :: Int) <> "-byte limit slap can address"
+    NINJA1MalformedChecksum field (ChecksumTokenText t) ->
+      fieldNameLabel field <> " token \"" <> t <> "\" is neither unk nor a valid hex checksum"
     NINJA1MalformedTextRecord       (LineText line)  -> "malformed text record: " <> line
 
 renderSlapError (ParseError label parserError) =
@@ -2805,13 +2830,19 @@ data APSN64HeaderMalformation
   | APSN64UnsupportedEncoding !Word8
   deriving (Eq, Show)
 
--- | The NINJA1-format-specific malformations a textual-patch parser
--- can refuse. Each constructor names a structural failure mode of
--- the textual patch grammar; the labeled newtypes (e.g. 'LineText')
--- carry the offending wire bytes verbatim for the renderer.
+-- | The NINJA1-format-specific malformations a textual-patch parser can refuse.
+-- Each names a structural failure of the textual grammar.
+-- The exception is 'NINJA1UnaddressableOffsetInTextRecord': a value the grammar admits but slap cannot carry.
+-- The labeled newtypes (e.g. 'LineText') carry the offending wire bytes for the renderer.
 data NINJA1Malformation
   = NINJA1EmptyTextualPatch
   | NINJA1InvalidOffsetInTextRecord OffsetTokenText
+  | NINJA1UnaddressableOffsetInTextRecord OffsetTokenText
+    -- ^ The offset token is clean hex but names a position past 'maxBound' :: 'Int'.
+    -- Textual offsets have no width limit, so the parser decodes at 'Integer' and refuses rather than wrapping.
+  | NINJA1MalformedChecksum FieldName ChecksumTokenText
+    -- ^ A header checksum slot holds a token that is neither @"unk"@\/@"unk."@ nor a valid checksum for that slot.
+    -- Such a token is refused rather than skipped or truncated into a wrong one; the 'FieldName' names the slot.
   | NINJA1MalformedTextRecord       LineText
   deriving (Eq, Show)
 
@@ -2833,6 +2864,10 @@ newtype LineText = LineText { unLineText :: Text }
 -- | A hex-offset token slice from a textual-patch line, carried
 -- verbatim for inclusion in a malformation diagnostic.
 newtype OffsetTokenText = OffsetTokenText { unOffsetTokenText :: Text }
+  deriving (Eq, Show)
+
+-- | A header checksum token, carried verbatim for a 'NINJA1MalformedChecksum' diagnostic.
+newtype ChecksumTokenText = ChecksumTokenText { unChecksumTokenText :: Text }
   deriving (Eq, Show)
 
 ----------------------------------------------------------------------------
@@ -2888,6 +2923,11 @@ data ByteParserError
   -- the offending record in wire order and the 'Word8' carries the
   -- byte as read.
   | ByteParserUnknownCommandByte !ActionIndex !Word8
+
+  -- | A width-prefixed integer field decoded a value past 'maxBound' :: 'Int' — the sibling of 'ByteParserVarintExceededWidth'.
+  -- The width prefix has no ceiling, so the wire can name a value no 'Int' holds; the reader decodes at 'Integer' and declines rather than wrapping.
+  -- The 'ActionIndex' names the record and the 'FieldName' which field.
+  | ByteParserFieldExceedsAddressableRange !ActionIndex !FieldName
 
   -- | 'Slap.ByteParser.getUntilByte' scanned for the given terminator
   -- byte from 'Position' to end-of-input and did not find it.
