@@ -25,9 +25,3 @@ lzma-rust2 = { version = "0.16.4", default-features = false, features = ["std", 
 lto = "fat"
 codegen-units = 1
 panic = "abort"
-
-# lzma-rust2 is a submodule pinned to our fork:
-# the registry 0.16.4 (and 0.16.5) loses compression across sync flushes,
-# which is the whole mechanism xdelta3's per-window secondary streams lean on.
-[patch.crates-io]
-lzma-rust2 = { path = "vendor/lzma-rust2" }

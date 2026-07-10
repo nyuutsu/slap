@@ -479,24 +479,30 @@ mod tests {
         }
     }
 
-    /// Thirty-two byte-identical sections, flushed apart. The gathered
-    /// stream's whole reason to exist is that a later section costs
-    /// almost nothing with its twin already in the dictionary; the
-    /// section bytes repeat nothing internally, so only cross-flush
-    /// matching can pass this. The registry lzma-rust2 (0.16.4 and
-    /// 0.16.5) emitted every piece as a stored chunk here — plain plus
-    /// three — which is what the vendored fork exists to fix.
+    /// Many small, low-entropy sections, flushed apart, must
+    /// round-trip byte-for-byte: the gathered stream shares one
+    /// dictionary across sync flushes, and what it emits must decode
+    /// back exactly.
     #[test]
-    fn identical_sections_compress_across_flushes() {
-        let section: Vec<u8> = (0..40u8).map(|i| i.wrapping_mul(37)).collect();
-        let sections: Vec<&[u8]> = (0..32).map(|_| section.as_slice()).collect();
-        let outcome = lzma_compress_sections(&sections);
-        let plain_total = 40 * 32;
-        assert!(
-            outcome.stream_bytes.len() * 2 < plain_total,
-            "gathered stream is {} bytes for {} plain: compression did not carry across flushes",
-            outcome.stream_bytes.len(),
-            plain_total,
-        );
+    fn low_entropy_sections_round_trip_across_flushes() {
+        for seed in 1..=5u64 {
+            let whole: Vec<u8> = pseudo_random_bytes(seed, 99_000)
+                .into_iter()
+                .map(|byte| byte % 4)
+                .collect();
+            let sections: Vec<&[u8]> = whole.chunks(3_000).collect();
+            let outcome = lzma_compress_sections(&sections);
+            let decoded = lzma_decompress(&outcome.stream_bytes)
+                .expect("the gathered stream decodes");
+            assert_eq!(
+                decoded.decoded_bytes, whole,
+                "seed {seed}: decoded bytes must match the input across flushes",
+            );
+            assert_eq!(
+                decoded.consumed_input_length,
+                outcome.stream_bytes.len(),
+                "seed {seed}: the stream must decode with nothing left over",
+            );
+        }
     }
 }

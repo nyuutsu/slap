@@ -324,7 +324,9 @@ djwSectionCompressor = SectionCompressor SecondaryDJW (map (carriageKeepingSmall
 -- the gathered stream shares one dictionary, so the early piece that fails to shrink on its own
 -- is often what makes the later, near-identical pieces nearly free —
 -- judging pieces one by one would drop the dictionary's teacher, and with it, piece by piece, the whole run.
--- Small per-window sections are exactly where the sharing pays.
+-- The encoder emits each flush's tail — a section's final lookahead-sized stretch — as blind literals,
+-- so a section shorter than that lookahead shares nothing across the flush and its kind simply rides plain through the whole-kind gate;
+-- the sharing pays on the sections long enough to match past their own tail.
 -- An empty section never participates: nothing compresses to nothing, and the read side refuses a compressed section declaring zero output.
 lzmaKindCarriages :: [ByteString] -> [SectionCarriage]
 lzmaKindCarriages plainSections

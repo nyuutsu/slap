@@ -308,23 +308,7 @@ This also works with `info`, `explain`, and `convert`. Regarding `convert`: our 
 
 ## Building 🔨
 
-slap is written in Haskell and Rust; the latter is there mostly for heavy byte-crunching stuff. To build it you will need tooling for each of these. You will need to clone one submodule:
-
-```
-git submodule update --init rusty-slap/vendor/lzma-rust2
-```
-
-Once those prerequisites are in place, building is straightforward:
-
-```sh
-make
-```
-
-At which point you could go find your newly-compiled program in `dist-newstyle/`. Or use `cabal run slap --` to run it from the project root, e.g. `cabal run slap -- info path/to/patch.ebp`. Or, and I like this approach more: `make install`; this allows using it without qualifiers, e.g. `slap info path/to/patch.rfc-vcdiff`.
-
-Thank you for trying it out!
-
-### Digression: how to get the aforementioned toolchains
+slap is written in Haskell and Rust; the latter is there mostly for heavy byte-crunching stuff. To build it you will need tooling for each of these.
 
 For each language,
 
@@ -348,7 +332,15 @@ In Rust's case, the version-manager is [rustup](https://rustup.rs); installing i
 rustup default stable
 ```
 
-*then* you can run `make`.
+Once those prerequisites are in place, building is straightforward:
+
+```sh
+make
+```
+
+At which point you could go find your newly-compiled program in `dist-newstyle/`. Or use `cabal run slap --` to run it from the project root, e.g. `cabal run slap -- info path/to/patch.ebp`. Or, and I like this approach more: `make install`; this allows using it without qualifiers, e.g. `slap info path/to/patch.rfc-vcdiff`.
+
+Thank you for trying it out!
 
 ## Running the tests 🧪
 
