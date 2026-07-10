@@ -145,8 +145,8 @@ data UndoOutput
 -- | Where convert writes the produced patch bytes.
 -- 'ConvertToDerivedFile' uses the source patch path with the target format's extension substituted in.
 data ConvertOutput
-  = ConvertToExplicitFile FilePath
-  | ConvertToDerivedFile
+  = ConvertToExplicitFile FilePath OverwritePolicy
+  | ConvertToDerivedFile OverwritePolicy
   deriving (Show, Eq)
 
 -- | Optional side-channel for @slap convert@ when the target format needs the original ROM,
@@ -258,6 +258,7 @@ data CreateCommand = CreateCommand
   , createOutput      :: FilePath
   , createMetadata    :: CreateMetadataInputs
   , createConstraints :: RequestedConstraints
+  , createOverwritePolicy :: OverwritePolicy
   }
 
 data ConvertCommand = ConvertCommand
@@ -278,6 +279,7 @@ data InfoCommand = InfoCommand
   , infoExtractDiz       :: Maybe FilePath
   , infoDialects         :: RequestedDialects
   , infoMetadataEncoding :: EncodingName
+  , infoOverwritePolicy  :: OverwritePolicy
   }
 
 data ExplainCommand = ExplainCommand
@@ -524,9 +526,19 @@ undoOutputParser = asum
         chooseWritingLane (Just path) policy = UndoToExplicitFile path policy
 
 convertOutputParser :: Parser ConvertOutput
-convertOutputParser = maybe ConvertToDerivedFile ConvertToExplicitFile
+convertOutputParser = chooseConvertLane
   <$> optional (pathOption (long "output" <> short 'o' <> metavar "FILE"
       <> help "Output file (default: replace input extension with target format's)"))
+  <*> overwritePolicyFlag
+  where
+    overwritePolicyFlag :: Parser OverwritePolicy
+    overwritePolicyFlag = flag RefuseOverwrite ForceOverwrite
+      (long "force" <> short 'f'
+        <> help "Overwrite existing output files")
+
+    chooseConvertLane :: Maybe FilePath -> OverwritePolicy -> ConvertOutput
+    chooseConvertLane (Just path) policy = ConvertToExplicitFile path policy
+    chooseConvertLane Nothing     policy = ConvertToDerivedFile policy
 
 createParser :: Parser CreateCommand
 createParser = do
@@ -537,6 +549,7 @@ createParser = do
     outputFile         <- pathArgument (metavar "OUTPUT"   <> help "Output patch file")
     metadataInputs     <- createMetadataInputsParser
     constraints        <- constraintsParser
+    overwritePolicy    <- overwritePolicyFlag
     pure CreateCommand
       { createFormat      = format
       , createFileReading = fileReadingOptions
@@ -545,7 +558,12 @@ createParser = do
       , createOutput      = outputFile
       , createMetadata    = metadataInputs
       , createConstraints = constraints
+      , createOverwritePolicy = overwritePolicy
       }
+  where
+    overwritePolicyFlag :: Parser OverwritePolicy
+    overwritePolicyFlag = flag RefuseOverwrite ForceOverwrite
+      (long "force" <> short 'f' <> help "Overwrite existing output files")
 
 convertParser :: Parser ConvertCommand
 convertParser = do
@@ -862,13 +880,19 @@ patchInfoParser = do
         <> help "Write the FILE_ID.DIZ to FILE (PPF2/PPF3)"))
     dialects <- dialectsParser
     metadataEncoding <- metadataEncodingParser
+    overwritePolicy <- overwritePolicyFlag
     pure InfoCommand
       { infoPatch            = patchFile
       , infoExtractMetadata  = extractMetadataPath
       , infoExtractDiz       = extractDizPath
       , infoDialects         = dialects
       , infoMetadataEncoding = metadataEncoding
+      , infoOverwritePolicy  = overwritePolicy
       }
+  where
+    overwritePolicyFlag :: Parser OverwritePolicy
+    overwritePolicyFlag = flag RefuseOverwrite ForceOverwrite
+      (long "force" <> short 'f' <> help "Overwrite existing extraction targets")
 
 ----------------------------------------------------------------------------
 -- Entry point

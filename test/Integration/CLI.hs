@@ -339,7 +339,7 @@ createFlagTests base bps =
         ByteString.readFile base >>= ByteString.writeFile target
         _ <- runExternal SlapBinary ["apply", bps, target, "--in-place", "--no-backup"] Nothing ""
         expectOk ["create", "--format", "ppf3",
-                  "--description", "test patch", base, target, patch]
+                  "--description", "test patch", base, target, patch, "--force"]
           "create/ppf3" "wrote"
 
   , testCase "create/ppf3 undo data present by default" $
@@ -348,7 +348,7 @@ createFlagTests base bps =
         ByteString.readFile base >>= ByteString.writeFile target
         _ <- runExternal SlapBinary ["apply", bps, target, "--in-place", "--no-backup"] Nothing ""
         _ <- runExternal SlapBinary ["create", "--format", "ppf3",
-                                     "--description", "test patch", base, target, patch] Nothing ""
+                                     "--description", "test patch", base, target, patch, "--force"] Nothing ""
         expectOk ["info", patch] "create/ppf3 undo" "undo"
   ]
 
@@ -525,7 +525,7 @@ ipsTruncateTests base =
       withTempFile "slap-patch" $ \patch -> do
         baseBytes <- ByteString.readFile base
         ByteString.writeFile small (ByteString.take 65536 baseBytes)
-        run <- runExternal SlapBinary ["create", "--format", "ips", base, small, patch] Nothing ""
+        run <- runExternal SlapBinary ["create", "--format", "ips", base, small, patch, "--force"] Nothing ""
         case externalRunExitCode run of
           ExitSuccess -> expectOk ["info", patch] "truncate/info" "truncate"
           _ -> assertFailure "create failed"
@@ -537,7 +537,7 @@ ipsTruncateTests base =
         baseBytes <- ByteString.readFile base
         let smallBytes = ByteString.take 65536 baseBytes
         ByteString.writeFile small smallBytes
-        run <- runExternal SlapBinary ["create", "--format", "ips", base, small, patch] Nothing ""
+        run <- runExternal SlapBinary ["create", "--format", "ips", base, small, patch, "--force"] Nothing ""
         case externalRunExitCode run of
           ExitSuccess -> do
             ByteString.writeFile result baseBytes
@@ -612,7 +612,7 @@ vcdiffCreateFlagTests =
       withTempFile "slap-patch" $ \patch ->
       withTempFile "slap-out" $ \out -> do
         expectOk [ "create", "--format", "rfc-vcdiff", "--window-size", "32k"
-                 , source, target, patch ]
+                 , source, target, patch, "--force" ]
           "vcdiff-flags/window-size" "wrote"
         removeIfExists out
         expectOk ["apply", patch, source, "-o", out]
@@ -624,7 +624,7 @@ vcdiffCreateFlagTests =
       withTempFile "slap-patch" $ \patch ->
       withTempFile "slap-out" $ \out -> do
         expectOk [ "create", "--format", "xdelta3", "--compress-with", "djw"
-                 , source, target, patch ]
+                 , source, target, patch, "--force" ]
           "vcdiff-flags/compress-with-djw" "wrote"
         removeIfExists out
         expectOk ["apply", patch, source, "-o", out]
@@ -636,7 +636,7 @@ vcdiffCreateFlagTests =
       withTempFile "slap-patch" $ \patch ->
       withTempFile "slap-out" $ \out -> do
         expectOk [ "create", "--format", "xdelta3", "--no-compress"
-                 , source, target, patch ]
+                 , source, target, patch, "--force" ]
           "vcdiff-flags/no-compress" "wrote"
         removeIfExists out
         expectOk ["apply", patch, source, "-o", out]
@@ -647,7 +647,7 @@ vcdiffCreateFlagTests =
       withGarbagePair $ \source target ->
       withTempFile "slap-patch" $ \patch ->
         expectFail [ "create", "--format", "xdelta3", "--compress-with", "fgk"
-                   , source, target, patch ]
+                   , source, target, patch, "--force" ]
           "vcdiff-flags/compress-with-fgk" "cannot yet write"
   ]
   where
@@ -714,7 +714,7 @@ ninja1VerifyTests tier base ips = quickCases ++ onlyAtFull tier fullTierCases
           withTempFile "slap-patch" $ \patch -> do
             ByteString.readFile base >>= ByteString.writeFile target
             _ <- runExternal SlapBinary ["apply", ips, target, "--in-place", "--no-backup"] Nothing ""
-            _ <- runExternal SlapBinary ["create", "--format", "ninja1", base, target, patch] Nothing ""
+            _ <- runExternal SlapBinary ["create", "--format", "ninja1", base, target, patch, "--force"] Nothing ""
             expectOk ["info", patch] "ninja1/info" "source CRC"
 
       , testCase "ninja1-verify/correct source" $
@@ -723,7 +723,7 @@ ninja1VerifyTests tier base ips = quickCases ++ onlyAtFull tier fullTierCases
           withTempFile "slap-out" $ \out -> do
             ByteString.readFile base >>= ByteString.writeFile target
             _ <- runExternal SlapBinary ["apply", ips, target, "--in-place", "--no-backup"] Nothing ""
-            _ <- runExternal SlapBinary ["create", "--format", "ninja1", base, target, patch] Nothing ""
+            _ <- runExternal SlapBinary ["create", "--format", "ninja1", base, target, patch, "--force"] Nothing ""
             removeIfExists out
             expectOk ["apply", patch, base, "-o", out] "ninja1/correct" "applied"
       ]
@@ -748,7 +748,7 @@ ninja1VerifyTests tier base ips = quickCases ++ onlyAtFull tier fullTierCases
           withTempFile "slap-out" $ \out -> do
             ByteString.readFile base >>= ByteString.writeFile target
             _ <- runExternal SlapBinary ["apply", ips, target, "--in-place", "--no-backup"] Nothing ""
-            _ <- runExternal SlapBinary ["create", "--format", "ninja1", base, target, patch] Nothing ""
+            _ <- runExternal SlapBinary ["create", "--format", "ninja1", base, target, patch, "--force"] Nothing ""
             writeGarbage wrong (4096 * 1024)
             removeIfExists out
             expectFail ["apply", patch, wrong, "-o", out] "ninja1/wrong" "mismatch"
@@ -760,7 +760,7 @@ ninja1VerifyTests tier base ips = quickCases ++ onlyAtFull tier fullTierCases
           withTempFile "slap-out" $ \out -> do
             ByteString.readFile base >>= ByteString.writeFile target
             _ <- runExternal SlapBinary ["apply", ips, target, "--in-place", "--no-backup"] Nothing ""
-            _ <- runExternal SlapBinary ["create", "--format", "ninja1", base, target, patch] Nothing ""
+            _ <- runExternal SlapBinary ["create", "--format", "ninja1", base, target, patch, "--force"] Nothing ""
             writeGarbage wrong (4096 * 1024)
             removeIfExists out
             expectOk ["apply", patch, wrong, "-o", out, "--no-verify"]
@@ -786,7 +786,7 @@ normalizationTests =
         ByteString.writeFile original (header <> body)
         ByteString.writeFile modified (header <> patchedBody)
         _ <- runExternal SlapBinary
-               ["create", "--format", "ninja2", "--rom-type", "nes", original, modified, patch] Nothing ""
+               ["create", "--format", "ninja2", "--rom-type", "nes", original, modified, patch, "--force"] Nothing ""
         removeIfExists out
         expectOk ["apply", patch, original, "-o", out] "normalize/ninja2-nes" "applied"
         outBytes      <- ByteString.readFile out
@@ -803,7 +803,7 @@ normalizationTests =
         ByteString.writeFile original (header <> body)
         ByteString.writeFile modified (header <> ByteString.replicate 0x200 0x24)
         _ <- runExternal SlapBinary
-               ["create", "--format", "ninja2", "--rom-type", "nes", original, modified, patch] Nothing ""
+               ["create", "--format", "ninja2", "--rom-type", "nes", original, modified, patch, "--force"] Nothing ""
         removeIfExists out
         expectFail ["convert", patch, "--to", "ninja1", "--rom-type", "snes", "-o", out]
           "normalize/retag-refused" "does not retag"
@@ -817,7 +817,7 @@ descriptionTests base bps =
         ByteString.readFile base >>= ByteString.writeFile target
         _ <- runExternal SlapBinary ["apply", bps, target, "--in-place", "--no-backup"] Nothing ""
         expectOk ["create", "--format", "aps-n64", "--description", "Test description",
-                  base, target, patch]
+                  base, target, patch, "--force"]
           "desc/aps-n64" "wrote"
         expectOk ["info", patch] "desc/aps-n64 info" "Test description"
   ]
@@ -890,7 +890,7 @@ metadataRejectionTests base bps =
         _ <- runExternal SlapBinary ["apply", bps, target, "--in-place", "--no-backup"] Nothing ""
         expectOk
           ["create", "--format", "dps", base, target, patch,
-           "--title", "Test patch", "--unstable"]
+           "--title", "Test patch", "--unstable", "--force"]
           "metadata-accept/dps" "wrote"
 
   , testCase "metadata-accept/ninja2 takes title rom-type genre" $
@@ -900,7 +900,7 @@ metadataRejectionTests base bps =
         _ <- runExternal SlapBinary ["apply", bps, target, "--in-place", "--no-backup"] Nothing ""
         expectOk
           ["create", "--format", "ninja2", base, target, patch,
-           "--title", "T", "--rom-type", "gbc", "--genre", "RPG"]
+           "--title", "T", "--rom-type", "gbc", "--genre", "RPG", "--force"]
           "metadata-accept/ninja2" "wrote"
 
   , testCase "metadata-accept/bps takes --metadata FILE" $
@@ -911,7 +911,7 @@ metadataRejectionTests base bps =
         _ <- runExternal SlapBinary ["apply", bps, target, "--in-place", "--no-backup"] Nothing ""
         ByteString.writeFile blob (ByteString8.pack "<blob/>")
         expectOk
-          ["create", "--format", "bps", base, target, patch, "--metadata", blob]
+          ["create", "--format", "bps", base, target, patch, "--metadata", blob, "--force"]
           "metadata-accept/bps" "wrote"
 
   , testCase "metadata-accept/ppf3 takes --no-undo --omit-verification --description" $
@@ -921,7 +921,7 @@ metadataRejectionTests base bps =
         _ <- runExternal SlapBinary ["apply", bps, target, "--in-place", "--no-backup"] Nothing ""
         expectOk
           ["create", "--format", "ppf3", base, target, patch,
-           "--description", "x", "--no-undo", "--omit-verification"]
+           "--description", "x", "--no-undo", "--omit-verification", "--force"]
           "metadata-accept/ppf3" "wrote"
 
   , testCase "metadata-accept/convert inherits source metadata silently" $
@@ -939,8 +939,8 @@ metadataRejectionTests base bps =
         ByteString.readFile base >>= ByteString.writeFile target
         _ <- runExternal SlapBinary ["apply", bps, target, "--in-place", "--no-backup"] Nothing ""
         _ <- runExternal SlapBinary ["create", "--format", "ebp", base, target, ebp,
-                                     "--title", "Inherited", "--author", "n", "--description", "d"] Nothing ""
-        expectOk ["convert", ebp, "--to", "ips", "-o", ips]
+                                     "--title", "Inherited", "--author", "n", "--description", "d", "--force"] Nothing ""
+        expectOk ["convert", ebp, "--to", "ips", "-o", ips, "--force"]
           "metadata-accept/inherit" "converted"
   ]
 
@@ -959,7 +959,7 @@ bpsConvertMetadataTests base bps =
         -- BPS\8594BPS has to round-trip through the source ROM, so
         -- @--with@ is required regardless of metadata intent.
         expectOk ["convert", sourceBps, "--to", "bps",
-                  "--with", base, "-o", out]
+                  "--with", base, "-o", out, "--force"]
           "bps-convert/inherit" "converted"
         extracted <- extractEmbeddedMetadata out
         assertEqual "expected source blob to carry through"
@@ -972,7 +972,7 @@ bpsConvertMetadataTests base bps =
         let replacement = ByteString8.pack "<replacement-blob/>"
         ByteString.writeFile newBlob replacement
         expectOk ["convert", sourceBps, "--to", "bps",
-                  "--with", base, "--metadata", newBlob, "-o", out]
+                  "--with", base, "--metadata", newBlob, "-o", out, "--force"]
           "bps-convert/override" "converted"
         extracted <- extractEmbeddedMetadata out
         assertEqual "expected CLI blob to win over source blob"
@@ -982,7 +982,7 @@ bpsConvertMetadataTests base bps =
       withSourceBps $ \sourceBps _ ->
       withTempFile "slap-out" $ \out -> do
         expectOk ["convert", sourceBps, "--to", "bps",
-                  "--with", base, "--drop-metadata", "-o", out]
+                  "--with", base, "--drop-metadata", "-o", out, "--force"]
           "bps-convert/drop" "converted"
         extracted <- extractEmbeddedMetadata out
         assertEqual "expected output to carry no metadata"
@@ -1006,7 +1006,7 @@ bpsConvertMetadataTests base bps =
       withSourceBps $ \sourceBps _ ->
       withTempFile "slap-out" $ \out ->
         expectOk ["convert", sourceBps, "--to", "ips",
-                  "--with", base, "--drop-metadata", "-o", out]
+                  "--with", base, "--drop-metadata", "-o", out, "--force"]
           "bps-convert/drop-cross-format" "converted"
   ]
   where
@@ -1025,25 +1025,25 @@ bpsConvertMetadataTests base bps =
         _ <- runExternal SlapBinary ["apply", bps, target, "--in-place", "--no-backup"] Nothing ""
         ByteString.writeFile blob blobBytes
         _ <- runExternal SlapBinary ["create", "--format", "bps",
-                                     base, target, sourceBps, "--metadata", blob] Nothing ""
+                                     base, target, sourceBps, "--metadata", blob, "--force"] Nothing ""
         action sourceBps blobBytes
 
     -- Read back the embedded metadata of a BPS by asking @slap info@
-    -- to extract it.  Returns 'Nothing' when the patch carries no
-    -- metadata (info reports \"no metadata in this patch\" on stderr
-    -- rather than writing the file), 'Just bytes' otherwise.
+    -- to extract it. Returns 'Nothing' when the patch carries no metadata
+    -- (info exits nonzero with "no embedded metadata to extract"), or
+    -- 'Just bytes' when it wrote the extraction file.
     extractEmbeddedMetadata :: FilePath -> IO (Maybe ByteString.ByteString)
     extractEmbeddedMetadata patchPath =
       withTempFile "slap-meta" $ \metaPath -> do
         run <- runExternal SlapBinary
-          ["info", patchPath, "--extract-metadata", metaPath] Nothing ""
+          ["info", patchPath, "--extract-metadata", metaPath, "--force"] Nothing ""
         case externalRunExitCode run of
-          ExitFailure _ -> assertFailure
-            ("info --extract-metadata failed: "
-             ++ externalRunStdout run ++ externalRunStderr run)
-          ExitSuccess
-            | "no metadata in this patch" `isInfixOf` externalRunStderr run -> pure Nothing
-            | otherwise -> Just <$> ByteString.readFile metaPath
+          ExitSuccess -> Just <$> ByteString.readFile metaPath
+          ExitFailure _
+            | "no embedded metadata" `isInfixOf` externalRunStderr run -> pure Nothing
+            | otherwise -> assertFailure
+                ("info --extract-metadata failed: "
+                 ++ externalRunStdout run ++ externalRunStderr run)
 
 -- | Like 'expectFail', but checks for several substrings in one go.
 -- The error message produced by 'MetadataFieldRejected' names both the

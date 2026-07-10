@@ -39,6 +39,8 @@ module Slap.VCDIFF.AddressCache
   , firstNearMode
   , firstSameMode
   , modeCeiling
+  , modeByteVocabularySize
+  , everyModeFitsItsByte
     -- * Mode classification
   , AddressModeFamily(..)
   , classifyAddressMode
@@ -208,6 +210,18 @@ firstSameMode config = firstNearMode + unNearSlotCount (nearSlotCount config)
 -- and the custom-table check rejects a COPY template that reaches it.
 modeCeiling :: AddressCacheConfig -> Int
 modeCeiling config = firstSameMode config + unSameBlockCount (sameBlockCount config)
+
+-- | How many distinct address modes a code table can name: a COPY's mode rides in a single byte (RFC 3284 §7a),
+-- so a geometry may define at most 256.
+modeByteVocabularySize :: Int
+modeByteVocabularySize = 256
+
+-- | Whether every mode a geometry defines fits the one byte that names it (@2 + s_near + s_same <= 256@).
+-- The encoder holds its cache growth to geometries that satisfy this; otherwise a mode past 255 wraps in 'modeFamilyToByte',
+-- and 'classifyAddressMode' reads the wrapped byte as a different mode — a silently wrong COPY.
+-- Decode needs no such bound: a mode byte classifies against whatever geometry the patch declared.
+everyModeFitsItsByte :: AddressCacheConfig -> Bool
+everyModeFitsItsByte config = modeCeiling config <= modeByteVocabularySize
 
 ----------------------------------------------------------------------------
 -- Mode classification

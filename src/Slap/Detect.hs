@@ -87,12 +87,13 @@ probeMatches (PatchFileContents fileBytes) probe =
 -- | Most formats are identified by a magic byte sequence at the start of the file, matched against the 'magicProbes' table.
 -- DPS is the lone exception: it has no magic and is detected by a heuristic walk ('Slap.DPS.Parse.isDPS').
 detectFormat :: PatchFileContents -> Maybe PatchFormat
-detectFormat patchFile =
-  case find (probeMatches patchFile) magicProbes of
-    Just probe -> Just (resolveAmbiguity (probeFormat probe))
-    Nothing
-      | DPS.isDPS fileBytes -> Just (PatchDifferential FormatDPS)
-      | otherwise           -> Nothing
+detectFormat patchFile
+  -- DPS carries no magic; it is recognised only by a strict structural walk ('Slap.DPS.Parse.isDPS').
+  -- It runs first so a DPS patch whose leading bytes happen to spell another format's magic is still read as DPS.
+  | DPS.isDPS fileBytes = Just (PatchDifferential FormatDPS)
+  | otherwise = case find (probeMatches patchFile) magicProbes of
+      Just probe -> Just (resolveAmbiguity (probeFormat probe))
+      Nothing    -> Nothing
   where
     PatchFileContents fileBytes = patchFile
 

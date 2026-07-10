@@ -7,25 +7,18 @@ module Slap.APSGBA.Create
 import Slap.APSGBA.Types (apsGbaMagicBytes, apsGbaBlockSize,
                            narrowAPSGBASourceSize, narrowAPSGBATargetSize,
                            unAPSGBASourceSize, unAPSGBATargetSize)
-import Slap.Binary (crc16, putWord32LE, putWord16LE, viewBytesInRange)
+import Slap.Binary (crc16, putWord32LE, putWord16LE, zeroExtendedBlock)
 import Slap.Checksum (CRC16(..))
 import Slap.Status (SlapError, CreateResult(..))
 import Slap.Measure (Offset(..), Length(..), byteFileSize)
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.ByteString.Builder (Builder, byteString, toLazyByteString)
 import Data.Bits (xor)
 import Data.Word (Word32)
-
--- | Callers pass a 'viewBytesInRange' slice of length @size@,
--- so the input is already at most @size@ bytes and this only ever pads a short final block.
-zeroPadToBlockSize :: Int -> ByteString -> ByteString
-zeroPadToBlockSize size input =
-  input <> ByteString.replicate (size - ByteString.length input) 0
 
 createAPSGBA :: InputFileContents -> OutputFileContents
              -> Either SlapError CreateResult
@@ -45,8 +38,8 @@ createAPSGBA inputContents@(InputFileContents original) outputContents@(OutputFi
     changedBlocks = filter hasChanges [0 .. blockCount - 1]
     hasChanges blockIndex =
       let offset = blockIndex * blockSize
-          sourceBlock = zeroPadToBlockSize blockSize (viewBytesInRange (Offset offset) (Length blockSize) original)
-          targetBlock = zeroPadToBlockSize blockSize (viewBytesInRange (Offset offset) (Length blockSize) modified)
+          sourceBlock = zeroExtendedBlock (Offset offset) (Length blockSize) original
+          targetBlock = zeroExtendedBlock (Offset offset) (Length blockSize) modified
       in sourceBlock /= targetBlock
 
 encodeGBABlock :: InputFileContents -> OutputFileContents -> Int -> Builder
@@ -60,6 +53,6 @@ encodeGBABlock (InputFileContents original) (OutputFileContents modified) blockI
     <> byteString xorPayload
   where
     offset = blockIndex * apsGbaBlockSize
-    sourceBlock = zeroPadToBlockSize apsGbaBlockSize (viewBytesInRange (Offset offset) (Length apsGbaBlockSize) original)
-    targetBlock = zeroPadToBlockSize apsGbaBlockSize (viewBytesInRange (Offset offset) (Length apsGbaBlockSize) modified)
+    sourceBlock = zeroExtendedBlock (Offset offset) (Length apsGbaBlockSize) original
+    targetBlock = zeroExtendedBlock (Offset offset) (Length apsGbaBlockSize) modified
     xorPayload = ByteString.packZipWith xor sourceBlock targetBlock

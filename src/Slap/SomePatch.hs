@@ -171,8 +171,8 @@ data Verification = Verification
 data ExpectedN64ByteOrder = SourceMustBeV64 | SourceMustNotBeV64
   deriving (Show, Eq)
 
--- | Per-block CRC16 check (APS-GBA).
-data BlockCheck = BlockCheck !Offset !CRC16
+-- | Per-block CRC16 check (APS-GBA): the CRC16 covers the zero-extended block, not the clipped tail.
+data BlockCheck = BlockCheck !Offset !Length !CRC16
   deriving (Show)
 
 -- | Validation block comparison (PPF2 and PPF3). The bytes are
@@ -779,12 +779,19 @@ vcdiffWindowChecks vcdiffPatch =
 parseSomePatchFromAPSN64 :: EncodingName -> PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromAPSN64 metadataEncoding patchContents = do
   Parsed patch@(APSN64.APSN64Patch header records) parseAdvisories <- APSN64.parseAPSN64 metadataEncoding patchContents
-  let expandN64 (APSN64.APSN64Normal recordOffset recordPayload) = Hunk recordOffset recordPayload
-      expandN64 (APSN64.APSN64RLE recordOffset fillValue fillCount) = Hunk recordOffset (ByteString.replicate (fromIntegral fillCount) fillValue)
+  let -- A zero-count APS-N64 RLE record writes nothing, so it must expand to no hunk: an empty hunk carried to an
+      -- IPS-family or APS-N64 target re-encodes as a size-0 record — the RLE sentinel — and desyncs every record after it.
+      -- Same guard as 'expandIPSRecord' above.
+      expandN64 (APSN64.APSN64Normal recordOffset recordPayload) =
+        Just (Hunk recordOffset recordPayload)
+      expandN64 (APSN64.APSN64RLE recordOffset fillValue fillCount)
+        | fillCount == 0 = Nothing
+        | otherwise      =
+            Just (Hunk recordOffset (ByteString.replicate (fromIntegral fillCount) fillValue))
   Right SomePatch
     { patchFormat         = LabelAPSN64
     , patchAnalysis       = APSN64.analyzeAPSN64 patch
-    , patchKind           = Direct (Just (emptyContents (Vector.toList (Vector.map expandN64 records)))
+    , patchKind           = Direct (Just (emptyContents (mapMaybe expandN64 (Vector.toList records)))
           { contentsDescription = Just (APSN64.apsN64Description header)
           -- ^ APSN64's description field is typed 'EncodedText';
           -- the parse-time decode (and any substitution advisories) lives inside 'parseAPSN64'.
@@ -1131,8 +1138,8 @@ parseSomePatchFromAPSGBA patchContents = do
           { runApply = \source -> pure (fmap noAdvisories (APSGBA.applyAPSGBA patch source)) }
     , patchUndo           = Nothing
     , patchVerification   = noVerification
-          { verifySourceBlocks = map (\record -> BlockCheck (APSGBA.apsGbaOffset record) (APSGBA.apsGbaSourceCRC record)) records
-          , verifyTargetBlocks = map (\record -> BlockCheck (APSGBA.apsGbaOffset record) (APSGBA.apsGbaTargetCRC record)) records
+          { verifySourceBlocks = map (\record -> BlockCheck (APSGBA.apsGbaOffset record) (Length APSGBA.apsGbaBlockSize) (APSGBA.apsGbaSourceCRC record)) records
+          , verifyTargetBlocks = map (\record -> BlockCheck (APSGBA.apsGbaOffset record) (Length APSGBA.apsGbaBlockSize) (APSGBA.apsGbaTargetCRC record)) records
           , verifyFileSize = Just (AdvisorySize (APSGBA.apsGbaSourceSize header))
           }
     , patchAdvisories       = parseAdvisories

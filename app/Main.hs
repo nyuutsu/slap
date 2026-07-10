@@ -51,11 +51,11 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as TextIO
 import Slap.Archive.Types (detectArchive, EntryName(unEntryName))
-import Slap.Binary (crc16, md5, sha1, viewBytesInRange)
+import Slap.Binary (crc16, md5, sha1, viewBytesInRange, zeroExtendedBlock)
 import Slap.Checksum (CRC32(..), CRC16, Adler32(..),
                       ExpectedCRC32(..), ActualCRC32(..))
 import Slap.FFI (crc32, adler32)
-import Slap.Status (SlapError(..), SlapAdvisory(..), CreateResult(..), Outcome(..),
+import Slap.Status (SlapError(..), ExtractionSubject(..), SlapAdvisory(..), CreateResult(..), Outcome(..),
                    VerificationSide(..), HashAlgorithm(..),
                    ExpectedAdler32(..), ActualAdler32(..), ByteCheckLabel(..),
                    emitAdvisories, bail, bailError, orBail)
@@ -94,16 +94,16 @@ import Archive (unwrapArchive)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import Control.Exception (try)
+import Control.Exception (try, bracketOnError)
 import Control.Monad (when, forM_)
-import System.Directory (copyFile, doesFileExist)
-import System.FilePath (dropExtension, replaceExtension, takeBaseName, takeExtension)
-import System.IO (IOMode(ReadMode), hFileSize, hSetEncoding, stderr, stdout, withFile)
+import System.Directory (copyFile, doesFileExist, renameFile, removeFile)
+import System.FilePath (dropExtension, replaceExtension, takeBaseName, takeExtension, takeDirectory, takeFileName)
+import System.IO (IOMode(ReadMode), hFileSize, hSetEncoding, stderr, stdout, withFile, openBinaryTempFile, hClose)
 import System.IO.MMap (mmapFileByteString)
 import System.IO.Error (isDoesNotExistError, ioeGetErrorString)
 import GHC.IO.Encoding (setFileSystemEncoding, setLocaleEncoding, utf8)
 import GHC.IO.Encoding.UTF8 (mkUTF8)
-import GHC.IO.Encoding.Failure (CodingFailureMode(TransliterateCodingFailure))
+import GHC.IO.Encoding.Failure (CodingFailureMode(TransliterateCodingFailure, RoundtripFailure))
 
 ----------------------------------------------------------------------------
 -- Entry point and dispatch
@@ -112,11 +112,11 @@ import GHC.IO.Encoding.Failure (CodingFailureMode(TransliterateCodingFailure))
 main :: IO ()
 main = do
   -- Slap is a UTF-8 program on both sides:
-  -- setFileSystemEncoding utf8 pins argument decoding to UTF-8 and setStdoutAndStderrToLenientUtf8 pins output,
-  -- so LANG/LC_CTYPE cannot change how slap reads its arguments or what it prints.
+  -- the filesystem pin decodes arguments and path bytes as UTF-8 (RoundtripFailure, so an odd non-UTF-8 name still round-trips),
+  -- setStdoutAndStderrToLenientUtf8 pins output, so LANG/LC_CTYPE cannot change how slap reads its arguments or what it prints.
   -- setLocaleEncoding utf8 pins the entry listings slap reads back from shelled-out archive tools.
   -- The filesystem pin must run first, before parseCommandLine decodes argv.
-  setFileSystemEncoding utf8
+  setFileSystemEncoding (mkUTF8 RoundtripFailure)
   setLocaleEncoding utf8
   setStdoutAndStderrToLenientUtf8
   parsedCommand <- parseCommandLine
@@ -132,12 +132,10 @@ main = do
 -- Archive-aware file reading
 ----------------------------------------------------------------------------
 
--- | Read a user-supplied input file, turning its two interesting IO failure modes into typed 'SlapError' values on slap's normal error channel:
--- the path is absent ('MissingInputFile'), or present but unopenable ('UnreadableInputFile').
--- A mapped input is live pages rather than a snapshot, so an outside process truncating the file mid-run
--- is outside slap's contract; slap's own in-place apply and undo stay clear of the hazard
--- because each writes only a fully materialized output and reads nothing from the input afterwards —
--- 'applyAndWriteTo' and 'undoAndWriteTo' own that ordering.
+-- | Read a user-supplied input file, memory-mapped when its shape allows ('readWholeFile').
+-- The mapped bytes are live pages, not a snapshot, so nothing may read the input after slap has written over it:
+-- in-place apply and undo stay clear by writing a finished output and never reading the input again.
+-- An absent or unopenable path surfaces as a typed 'SlapError' rather than an exception.
 readInputFile :: FilePath -> IO ByteString
 readInputFile path = do
   result <- try (readWholeFile path)
@@ -160,6 +158,35 @@ readWholeFile path = do
   case probedSize of
     Right byteCount | byteCount > 0 -> mmapFileByteString path Nothing
     _                               -> ByteString.readFile path
+
+-- | Write an output file: the write-side mirror of 'readInputFile'.
+writeOutputFile :: FilePath -> ByteString -> IO ()
+writeOutputFile path outputBytes = do
+  result <- try (ByteString.writeFile path outputBytes)
+  case result of
+    Right ()   -> pure ()
+    Left ioErr -> bailError (UnwritableOutputFile path (ioeGetErrorString ioErr))
+
+-- | Replace @path@'s contents atomically: write a sibling temporary, then 'renameFile' it over @path@.
+-- The original is never truncated mid-write — an interrupted or failed write leaves it whole, not half-written —
+-- which is what makes in-place apply and undo safe to run on a ROM the user cannot re-fetch.
+writeFileAtomicallyOver :: FilePath -> ByteString -> IO ()
+writeFileAtomicallyOver path outputBytes = do
+  result <- try $ bracketOnError
+    (openBinaryTempFile (takeDirectory path) (takeFileName path <> ".tmp"))
+    (\(tempPath, tempHandle) -> hClose tempHandle >> removeFileIfExists tempPath)
+    (\(tempPath, tempHandle) -> do
+       ByteString.hPut tempHandle outputBytes
+       hClose tempHandle
+       renameFile tempPath path)
+  case result of
+    Right ()   -> pure ()
+    Left ioErr -> bailError (UnwritableOutputFile path (ioeGetErrorString ioErr))
+
+removeFileIfExists :: FilePath -> IO ()
+removeFileIfExists path = do
+  exists <- doesFileExist path
+  when exists (removeFile path)
 
 -- | Read a file, transparently unwrapping single-entry archives.
 readUnwrap :: FilePath -> IO ByteString
@@ -240,20 +267,28 @@ doInfo parsedCommand = do
             (infoDialects parsedCommand))
   mapM_ TextIO.putStrLn (renderPatchInfo SizeOnly (patchInfo parsed))
   emitAdvisories (patchAdvisories parsed)
-  case infoExtractMetadata parsedCommand of
-    Nothing -> pure ()
+  -- Attempt each requested extraction, writing whatever the patch can satisfy;
+  -- an extraction that finds nothing is a refused request, reported only after any satisfiable one has been written.
+  metadataMiss <- case infoExtractMetadata parsedCommand of
+    Nothing -> pure Nothing
     Just outPath -> case patchMetadata parsed of
-      Nothing   -> TextIO.hPutStrLn stderr "slap: no metadata in this patch"
+      Nothing -> pure (Just (NothingToExtract outPath EmbeddedMetadataSubject))
       Just metadataBytes -> do
-        ByteString.writeFile outPath metadataBytes
+        refuseOverwrite (infoOverwritePolicy parsedCommand) outPath
+        writeOutputFile outPath metadataBytes
         TextIO.putStrLn ("wrote metadata to " <> pathText outPath)
-  case infoExtractDiz parsedCommand of
-    Nothing -> pure ()
+        pure Nothing
+  dizMiss <- case infoExtractDiz parsedCommand of
+    Nothing -> pure Nothing
     Just outPath -> case patchContentsOf parsed >>= contentsFileIdDiz of
-      Nothing        -> TextIO.hPutStrLn stderr "slap: no FILE_ID.DIZ in this patch"
+      Nothing -> pure (Just (NothingToExtract outPath FileIdDizSubject))
       Just fileIdDiz -> do
-        ByteString.writeFile outPath (fst (encodeTextLenient (encodedTextEncoding fileIdDiz) (encodedTextContent fileIdDiz)))
+        refuseOverwrite (infoOverwritePolicy parsedCommand) outPath
+        writeOutputFile outPath (fst (encodeTextLenient (encodedTextEncoding fileIdDiz) (encodedTextContent fileIdDiz)))
         TextIO.putStrLn ("wrote FILE_ID.DIZ to " <> pathText outPath)
+        pure Nothing
+  mapM_ bailError metadataMiss
+  mapM_ bailError dizMiss
 
 doExplain :: ExplainCommand -> IO ()
 doExplain parsedCommand = do
@@ -310,7 +345,7 @@ doApply parsedCommand = do
         let (restoredTarget, restoreAdvisories) =
               restoreStrippedContent (patchFormat parsed) (normalizedSourceRestore normalized) target
         emitAdvisories restoreAdvisories
-        ByteString.writeFile outputPath (unOutputFileContents restoredTarget)
+        writeFileAtomicallyOver outputPath (unOutputFileContents restoredTarget)
         TextIO.putStrLn (renderActionLine "applied" (patchInfo parsed) outputPath)
 
   case applyOutput parsedCommand of
@@ -359,7 +394,7 @@ doUndo parsedCommand = do
             let revertedSource = outcomeValue outcome
             verifySource verificationPolicy verification revertedSource
             let InputFileContents result = revertedSource
-            ByteString.writeFile outputPath result
+            writeFileAtomicallyOver outputPath result
             TextIO.putStrLn (renderActionLine "reverted" (patchInfo parsed) outputPath)
 
       case undoOutput parsedCommand of
@@ -390,6 +425,7 @@ doCreate parsedCommand = do
   orBail (rejectUnencodableSecondaryCompressor (createFormat parsedCommand) createMeta)
   orBail (rejectIncompatibleConstraints (createFormat parsedCommand) (createConstraints parsedCommand))
   resolvedXDelta1Names <- orBail (resolveCreateXDelta1Names parsedCommand createMeta)
+  refuseOverwrite (createOverwritePolicy parsedCommand) (createOutput parsedCommand)
   originalBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createOriginal parsedCommand)
   modifiedBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createModified parsedCommand)
   emitAdvisories (createDefaultAdvisories (createFormat parsedCommand) createMeta)
@@ -403,7 +439,7 @@ doCreate parsedCommand = do
                      (createConstraints parsedCommand)
                      noDialectsRequested)
   emitAdvisories (resultAdvisories result)
-  ByteString.writeFile (createOutput parsedCommand) (unPatchFileContents (resultBytes result))
+  writeOutputFile (createOutput parsedCommand) (unPatchFileContents (resultBytes result))
   TextIO.putStrLn ("wrote " <> pathText (createOutput parsedCommand))
 
 -- | Resolve the xdelta1 file-name pair for @slap create@,
@@ -466,10 +502,12 @@ doConvert parsedCommand = do
             (convertDialects parsedCommand))
   orBail (rejectCrossPlatformRomTypeRetag cliMeta (patchExtractedMeta parsed))
   emitAdvisories (patchAdvisories parsed)
-  let outputFile = case convertOutput parsedCommand of
-        ConvertToExplicitFile explicit -> explicit
-        ConvertToDerivedFile           -> replaceExtension (convertPatch parsedCommand)
-                                                           (formatExtension (convertTo parsedCommand))
+  let (outputFile, overwritePolicy) = case convertOutput parsedCommand of
+        ConvertToExplicitFile explicit policy -> (explicit, policy)
+        ConvertToDerivedFile policy           ->
+          ( replaceExtension (convertPatch parsedCommand)
+                             (formatExtension (convertTo parsedCommand))
+          , policy )
       blobIntent = convertEmbeddedBlobIntent (convertMetadata parsedCommand)
       -- The merge inherits the source patch's embedded blob when the CLI supplied none;
       -- for 'DropEmbeddedBlob' that would re-introduce the very bytes the user asked to discard.
@@ -478,6 +516,7 @@ doConvert parsedCommand = do
           (mergeRequestedMetadata cliMeta (patchExtractedMeta parsed))
             { requestedEmbeddedBlob = Nothing }
         _ -> mergeRequestedMetadata cliMeta (patchExtractedMeta parsed)
+  refuseOverwrite overwritePolicy outputFile
   resolvedXDelta1Names <- orBail (resolveConvertXDelta1Names parsedCommand parsed mergedMeta)
   case chooseConvertDispatch parsedCommand parsed of
     ApplyAndRecreate withSource -> do
@@ -496,12 +535,12 @@ doConvert parsedCommand = do
       emitAdvisories (patchSourceAdvisories parsed
                         ++ createDefaultAdvisories (convertTo parsedCommand) mergedMeta
                         ++ resultAdvisories createResult)
-      ByteString.writeFile outputFile (unPatchFileContents (resultBytes createResult))
+      writeOutputFile outputFile (unPatchFileContents (resultBytes createResult))
       TextIO.putStrLn ("converted to " <> formatName (convertTo parsedCommand) <> ": " <> pathText outputFile)
     SourceLessConvert contents -> do
       convertResult <- orBail (convertDirect contents (convertTo parsedCommand) mergedMeta (convertConstraints parsedCommand) noDialectsRequested)
       emitAdvisories (patchSourceAdvisories parsed ++ resultAdvisories convertResult)
-      ByteString.writeFile outputFile (unPatchFileContents (resultBytes convertResult))
+      writeOutputFile outputFile (unPatchFileContents (resultBytes convertResult))
       TextIO.putStrLn ("converted to " <> formatName (convertTo parsedCommand) <> ": " <> pathText outputFile)
     ConvertRequiresSource somePatch ->
       bail (needSourceMessage somePatch)
@@ -593,8 +632,8 @@ verifySource verificationPolicy verification (InputFileContents sourceBytes) = d
   let preprocessed = applySourcePreHash (verifySourcePreHash verification) sourceBytes
   -- Advisory-class checks first: per-spec non-fatal diagnostics that the format chose to populate.
   -- --no-verify doesn't gate these; it operates only on the fatal-class checks below.
-  forM_ (verifySourceBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
-    noteBlockCRC SourceSide blockOffset expectedCRC (crc16 (viewBytesInRange blockOffset (Length 0x10000) sourceBytes))
+  forM_ (verifySourceBlocks verification) $ \(BlockCheck blockOffset blockLength expectedCRC) ->
+    noteBlockCRC SourceSide blockOffset expectedCRC (crc16 (zeroExtendedBlock blockOffset blockLength sourceBytes))
   forM_ (verifyPPFBlock verification) $ \(ValidationBlock blockOffset expectedData) ->
     notePPFBlock blockOffset expectedData sourceBytes
   forM_ (verifySourceBytes verification) $ \(ByteCheck checkOffset (AdvisoryExpectedBytes expectedData) checkLabel) ->
@@ -625,8 +664,8 @@ verifySource verificationPolicy verification (InputFileContents sourceBytes) = d
 verifyTarget :: VerificationPolicy -> Verification -> OutputFileContents -> IO ()
 verifyTarget verificationPolicy verification (OutputFileContents targetBytes) = do
   -- Advisory-class checks first; see verifySource for the discipline.
-  forM_ (verifyTargetBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
-    noteBlockCRC TargetSide blockOffset expectedCRC (crc16 (viewBytesInRange blockOffset (Length 0x10000) targetBytes))
+  forM_ (verifyTargetBlocks verification) $ \(BlockCheck blockOffset blockLength expectedCRC) ->
+    noteBlockCRC TargetSide blockOffset expectedCRC (crc16 (zeroExtendedBlock blockOffset blockLength targetBytes))
   -- Fatal-class checks.
   forM_ (verifyTargetCRC32 verification) $ \expected ->
     enforceCRC verificationPolicy TargetSide expected (crc32 targetBytes)

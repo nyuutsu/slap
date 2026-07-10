@@ -46,10 +46,6 @@ import Slap.Narrow (EncodingLimits(..), narrowToWord32)
 import Slap.Text (EncodedText, EncodingName(..),
                   encodedTextContent, encodeTextLenient)
 
--- | A PPF2 record. Same wire shape as PPF1: a target-file offset
--- and the bytes to write. The wire-level RLE encoding (count=0
--- sentinel) is decoded at parse time into the same flat payload
--- representation literal records use.
 data PPF2Record = PPF2Record
   { ppf2RecordOffset  :: !Offset
   , ppf2RecordPayload :: !ByteString

@@ -35,6 +35,7 @@ module Slap.Binary
   , copyRegion
   , copyInPlace
   , viewBytesInRange
+  , zeroExtendedBlock
   , fillNewBuffer
     -- * Byte permutations
   , swapAdjacentBytePairs
@@ -369,6 +370,13 @@ copyRegion destination destinationOffset source sourcePosition regionLength =
 viewBytesInRange :: Offset -> Length -> ByteString -> ByteString
 viewBytesInRange rangeStart rangeLength input =
   ByteString.take (unLength rangeLength) (ByteString.drop (unOffset rangeStart) input)
+
+-- | The @regionLength@-byte block starting at @rangeStart@, always exactly that long:
+-- a range that runs past the end of the input is zero-extended rather than clipped.
+zeroExtendedBlock :: Offset -> Length -> ByteString -> ByteString
+zeroExtendedBlock rangeStart regionLength input =
+  present <> ByteString.replicate (unLength regionLength - ByteString.length present) 0
+  where present = viewBytesInRange rangeStart regionLength input
 
 -- | Copy @regionLength@ bytes from one position in a buffer to
 -- another position in the SAME buffer. Used by apply workers for

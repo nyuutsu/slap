@@ -16,6 +16,7 @@ import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import qualified Data.ByteString as ByteString
 import Data.Word (Word8)
+import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (Ptr)
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -53,8 +54,11 @@ applyDPS patch (InputFileContents source)
       | otherwise = Right ()
 
     runApply :: Ptr Word8 -> IO (Maybe ApplyError)
-    runApply outputPointer =
-      let
+    runApply outputPointer = do
+      -- DPS names only the bytes its records write, and 'fillNewBuffer' does not zero the rest.
+      fillBytes outputPointer (0 :: Word8) (unFileSize outputSize)
+      applyRecordStream firstAction records
+      where
         applyRecordStream :: ActionIndex -> [DPSRecord] -> IO (Maybe ApplyError)
         applyRecordStream !_recordIndex [] = pure Nothing
         applyRecordStream !recordIndex (record : remainingRecords) =
@@ -79,5 +83,3 @@ applyDPS patch (InputFileContents source)
                else do
                  copyRegion outputPointer outputOffset payload (Offset 0) writeLength
                  applyRecordStream (nextAction recordIndex) remainingRecords
-
-      in applyRecordStream firstAction records

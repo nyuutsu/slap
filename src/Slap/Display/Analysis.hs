@@ -399,8 +399,9 @@ renderAnalysisSummary info analysis mSource = Text.unlines $ joinSections
     -- Bucket-based analysis
     bucketCount = 56 :: Int  -- terminal sparkline width
 
+    -- Ceiling division, so bucketWidth * bucketCount >= rangeLength and every offset in the range lands in a column below bucketCount.
     bucketWidth :: OffsetRange -> Int
-    bucketWidth range = max 1 (max 1 (unLength (rangeLength range)) `div` bucketCount)
+    bucketWidth range = max 1 ((unLength (rangeLength range) + bucketCount - 1) `div` bucketCount)
 
     spannedColumns :: OffsetRange -> AnalysisRegion -> [BucketIndex]
     spannedColumns range region =
@@ -446,7 +447,10 @@ renderAnalysisSummary info analysis mSource = Text.unlines $ joinSections
                 let runStart = unBucketIndex (runFirstBucket run)
                     runEnd   = unBucketIndex (runLastBucket run)
                     startOffset = unOffset (rangeStart range) + runStart * width
-                    endOffset = unOffset (rangeStart range) + (runEnd + 1) * width - 1
+                    -- The ceiling-rounded last bucket can nominally reach past the range's final byte;
+                    -- clamp the shown end to the real last byte.
+                    endOffset = min (unOffset (rangeStart range) + (runEnd + 1) * width - 1)
+                                    (unOffset (rangeLastByte range))
                     recordsInRun = runRecords run
                     bytesInRun   = runBytes run
                     percentage = if totalModified > 0

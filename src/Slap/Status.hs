@@ -15,6 +15,7 @@ module Slap.Status
   , orBail
     -- Status values
   , SlapError(..)
+  , ExtractionSubject(..)
   , SlapAdvisory(..)
   , ApplyError(..)
   , CursorKind(..)
@@ -462,6 +463,12 @@ data CompressionAlgorithm
 -- SlapError
 ----------------------------------------------------------------------------
 
+-- | Which @info@ extraction found nothing to write, for 'NothingToExtract'.
+data ExtractionSubject
+  = EmbeddedMetadataSubject
+  | FileIdDizSubject
+  deriving (Show, Eq)
+
 data SlapError
 
   -- IO boundary
@@ -474,6 +481,15 @@ data SlapError
   -- explanation ('System.IO.Error.ioeGetErrorString') so the user
   -- sees the same words their kernel would have said.
   | UnreadableInputFile FilePath String
+
+  -- | slap could not write an output file it was asked to produce: wrong permissions, the path resolves to a directory,
+  -- the disk is full, and so on. The 'String' carries the OS-supplied explanation ('System.IO.Error.ioeGetErrorString') —
+  -- the write-side mirror of 'UnreadableInputFile'.
+  | UnwritableOutputFile FilePath String
+
+  -- | @info --extract-metadata@ or @--extract-diz@ was asked for, but the patch carries no such content, so nothing was written.
+  -- The 'ExtractionSubject' names which extraction came up empty.
+  | NothingToExtract FilePath ExtractionSubject
 
   -- | slap recognized the input as an archive and tried to unwrap the
   -- single patch inside it, but couldn't. The 'FilePath' is the archive
@@ -1679,6 +1695,15 @@ renderSlapError (MissingInputFile path) =
 
 renderSlapError (UnreadableInputFile path reason) =
   "cannot read " <> Text.pack path <> ": " <> Text.pack reason
+
+renderSlapError (UnwritableOutputFile path reason) =
+  "cannot write " <> Text.pack path <> ": " <> Text.pack reason
+
+renderSlapError (NothingToExtract path subject) =
+  "no " <> subjectText <> " to extract to " <> Text.pack path
+  where subjectText = case subject of
+          EmbeddedMetadataSubject -> "embedded metadata"
+          FileIdDizSubject        -> "FILE_ID.DIZ"
 
 renderSlapError (ArchiveUnwrapFailed path format unwrapError) =
   renderUnwrapError path format unwrapError

@@ -1,11 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Parse a PPF2 patch from raw bytes. Spec:
--- @docs/ppf/upstream/pdx-ppf2/ppftools/ppfdev/PPF2.txt@. The PPF2
--- record stream wire format is identical to PPF1's (4-byte LE
--- offset, 1-byte count, payload, with count=0 meaning RLE), but
--- the spec text is silent on the RLE branch — the reference
--- applier treats both formats the same way and we follow it.
+-- | Parse a PPF2 patch from raw bytes. Spec: @docs/ppf/upstream/pdx-ppf2/ppftools/ppfdev/PPF2.txt@.
+-- A PPF2 record is a 4-byte LE offset, a 1-byte count, then @count@ payload bytes; a count of zero is a zero-length write.
 module Slap.PPF2.Parse (parsePPF2, parsePPF2Records) where
 
 import Slap.PPF2.Types (PPF2Patch(..), PPF2Record(..),
@@ -23,7 +19,7 @@ import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runFormatParser, throwByteParserError,
                         getByte, getBytes, remaining, skip, word32LE)
-import Slap.Measure (Offset, offsetFromParsed, Length(..),
+import Slap.Measure (offsetFromParsed, Length(..),
                      EncodingMethodByte(..),
                      ActionIndex,
                      RequiredLength(..), ActualLength(..), RemainingLength(..),
@@ -94,45 +90,25 @@ checkEncodingByte input
   | otherwise      = Left (UnsupportedEncodingMethod LabelPPF2 (EncodingMethodByte actual))
   where actual = ByteString.index input 5
 
--- | Same record-stream shape as PPF1, but kept as a separate per-format
--- copy so the two versions can diverge on their own producer quirks.
+ppf2RecordHeaderLength :: Int
+ppf2RecordHeaderLength = 5
+
 parsePPF2Records :: ActionIndex -> ByteParser [PPF2Record]
 parsePPF2Records recordIndex = do
   remainingBytes <- remaining
-  if unLength remainingBytes < 5 then pure []
+  if unLength remainingBytes < ppf2RecordHeaderLength then pure []
   else do
-    recordOffset <- offsetFromParsed <$> word32LE
-    countByte <- fromIntegral <$> getByte
-    remainingAfterHeader <- remaining
-    record <- if countByte == 0
-      then parseRleBody recordIndex remainingAfterHeader recordOffset
-      else parseLiteralBody recordIndex remainingAfterHeader recordOffset countByte
-    rest <- parsePPF2Records (nextAction recordIndex)
-    pure (record : rest)
-  where
-    parseLiteralBody :: ActionIndex -> Length -> Offset -> Int -> ByteParser PPF2Record
-    parseLiteralBody index remainingAfterHeader writeOffset payloadLength
-      | unLength remainingAfterHeader < payloadLength =
-          throwByteParserError (ByteParserTruncatedRecord index
-            (RequiredLength (Length (5 + payloadLength)))
-            (RemainingLength (lengthWithRecordHeader remainingAfterHeader)))
-      | otherwise = do
-          payload <- getBytes (Length payloadLength)
-          pure (PPF2Record writeOffset payload)
-
-    parseRleBody :: ActionIndex -> Length -> Offset -> ByteParser PPF2Record
-    parseRleBody index remainingAfterHeader writeOffset
-      | unLength remainingAfterHeader < 2 =
-          throwByteParserError (ByteParserTruncatedRecord index
-            (RequiredLength (Length 7))
-            (RemainingLength (lengthWithRecordHeader remainingAfterHeader)))
-      | otherwise = do
-          dataByte <- getByte
-          repeatCount <- fromIntegral <$> getByte
-          pure (PPF2Record writeOffset (ByteString.replicate repeatCount dataByte))
-
-    lengthWithRecordHeader :: Length -> Length
-    lengthWithRecordHeader (Length availableAfterHeader) = Length (5 + availableAfterHeader)
+    recordOffset  <- offsetFromParsed <$> word32LE
+    payloadLength <- fromIntegral <$> getByte
+    let totalNeeded = ppf2RecordHeaderLength + payloadLength
+    if totalNeeded > unLength remainingBytes
+      then throwByteParserError (ByteParserTruncatedRecord recordIndex
+             (RequiredLength (Length totalNeeded))
+             (RemainingLength remainingBytes))
+      else do
+        payload <- getBytes (Length payloadLength)
+        rest    <- parsePPF2Records (nextAction recordIndex)
+        pure (PPF2Record recordOffset payload : rest)
 
 
 ----------------------------------------------------------------------------

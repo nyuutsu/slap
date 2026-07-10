@@ -68,7 +68,7 @@ import Slap.VCDIFF.Cover (Cover(..), CoverSegment(..))
 import Slap.VCDIFF.FFI (vcdiffCover, vcdiffWindowedCovers, vcdiffProducedTargetCovers)
 import Slap.VCDIFF.AddressCache
   ( AddressCacheConfig(..), NearSlotCount(..), SameBlockCount(..)
-  , freshAddressCache, defaultAddressCacheConfig
+  , freshAddressCache, defaultAddressCacheConfig, everyModeFitsItsByte
   , selectCopyAddressMode, SelectedCopyAddress(..), CopyAddressOperand(..)
   , SameSlotByte(..) )
 import qualified Slap.VCDIFF.CodeTable as Table
@@ -984,7 +984,7 @@ probePatchSize = ByteString.length . probePatchBytes
 -- stop when a slot buys nothing (or the bumped config is infeasible).
 -- Near is grown first, then same from there; the two interact, so the order can nudge where it lands,
 -- which is fine, more slots never hurt the address section either way.
--- The patch's own diminishing returns are the stopping rule: no threshold, no cap beyond the one-byte wire ceiling on each cache size.
+-- The patch's own diminishing returns are the stopping rule: no threshold, no cap beyond the combined mode-byte ceiling ('everyModeFitsItsByte').
 grownCacheCandidate :: (AddressCacheConfig -> Maybe ByteString) -> CacheProbe
 grownCacheCandidate candidateAt =
     growWhilePaying growSameBlock (growWhilePaying growNearSlot defaultProbe)
@@ -1005,23 +1005,26 @@ grownCacheCandidate candidateAt =
               growWhilePaying growOneStep (CacheProbe largerGeometry largerBytes)
         _ -> probe
 
--- | Enlarge the near cache by one slot, or 'Nothing' at the one-byte @s_near@ wire ceiling.
+-- | Enlarge the near cache by one slot,
+-- declining once the grown geometry would name more modes than a mode byte can carry ('everyModeFitsItsByte').
 growNearSlot :: AddressCacheConfig -> Maybe AddressCacheConfig
-growNearSlot geometry
-  | slots < maxCacheDimension = Just geometry { nearSlotCount = NearSlotCount (slots + 1) }
-  | otherwise                 = Nothing
-  where slots = unNearSlotCount (nearSlotCount geometry)
+growNearSlot geometry =
+  grownGeometryIfModesStillFit
+    geometry { nearSlotCount = NearSlotCount (unNearSlotCount (nearSlotCount geometry) + 1) }
 
--- | Enlarge the same cache by one block: the mirror of 'growNearSlot', bounded by the same one-byte @s_same@ ceiling.
+-- | Enlarge the same cache by one block: the mirror of 'growNearSlot', held to the same combined mode-byte ceiling.
 growSameBlock :: AddressCacheConfig -> Maybe AddressCacheConfig
-growSameBlock geometry
-  | blocks < maxCacheDimension = Just geometry { sameBlockCount = SameBlockCount (blocks + 1) }
-  | otherwise                  = Nothing
-  where blocks = unSameBlockCount (sameBlockCount geometry)
+growSameBlock geometry =
+  grownGeometryIfModesStillFit
+    geometry { sameBlockCount = SameBlockCount (unSameBlockCount (sameBlockCount geometry) + 1) }
 
--- | The largest value the one-byte @s_near@ \/ @s_same@ cache-size fields can carry (RFC 3284 §7).
-maxCacheDimension :: Int
-maxCacheDimension = 255
+-- | A grown geometry, kept only while every mode it defines still fits its one-byte name ('everyModeFitsItsByte', RFC 3284 §7a).
+-- This subsumes the per-dimension one-byte field ceiling: @2 + s_near + s_same <= 256@ forces each dimension below 255,
+-- so the @s_near@/@s_same@ header bytes ('framedCustomTableData') stay in range too.
+grownGeometryIfModesStillFit :: AddressCacheConfig -> Maybe AddressCacheConfig
+grownGeometryIfModesStillFit geometry
+  | everyModeFitsItsByte geometry = Just geometry
+  | otherwise                     = Nothing
 
 -- | Assemble the custom-table patch for a designed candidate under a cache geometry:
 -- the header declares VCD_CODETABLE and carries the framed table data ('framedCustomTableData'),
