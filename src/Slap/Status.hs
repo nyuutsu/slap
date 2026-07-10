@@ -59,6 +59,8 @@ module Slap.Status
   , emptyUnitLabel
   , XDelta1KnownUnsupportedVersion(..)
   , XDelta1ShapeViolation(..)
+  , XDelta1SourceListShape(..)
+  , XDelta1SourcelessShape(..)
   , XDelta1SourceFlag(..)
   , VCDIFFShapeViolation(..)
   , VCDIFFCodeTableMalformation(..)
@@ -139,7 +141,8 @@ import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as TextIO
-import Data.Word (Word8)
+import Data.Word (Word8, Word32)
+import Numeric (showHex)
 import System.Exit (exitFailure)
 import System.IO (stderr)
 
@@ -526,7 +529,6 @@ data SlapError
   -- @"TZ"@ (compressed text); any other pair is off-spec or from a
   -- newer revision.
   | UnsupportedNINJA1Subformat ByteString
-  | TruncatedRecord FormatLabel Int Length Length
   | NegativeSize FormatLabel FieldName ParsedSizeValue
   | DecompressionFailed DecompressionFailure
 
@@ -562,14 +564,10 @@ data SlapError
   -- Distinct from 'RecordExceedsAddressableRange', whose ceiling is the format's own wire maximum, not slap's carrier.
   | RecordEndExceedsAddressableRange FormatLabel ActionIndex Offset Length
 
-  -- | A parsed record carries a structurally malformed field — for
-  -- example an RLE record whose run length is zero, or any other
-  -- per-record value the spec or slap's strict discipline rejects
-  -- as invalid. The 'ActionIndex' names the offending record; the
-  -- 'FieldName' identifies which field of that record was
-  -- malformed. Distinct from 'TruncatedRecord' (record was too
-  -- short) and 'NegativeSize' (a top-level header size was
-  -- negative).
+  -- | A parsed record carries a structurally malformed field — an RLE record whose run length is zero, say,
+  -- or any other per-record value the spec or slap's strict discipline rejects.
+  -- The 'ActionIndex' names the offending record; the 'FieldName' identifies which field was malformed.
+  -- Distinct from 'NegativeSize' (a top-level header size was negative).
   | MalformedRecordField FormatLabel ActionIndex FieldName
 
   -- | A parser found bytes after a recognized stream-closing trailer
@@ -618,16 +616,9 @@ data SlapError
   -- on which format-level call site invoked it.
   | ParseError FormatLabel ByteParserError
 
-  -- | The xdelta1 parser rejected a source-list configuration that
-  -- was not the canonical @[data segment, file source]@ pair. The
-  -- 'XDelta1ShapeViolation' enumerates the off-spec shapes the wire
-  -- can produce. The wire encodes the source list as an EDSIO
-  -- length-prefixed sequence, so any count parses structurally;
-  -- canonical xdelta unconditionally emits exactly two sources in
-  -- @[data, file]@ order (@xdelta.c:246@ adds the data source,
-  -- @xdmain.c:1539-1542@ adds the from-file source, both in
-  -- @docs/xdelta1/upstream/xdelta-1.1.3.tar.gz@),
-  -- and slap refuses anything else as off-spec.
+  -- | The xdelta1 parser rejected a source-list shape canonical xdelta cannot emit: duplicated kinds, the reversed pair, or more than two sources.
+  -- The list is an EDSIO length-prefixed sequence, so any count parses structurally;
+  -- the 'XDelta1ShapeViolation' names which off-spec shape the patch carried.
   | UnsupportedXDelta1Shape XDelta1ShapeViolation
 
   -- | A source record's @isdata@ or @sequential@ flag byte held a value other than 0 or 1. Both are booleans,
@@ -732,13 +723,10 @@ data SlapError
   -- walk; the 'ActionIndex' names the offending record.
   | PPF4ReplaceAfterAppend !ActionIndex
 
-  -- | An xdelta1 patch's instruction referenced a source index that
-  -- is not 0 (the data source) or 1 (the file source). Canonical
-  -- xdelta emits only those two indices and slap rejects anything
-  -- else at parse time so 'Slap.XDelta1.Apply.applyXDelta1' can
-  -- dispatch on a total two-arm pattern. The 'Int64' is the
-  -- offending wire-level index.
-  | XDelta1UnknownInstructionTarget !Int64
+  -- | An xdelta1 instruction referenced a source index its own emitted list has no position for.
+  -- Indices count positions in the list, so the valid set depends on the shape:
+  -- the 'XDelta1SourceListShape' carries it, so the refusal names the indices this patch actually declared. The 'Int64' is the offending index.
+  | XDelta1UnknownInstructionTarget !XDelta1SourceListShape !Int64
 
   -- | An xdelta1 patch expected one or both input files to be gzip
   -- streams at apply time (@FLAG_FROM_COMPRESSED@ bit 1 and\/or
@@ -749,6 +737,16 @@ data SlapError
   -- silently producing wrong output against the user's literal
   -- source bytes. The payload names which side(s) are affected.
   | XDelta1InputPreCompressionUnsupported XDelta1GzipStreamInputs
+
+  -- | An xdelta1 patch's envelope carries literal data bytes, but its source list has no data record to name them —
+  -- no index reaches the segment, so no instruction could ever read it. Canonical emits an empty data area whenever it drops the data record,
+  -- so a populated one means the envelope and source list disagree about what the patch carries.
+  -- The 'ActualSize' is the decompressed segment's byte count.
+  | XDelta1DanglingDataSegment ActualSize
+
+  -- | An xdelta1 control segment decompressed to fewer bytes than a control body's fixed minimum.
+  -- The 'RequiredLength' is that floor; the 'ActualLength' is what the segment held.
+  | XDelta1ControlSegmentTooShort !RequiredLength !ActualLength
 
   -- | An xdelta1 patch's data-record declared a length that
   -- disagrees with the actual byte count of the data segment slap
@@ -1156,6 +1154,11 @@ data SlapAdvisory
   -- the flag is honored regardless of slot contents, 'VerificationOptedOutByCreator' fires as usual. The curio is purely informational,
   -- naming the structural oddity so a reader wondering about the patch's provenance learns it wasn't produced by canonical xdelta.
   | XDelta1NoVerifyWithDivergentSentinel
+
+  -- | A source-less patch (@[data]@ or @[]@) was applied: its output is fully determined by the patch, so the handed input was never read.
+  -- Canonical says so at create time ("patch will apply without it"); slap says it at apply, where the unused argument is the surprise.
+  -- The 'XDelta1SourcelessShape' names which shape it is.
+  | XDelta1InputFileNotConsulted !XDelta1SourcelessShape
 
   -- | An xdelta 1.1.x patch's data-record carried a @name@ field
   -- that wasn't the canonical literal 'xdelta1DataRecordName'
@@ -1646,6 +1649,11 @@ renderByteParserError (ByteParserEdsioVarintExceeds32Bits value) =
   "EDSIO varint decoded " <> renderAsText value
   <> ", past the 0xFFFFFFFF ceiling of xdelta1's 32-bit fields"
 
+renderByteParserError (ByteParserXDelta1UnexpectedControlTypeTag observedTag) =
+  "xdelta1 control segment opens with type tag 0x" <> Text.pack (showHex observedTag "")
+  <> ", not ST_XdeltaControl; canonical's EDSIO reader rejects an unregistered library number "
+  <> "(the tag's low byte) with \"Unregistered library: N\""
+
 renderByteParserError (ByteParserUnexpectedDoPatternFailure message) =
   "internal: do-pattern match failed in slap's parser: " <> Text.pack message
 
@@ -1728,6 +1736,11 @@ renderSlapError (InputTooShort label (RequiredLength needed) (ActualLength actua
   <> renderAsText (unLength needed) <> " bytes, have "
   <> renderAsText (unLength actual) <> ")"
 
+renderSlapError (XDelta1ControlSegmentTooShort (RequiredLength needed) (ActualLength actual)) =
+  formatLabelName LabelXDelta1 <> ": control segment too short (need "
+  <> renderAsText (unLength needed) <> " bytes, have "
+  <> renderAsText (unLength actual) <> ")"
+
 renderSlapError (BadMagic label (ActualMagic actualBytes)) =
   "not a " <> formatLabelName label <> " file (bad magic: "
   <> renderAsText actualBytes <> ")"
@@ -1749,11 +1762,6 @@ renderSlapError (UnsupportedNINJA1Subformat subformatBytes) =
 
 renderSlapError NINJA1BinaryMissingEOFFooter =
   formatLabelName LabelNINJA1 <> ": binary patch ends without the EOF footer"
-
-renderSlapError (TruncatedRecord label recordIndex needed available) =
-  formatLabelName label <> ": record " <> renderAsText recordIndex
-  <> " truncated (need " <> renderAsText (unLength needed)
-  <> " bytes, have " <> renderAsText (unLength available) <> ")"
 
 renderSlapError (NegativeSize label name (ParsedSizeValue value)) =
   formatLabelName label <> ": negative "
@@ -1830,17 +1838,15 @@ renderSlapError (ParseError label parserError) =
 
 renderSlapError (UnsupportedXDelta1Shape violation) =
   formatLabelName LabelXDelta1
-  <> ": source list is not canonical [data segment, file source]: "
-  <> describeViolation violation
-  <> " (xdelta1 patches carry exactly two sources in that order;"
-  <> " any other count or ordering is off-spec)"
+  <> ": source list is " <> describeViolation violation
+  <> ", a shape canonical xdelta cannot emit"
+  <> " (it writes the data segment and the from-file source, dropping whichever its"
+  <> " instructions never cite, so [data, file], [data], [file], and [] are the only"
+  <> " source lists a patch can carry)"
   where
     describeViolation XDelta1TwoDataSources        = "[data, data]"
     describeViolation XDelta1ReversedDataFileOrder = "[file, data]"
     describeViolation XDelta1TwoFileSources        = "[file, file]"
-    describeViolation XDelta1ZeroSources           = "0 sources"
-    describeViolation XDelta1OneDataSource         = "1 source: data"
-    describeViolation XDelta1OneFileSource         = "1 source: file"
     describeViolation (XDelta1TooManySources n)    = renderAsText n <> " sources"
 
 renderSlapError (XDelta1NonBooleanSourceFlag flag byteValue) =
@@ -1986,11 +1992,24 @@ renderSlapError (PPF4ReplaceAfterAppend recordIndex) =
   <> " is a Replace after an Append; PPF4 is two-phase — once an Append"
   <> " record appears, every subsequent record must also be Append"
 
-renderSlapError (XDelta1UnknownInstructionTarget wireIndex) =
+renderSlapError (XDelta1UnknownInstructionTarget listShape wireIndex) =
   formatLabelName LabelXDelta1
   <> ": instruction references source index " <> renderAsText wireIndex
-  <> "; xdelta1 patches carry exactly two sources, so valid indices are"
-  <> " 0 (data segment) or 1 (file source)"
+  <> "; " <> case listShape of
+       SourceListDataAndFile ->
+         "the patch's source list is [data segment, file source], so the valid indices are 0 and 1"
+       SourceListDataOnly ->
+         "the patch's source list holds only the data segment, at index 0"
+       SourceListFileOnly ->
+         "the patch's source list holds only the file source, at index 0"
+       SourceListEmpty ->
+         "the patch's source list is empty, so no instruction may reference a source"
+
+renderSlapError (XDelta1DanglingDataSegment (ActualSize segmentSize)) =
+  formatLabelName LabelXDelta1
+  <> ": the patch carries " <> renderAsText (unFileSize segmentSize)
+  <> " bytes of literal data, but its source list has no data record to name them;"
+  <> " no instruction could ever read those bytes"
 
 renderSlapError (XDelta1DataRecordLengthMismatch (ExpectedSize declared) (ActualSize actual)) =
   formatLabelName LabelXDelta1
@@ -2410,6 +2429,13 @@ renderSlapAdvisory (IPSTruncationMarkerIgnored label
 renderSlapAdvisory XDelta1NoVerifyWithDivergentSentinel =
   "xdelta1: FLAG_NO_VERIFY is set but stored MD5s are not the canonical empty-input sentinel (non-canonical producer or transit corruption)"
 
+renderSlapAdvisory (XDelta1InputFileNotConsulted sourcelessShape) =
+  formatLabelName LabelXDelta1 <> case sourcelessShape of
+    OutputComesFromDataSegment ->
+      ": the patch names no source file — the output comes entirely from the patch's own data, and the input was not consulted"
+    OutputIsEmpty ->
+      ": the patch names no source file and its target is empty; the input was not consulted"
+
 renderSlapAdvisory (XDelta1DataRecordNameDiverges observedName) =
   formatLabelName LabelXDelta1
   <> ": data-record name is " <> renderAsText observedName
@@ -2704,17 +2730,28 @@ data XDelta1KnownUnsupportedVersion
   | XDelta1_0_14
   deriving (Eq, Show)
 
--- | The off-spec shapes the xdelta1 source-list parser refuses. The
--- nullary constructors cover the enumerable cases; 'XDelta1TooManySources'
--- carries the count (N >= 3) because the value is open-ended.
+-- | The off-spec source-list shapes the xdelta1 parser refuses. The nullary constructors are the fixed cases;
+-- 'XDelta1TooManySources' carries the count (N >= 3), which is open-ended.
 data XDelta1ShapeViolation
   = XDelta1TwoDataSources
   | XDelta1ReversedDataFileOrder
   | XDelta1TwoFileSources
-  | XDelta1ZeroSources
-  | XDelta1OneDataSource
-  | XDelta1OneFileSource
   | XDelta1TooManySources Int
+  deriving (Eq, Show)
+
+-- | The emitted source-list shape an instruction's wire index indexes into,
+-- carried by 'XDelta1UnknownInstructionTarget' so the refusal can name the indices the patch actually declared.
+data XDelta1SourceListShape
+  = SourceListDataAndFile  -- ^ index 0 is the data segment, index 1 the file source.
+  | SourceListDataOnly     -- ^ index 0 is the data segment; there is no index 1.
+  | SourceListFileOnly     -- ^ index 0 is the file source; there is no index 1.
+  | SourceListEmpty        -- ^ no valid indices at all.
+  deriving (Eq, Show)
+
+-- | Why an xdelta1 apply never read the handed input, carried by 'XDelta1InputFileNotConsulted'.
+data XDelta1SourcelessShape
+  = OutputComesFromDataSegment  -- ^ @[data]@: every instruction reads the patch's own segment.
+  | OutputIsEmpty               -- ^ @[]@: the declared target is empty; nothing reads anything.
   deriving (Eq, Show)
 
 -- | Which boolean flag on an xdelta1 source record held a non-boolean byte, for 'XDelta1NonBooleanSourceFlag'.
@@ -3182,6 +3219,11 @@ data ByteParserError
   -- decoded value. Only the EDSIO reader raises it.
   | ByteParserEdsioVarintExceeds32Bits !Int64
 
+  -- | The xdelta1 control segment opened with a type tag that isn't @ST_XdeltaControl@.
+  -- Canonical's EDSIO reader rejects an unregistered library number (the tag's low byte) with "Unregistered library: N";
+  -- slap declines the same way. The 'Word32' is the tag as read.
+  | ByteParserXDelta1UnexpectedControlTypeTag !Word32
+
   -- | 'MonadFail'\@'fail' fallback for @do@-notation pattern-match
   -- failures inside slap's parser code. Reaching this arm means a
   -- refutable pattern bind in a parser body didn't match — i.e.
@@ -3249,6 +3291,7 @@ slapAdvisorySeverity advisory = case advisory of
   EBPMetadataMalformed{}               -> SeverityNote
   BPSMetadataNonConformant{}           -> SeverityNote
   XDelta1DataRecordNameDiverges{}      -> SeverityNote
+  XDelta1InputFileNotConsulted{}       -> SeverityNote
   FieldDropped{}                       -> SeverityNote
   UndoDataDropped{}                    -> SeverityNote
   ValidationBlockDropped               -> SeverityNote
@@ -3261,6 +3304,10 @@ slapAdvisorySeverity advisory = case advisory of
   FieldTruncated{}                     -> SeverityNote
   FieldDecodedSubstituted{}            -> SeverityNote
   FieldEncodedSubstituted{}            -> SeverityNote
+
+  -- Format-specific field, rom-type, image, and platform handling.
+  -- Severity turns on whether slap could act cleanly: a recognized default or a clean normalization is a note;
+  -- an unrecognized shape, an unconfirmable retag, a truncation, or a dropped container warns.
   FieldContentPastEnd{}                -> SeverityWarning
   PlatformNotAvailable{}               -> SeverityWarning
   NINJA2SMSGameGearAmbiguity           -> SeverityNote

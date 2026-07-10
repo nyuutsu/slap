@@ -39,7 +39,10 @@ pub fn yay0_decompress(input: &[u8]) -> Result<Vec<u8>, String> {
     let mut command_bitstream = CommandBitstream::starting_at(input, 0x10);
     let mut chunk_stream     = ByteStreamCursor::new(input, header.chunk_offset, "chunk");
     let mut link_stream      = ByteStreamCursor::new(input, header.link_offset,  "link");
-    let mut decoded_output   = Vec::with_capacity(header.decompressed_size);
+    // The header's decompressed size bounds the loop and the overflow
+    // check below, but it is a declaration, not a measurement, and does
+    // not earn an up-front allocation; the vector grows as bytes land.
+    let mut decoded_output   = Vec::new();
 
     while decoded_output.len() < header.decompressed_size {
         if command_bitstream.pop_bit()? {

@@ -106,6 +106,14 @@ pub enum DjwFault {
     /// before reading a single bit ("invalid input"), and so do we —
     /// a section that produces nothing has no reason to exist.
     OutputBudgetIsZero,
+    /// The declared output exceeds what the section's bits could code:
+    /// every output byte costs at least one bit under its group table,
+    /// so a section can never produce more bytes than it holds bits.
+    /// Checked before any size-derived bookkeeping — the sector count
+    /// and selector sequence scale with the declaration, and a
+    /// declaration the input's own bytes never justify must not
+    /// command that work.
+    DeclaredOutputExceedsBitCapacity { declared: usize, bit_capacity: usize },
     /// The bit stream ended before the section's declared output was
     /// produced. (xd3: "secondary decoder end of input")
     InputExhausted,
@@ -128,6 +136,12 @@ impl std::fmt::Display for DjwFault {
         match self {
             DjwFault::OutputBudgetIsZero => {
                 write!(formatter, "a DJW section cannot decode to zero bytes")
+            }
+            DjwFault::DeclaredOutputExceedsBitCapacity { declared, bit_capacity } => {
+                write!(
+                    formatter,
+                    "the section declares {declared} output bytes but holds only {bit_capacity} bits, and each output byte costs at least one bit"
+                )
             }
             DjwFault::InputExhausted => {
                 write!(formatter, "the bit stream ended before the declared output was produced")
@@ -494,6 +508,13 @@ fn decode_section(
 ) -> Result<DjwDecodeOutcome, DjwFault> {
     if expected_output_length == 0 {
         return Err(DjwFault::OutputBudgetIsZero);
+    }
+    let bit_capacity = section_bytes.len().saturating_mul(8);
+    if expected_output_length > bit_capacity {
+        return Err(DjwFault::DeclaredOutputExceedsBitCapacity {
+            declared: expected_output_length,
+            bit_capacity,
+        });
     }
 
     let mut reader = BitReader::over(section_bytes);
@@ -1527,15 +1548,32 @@ mod tests {
     }
 
     #[test]
-    fn empty_input_exhausts_immediately() {
+    fn empty_input_cannot_back_any_output() {
         let fault = decode_section(&[], 10).unwrap_err();
-        assert_eq!(fault, DjwFault::InputExhausted);
+        assert_eq!(
+            fault,
+            DjwFault::DeclaredOutputExceedsBitCapacity { declared: 10, bit_capacity: 0 }
+        );
     }
 
     #[test]
     fn zero_output_budget_is_refused() {
         let fault = decode_section(&XD3_SINGLE_GROUP_SECTION, 0).unwrap_err();
         assert_eq!(fault, DjwFault::OutputBudgetIsZero);
+    }
+
+    /// A tiny section declaring an enormous output is refused before
+    /// the sector bookkeeping that scales with the declaration, not
+    /// after it.
+    #[test]
+    fn declared_output_past_bit_capacity_is_refused() {
+        let bit_capacity = XD3_SINGLE_GROUP_SECTION.len() * 8;
+        let fault =
+            decode_section(&XD3_SINGLE_GROUP_SECTION, bit_capacity + 1).unwrap_err();
+        assert_eq!(
+            fault,
+            DjwFault::DeclaredOutputExceedsBitCapacity { declared: bit_capacity + 1, bit_capacity }
+        );
     }
 
     /// A code-length-code table that assigns no codes at all: the

@@ -32,6 +32,7 @@ import Slap.MetadataInclusion (VerificationInclusion(..), CompressionInclusion(.
 import Slap.Text (EncodedText(..), EncodingName(..))
 import Slap.XDelta1.Parse (parseXDelta1)
 import Slap.XDelta1.Types (XDelta1Patch(..),
+                           XDelta1FileSource(..), rosterFileSource,
                            XDelta1FromName(..), XDelta1ToName(..),
                            ResolvedXDelta1FileNames,
                            resolveXDelta1FileNames,
@@ -79,7 +80,7 @@ trees =
           explicitNamesCarry
       , testCase "explicit empty: --from-name \"\" produces empty embedded bytes"
           explicitEmptyHonored
-      , testCase "source-record name mirrors header from-name (xdelta1SourceName == xdelta1FromName)"
+      , testCase "source-record name mirrors header from-name (xdelta1FileSourceName == xdelta1FromName)"
           sourceRecordNameMirrorsFromName
       ]
   , testGroup "length bounds"
@@ -179,11 +180,14 @@ parseAndExtractNames :: ByteString -> IO ParsedXDelta1Names
 parseAndExtractNames wireBytes =
   case parseXDelta1 EncodingUtf8 (PatchFileContents wireBytes) of
     Left err -> assertFailureT ("parseXDelta1: " <> renderSlapError err)
-    Right (Parsed patch _warnings) -> pure ParsedXDelta1Names
-      { parsedXDelta1FromName         = xdelta1FromName   patch
-      , parsedXDelta1ToName           = xdelta1ToName     patch
-      , parsedXDelta1SourceRecordName = xdelta1SourceName patch
-      }
+    Right (Parsed patch _warnings) ->
+      case rosterFileSource (xdelta1SourceRoster patch) of
+        Nothing -> assertFailureT "expected the parsed roster to carry a file source"
+        Just fileSource -> pure ParsedXDelta1Names
+          { parsedXDelta1FromName         = xdelta1FromName patch
+          , parsedXDelta1ToName           = xdelta1ToName   patch
+          , parsedXDelta1SourceRecordName = xdelta1FileSourceName fileSource
+          }
 
 ----------------------------------------------------------------------------
 -- Create-side assertions
@@ -220,14 +224,8 @@ explicitEmptyHonored = withRoundTrippedNames "" "target" $ \parsed -> do
   assertEqual "to-name: unchanged"
     (XDelta1ToName   (utf8Name "target")) (parsedXDelta1ToName parsed)
 
--- | xdelta1's EDSIO source list carries a per-source-record name on
--- the file-source record (separate from the header from-name).
--- Slap's create path resolves a single 'XDelta1FromName' and pipes
--- it into both wire fields: the header from-name 'xdelta1FromName'
--- and the source-record name 'xdelta1SourceName'. The type model
--- already reflects this (both fields are 'XDelta1FromName'); this
--- test pins the runtime equality so a divergence in
--- 'assemblePatch' would be caught.
+-- | Create fills both name fields — the header 'xdelta1FromName' and the file-source record's 'xdelta1FileSourceName' —
+-- from one resolved value; this pins their runtime equality so a divergence in 'assemblePatch' would be caught.
 sourceRecordNameMirrorsFromName :: Assertion
 sourceRecordNameMirrorsFromName =
   withRoundTrippedNames "real-source.bin" "real-target.bin" $ \parsed -> do

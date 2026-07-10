@@ -50,8 +50,8 @@ import Slap.Text (EncodedText(..), EncodingName(..))
 import qualified Data.Text as Text
 import Slap.XDelta1.Types
   ( XDelta1Patch(..)
+  , XDelta1SourceRoster(..)
   , XDelta1FromName(..), XDelta1ToName(..)
-  , XDelta1OffsetMode(..)
   , XDelta1VerificationPosture(..)
   , XDelta1PatchCompression(..)
   , XDelta1FileAtDeltaTime(..)
@@ -117,7 +117,7 @@ failureModeTests tier getTargets = do
       stadium2SizeChange = repo </> "test/data/stadium2/size-change/patch.xdelta1"
 
   let smcMaybes = map WillRun smcShapeConstraintTests
-      xdelta1ShapeMaybes = map WillRun xdelta1ShapeRejectionTests
+      xdelta1ShapeMaybes = map WillRun xdelta1SourceShapeTests
       dialectMaybes = map WillRun dialectAxisRejectionTests
 
   xdelta1NoVerifyMaybes <- requireFixture stadium2SizeChange $ \_ ->
@@ -694,22 +694,16 @@ smcShapeConstraintTests =
             Right parsed -> pure parsed
 
 ----------------------------------------------------------------------------
--- xdelta1 source-shape rejection
+-- xdelta1 source-list shapes
 --
--- The format-in-practice admits exactly one source-list shape:
--- @[data segment, file source]@ in that order, per canonical xdelta
--- ('xdelta-1.1.4/xdelta.c:241-251' adds the data source,
--- 'xdmain.c:1539-1542' adds the from-file source — both unconditional)
--- and the xdelta.1 manpage (MacDonald 2001). The wire format's
--- structural capacity for arbitrary-length source lists is EDSIO
--- serialization plumbing, not format intent. Slap rejects off-spec
--- shapes at parse time with 'UnsupportedXDelta1Shape' (count or
--- ordering) or 'XDelta1UnknownInstructionTarget' (instruction names
--- a source index outside @{0, 1}@).
+-- Slap accepts all four shapes canonical can emit (see 'Slap.XDelta1.Types.XDelta1SourceRoster');
+-- the three reduced ones are pinned here.
+-- What canonical cannot emit is refused at parse time: duplicated kinds, the reversed pair, and more than two sources ('UnsupportedXDelta1Shape'),
+-- plus an instruction naming a source index its list has no position for ('XDelta1UnknownInstructionTarget').
 ----------------------------------------------------------------------------
 
-xdelta1ShapeRejectionTests :: [TestTree]
-xdelta1ShapeRejectionTests =
+xdelta1SourceShapeTests :: [TestTree]
+xdelta1SourceShapeTests =
   [ testCase "xdelta1-shape/rejects three sources" $
       let controlBytes = buildXDelta1Control
             [TestDataKind, TestFileKind, TestFileKind]
@@ -717,8 +711,8 @@ xdelta1ShapeRejectionTests =
       in case parseControlBytes controlBytes of
         Right _ -> assertFailure "expected parse failure for three-source xdelta1 patch"
         Left rendered -> do
-          assertBool ("expected 'source list is not canonical': " ++ rendered)
-            (ciContains "source list is not canonical" rendered)
+          assertBool ("expected 'a shape canonical xdelta cannot emit': " ++ rendered)
+            (ciContains "a shape canonical xdelta cannot emit" rendered)
           assertBool ("expected '3 sources' in: " ++ rendered)
             (ciContains "3 sources" rendered)
 
@@ -727,46 +721,54 @@ xdelta1ShapeRejectionTests =
       in case parseControlBytes controlBytes of
         Right _ -> assertFailure "expected parse failure for [file, data] ordering"
         Left rendered -> do
-          assertBool ("expected 'source list is not canonical': " ++ rendered)
-            (ciContains "source list is not canonical" rendered)
+          assertBool ("expected 'a shape canonical xdelta cannot emit': " ++ rendered)
+            (ciContains "a shape canonical xdelta cannot emit" rendered)
           assertBool ("expected '[file, data]' in: " ++ rendered)
             (ciContains "[file, data]" rendered)
 
-  , testCase "xdelta1-shape/rejects empty source list" $
+  , testCase "xdelta1-shape/accepts empty source list as NoSources" $
       let controlBytes = buildXDelta1Control [] []
       in case parseControlBytes controlBytes of
-        Right _ -> assertFailure "expected parse failure for empty source list"
-        Left rendered ->
-          assertBool ("expected '0 sources' in: " ++ rendered)
-            (ciContains "0 sources" rendered)
+        Left rendered -> assertFailure ("expected the empty source list to parse, got: " ++ rendered)
+        Right patch -> assertEqual "roster" NoSources (xdelta1SourceRoster patch)
 
-  , testCase "xdelta1-shape/rejects single data source" $
+  , testCase "xdelta1-shape/accepts single data source as DataSourceOnly" $
       let controlBytes = buildXDelta1Control [TestDataKind] []
       in case parseControlBytes controlBytes of
-        Right _ -> assertFailure "expected parse failure for single-data source list"
-        Left rendered ->
-          assertBool ("expected '1 source: data' in: " ++ rendered)
-            (ciContains "1 source: data" rendered)
+        Left rendered -> assertFailure ("expected the [data] source list to parse, got: " ++ rendered)
+        Right patch -> assertEqual "roster" DataSourceOnly (xdelta1SourceRoster patch)
 
-  , testCase "xdelta1-shape/rejects single file source" $
+  , testCase "xdelta1-shape/accepts single file source as FileSourceOnly" $
       let controlBytes = buildXDelta1Control [TestFileKind] []
       in case parseControlBytes controlBytes of
-        Right _ -> assertFailure "expected parse failure for single-file source list"
-        Left rendered ->
-          assertBool ("expected '1 source: file' in: " ++ rendered)
-            (ciContains "1 source: file" rendered)
+        Left rendered -> assertFailure ("expected the [file] source list to parse, got: " ++ rendered)
+        Right patch -> case xdelta1SourceRoster patch of
+          FileSourceOnly _ -> pure ()
+          otherRoster -> assertFailure ("expected FileSourceOnly, got: " ++ show otherRoster)
 
   , testCase "xdelta1-shape/rejects instruction targeting unknown source index" $
       let controlBytes = buildXDelta1Control
-            [TestDataKind, TestFileKind]   -- canonical shape
-            [(2, 0, 0)]                    -- index 2 is unknown
+            [TestDataKind, TestFileKind]   -- the full pair
+            [(2, 0, 0)]                    -- index 2 names no position in it
       in case parseControlBytes controlBytes of
         Right _ -> assertFailure "expected parse failure for unknown instruction target"
         Left rendered -> do
           assertBool ("expected 'instruction references source index 2' in: " ++ rendered)
             (ciContains "instruction references source index 2" rendered)
-          assertBool ("expected '0 (data segment) or 1 (file source)' in: " ++ rendered)
-            (ciContains "0 (data segment) or 1 (file source)" rendered)
+          assertBool ("expected 'the valid indices are 0 and 1' in: " ++ rendered)
+            (ciContains "the valid indices are 0 and 1" rendered)
+
+  , testCase "xdelta1-shape/rejects instruction indexing past a reduced list" $
+      let controlBytes = buildXDelta1Control
+            [TestDataKind]                 -- [data] alone
+            [(1, 0, 0)]                    -- index 1 exists only in the full pair
+      in case parseControlBytes controlBytes of
+        Right _ -> assertFailure "expected parse failure for index 1 against [data]"
+        Left rendered -> do
+          assertBool ("expected 'instruction references source index 1' in: " ++ rendered)
+            (ciContains "instruction references source index 1" rendered)
+          assertBool ("expected 'only the data segment, at index 0' in: " ++ rendered)
+            (ciContains "only the data segment, at index 0" rendered)
   ]
   where
     parseControlBytes controlBytes =
@@ -897,10 +899,7 @@ xdelta1InputPreCompressionTests fixturePath =
             , xdelta1FromAtDeltaTime  = FileWasGzipStream
             , xdelta1ToAtDeltaTime    = FileWasRawBytes
             , xdelta1TargetLength     = FileSize 0
-            , xdelta1SourceName       = XDelta1FromName emptyName
-            , xdelta1SourceMD5        = Nothing
-            , xdelta1SourceLength     = FileSize 0
-            , xdelta1SourceOffsetMode = AbsoluteOffsets
+            , xdelta1SourceRoster     = NoSources
             , xdelta1Instructions     = []
             , xdelta1DataSegment      = ByteString.empty
             }

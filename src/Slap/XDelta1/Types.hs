@@ -2,6 +2,11 @@
 
 module Slap.XDelta1.Types
   ( XDelta1Patch(..)
+  , XDelta1SourceRoster(..)
+  , XDelta1FileSource(..)
+  , rosterFileSource
+  , rosterSourceCount
+  , instructionTargetWireIndex
   , XDelta1Instruction(..)
   , XDelta1InstructionTarget(..)
   , XDelta1OffsetMode(..)
@@ -36,7 +41,7 @@ import Data.Bits (shiftL)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.Text as Text
-import Data.Word (Word32)
+import Data.Word (Word32, Word64)
 import Slap.Checksum (MD5Hash(..))
 import Slap.Status (SlapError(..))
 import Slap.FieldName (FieldName(..))
@@ -48,26 +53,15 @@ import Slap.Text (EncodedText(..), EncodingName(..),
                   encodedTextContent, encodeTextLenient)
 import System.FilePath (takeFileName)
 
--- | Per-source wire convention for how instruction offsets are
--- encoded. Under 'AbsoluteOffsets', each instruction's source offset
--- is written verbatim. Under 'SequentialOffsets', the wire offset is
--- 0 for every instruction, and each instruction's actual source
--- offset is reconstructed on parse as the running cumulative sum of
--- preceding instructions' lengths against that source.
--- Encoded by 'Slap.XDelta1.Create.encodeInstruction'; reconstructed
--- by 'Slap.XDelta1.Parse.fixSequentialOffsets'.
+-- | Per-source wire convention for how instruction offsets are encoded.
+-- Under 'AbsoluteOffsets', each instruction's source offset is written verbatim.
+-- Under 'SequentialOffsets', the wire offset is 0 for every instruction,
+-- and the real offset is reconstructed on parse as the running sum of preceding instructions' lengths against that source.
 data XDelta1OffsetMode = AbsoluteOffsets | SequentialOffsets
   deriving (Show, Eq)
 
--- | An xdelta 1.1.x patch's in-memory model. Field layout mirrors
--- 'Slap.BPS.Types.BPSPatch' / 'Slap.UPS.Types.UPSPatch' (flat source
--- fields on the patch record) rather than the parallel-source shape
--- canonical xdelta's libedsio serializer paints on the wire. The wire
--- carries two source records (data segment and source file) treated
--- uniformly by libedsio; slap models only the file source's metadata
--- because the data segment's name, MD5, length, and (always
--- sequential) offset-mode are all fixed or derivable from
--- 'xdelta1DataSegment'.
+-- | An xdelta 1.1.x patch's in-memory model. The data segment's literal bytes live in 'xdelta1DataSegment' whatever the roster shape:
+-- the segment belongs to the patch envelope, not the source list, so even a sourceless patch carries an empty one on the wire.
 data XDelta1Patch = XDelta1Patch
   { xdelta1FromName         :: XDelta1FromName
   , xdelta1ToName           :: XDelta1ToName
@@ -76,30 +70,75 @@ data XDelta1Patch = XDelta1Patch
   , xdelta1FromAtDeltaTime  :: XDelta1FileAtDeltaTime
   , xdelta1ToAtDeltaTime    :: XDelta1FileAtDeltaTime
   , xdelta1TargetLength     :: FileSize
-  , xdelta1SourceName       :: XDelta1FromName
-    -- ^ The file-source record's "name" in the EDSIO source list.
-    -- A distinct concept from the header 'xdelta1FromName', though
-    -- create mirrors the same resolved value into both wire fields.
-  , xdelta1SourceMD5        :: Maybe MD5Hash
-  , xdelta1SourceLength     :: FileSize
-  , xdelta1SourceOffsetMode :: XDelta1OffsetMode
+  , xdelta1SourceRoster     :: XDelta1SourceRoster
   , xdelta1Instructions     :: [XDelta1Instruction]
   , xdelta1DataSegment      :: ByteString  -- decompressed literal data
   } deriving (Show, Eq)
 
--- | The from-name an xdelta 1.1.x patch carries in its header — the
--- display label for the source file at create time. Distinct from
--- 'XDelta1ToName' so transposition at any call site (encoder,
--- parser, resolver, test fixture) is a type error rather than a
--- silent wire-byte swap. The wrapped 'EncodedText' carries the
--- decoded codepoints alongside the encoding tag they were decoded
--- under; locale today (matching canonical xdelta's @memcpy@-from-
--- @argv@ convention), but the tag rides along so a future re-encode
--- under a different encoding picks the right encoder.
+-- | Which sources a patch's EDSIO source list carries.
+-- Canonical xdelta drops a source its instructions never cite (@control_add_info@'s @if (! src->used)@ early return,
+-- @xdelta.c:1155@ in @docs/xdelta1/upstream/xdelta-1.1.3.tar.gz@),
+-- so four shapes reach the wire: the full pair (an ordinary delta), the data segment alone (unrelated or too-short inputs),
+-- the file source alone (identical files, or truncation), and nothing at all (an empty target).
+-- An instruction's wire index counts positions in this list, so under 'FileSourceOnly' the file source is index 0, not 1.
 --
--- The u16 byte-length cap is checked at construction of
--- 'ResolvedXDelta1FileNames', not here: parsed bytes are already
--- cap-bounded by the wire's u16 length-prefix.
+-- Only the file source keeps a payload ('XDelta1FileSource');
+-- the data record's name, MD5, length, and offset mode are all fixed or derivable from 'xdelta1DataSegment',
+-- re-derived at create rather than stored.
+data XDelta1SourceRoster
+  = DataAndFileSources XDelta1FileSource
+  | DataSourceOnly
+  | FileSourceOnly XDelta1FileSource
+  | NoSources
+  deriving (Show, Eq)
+
+data XDelta1FileSource = XDelta1FileSource
+  { xdelta1FileSourceName       :: XDelta1FromName
+    -- ^ Distinct from the header 'xdelta1FromName',
+    -- though create fills both wire fields from the same resolved value.
+  , xdelta1FileSourceMD5        :: Maybe MD5Hash
+  , xdelta1FileSourceLength     :: FileSize
+  , xdelta1FileSourceOffsetMode :: XDelta1OffsetMode
+  } deriving (Show, Eq)
+
+rosterFileSource :: XDelta1SourceRoster -> Maybe XDelta1FileSource
+rosterFileSource (DataAndFileSources fileSource) = Just fileSource
+rosterFileSource DataSourceOnly                  = Nothing
+rosterFileSource (FileSourceOnly fileSource)     = Just fileSource
+rosterFileSource NoSources                       = Nothing
+
+rosterSourceCount :: XDelta1SourceRoster -> Int
+rosterSourceCount (DataAndFileSources _) = 2
+rosterSourceCount DataSourceOnly         = 1
+rosterSourceCount (FileSourceOnly _)     = 1
+rosterSourceCount NoSources              = 0
+
+-- | An instruction's wire source-index: its position in the emitted list, the inverse of 'Slap.XDelta1.Parse.translateInstruction'.
+-- A target the roster does not carry has no index at all — the roster is built from the very instructions that index it,
+-- so an 'error' here would mean a broken invariant, not a wire value any reader could resolve.
+instructionTargetWireIndex :: XDelta1SourceRoster -> XDelta1InstructionTarget -> Word64
+instructionTargetWireIndex roster target = case (roster, target) of
+  (DataAndFileSources _, FromDataSource) -> 0
+  (DataAndFileSources _, FromFileSource) -> 1
+  (DataSourceOnly,       FromDataSource) -> 0
+  (FileSourceOnly _,     FromFileSource) -> 0
+  (DataSourceOnly,       FromFileSource) -> absentSource "file"
+  (FileSourceOnly _,     FromDataSource) -> absentSource "data"
+  (NoSources,            _)              -> absentSource (case target of
+                                              FromDataSource -> "data"
+                                              FromFileSource -> "file")
+  where
+    absentSource sourceKindName =
+      error ("instructionTargetWireIndex: an instruction targets the " ++ sourceKindName
+              ++ " source, but the patch's roster does not carry one")
+
+-- | The from-name an xdelta 1.1.x patch carries in its header — the display label for the source file at create time.
+-- The wrapped 'EncodedText' carries the decoded codepoints alongside the tag they were decoded under:
+-- locale today (matching canonical xdelta's @memcpy@-from-@argv@ convention),
+-- but the tag rides along, so a future re-encode under a different encoding picks the right encoder.
+--
+-- The u16 byte-length cap is checked at construction of 'ResolvedXDelta1FileNames', not here:
+-- parsed bytes are already cap-bounded by the wire's u16 length-prefix.
 newtype XDelta1FromName = XDelta1FromName
   { unXDelta1FromName :: EncodedText
   } deriving (Eq, Show)
@@ -211,15 +250,12 @@ checkNameLength field text
 xdelta1NameByteCap :: Int
 xdelta1NameByteCap = 0xFFFF
 
--- | The slap-internal representation of an xdelta 1.1.x patch's
--- verification posture — whether MD5 fields carry real verification
--- data or are the canonical sentinel ('xdelta1EmptyInputMD5Sentinel')
--- emitted by the canonical tool's @--noverify@. On the wire that is
--- the flag bit set with sentinels in the MD5 slots, or the bit clear
--- with computed MD5s. The source-file MD5 ('xdelta1SourceMD5') tracks
--- the same posture — @Just@ under 'VerifyAgainstStoredMD5s', @Nothing@
--- under 'CreatorOptedOutOfVerification' — but by parser convention,
--- not at the type level.
+-- | The slap-internal representation of an xdelta 1.1.x patch's verification posture:
+-- whether the MD5 fields carry real verification data, or the canonical sentinel ('xdelta1EmptyInputMD5Sentinel') the reference's @--noverify@ emits.
+-- On the wire that is the flag bit set with sentinels in the MD5 slots, or the bit clear with computed MD5s.
+-- The file-source MD5 ('xdelta1FileSourceMD5') tracks the same posture —
+-- @Just@ under 'VerifyAgainstStoredMD5s', @Nothing@ under 'CreatorOptedOutOfVerification' —
+-- but by parser convention, not at the type level.
 data XDelta1VerificationPosture
   = VerifyAgainstStoredMD5s MD5Hash
   | CreatorOptedOutOfVerification

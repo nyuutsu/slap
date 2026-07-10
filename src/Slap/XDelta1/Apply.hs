@@ -4,10 +4,13 @@ module Slap.XDelta1.Apply
 
 import Slap.XDelta1.Types
     ( XDelta1Patch(..), XDelta1Instruction(..)
+    , XDelta1SourceRoster(..)
     , XDelta1InstructionTarget(..)
     , XDelta1FileAtDeltaTime(..)
     )
-import Slap.Status (SlapError(..), ApplyError(..), XDelta1GzipStreamInputs(..))
+import Slap.Status (SlapError(..), SlapAdvisory(..), ApplyError(..),
+                    Outcome(..), XDelta1GzipStreamInputs(..),
+                    XDelta1SourcelessShape(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Binary (copyRegion, fillNewBuffer)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Cursor(..),
@@ -21,24 +24,24 @@ import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.State.Strict (StateT, evalStateT, get, modify)
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as ByteString
 import System.IO.Unsafe (unsafePerformIO)
 
 ----------------------------------------------------------------------------
 -- Apply
 ----------------------------------------------------------------------------
 
--- | Walks the instruction stream, copying bytes from the resolved source for each instruction.
--- Which source an instruction reads is a total two-arm dispatch on 'XDelta1InstructionTarget':
--- 'Slap.XDelta1.Parse.translateInstruction' rejects any other index at parse time, so apply needs no runtime check there.
--- The read within that source is bounds-checked per instruction:
--- a length/offset past the source's end returns 'ApplySourceReadOutOfBounds' rather than partial output.
+-- | Walk the instruction stream, copying each instruction's resolved source into the output.
+-- Which source it reads is a total dispatch on 'XDelta1InstructionTarget' — parse already rejected any index the roster has no position for,
+-- so apply needs no runtime check. The read itself is bounds-checked:
+-- a length or offset past the source's end returns 'ApplySourceReadOutOfBounds', never partial output.
 --
--- The recorded input pre-compression posture is checked first:
--- if either input was a gzip stream at delta time ('FLAG_FROM_COMPRESSED' or 'FLAG_TO_COMPRESSED' set),
--- apply refuses with 'XDelta1InputPreCompressionUnsupported'. Slap doesn't implement the apply-time gzip transparency canonical xdelta-1.x does,
--- so proceeding against the user's literal source bytes would silently produce wrong output.
-applyXDelta1 :: XDelta1Patch -> InputFileContents -> Either SlapError OutputFileContents
+-- The pre-compression posture is checked first. If either input was a gzip stream at delta time ('FLAG_FROM_COMPRESSED' or 'FLAG_TO_COMPRESSED'),
+-- apply refuses with 'XDelta1InputPreCompressionUnsupported':
+-- slap has no apply-time gzip transparency, so running against the literal source bytes would quietly produce wrong output.
+--
+-- A roster naming no file source ('DataSourceOnly', 'NoSources') never reads the handed input. Apply still proceeds,
+-- and the 'Outcome' carries an 'XDelta1InputFileNotConsulted' note — as the reference does, applying such a patch against any from-file argument.
+applyXDelta1 :: XDelta1Patch -> InputFileContents -> Either SlapError (Outcome OutputFileContents)
 applyXDelta1 patch sourceContents =
   case (xdelta1FromAtDeltaTime patch, xdelta1ToAtDeltaTime patch) of
     (FileWasGzipStream, FileWasRawBytes)
@@ -48,15 +51,20 @@ applyXDelta1 patch sourceContents =
     (FileWasGzipStream, FileWasGzipStream)
       -> Left (XDelta1InputPreCompressionUnsupported BothFilesWereGzipStreams)
     (FileWasRawBytes,   FileWasRawBytes)
-      | unFileSize targetFileSize == 0
-          -> Right (OutputFileContents ByteString.empty)
       | unFileSize targetFileSize < 0
           -> Left (NegativeTargetSize LabelXDelta1 targetFileSize)
       | otherwise
-          -> proceedWithApply sourceContents
+          -> attachSourcelessNotes <$> proceedWithApply sourceContents
   where
     targetFileSize = xdelta1TargetLength patch
     dataSegment    = xdelta1DataSegment patch
+
+    attachSourcelessNotes producedOutput = Outcome producedOutput sourcelessNotes
+    sourcelessNotes = case xdelta1SourceRoster patch of
+      DataAndFileSources _ -> []
+      FileSourceOnly _     -> []
+      DataSourceOnly       -> [XDelta1InputFileNotConsulted OutputComesFromDataSegment]
+      NoSources            -> [XDelta1InputFileNotConsulted OutputIsEmpty]
 
     sourceBytesFor :: ByteString -> XDelta1InstructionTarget -> ByteString
     sourceBytesFor _      FromDataSource = dataSegment

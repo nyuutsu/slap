@@ -61,12 +61,10 @@ negativeWireValuesTests = testGroup "hostile wire values are named, not mislabel
       ninja2NegativeRecordOffset
   ]
 
--- | A bsdiff patch whose single instruction declares an add region of
--- negative length. The apply must refuse with 'ApplyNegativeControlLength',
--- naming the malformed instruction, rather than summing the negative
--- length into a bounds verdict. The compressed-size fields and the
--- diff\/extra streams play no part in this rejection, so the patch is
--- built as a value directly — no bzip2 framing needed to reach the guard.
+-- | A bsdiff patch whose single instruction declares an add region of negative length.
+-- Apply must refuse with 'ApplyNegativeControlLength', naming the malformed instruction, not fold the negative length into a bounds verdict.
+-- The patch is built directly, no bzip2 framing — but its diff stream must cover the declared target size,
+-- since the declared-size ceiling runs before the instruction walk and only a patch that clears it reaches this guard.
 bsdiffNegativeAddLength :: Assertion
 bsdiffNegativeAddLength =
   assertNegativeControlLength
@@ -80,16 +78,16 @@ bsdiffNegativeCopyLength =
   assertNegativeControlLength
     (bsdiffPatchWithInstruction (BSDiffInstruction (Length 0) (Length (-1)) (Delta 0)))
 
--- | A bsdiff patch carrying exactly one control instruction, a positive
--- declared target size, and empty diff\/extra streams.
+-- | A bsdiff patch with one control instruction, a positive target size, and a diff stream that covers it,
+-- so the declared-size ceiling passes and the instruction walk is reached.
 bsdiffPatchWithInstruction :: BSDiffInstruction -> BSDiffPatch
 bsdiffPatchWithInstruction instruction = BSDiffPatch
   { bsdiffControlSize  = Length 0
-  , bsdiffDiffSize     = Length 0
+  , bsdiffDiffSize     = Length 4
   , bsdiffExtraSize    = Length 0
   , bsdiffTargetSize   = FileSize 4
   , bsdiffInstructions = [instruction]
-  , bsdiffDiffData     = ByteString.empty
+  , bsdiffDiffData     = ByteString.replicate 4 0x00
   , bsdiffExtraData    = ByteString.empty
   }
 

@@ -28,7 +28,9 @@ pub fn zip_extract_entry(input: &[u8], entry_name: &str) -> Result<Vec<u8>, Stri
             "the entry \"{entry_name}\" is password-protected; slap cannot read encrypted archives"
         ));
     }
-    let mut output = Vec::with_capacity(entry.size() as usize);
+    // The central directory's size field is a declaration, not a
+    // measurement; the vector grows as decompression produces bytes.
+    let mut output = Vec::new();
     entry
         .read_to_end(&mut output)
         .map_err(|cause| format!("could not decompress the entry \"{entry_name}\": {cause}"))?;

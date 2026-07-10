@@ -22,7 +22,7 @@
 -- the sentinel ('xdelta1EmptyInputMD5Sentinel') fills every MD5 slot, matching what canonical xdelta's @--noverify@ produces.
 module Slap.XDelta1.Create
   ( createXDelta1
-  , narrowXDelta1ControlOffset
+  , narrowXDelta1WireNumber
   ) where
 
 import Slap.Compression.Stream (gzipDeflate)
@@ -33,6 +33,8 @@ import Slap.XDelta1.FFI
     )
 import Slap.XDelta1.Types
     ( XDelta1Patch(..)
+    , XDelta1SourceRoster(..), XDelta1FileSource(..)
+    , rosterFileSource, rosterSourceCount, instructionTargetWireIndex
     , XDelta1Instruction(..), XDelta1InstructionTarget(..)
     , XDelta1OffsetMode(..)
     , XDelta1VerificationPosture(..)
@@ -61,6 +63,10 @@ import Slap.Status (SlapError(..), SlapAdvisory, CreateResult(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..),
                           PatchFileContents(..))
 import Slap.Measure (Offset(..), FileSize(..), byteFileSize)
+
+import Data.Bifunctor (first)
+import Data.Foldable (traverse_)
+import Data.Functor (void)
 import Slap.Text (EncodedText,
                   encodedTextContent, encodedTextEncoding,
                   encodeTextLenient, encodeLossAdvisories)
@@ -70,26 +76,17 @@ import qualified Data.ByteString as ByteString
 import Data.ByteString.Builder (Builder, byteString, toLazyByteString, word8)
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Bits (shiftL, (.|.))
-import Data.Word (Word8, Word32, Word64)
+import Data.Word (Word8, Word32)
 
 ----------------------------------------------------------------------------
 -- Top-level entry
 ----------------------------------------------------------------------------
 
--- | Create an xdelta1 patch from source and target bytes. The differ
--- ('Slap.XDelta1.FFI.xdelta1Diff') produces the instruction
--- stream and the data segment; this function wraps them in an
--- 'XDelta1Patch' value (computing MD5s and choosing the offset mode
--- per source) and runs the wire encoder.
---
+-- | Create an xdelta1 patch from source and target bytes.
 -- The 'VerificationInclusion' and 'CompressionInclusion' choices gate the @FLAG_NO_VERIFY@ and @FLAG_PATCH_COMPRESSED@ wire effects;
 -- see the module header.
 createXDelta1 :: VerificationInclusion -> CompressionInclusion
               -> ResolvedXDelta1FileNames
-                 -- ^ from-name and to-name, already resolved and cap-checked by the porcelain
-                 -- via 'Slap.XDelta1.Types.resolveXDelta1FileNames' / 'Slap.XDelta1.Types.requireXDelta1FileNames'.
-                 -- Those two are the only constructors, so this function writes the names without re-checking
-                 -- (both bytes locale-encoded, each ≤ the u16 cap).
               -> InputFileContents -> OutputFileContents
               -> Either SlapError CreateResult
 createXDelta1 verificationChoice compressionChoice resolvedNames inputContents outputContents = do
@@ -108,11 +105,8 @@ createXDelta1 verificationChoice compressionChoice resolvedNames inputContents o
 -- Differ output → XDelta1Patch
 ----------------------------------------------------------------------------
 
--- | Wrap a 'XDelta1DiffOutput' (instructions + data segment + the
--- per-source sequential-mode flags) into an 'XDelta1Patch' ready
--- for the wire encoder. The MD5s, the 'VerificationInclusion'
--- wiring, and the 'XDelta1PatchCompression' wiring live here; the
--- differ doesn't know about them.
+-- | Wrap a 'XDelta1DiffOutput' into an 'XDelta1Patch' for the wire encoder,
+-- deriving the source roster from which sources the instructions actually cite (see 'XDelta1SourceRoster').
 assemblePatch
   :: VerificationInclusion -> XDelta1PatchCompression
   -> ResolvedXDelta1FileNames
@@ -129,13 +123,7 @@ assemblePatch inclusion compression resolvedNames sourceBytes targetBytes diff =
   , xdelta1FromAtDeltaTime  = FileWasRawBytes
   , xdelta1ToAtDeltaTime    = FileWasRawBytes
   , xdelta1TargetLength     = byteFileSize targetBytes
-    -- The per-source-record name in the EDSIO source list reflects
-    -- the same source file as the header's from-name; the resolver
-    -- produces one value and both wire fields consume it.
-  , xdelta1SourceName       = resolvedXDelta1FromName resolvedNames
-  , xdelta1SourceMD5        = perSourceMD5 (md5 sourceBytes)
-  , xdelta1SourceLength     = byteFileSize sourceBytes
-  , xdelta1SourceOffsetMode = xdelta1DiffFileSourceOffsetMode diff
+  , xdelta1SourceRoster     = roster
   , xdelta1Instructions     = xdelta1DiffInstructions diff
   , xdelta1DataSegment      = xdelta1DiffDataSegment diff
   }
@@ -149,6 +137,22 @@ assemblePatch inclusion compression resolvedNames sourceBytes targetBytes diff =
     perSourceMD5 computedMD5 = case inclusion of
       IncludeVerification -> Just computedMD5
       OmitVerification    -> Nothing
+
+    anyInstructionTargets wantedTarget =
+      any ((== wantedTarget) . xdelta1InstructionTarget) (xdelta1DiffInstructions diff)
+
+    fileSource = XDelta1FileSource
+      { xdelta1FileSourceName       = resolvedXDelta1FromName resolvedNames
+      , xdelta1FileSourceMD5        = perSourceMD5 (md5 sourceBytes)
+      , xdelta1FileSourceLength     = byteFileSize sourceBytes
+      , xdelta1FileSourceOffsetMode = xdelta1DiffFileSourceOffsetMode diff
+      }
+
+    roster = case (anyInstructionTargets FromDataSource, anyInstructionTargets FromFileSource) of
+      (True,  True)  -> DataAndFileSources fileSource
+      (True,  False) -> DataSourceOnly
+      (False, True)  -> FileSourceOnly fileSource
+      (False, False) -> NoSources
 
 ----------------------------------------------------------------------------
 -- Wire encoder
@@ -180,7 +184,8 @@ assemblePatch inclusion compression resolvedNames sourceBytes targetBytes diff =
 --   8. Trailing magic:      @%XDZ004%@ (8 bytes)
 encodeXDelta1 :: XDelta1Patch -> Either SlapError (ByteString, [SlapAdvisory])
 encodeXDelta1 patch = do
-  controlOffsetWord <- narrowXDelta1ControlOffset controlOffsetValue
+  refuseUnencodableWireNumbers patch
+  controlOffsetWord <- narrowXDelta1WireNumber FieldXDelta1ControlOffset controlOffsetValue
   Right
     ( ByteString.concat
         [ magicBytes
@@ -193,9 +198,8 @@ encodeXDelta1 patch = do
         , magicBytes
         ]
     , fromNameAdvisories ++ toNameAdvisories
-      -- The source-record name shares its bytes with the from-name
-      -- ('assemblePatch' pipes one value into both), so the from-name's
-      -- advisories speak for both; 'encodeFileSourceRecord' discards its own.
+      -- Source-record name and from-name are the same bytes, so the from-name's advisories speak for both;
+      -- 'encodeFileSourceRecord' discards its own.
     )
   where
     magicBytes     = "%XDZ004%"
@@ -247,10 +251,6 @@ encodeXDelta1 patch = do
     dataSegment    = applyCompression (xdelta1DataSegment patch)
     controlSegment = applyCompression (encodeControl patch)
 
-    -- File offset where the control segment begins. Narrowed to the
-    -- trailer's 4-byte field by 'narrowXDelta1ControlOffset' rather
-    -- than masked, so a patch too large for xdelta1's 32-bit positions
-    -- is refused, not silently truncated.
     controlOffsetValue :: Int
     controlOffsetValue =
       ByteString.length magicBytes
@@ -259,42 +259,47 @@ encodeXDelta1 patch = do
       + toNameLength
       + ByteString.length dataSegment
 
--- | Narrow a control-segment file offset to the trailer's 4-byte
--- big-endian field, refusing a value past @0xFFFFFFFF@. xdelta1's
--- positions are 32-bit — the format reconstructs its EDSIO @uint@s
--- into a @guint32@ and the reference documents a 32-bit file-size
--- limit (the underlying EDSIO library can serialise wider, but the
--- xdelta1 format does not draw on that) — so a patch whose control
--- offset would not fit cannot be read back faithfully: the reference
--- would silently truncate the trailer pointer. slap declines to emit
--- it instead, the create-side mirror of the parser's guint32 cap.
-narrowXDelta1ControlOffset :: Int -> Either SlapError Word32
-narrowXDelta1ControlOffset value =
-  case narrowToWord32 LabelXDelta1 FieldXDelta1ControlOffset value of
-    Left  failure -> Left (NarrowingError failure)
-    Right word    -> Right word
+-- | Narrow one of the format's wire integers to 32 bits, refusing anything past @0xFFFFFFFF@.
+-- Every xdelta1 integer — offset, length, count — is a @guint32@:
+-- the reference reads its EDSIO @uint@s back into one (@libedsio/default.c@ in @docs/xdelta1/upstream/xdelta-1.1.3.tar.gz@;
+-- EDSIO itself can go wider, but the format never does), so a wider value could not be read back —
+-- the reference would silently truncate it. slap declines to emit it, naming the field that overflowed.
+narrowXDelta1WireNumber :: FieldName -> Int -> Either SlapError Word32
+narrowXDelta1WireNumber field value =
+  first NarrowingError (narrowToWord32 LabelXDelta1 field value)
+
+-- | Before building any bytes, refuse any length past xdelta1's 32-bit wire space,
+-- and any absolute-mode instruction offset (sequential offsets encode as zero).
+-- Without this, a create over inputs of 4 GiB or more would emit varints slap's own parser could not read back — the EDSIO guint32 ceiling.
+refuseUnencodableWireNumbers :: XDelta1Patch -> Either SlapError ()
+refuseUnencodableWireNumbers patch = do
+  void (narrowXDelta1WireNumber FieldXDelta1TargetLength
+          (unFileSize (xdelta1TargetLength patch)))
+  void (narrowXDelta1WireNumber FieldXDelta1DataSegmentLength
+          (ByteString.length (xdelta1DataSegment patch)))
+  traverse_ (narrowXDelta1WireNumber FieldXDelta1SourceLength . unFileSize . xdelta1FileSourceLength)
+            (rosterFileSource (xdelta1SourceRoster patch))
+  traverse_ checkInstructionWireNumbers (xdelta1Instructions patch)
+  where
+    checkInstructionWireNumbers instruction = do
+      void (narrowXDelta1WireNumber FieldXDelta1InstructionLength
+              (unFileSize (xdelta1InstructionLength instruction)))
+      case instructionWireOffsetMode patch instruction of
+        SequentialOffsets -> Right ()
+        AbsoluteOffsets   ->
+          void (narrowXDelta1WireNumber FieldXDelta1InstructionOffset
+                  (unOffset (xdelta1InstructionOffset instruction)))
 
 ----------------------------------------------------------------------------
 -- Control segment encoder
 ----------------------------------------------------------------------------
 
--- | Encode the EDSIO-serialized control structure (mirror image of
--- 'Slap.XDelta1.Parse.parseControlBody'): the canonical
--- @ST_XdeltaControl@ type tag ('xdelta1ControlTypeTag', 4 BE bytes),
--- a parser-scratch allocation upper bound
--- ('xdelta1ControlAllocationBound', 4 BE bytes), the target MD5, a
--- varint target length, the @has_data@ boolean, the source list
--- (always two records, in @[data, file]@ order), and the instruction
--- list.
+-- | Encode the EDSIO control structure, the mirror of 'Slap.XDelta1.Parse.parseControlBody'.
 --
--- The two prelude words are non-negotiable:
--- canonical xdelta's generic EDSIO reader (@libedsio\/generic.c:66@) bails immediately with "Unregistered library: 0"
--- when the type tag's low byte isn't a registered library number,
--- and its sub-allocation accountant (@libedsio\/default.c@) caps every reconstructed pointer at the declared allocation bound.
--- An all-zeros prelude is therefore rejected by canonical even though it carries no instruction data.
---
--- The data-record's wire bytes don't live on 'XDelta1Patch': 'encodeDataRecord' derives them from the data-segment bytes
--- and 'xdelta1DataRecordName'. The source-file record's bytes come from the patch's flat @xdelta1Source*@ fields.
+-- The two prelude words are load-bearing:
+-- canonical's EDSIO reader (@libedsio\/generic.c:66@) bails with "Unregistered library: 0" if the type tag's low byte names no registered library,
+-- and its allocation accountant (@libedsio\/default.c@) caps every reconstructed pointer at the declared bound.
+-- An all-zeros prelude is refused even though it carries no instruction data.
 encodeControl :: XDelta1Patch -> ByteString
 encodeControl patch = LazyByteString.toStrict (toLazyByteString builder)
   where
@@ -304,13 +309,20 @@ encodeControl patch = LazyByteString.toStrict (toLazyByteString builder)
       <> byteString (unMD5Hash toMD5Bytes)
       <> putEdsioVarint (fromIntegral (unFileSize (xdelta1TargetLength patch)))
       <> word8 hasDataByte
-      <> putEdsioVarint 2  -- two source records: the data record, then the file source
-      <> encodeDataRecord patch
-      <> encodeFileSourceRecord patch
+      <> putEdsioVarint (fromIntegral (rosterSourceCount roster))
+      <> sourceRecords
       <> putEdsioVarint (fromIntegral (length instructions))
       <> foldMap (encodeInstruction patch) instructions
 
     instructions = xdelta1Instructions patch
+    roster       = xdelta1SourceRoster patch
+
+    sourceRecords = case roster of
+      DataAndFileSources fileSource ->
+        encodeDataRecord patch <> encodeFileSourceRecord fileSource
+      DataSourceOnly            -> encodeDataRecord patch
+      FileSourceOnly fileSource -> encodeFileSourceRecord fileSource
+      NoSources                 -> mempty
 
     -- @has_data@ is set when the data segment is non-empty. Canonical
     -- xdelta clears the byte when the differ found the entire target
@@ -348,50 +360,44 @@ encodeDataRecord patch =
       VerifyAgainstStoredMD5s _     -> md5 dataBytes
       CreatorOptedOutOfVerification -> xdelta1EmptyInputMD5Sentinel
 
--- | Encode the source-file record's EDSIO source-record bytes from
--- the patch's flat @xdelta1Source*@ fields. The kind byte is @0@
--- (file source); the offset-mode byte tracks the differ's choice
--- ('xdelta1SourceOffsetMode'), which 'fixSequentialOffsets' on
--- parse and 'encodeInstruction' on create both consult to decide
--- whether per-instruction offsets are absolute or sequential.
-encodeFileSourceRecord :: XDelta1Patch -> Builder
-encodeFileSourceRecord patch =
+encodeFileSourceRecord :: XDelta1FileSource -> Builder
+encodeFileSourceRecord fileSource =
   putEdsioVarint (fromIntegral (ByteString.length sourceNameBytes))
   <> byteString sourceNameBytes
   <> byteString (unMD5Hash sourceMD5Bytes)
-  <> putEdsioVarint (fromIntegral (unFileSize (xdelta1SourceLength patch)))
+  <> putEdsioVarint (fromIntegral (unFileSize (xdelta1FileSourceLength fileSource)))
   <> word8 0  -- kind: file source
-  <> word8 (offsetModeByte (xdelta1SourceOffsetMode patch))
+  <> word8 (offsetModeByte (xdelta1FileSourceOffsetMode fileSource))
   where
     -- The notice list is discarded: 'encodeXDelta1' already surfaced the same substitution advisories via the from-name slot.
     (sourceNameBytes, _notices) =
       encodeTextLenient (encodedTextEncoding sourceName)
                         (encodedTextContent sourceName)
-    sourceName = unXDelta1FromName (xdelta1SourceName patch)
-    sourceMD5Bytes = case xdelta1SourceMD5 patch of
+    sourceName = unXDelta1FromName (xdelta1FileSourceName fileSource)
+    sourceMD5Bytes = case xdelta1FileSourceMD5 fileSource of
       Just md5Hash -> md5Hash
       Nothing      -> xdelta1EmptyInputMD5Sentinel
 
--- | Encode one instruction. The offset field is written as 0 when the
--- applicable source is in 'SequentialOffsets' mode (the parser at
--- 'Slap.XDelta1.Parse.fixSequentialOffsets' reconstructs the absolute
--- offset from the running cumulative length); under 'AbsoluteOffsets'
--- the offset is written verbatim. The applicable source is decided
--- by 'xdelta1InstructionTarget': data-targeting instructions are
--- always sequential, file-targeting instructions follow the patch's
--- 'xdelta1SourceOffsetMode'.
+-- | The offset field is written as 0 in 'SequentialOffsets' mode — the parser rebuilds the absolute offset from the running cumulative length —
+-- and verbatim in 'AbsoluteOffsets'.
 encodeInstruction :: XDelta1Patch -> XDelta1Instruction -> Builder
 encodeInstruction patch instruction =
-  putEdsioVarint (instructionTargetWireIndex (xdelta1InstructionTarget instruction))
+  putEdsioVarint (instructionTargetWireIndex (xdelta1SourceRoster patch) (xdelta1InstructionTarget instruction))
   <> offsetVarint
   <> putEdsioVarint (fromIntegral (unFileSize (xdelta1InstructionLength instruction)))
   where
-    instructionOffsetMode = case xdelta1InstructionTarget instruction of
-      FromDataSource -> SequentialOffsets
-      FromFileSource -> xdelta1SourceOffsetMode patch
-    offsetVarint = case instructionOffsetMode of
+    offsetVarint = case instructionWireOffsetMode patch instruction of
       SequentialOffsets -> putEdsioVarint 0
       AbsoluteOffsets   -> putEdsioVarint (fromIntegral (unOffset (xdelta1InstructionOffset instruction)))
+
+-- | Data-targeting offsets are always sequential — slap's differ emits the data segment in citation order —
+-- while file-targeting ones follow the file source's declared mode.
+instructionWireOffsetMode :: XDelta1Patch -> XDelta1Instruction -> XDelta1OffsetMode
+instructionWireOffsetMode patch instruction = case xdelta1InstructionTarget instruction of
+  FromDataSource -> SequentialOffsets
+  FromFileSource ->
+    maybe AbsoluteOffsets xdelta1FileSourceOffsetMode
+          (rosterFileSource (xdelta1SourceRoster patch))
 
 -- | Wire byte for the offset-mode slot of an EDSIO source record.
 -- Inverse of the parser's @offsetModeByte \/= 0@ test
@@ -399,13 +405,6 @@ encodeInstruction patch instruction =
 offsetModeByte :: XDelta1OffsetMode -> Word8
 offsetModeByte SequentialOffsets = 1
 offsetModeByte AbsoluteOffsets   = 0
-
--- | Wire source-index for an instruction. Inverse of the parser's
--- 'Slap.XDelta1.Parse.translateInstruction': the data source is
--- referenced by index @0@ and the file source by index @1@.
-instructionTargetWireIndex :: XDelta1InstructionTarget -> Word64
-instructionTargetWireIndex FromDataSource = 0
-instructionTargetWireIndex FromFileSource = 1
 
 -- | Re-encode an xdelta1 header name from its typed 'EncodedText' to
 -- the wire bytes that go between the header and the data segment.

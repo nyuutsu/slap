@@ -273,6 +273,8 @@ roundTripTests = testGroup "RoundTrip"
       ]
   , testGroup "PPF3"
       [ testProperty "round-trip" prop_ppf3
+      , testCase "apply grows the file: a record past the source end reproduces the target"
+                 ppf3GrowthApplyReproducesTarget
       , testCase "description: UTF-8 codepoints round-trip byte-faithfully"
                  ppf3DescriptionUtf8RoundTrip
       , testCase "description: 4-byte codepoint at the 50-byte cap is dropped whole"
@@ -2938,6 +2940,27 @@ ppf2DescriptionCodepointAwareTruncation =
         PPF2.encodePPF2 [] descriptionTyped sourceSize validation
   in assertPPFDescriptionTruncationWarning LabelPPF2 advisories
 
+-- | Apply must reproduce a growing patch — a record starting at the source's end —
+-- even though PPF3 create refuses growth ('ppf3RejectIncompatibleSizeChange'), so 'prop_ppf3' never covers this path.
+-- The create/apply gap in miniature: apply accepts a shape create declines to emit.
+ppf3GrowthApplyReproducesTarget :: Assertion
+ppf3GrowthApplyReproducesTarget =
+  let source  = ByteString.pack [0x11, 0x22, 0x33, 0x44]
+      payload = ByteString.pack [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x10, 0x20]
+      patch   = PPF3.PPF3Patch
+        { PPF3.ppf3Description     = SlapText.EncodedText SlapText.EncodingUtf8 ""
+        , PPF3.ppf3ImageType       = BIN
+        , PPF3.ppf3HasUndo         = False
+        , PPF3.ppf3ValidationBlock = Nothing
+        , PPF3.ppf3Records         = [PPF3.PPF3Record (Offset 4) payload Nothing]
+        , PPF3.ppf3FileId          = Nothing
+        }
+  in case PPF3.applyPPF3 patch (InputFileContents source) of
+       Left refusal  -> assertFailureT ("PPF3 growth apply failed: " <> renderSlapError refusal)
+       Right outcome ->
+         assertEqual "PPF3 growth apply reproduces source ++ payload"
+           (source <> payload) (unOutputFileContents (outcomeValue outcome))
+
 ppf3DescriptionUtf8RoundTrip :: Assertion
 ppf3DescriptionUtf8RoundTrip =
   let descriptionTyped = SlapText.EncodedText SlapText.EncodingUtf8 ppfNonAsciiDescriptionText
@@ -3069,14 +3092,10 @@ prop_bpsNoSizeRegression = forAll genPair $ \(source, target) ->
 -- of the produced patch changes.
 ----------------------------------------------------------------------------
 
--- | Stand-in 'ResolvedXDelta1FileNames' used by every xdelta1
--- round-trip property here: the names are immaterial to the
--- create→parse→apply invariant under test (apply consults
--- 'xdelta1SourceMD5' and 'xdelta1Verification', not the display
--- labels), so a once-resolved pair feeds every call. Routing
--- through 'resolveXDelta1FileNames' rather than constructing the
--- smart-constructor type directly is the only way: the bare
--- constructor isn't exported from "Slap.XDelta1.Types".
+-- | Stand-in 'ResolvedXDelta1FileNames' shared by the xdelta1 round-trip properties here.
+-- The names are immaterial — apply reads the roster's file source and 'xdelta1Verification', not the display labels —
+-- so one resolved pair serves every call.
+-- It goes through 'resolveXDelta1FileNames' because the bare constructor isn't exported from "Slap.XDelta1.Types".
 xdelta1FixtureNames :: ResolvedXDelta1FileNames
 xdelta1FixtureNames =
   let asLocale = SlapText.EncodedText SlapText.EncodingUtf8
@@ -3093,7 +3112,7 @@ prop_xdelta1RoundTrips =
     Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) (property False)
     Right (CreateResult patch _) -> case XDelta1.parseXDelta1 SlapText.EncodingUtf8 patch of
       Left parseError -> counterexample ("parse: " ++ Text.unpack (renderSlapError parseError)) (property False)
-      Right (Parsed parsed _) -> case XDelta1.applyXDelta1 parsed (InputFileContents sourceBytes) of
+      Right (Parsed parsed _) -> case fmap outcomeValue (XDelta1.applyXDelta1 parsed (InputFileContents sourceBytes)) of
         Left applyError    -> counterexample ("apply: " ++ Text.unpack (renderSlapError applyError)) (property False)
         Right outputBytes  -> outputBytes === OutputFileContents targetBytes
 
@@ -3161,7 +3180,7 @@ prop_xdelta1NoVerifyRoundTrip =
             warningCheck = counterexample
               ("expected VerificationOptedOutByCreator warning, got: " ++ show warnings)
               (any isOptedOutByCreatorWarning warnings)
-            applyCheck = case XDelta1.applyXDelta1 parsed (InputFileContents sourceBytes) of
+            applyCheck = case fmap outcomeValue (XDelta1.applyXDelta1 parsed (InputFileContents sourceBytes)) of
               Left applyError    -> counterexample ("apply: " ++ Text.unpack (renderSlapError applyError)) (property False)
               Right outputBytes  -> outputBytes === OutputFileContents targetBytes
         in postureCheck .&&. warningCheck .&&. applyCheck
@@ -3189,7 +3208,7 @@ xdelta1RoundTripCase sourceBytes targetBytes =
     Left createError -> assertFailureT ("create: " <> renderSlapError createError)
     Right (CreateResult patch _) -> case XDelta1.parseXDelta1 SlapText.EncodingUtf8 patch of
       Left parseError -> assertFailureT ("parse: " <> renderSlapError parseError)
-      Right (Parsed parsed _) -> case XDelta1.applyXDelta1 parsed (InputFileContents sourceBytes) of
+      Right (Parsed parsed _) -> case fmap outcomeValue (XDelta1.applyXDelta1 parsed (InputFileContents sourceBytes)) of
         Left applyError -> assertFailureT ("apply: " <> renderSlapError applyError)
         Right outputBytes -> assertEqual "round-trip target" (OutputFileContents targetBytes) outputBytes
 

@@ -1035,16 +1035,18 @@ parseSomePatchFromGDIFF patchContents = do
 parseSomePatchFromXDelta1 :: EncodingName -> PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromXDelta1 metadataEncoding patchContents = do
   Parsed patch parseAdvisories <- XDelta1.parseXDelta1 metadataEncoding patchContents
-  let md5Verification = case XDelta1.xdelta1Verification patch of
+  let fileSource = XDelta1.rosterFileSource (XDelta1.xdelta1SourceRoster patch)
+      md5Verification = case XDelta1.xdelta1Verification patch of
         XDelta1.VerifyAgainstStoredMD5s targetMD5 -> noVerification
-          { verifySourceMD5 = XDelta1.xdelta1SourceMD5 patch
+          { verifySourceMD5 = XDelta1.xdelta1FileSourceMD5 =<< fileSource
           , verifyTargetMD5 = Just targetMD5
           }
         XDelta1.CreatorOptedOutOfVerification -> noVerification
       -- The from-file length gate sits outside the posture split:
       -- canonical xdelta refuses a wrong-length from file before any hashing, @FLAG_NO_VERIFY@ or not.
+      -- A roster with no file source has no from-file to gate, so the check is absent, not zero.
       xdeltaVerification = md5Verification
-        { verifyFileSize = Just (RequiredSize (XDelta1.xdelta1SourceLength patch)) }
+        { verifyFileSize = RequiredSize . XDelta1.xdelta1FileSourceLength <$> fileSource }
       -- The data-record-name is a display label, not anything apply
       -- consults, so its divergence is routed to the notice lane
       -- rather than the warning lane.
@@ -1054,7 +1056,7 @@ parseSomePatchFromXDelta1 metadataEncoding patchContents = do
     , patchAnalysis       = XDelta1.analyzeXDelta1 patch
     , patchKind           = Differential
     , patchApply          = ApplyStrategy
-        { runApply     = \source -> pure (fmap noAdvisories (XDelta1.applyXDelta1 patch source)) }
+        { runApply     = \source -> pure (XDelta1.applyXDelta1 patch source) }
     , patchUndo           = Nothing
     , patchVerification   = xdeltaVerification
     , patchAdvisories       = otherWarnings

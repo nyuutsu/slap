@@ -10,7 +10,8 @@ module Slap.XDelta1.Describe
 
 import Slap.XDelta1.Types
     ( XDelta1Patch(..), XDelta1Instruction(..)
-    , XDelta1InstructionTarget(..)
+    , XDelta1SourceRoster(..), XDelta1FileSource(..)
+    , rosterFileSource, rosterSourceCount, instructionTargetWireIndex
     , XDelta1OffsetMode(..)
     , XDelta1VerificationPosture(..)
     , XDelta1FileAtDeltaTime(..)
@@ -32,7 +33,6 @@ import Slap.Display.Primitives (hexByteString)
 import Slap.Measure (Length(..), FileSize(..))
 import Slap.Text (EncodedText(..), EncodingName(..), encodedTextContent)
 
-import Data.Int (Int64)
 import Data.Text (Text)
 import qualified Data.ByteString as ByteString
 import qualified Data.Text.Encoding as TextEncoding
@@ -47,11 +47,18 @@ xdelta1Meta patch =
   , InfoLine "to"          (renderName (unXDelta1ToName   (xdelta1ToName   patch)))
   , InfoLine "target size" (renderAsText (unFileSize (xdelta1TargetLength patch)))
   ] ++ verificationLines ++ inputsLines ++
-  [ InfoLine "sources"     "2"
+  [ InfoLine "sources"     (renderAsText (rosterSourceCount roster))
   ] ++ sourceMD5Lines ++
   [ InfoLine "data seg"    (renderAsText dataSegmentLength <> " bytes") ]
   where
+    roster            = xdelta1SourceRoster patch
     dataSegmentLength = ByteString.length (xdelta1DataSegment patch)
+
+    rosterCarriesDataRecord = case roster of
+      DataAndFileSources _ -> True
+      DataSourceOnly       -> True
+      FileSourceOnly _     -> False
+      NoSources            -> False
 
     verificationLines = case xdelta1Verification patch of
       VerifyAgainstStoredMD5s targetMD5
@@ -59,11 +66,6 @@ xdelta1Meta patch =
       CreatorOptedOutOfVerification
         -> [InfoLine "verification" "opted out by creator (--no-verify)"]
 
-    -- Bits 1 and 2 of the header's flags word. Common case (both
-    -- raw bytes) shows nothing — info stays uncluttered. When at
-    -- least one side is a gzip stream, surface a single descriptive
-    -- line naming the affected side(s) and the relevant flag bit(s),
-    -- and remind the reader that apply will refuse on this patch.
     inputsLines = case (xdelta1FromAtDeltaTime patch, xdelta1ToAtDeltaTime patch) of
       (FileWasRawBytes,   FileWasRawBytes)   -> []
       (FileWasGzipStream, FileWasRawBytes)
@@ -78,8 +80,8 @@ xdelta1Meta patch =
       VerifyAgainstStoredMD5s _     ->
         [ InfoLine "data segment MD5"
             (hexByteString (unMD5Hash (md5 (xdelta1DataSegment patch))))
-        ]
-        ++ case xdelta1SourceMD5 patch of
+        | rosterCarriesDataRecord ]
+        ++ case rosterFileSource roster >>= xdelta1FileSourceMD5 of
              Just fileMD5 -> [InfoLine "file source MD5" (hexByteString (unMD5Hash fileMD5))]
              Nothing      -> []
 
@@ -90,32 +92,33 @@ xdelta1Meta patch =
 analyzeXDelta1 :: XDelta1Patch -> PatchAnalysis
 analyzeXDelta1 patch = PatchAnalysis
   { analysisSections =
-      [ makeXDelta1DataRecordText patch
-      , makeXDelta1FileSourceText patch
-      , SectionText ""
+      sourceRowSections ++
+      [ SectionText ""
       , SectionText ("instructions: " <> renderAsText instructionCount)
       , SectionText ""
-      , SectionRegions (map makeXDelta1Region (xdelta1Instructions patch))
+      , SectionRegions (map (makeXDelta1Region roster) (xdelta1Instructions patch))
       ]
   , analysisSummary  = Summary (SummaryInfo (Tally instructionCount) Instructions (Just (TotalOutputBytes (xdelta1TargetLength patch))))
   }
   where
     instructionCount = length (xdelta1Instructions patch)
+    roster           = xdelta1SourceRoster patch
 
--- | Render the data-record source section as the encoder would have
--- written it: name is 'xdelta1DataRecordName', length is the data
--- segment's byte count, offset-mode is always sequential, MD5 is the
--- segment-bytes MD5 (only when the patch's posture is
--- 'VerifyAgainstStoredMD5s'). The format mirrors
--- 'makeXDelta1FileSourceText' so explain output reads as two
--- comparable rows.
---
--- 'xdelta1DataRecordName' is a fixed ASCII wire constant (@"(patch data)"@); decoding it under UTF-8 is byte-identical to its codepoint reading,
--- so wrapping it as 'EncodedText' tagged 'EncodingUtf8' is accurate
--- and lets the data-record row participate in the same 'EncodedText' rendering path the file-source row uses.
-makeXDelta1DataRecordText :: XDelta1Patch -> AnalysisSection
-makeXDelta1DataRecordText patch =
-  renderSourceLine 0 "data" dataRecordNameText
+    sourceRowSections = case roster of
+      DataAndFileSources fileSource ->
+        [ makeXDelta1DataRecordText 0 patch
+        , makeXDelta1FileSourceText 1 fileSource
+        ]
+      DataSourceOnly                -> [makeXDelta1DataRecordText 0 patch]
+      FileSourceOnly fileSource     -> [makeXDelta1FileSourceText 0 fileSource]
+      NoSources                     -> [SectionText "  (no sources; the declared target is empty)"]
+
+-- | Render the data-record's row for the analysis, re-derived rather than stored.
+-- 'xdelta1DataRecordName' is a fixed ASCII constant (@"(patch data)"@), byte-identical under UTF-8,
+-- so tagging it 'EncodingUtf8' is accurate and lets it share 'renderSourceLine' with the file-source row.
+makeXDelta1DataRecordText :: Int -> XDelta1Patch -> AnalysisSection
+makeXDelta1DataRecordText listIndex patch =
+  renderSourceLine listIndex "data" dataRecordNameText
     (FileSize dataSegmentLength) SequentialOffsets dataMD5
   where
     dataRecordNameText =
@@ -126,31 +129,19 @@ makeXDelta1DataRecordText patch =
       VerifyAgainstStoredMD5s _     -> Just (md5 dataSegmentBytes)
       CreatorOptedOutOfVerification -> Nothing
 
--- | Render the file-source section from the patch's flat
--- @xdelta1Source*@ fields.
-makeXDelta1FileSourceText :: XDelta1Patch -> AnalysisSection
-makeXDelta1FileSourceText patch = SectionText $
-  "  [1] " <> renderName (unXDelta1FromName (xdelta1SourceName patch))
-  <> " (file)"
-  <> (case xdelta1SourceOffsetMode patch of
-        SequentialOffsets -> " seq"
-        AbsoluteOffsets   -> "")
-  <> "  " <> renderAsText (unFileSize (xdelta1SourceLength patch)) <> " bytes"
-  <> (case xdelta1SourceMD5 patch of
-        Just hash -> "  MD5:" <> hexByteString (unMD5Hash hash)
-        Nothing   -> "")
+makeXDelta1FileSourceText :: Int -> XDelta1FileSource -> AnalysisSection
+makeXDelta1FileSourceText listIndex fileSource =
+  renderSourceLine listIndex "file"
+    (unXDelta1FromName (xdelta1FileSourceName fileSource))
+    (xdelta1FileSourceLength fileSource)
+    (xdelta1FileSourceOffsetMode fileSource)
+    (xdelta1FileSourceMD5 fileSource)
 
--- | Render one EDSIO source-record row from its typed-text name,
--- length, offset-mode, and optional MD5. Shared between the data
--- record and any other source row that decides to route through it;
--- file-source rows inline the same layout in 'makeXDelta1FileSourceText'
--- because the @"(file)"@ kind label and the source-length\/offset-
--- mode reads come from a different patch field.
 renderSourceLine
   :: Int -> Text -> EncodedText -> FileSize -> XDelta1OffsetMode
   -> Maybe MD5Hash -> AnalysisSection
-renderSourceLine index kindLabel sourceName sourceLength offsetMode md5Hash = SectionText $
-  "  [" <> renderAsText index <> "] " <> renderName sourceName
+renderSourceLine listIndex kindLabel sourceName sourceLength offsetMode md5Hash = SectionText $
+  "  [" <> renderAsText listIndex <> "] " <> renderName sourceName
   <> " (" <> kindLabel <> ")"
   <> (case offsetMode of SequentialOffsets -> " seq"; AbsoluteOffsets -> "")
   <> "  " <> renderAsText (unFileSize sourceLength) <> " bytes"
@@ -164,19 +155,12 @@ renderSourceLine index kindLabel sourceName sourceLength offsetMode md5Hash = Se
 renderName :: EncodedText -> Text
 renderName = encodedTextContent
 
-makeXDelta1Region :: XDelta1Instruction -> AnalysisRegion
-makeXDelta1Region instruction = AnalysisRegion
+makeXDelta1Region :: XDelta1SourceRoster -> XDelta1Instruction -> AnalysisRegion
+makeXDelta1Region roster instruction = AnalysisRegion
   { regionOffset     = xdelta1InstructionOffset instruction
   , regionSize       = Length (unFileSize (xdelta1InstructionLength instruction))
   , regionLabel      = "Copy  "
   , regionPayload    = PayloadCopy FromSource
   , regionAnnotation = AnnotationAt AtOffset (xdelta1InstructionOffset instruction)
-      [DetailSourceIndex (targetToWireIndex (xdelta1InstructionTarget instruction))]
+      [DetailSourceIndex (fromIntegral (instructionTargetWireIndex roster (xdelta1InstructionTarget instruction)))]
   }
-
--- | The wire-format integer that encodes an 'XDelta1InstructionTarget'.
--- Matches what canonical xdelta emits: 0 for the data source, 1 for the file source.
--- The explain output prints this number so its "instruction at offset N references source 0/1" line reads the same as xdelta's own source indices.
-targetToWireIndex :: XDelta1InstructionTarget -> Int64
-targetToWireIndex FromDataSource = 0
-targetToWireIndex FromFileSource = 1

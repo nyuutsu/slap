@@ -17,7 +17,7 @@ import Slap.PMSR.Types    (pmsrLimits)
 import Slap.PPF1.Types    (ppf1Limits)
 import Slap.PPF2.Types    (ppf2Limits)
 import Slap.PPF3.Types    (ppf3MaxRecordPayload)
-import Slap.XDelta1.Create (narrowXDelta1ControlOffset)
+import Slap.XDelta1.Create (narrowXDelta1WireNumber)
 import Slap.FieldName     (FieldName(..))
 import Slap.FormatLabel   (FormatLabel(..))
 import Slap.Measure       (Offset(..), Length(..), FileSize(..), Hunk(..),
@@ -67,7 +67,7 @@ apsN64RejectsDestinationSizeOverflow =
 
 xdelta1RejectsControlOffsetOverflow :: Assertion
 xdelta1RejectsControlOffsetOverflow =
-  case narrowXDelta1ControlOffset 0x100000000 of
+  case narrowXDelta1WireNumber FieldXDelta1ControlOffset 0x100000000 of
     Left (NarrowingError (FieldValueExceedsBound LabelXDelta1 FieldXDelta1ControlOffset
                             0x100000000 0xFFFFFFFF)) -> pure ()
     other -> assertFailure

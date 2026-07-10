@@ -11,8 +11,8 @@
 use std::io::{Read, Write};
 
 use bzip2::read::{BzDecoder, BzEncoder};
-use flate2::read::{GzDecoder, ZlibDecoder, ZlibEncoder};
-use flate2::{Compression, GzBuilder};
+use flate2::read::{GzDecoder, ZlibEncoder};
+use flate2::{Compression, Decompress, FlushDecompress, GzBuilder, Status};
 
 /// Drain a `Read` to a fresh `Vec<u8>`, surfacing any I/O failure as the
 /// underlying library's diagnostic verbatim. The four streaming entry
@@ -27,8 +27,49 @@ fn drain_to_vec<R: Read>(mut reader: R) -> Result<Vec<u8>, String> {
 }
 
 /// Zlib (RFC 1950) inflate: 2-byte header + deflate + adler32 checksum.
+/// The stream must account for the whole input and reach its own end:
+/// the callers hand exactly the bytes their wire container delimits as
+/// the stream, so a stream ending before the input (trailing bytes) or
+/// an input ending before the stream (truncation) is container
+/// corruption. Both verdicts are judged on the raw `Decompress` state
+/// machine — the `Read`-wrapper decoders treat end-of-input as
+/// end-of-stream and hand back partial output for a truncated stream,
+/// exactly the completeness they cannot answer.
 pub fn zlib_inflate(input: &[u8]) -> Result<Vec<u8>, String> {
-    drain_to_vec(ZlibDecoder::new(input))
+    // A chunk at a time; the vector grows as output lands, not pre-sized.
+    const OUTPUT_RESERVE_CHUNK: usize = 32 * 1024;
+    let mut decompressor = Decompress::new(true);
+    let mut output_bytes: Vec<u8> = Vec::new();
+    loop {
+        let consumed_before = decompressor.total_in() as usize;
+        let produced_before = decompressor.total_out();
+        output_bytes.reserve(OUTPUT_RESERVE_CHUNK);
+        let status = decompressor
+            .decompress_vec(&input[consumed_before..], &mut output_bytes, FlushDecompress::None)
+            .map_err(|cause| cause.to_string())?;
+        match status {
+            Status::StreamEnd => break,
+            Status::Ok | Status::BufError => {
+                let stalled = decompressor.total_in() as usize == consumed_before
+                    && decompressor.total_out() == produced_before;
+                if stalled {
+                    return Err(format!(
+                        "the stream is incomplete: decoding stalled after {} of {} input bytes without reaching the stream's end",
+                        decompressor.total_in(),
+                        input.len()
+                    ));
+                }
+            }
+        }
+    }
+    let consumed = decompressor.total_in() as usize;
+    if consumed != input.len() {
+        return Err(format!(
+            "the stream ended after {consumed} of {} input bytes; the remainder is not part of the stream",
+            input.len()
+        ));
+    }
+    Ok(output_bytes)
 }
 
 /// Zlib (RFC 1950) deflate at the library's default compression level.
@@ -78,7 +119,7 @@ pub fn bzip2_compress(input: &[u8]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{bzip2_compress, bzip2_decompress};
+    use super::{bzip2_compress, bzip2_decompress, zlib_deflate, zlib_inflate};
 
     #[test]
     fn bzip2_round_trips() {
@@ -88,5 +129,30 @@ mod tests {
             assert!(!compressed.is_empty(), "even empty input owes framing bytes");
             assert_eq!(bzip2_decompress(&compressed).as_deref(), Ok(input));
         }
+    }
+
+    #[test]
+    fn zlib_round_trips() {
+        let inputs: [&[u8]; 3] = [b"", b"slap", &[0u8; 100_000]];
+        for input in inputs {
+            assert_eq!(zlib_inflate(&zlib_deflate(input)).as_deref(), Ok(input));
+        }
+    }
+
+    /// A stream cut short is refused, never returned as partial output.
+    #[test]
+    fn zlib_truncated_stream_is_refused() {
+        let compressed =
+            zlib_deflate(b"a body long enough that cutting five bytes lands mid-stream");
+        let truncated = &compressed[..compressed.len() - 5];
+        assert!(zlib_inflate(truncated).is_err(), "a truncated stream must not decode");
+    }
+
+    /// Bytes past the stream's end are container corruption, not padding.
+    #[test]
+    fn zlib_trailing_bytes_are_refused() {
+        let mut padded = zlib_deflate(b"slap");
+        padded.extend_from_slice(&[0x00, 0x51]);
+        assert!(zlib_inflate(&padded).is_err(), "trailing bytes must be refused");
     }
 }
