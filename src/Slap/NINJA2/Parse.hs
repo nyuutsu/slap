@@ -100,9 +100,9 @@ parseFixedHeader metadataEncoding textMode input =
           fieldBytes = ByteString.take takeCount (ByteString.drop dropCount input)
           (content, advisories) =
             decodeFixedWidthTextField effectiveEncoding LabelNINJA2 fieldName fieldBytes
-      in if Text.null (encodedTextContent content)
-           then (Nothing, [])
-           else (Just content, advisories)
+      -- An empty field stores no value, but what the decode noticed still stands — content behind a leading NUL, say.
+      in ( if Text.null (encodedTextContent content) then Nothing else Just content
+         , advisories )
 
 ----------------------------------------------------------------------------
 -- Command stream (starts at offset 0x800)

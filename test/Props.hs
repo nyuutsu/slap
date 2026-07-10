@@ -49,6 +49,7 @@ import qualified Props.JSON as JSON
 import qualified Props.Measure as Measure
 import qualified Props.Narrow as Narrow
 import qualified Props.NegativeWireValues as NegativeWireValues
+import qualified Props.Normalize as Normalize
 import qualified Props.ParseWarnings as ParseWarnings
 import qualified Props.ResolveCopyAddress as ResolveCopyAddress
 import qualified Props.RoundTrip as RoundTrip
@@ -79,5 +80,6 @@ main = defaultMain $ testGroup "Properties"
   , Measure.measureTests
   , Narrow.narrowTests
   , NegativeWireValues.negativeWireValuesTests
+  , Normalize.normalizeTests
   , XDelta1Conformance.xdelta1ConformanceTests
   ]

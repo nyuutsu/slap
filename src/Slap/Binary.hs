@@ -36,6 +36,9 @@ module Slap.Binary
   , copyInPlace
   , viewBytesInRange
   , fillNewBuffer
+    -- * Byte permutations
+  , swapAdjacentBytePairs
+  , deinterleaveSMDBlock
     -- * Diff
   , diffHunks
   ) where
@@ -52,6 +55,7 @@ import Data.Int (Int64)
 import Data.Word (Word8, Word16, Word32, Word64)
 import Foreign.Marshal.Utils (copyBytes, moveBytes)
 import Foreign.Ptr (Ptr, plusPtr, castPtr)
+import Foreign.Storable (pokeByteOff)
 import qualified Crypto.Hash as Hash
 import qualified Data.ByteArray as ByteArray
 import Slap.Checksum (CRC16(..), MD5Hash(..), SHA1Hash(..))
@@ -400,6 +404,40 @@ fillNewBuffer size fill =
   Internal.createAndTrim' (unFileSize size) $ \bufferPointer -> do
     extra <- fill bufferPointer
     pure (0, unFileSize size, extra)
+
+----------------------------------------------------------------------------
+-- Byte permutations
+----------------------------------------------------------------------------
+
+-- | Swap every adjacent byte pair: @1234@ becomes @2143@.
+-- Even input length is a precondition — a trailing odd byte would have no partner to swap with.
+swapAdjacentBytePairs :: ByteString -> ByteString
+swapAdjacentBytePairs input = Internal.unsafeCreate inputLength $ \outputPointer ->
+  let swapPairAt index
+        | index >= inputLength = pure ()
+        | otherwise = do
+            pokeByteOff outputPointer index       (UnsafeByteString.unsafeIndex input (index + 1))
+            pokeByteOff outputPointer (index + 1) (UnsafeByteString.unsafeIndex input index)
+            swapPairAt (index + 2)
+  in swapPairAt 0
+  where
+    inputLength = ByteString.length input
+
+-- | Deinterleave a block whose first half holds the output's even positions and its second half the odd:
+-- @output[2i] = block[i]@ and @output[2i + 1] = block[half + i]@.
+-- Even block length is a precondition — the two halves must be equal.
+deinterleaveSMDBlock :: ByteString -> ByteString
+deinterleaveSMDBlock block = Internal.unsafeCreate blockLength $ \outputPointer ->
+  let interleaveAt index
+        | index >= halfLength = pure ()
+        | otherwise = do
+            pokeByteOff outputPointer (2 * index)     (UnsafeByteString.unsafeIndex block index)
+            pokeByteOff outputPointer (2 * index + 1) (UnsafeByteString.unsafeIndex block (halfLength + index))
+            interleaveAt (index + 1)
+  in interleaveAt 0
+  where
+    blockLength = ByteString.length block
+    halfLength  = blockLength `div` 2
 
 ----------------------------------------------------------------------------
 -- CRC-16/IBM (reflected polynomial 0xA001, init 0x0000)

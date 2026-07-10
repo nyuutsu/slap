@@ -10,6 +10,7 @@ module Slap.NINJA2.Create
 
 import Slap.NINJA2.Types
 import Slap.Binary (diffHunks, md5)
+import Slap.Normalize (normalizeCreatePair)
 import Slap.Checksum (MD5Hash(..))
 import Slap.Measure (Offset(..), Length(..), Hunk(..))
 import Slap.Status (SlapError, SlapAdvisory, CreateResult(..))
@@ -49,19 +50,21 @@ encodeBoundedField fieldName fieldWidth = \case
     in (padded, advisories)
 
 
--- | XOR-based records with VLV encoding; handles size changes via overflow.
--- Field-truncation and field-substitution advisories (from fields
--- that overflow the fixed header, or that contain codepoints the
--- target encoding can't represent) and platform advisories (from
--- 'PlatformType' values NINJA2 can't express) are all folded into
--- 'CreateResult.resultAdvisories' so the caller doesn't have to
--- remember to collect them separately.
+-- | XOR-based records with VLV encoding; size changes go through the overflow section.
+-- Field advisories (truncation and substitution from the fixed header's bounded text), platform advisories (a 'PlatformType' NINJA2 can't express),
+-- and normalization advisories all fold into 'CreateResult.resultAdvisories', so the caller collects them from one place.
+-- When the ROM type has a normalization procedure, both files are canonicalized before the diff and the hashes.
 createNINJA2 :: InputFileContents -> OutputFileContents -> NINJA2CreateMetadata
              -> Either SlapError CreateResult
-createNINJA2 (InputFileContents original) (OutputFileContents modified) metadata =
+createNINJA2 handedOriginal handedModified metadata =
     Right (CreateResult (PatchFileContents patchBytes)
-                        (fieldAdvisories ++ platformAdvisories))
+                        (normalizationAdvisories ++ fieldAdvisories ++ platformAdvisories))
   where
+    (InputFileContents original, OutputFileContents modified, normalizationAdvisories) =
+      case ninja2CreateMetadataPlatform metadata of
+        Just platform | ninja2RomTypeNeedsNormalization romType ->
+          normalizeCreatePair LabelNINJA2 platform handedOriginal handedModified
+        _ -> (handedOriginal, handedModified, [])
     textMode              = ninja2CreateTextMode metadata
     -- The fixed header's bounded text fields, in wire order. Each
     -- encodes to its padded bytes paired with any truncation or

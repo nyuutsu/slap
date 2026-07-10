@@ -71,6 +71,11 @@ module Slap.Status
   , APSN64HeaderMalformation(..)
   , NINJA1Malformation(..)
   , NINJA1SubformatConversion(..)
+  , NormalizationStep(..)
+  , SNESInterleaveLayout(..)
+  , NormalizedImageRole(..)
+  , NormalizationSkipReason(..)
+  , RestoredContent(..)
   , BPSMetadataDivergence(..)
   , LineText(..)
   , OffsetTokenText(..)
@@ -97,7 +102,8 @@ import Slap.Archive.Types (ArchiveFormat, archiveFormatName, toolsFor,
                            EntryName(..), SeenEntryCount(..),
                            UnreadableReason(..), UnwrapError(..))
 import Slap.Display.Primitives (hexByteString, padHex, renderPrintableASCIIOrHex)
-import Slap.PlatformType (PlatformType, platformName)
+import Slap.PlatformType (PlatformType(..), platformName,
+                          CarriedRomType(..), RequestedRomType(..))
 import Slap.Measure (Offset(..), Length(..), Position(..), FileSize(..),
                      SignedOffset(..), ActionIndex(unActionIndex),
                      ReadOffset(..), WritePosition(..),
@@ -862,6 +868,12 @@ data SlapError
   -- parsing or encoding work begins.
   | DialectNotSupported (NonEmpty Dialect) FormatLabel
 
+  -- | The user asked @slap convert@ to retag a patch's ROM type across platforms — the source patch declares one platform, @--rom-type@ names another.
+  -- The records were built against the carried platform's normalized form,
+  -- so a different tag would tell appliers to normalize the input differently, and the records would land on the wrong bytes.
+  -- The one retag convert honors is the same-layout sibling pair — SMS and Game Gear, whose procedures are identical.
+  | RomTypeRetagRejected CarriedRomType RequestedRomType
+
   -- | The user asked @slap convert@ to write an xdelta1 patch from a
   -- non-xdelta1 source patch without supplying @--from-name@ /
   -- @--to-name@. xdelta1's header carries two free-form display
@@ -1203,9 +1215,6 @@ data SlapAdvisory
 
   -- NINJA rom-type handling
   --
-  -- | A NINJA patch's ROM type calls for a normalization slap does not run,
-  -- so an input not already in that form will fail the source check.
-  | RomTypeNormalizationUnsupported FormatLabel PlatformType
   -- | A non-Raw NINJA ROM type the spec defines no normalization for: slap
   -- has nothing to run and applies the patch as-is.
   | RomTypeWithoutNormalization FormatLabel PlatformType
@@ -1216,10 +1225,28 @@ data SlapAdvisory
   -- | The textual sibling of 'UnrecognizedRomType': a NINJA1 textual patch
   -- named a ROM type the format does not define, carried as the name.
   | UnrecognizedRomTypeName FormatLabel Text
-  -- | The refusal for an unrecognized ROM type with no source checksum to
-  -- fall back on: nothing confirms the patch belongs to the input. Gated by
-  -- the apply's verification policy, so @--no-verify@ overrides it.
-  | UnrecognizedRomTypeWithoutChecksum FormatLabel
+
+  -- ROM-image normalization ('Slap.Normalize')
+  --
+  -- | Note: the ROM type's normalization procedure changed an image on its way into a diff or an apply.
+  -- One advisory per step, so a ROM that is both header-stripped and deinterleaved narrates both.
+  | RomImageNormalized FormatLabel NormalizedImageRole PlatformType NormalizationStep
+  -- | Note: content the normalization set aside was returned to the output after the apply —
+  -- a header re-prepended, or patched data reinserted into its UNIF container.
+  | RomImageContentRestored FormatLabel RestoredContent
+  -- | The image matches none of the shapes the ROM type's procedure recognizes.
+  -- Where the reference tool would refuse outright, slap takes the image as-is.
+  | RomImageShapeUnrecognized FormatLabel NormalizedImageRole PlatformType
+  -- | The image matched one of the ROM type's shapes, but its structure makes the transform impossible — the 'NormalizationSkipReason' names how.
+  -- The image is taken as-is.
+  | RomImageNormalizationSkipped FormatLabel NormalizedImageRole PlatformType NormalizationSkipReason
+  -- | The ROM type has a normalization procedure but the patch carries no source checksum, so nothing can confirm the normalized input is what it was built against.
+  -- slap normalizes and proceeds; the absent checksum is the creator's omission, not a reason to be stricter than the format.
+  | RomTypeNormalizationUnconfirmable FormatLabel PlatformType
+  -- | The patched data's byte count no longer matches what the original UNIF container's PRG and CHR chunks hold,
+  -- so the data cannot be reinserted and the output is left in the merged (headerless) form.
+  -- The 'ExpectedSize' is the container's chunk total; the 'ActualSize' is the patched data's length.
+  | UNIFContainerNotRebuilt FormatLabel ExpectedSize ActualSize
   -- | The source ROM's byte-order does not match the image format an APS-N64 Type-1 patch declares.
   -- Gated by the verification policy, so @--no-verify@ overrides.
   | APSN64ImageFormatMismatch
@@ -2069,6 +2096,14 @@ renderSlapError (DialectNotSupported axes target) =
          <> " format does not have these dialect axes:"
          <> Text.concat (map (\d -> "\n  - " <> renderOne d) many)
 
+renderSlapError (RomTypeRetagRejected (CarriedRomType carried) (RequestedRomType requested)) =
+  "--rom-type: this patch declares ROM type " <> platformName carried
+  <> ", and convert does not retag across platforms: the records were built against the "
+  <> platformName carried <> " normalized form, and a " <> platformName requested
+  <> " tag would tell appliers to normalize the input differently."
+  <> "\n  --rom-type on convert only disambiguates the combined SMS/Game Gear slot;"
+  <> " to target " <> platformName requested <> ", create a new patch from the ROM files"
+
 renderSlapError (XDelta1ConvertRequiresNames sourceLabel) =
   "cannot convert from " <> formatLabelName sourceLabel
   <> " to " <> formatLabelName LabelXDelta1
@@ -2414,11 +2449,6 @@ renderSlapAdvisory NINJA2SMSGameGearAmbiguity =
   <> " is ambiguous; defaults to SMS"
   <> " on conversion (override with --rom-type gg)"
 
-renderSlapAdvisory (RomTypeNormalizationUnsupported label platform) =
-  formatLabelName label <> ": ROM type " <> platformName platform
-  <> " calls for a normalization slap does not perform yet;"
-  <> " an input not already in that form will fail the source check"
-
 renderSlapAdvisory (RomTypeWithoutNormalization label platform) =
   formatLabelName label <> ": ROM type " <> platformName platform
   <> " carries no normalization; the patch is applied as-is"
@@ -2431,9 +2461,37 @@ renderSlapAdvisory (UnrecognizedRomTypeName label romName) =
   formatLabelName label <> ": unrecognized ROM type \"" <> romName
   <> "\"; records are applied unchanged, but any preprocessing it implies is unknown"
 
-renderSlapAdvisory (UnrecognizedRomTypeWithoutChecksum label) =
-  formatLabelName label <> ": unrecognized ROM type and no source checksum,"
-  <> " so slap cannot confirm this patch matches the input"
+renderSlapAdvisory (RomImageNormalized label role platform step) =
+  formatLabelName label <> ": normalized the " <> normalizedImageRoleLabel role
+  <> " as " <> platformName platform <> ": " <> normalizationStepPhrase step
+
+renderSlapAdvisory (RomImageContentRestored label restored) =
+  formatLabelName label <> ": " <> case restored of
+    RestoredHeaderPrefix (Length headerLength) ->
+      "restored the " <> renderAsText headerLength <> "-byte header to the front of the output"
+    RestoredUNIFContainer ->
+      "reinserted the patched data into the original UNIF container"
+
+renderSlapAdvisory (RomImageShapeUnrecognized label role platform) =
+  formatLabelName label <> ": the patch's ROM type is " <> platformName platform
+  <> ", but the " <> normalizedImageRoleLabel role <> " "
+  <> unrecognizedShapePhrase platform <> "; taken as-is"
+
+renderSlapAdvisory (RomImageNormalizationSkipped label role platform reason) =
+  formatLabelName label <> ": the " <> normalizedImageRoleLabel role
+  <> " matches a " <> platformName platform <> " shape whose "
+  <> normalizationSkipPhrase reason <> "; taken as-is"
+
+renderSlapAdvisory (RomTypeNormalizationUnconfirmable label platform) =
+  formatLabelName label <> ": ROM type " <> platformName platform
+  <> " calls for normalization, and the patch carries no source checksum"
+  <> " to confirm the normalized input is what it was built against"
+
+renderSlapAdvisory (UNIFContainerNotRebuilt label (ExpectedSize containerTotal) (ActualSize patchedLength)) =
+  formatLabelName label <> ": the original UNIF container's PRG and CHR chunks hold "
+  <> renderAsText (unFileSize containerTotal) <> " bytes but the patched data is "
+  <> renderAsText (unFileSize patchedLength)
+  <> "; the output is the merged data, not a UNIF file"
 
 renderSlapAdvisory APSN64ImageFormatMismatch =
   formatLabelName LabelAPSN64 <> ": the source ROM's byte order does not match"
@@ -2855,6 +2913,107 @@ data NINJA1SubformatConversion
   | NINJA1CompressedTextToCompressedBinary
   deriving (Eq, Show)
 
+-- | One canonicalization a ROM type's normalization procedure performed, carried by 'RomImageNormalized'
+-- so each transform narrates itself the way @--remove-header@ does through 'InputHeaderRemoved'.
+-- The header widths are fixed per arm (the iNES header is 16 bytes, the copier-era headers 512), so no arm carries a length.
+-- The procedures live in "Slap.Normalize".
+data NormalizationStep
+  = StrippedINESHeader
+  | StrippedFFEHeader
+  | MergedUNIFChunks
+  | StrippedSNESCopierHeader
+  | StrippedNSRTHeader
+  | DeinterleavedSNESHiROM SNESInterleaveLayout
+  | ByteswappedN64Image
+  | StrippedSmartCardHeader
+  | DeinterleavedSMDImage
+  | StrippedMagicSuperGriffinHeader
+  | StrippedLynxHeader
+  deriving (Eq, Show)
+
+normalizationStepPhrase :: NormalizationStep -> Text
+normalizationStepPhrase StrippedINESHeader = "removed the 16-byte iNES header"
+normalizationStepPhrase StrippedFFEHeader  = "removed the 512-byte FFE header"
+normalizationStepPhrase MergedUNIFChunks   = "merged the UNIF container's PRG and CHR chunks into one image"
+normalizationStepPhrase StrippedSNESCopierHeader = "removed the 512-byte copier header"
+normalizationStepPhrase StrippedNSRTHeader = "removed the 512-byte NSRT header"
+normalizationStepPhrase (DeinterleavedSNESHiROM layout) =
+  "deinterleaved the HiROM image (" <> snesInterleaveLayoutPhrase layout <> ")"
+normalizationStepPhrase ByteswappedN64Image = "byteswapped the V64 image to native byte order"
+normalizationStepPhrase StrippedSmartCardHeader = "removed the 512-byte SmartCard header"
+normalizationStepPhrase DeinterleavedSMDImage = "removed the 512-byte SMD header and deinterleaved the 16 KiB blocks"
+normalizationStepPhrase StrippedMagicSuperGriffinHeader = "removed the 512-byte Magic Super Griffin header"
+normalizationStepPhrase StrippedLynxHeader = "removed the 64-byte LYNX header"
+
+-- | Which interleave layout a SNES HiROM deinterleave undid: the generic even/odd halves scheme,
+-- or one of the three Game Doctor SF charts, keyed to exact image sizes (20, 24, 48 Mbit).
+data SNESInterleaveLayout
+  = EvenOddHalvesLayout
+  | GD3Chart20MbitLayout
+  | GD3Chart24MbitLayout
+  | GD3Chart48MbitLayout
+  deriving (Eq, Show)
+
+snesInterleaveLayoutPhrase :: SNESInterleaveLayout -> Text
+snesInterleaveLayoutPhrase EvenOddHalvesLayout  = "even/odd 32 KiB halves"
+snesInterleaveLayoutPhrase GD3Chart20MbitLayout = "Game Doctor 20 Mbit chart"
+snesInterleaveLayoutPhrase GD3Chart24MbitLayout = "Game Doctor 24 Mbit chart"
+snesInterleaveLayoutPhrase GD3Chart48MbitLayout = "Game Doctor 48 Mbit chart"
+
+-- | Which file a normalization advisory speaks about: the apply-side input, or one of the two files handed to create.
+data NormalizedImageRole
+  = NormalizedApplyInput
+  | NormalizedCreateOriginal
+  | NormalizedCreateModified
+  deriving (Eq, Show)
+
+normalizedImageRoleLabel :: NormalizedImageRole -> Text
+normalizedImageRoleLabel NormalizedApplyInput     = "input"
+normalizedImageRoleLabel NormalizedCreateOriginal = "original"
+normalizedImageRoleLabel NormalizedCreateModified = "modified"
+
+-- | Why an image that matched one of its ROM type's shapes still could not be normalized:
+-- the declared structure and the actual bytes disagree in a way the transform cannot bridge.
+data NormalizationSkipReason
+  = ImageShorterThanItsHeader
+  | SMDBlocksNotWhole
+  | SNESInterleavedBlocksNotWhole
+  | UNIFChunkTableTruncated
+  | N64ImageOddLength
+  deriving (Eq, Show)
+
+-- | The clause after "matches a <platform> shape whose ..." in the 'RomImageNormalizationSkipped' rendering; each phrase completes that sentence.
+normalizationSkipPhrase :: NormalizationSkipReason -> Text
+normalizationSkipPhrase ImageShorterThanItsHeader =
+  "image is smaller than the header the procedure would remove"
+normalizationSkipPhrase SMDBlocksNotWhole =
+  "body after the SMD header does not divide into whole 16 KiB blocks"
+normalizationSkipPhrase SNESInterleavedBlocksNotWhole =
+  "body does not divide into two equal halves of whole 32 KiB blocks"
+normalizationSkipPhrase UNIFChunkTableTruncated =
+  "chunk table runs past the end of the file"
+normalizationSkipPhrase N64ImageOddLength =
+  "byteswapped image has an odd byte count"
+
+-- | What the image was expected to show and did not, for the 'RomImageShapeUnrecognized' rendering.
+-- Only platforms whose procedures reach that verdict have a specific phrase; the final arm covers the rest.
+unrecognizedShapePhrase :: PlatformType -> Text
+unrecognizedShapePhrase platform = case platform of
+  PlatformNES      -> "has no iNES or UNIF signature and no FFE marker at offset 8"
+  PlatformSNES     -> "carries no internal header checksum at 0x7FDC or 0xFFDC"
+  PlatformN64      -> "leads with neither N64 magic (native 0x80371240, byteswapped 0x37804012)"
+  PlatformSMS      -> "has neither the SEGA signature at 0x7FF4 nor the SMD marker at offset 8"
+  PlatformGameGear -> "has neither the SEGA signature at 0x7FF4 nor the SMD marker at offset 8"
+  PlatformGenesis  -> "has neither the SEGA signature at 0x100 nor the SMD marker at offset 8"
+  _                -> "matches none of the shapes its normalization procedure recognizes"
+
+-- | What 'RomImageContentRestored' put back into the output: a stripped header re-prepended (carrying its width for the rendering),
+-- or patched data reinserted into the original UNIF chunk table.
+data RestoredContent
+  = RestoredHeaderPrefix Length
+  | RestoredUNIFContainer
+  deriving (Eq, Show)
+
 -- | A line of textual-patch input, carried verbatim for inclusion in
 -- a malformation diagnostic. Labeled so the wire content stays
 -- non-pattern-matchable at the type level.
@@ -3070,11 +3229,15 @@ slapAdvisorySeverity advisory = case advisory of
   FieldContentPastEnd{}                -> SeverityWarning
   PlatformNotAvailable{}               -> SeverityWarning
   NINJA2SMSGameGearAmbiguity           -> SeverityNote
-  RomTypeNormalizationUnsupported{}    -> SeverityWarning
   RomTypeWithoutNormalization{}        -> SeverityNote
   UnrecognizedRomType{}                -> SeverityWarning
   UnrecognizedRomTypeName{}            -> SeverityWarning
-  UnrecognizedRomTypeWithoutChecksum{} -> SeverityWarning
+  RomImageNormalized{}                 -> SeverityNote
+  RomImageContentRestored{}            -> SeverityNote
+  RomImageShapeUnrecognized{}          -> SeverityWarning
+  RomImageNormalizationSkipped{}       -> SeverityWarning
+  RomTypeNormalizationUnconfirmable{}  -> SeverityWarning
+  UNIFContainerNotRebuilt{}            -> SeverityWarning
   APSN64ImageFormatMismatch            -> SeverityWarning
   APSN64Type1HeaderDropped             -> SeverityWarning
   SubformatConverted{}                 -> SeverityNote

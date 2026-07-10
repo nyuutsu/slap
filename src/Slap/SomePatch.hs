@@ -102,6 +102,8 @@ import qualified Slap.NINJA1.Apply as NINJA1
 import qualified Slap.NINJA1.Create as NINJA1
 import qualified Slap.NINJA1.Describe as NINJA1
 import Slap.Platform (ninja1ToPlatform, ninja2ToPlatform)
+import Slap.Normalize (SourceNormalization(..), RestoreDiscipline(..),
+                       NormalizationConfirmation(..))
 import Slap.Display.Analysis (PatchAnalysis(..))
 import Slap.Display.Common (FormatHeader(..),
                              Tally(..), CountUnit(..), ByteCount(..))
@@ -159,10 +161,6 @@ data Verification = Verification
   , verifyWindowAdler32 :: [WindowCheck]
   , verifySourceBytes   :: [ByteCheck]
   , verifySourcePreHash :: SourcePreHash
-    -- | 'Just' the format when the patch's ROM-type byte is unrecognized,
-    -- 'Nothing' otherwise (set by the NINJA parsers). Drives the
-    -- 'UnrecognizedRomTypeWithoutChecksum' refusal.
-  , verifyRomTypeUnrecognized :: Maybe FormatLabel
     -- | Set for an APS-N64 Type-1 source; gates its byte-order on apply, 'Nothing' otherwise.
   , verifyN64ByteOrder :: Maybe ExpectedN64ByteOrder
   }
@@ -220,7 +218,6 @@ noVerification = Verification
   , verifyPPFBlock = Nothing, verifyFileSize = Nothing
   , verifyWindowAdler32 = [], verifySourceBytes = []
   , verifySourcePreHash = HashWholeSource
-  , verifyRomTypeUnrecognized = Nothing
   , verifyN64ByteOrder = Nothing
   }
 
@@ -255,6 +252,9 @@ data SomePatch = SomePatch
   , patchApply          :: ApplyStrategy
   , patchUndo           :: Maybe UndoStrategy
   , patchVerification   :: Verification
+  , patchSourceNormalization :: Maybe SourceNormalization
+    -- ^ 'Just' when the patch's ROM type has a normalization procedure ("Slap.Normalize").
+    -- The apply pipeline canonicalizes the input before any hash or record, and restores what it set aside after target verification.
   , patchAdvisories       :: [SlapAdvisory]
   , patchInfo           :: PatchInfo
     -- ^ Cheap display carrier consumed by @slap info@ and @slap apply@.
@@ -335,6 +335,7 @@ parseSomePatchFromPPF1 (Parsed patch parseAdvisories) =
           , infoRange    = PPF1.ppf1RecordsRange records
           }
       , patchSourceAdvisories    = []
+      , patchSourceNormalization = Nothing
       , patchMetadata       = Nothing
       , patchExtractedMeta  = noMetadataRequested
             { requestedDescription = presentField (PPF1.ppf1Description patch) }
@@ -379,6 +380,7 @@ parseSomePatchFromPPF2 (Parsed patch parseAdvisories) =
           , infoRange    = PPF2.ppf2RecordsRange records
           }
       , patchSourceAdvisories    = []
+      , patchSourceNormalization = Nothing
       , patchMetadata       = Nothing
       , patchExtractedMeta  = noMetadataRequested
             { requestedDescription           = presentField (PPF2.ppf2Description patch)
@@ -435,6 +437,7 @@ parseSomePatchFromPPF3 (Parsed patch parseAdvisories) =
           , infoRange    = PPF3.ppf3RecordsRange records
           }
       , patchSourceAdvisories    = []
+      , patchSourceNormalization = Nothing
       , patchMetadata       = Nothing
       , patchExtractedMeta  = noMetadataRequested
             { requestedDescription           = presentField (PPF3.ppf3Description patch)
@@ -483,6 +486,7 @@ parseSomePatchFromPPF4 metadataEncoding patchContents = do
           , infoRange    = PPF4.ppf4ReplacesRange replaces
           }
       , patchSourceAdvisories    = []
+      , patchSourceNormalization = Nothing
       , patchMetadata       = Nothing
       , patchExtractedMeta  = noMetadataRequested
             { requestedDescription = presentField (PPF4.ppf4Description patch) }
@@ -534,6 +538,7 @@ parseSomePatchFromIPS variant patchContents = do
             , infoRange    = IPS.ipsRecordsRange records
             }
         , patchSourceAdvisories    = []
+        , patchSourceNormalization = Nothing
         , patchMetadata       = Nothing
         , patchExtractedMeta  = noMetadataRequested
         }
@@ -569,6 +574,7 @@ parseSomePatchFromIPS variant patchContents = do
             , infoRange    = IPS.ipsRecordsRange records
             }
         , patchSourceAdvisories    = []
+        , patchSourceNormalization = Nothing
         , patchMetadata       = Nothing
         , patchExtractedMeta  = extractedMeta
         }
@@ -601,6 +607,7 @@ parseSomePatchFromIPS variant patchContents = do
             , infoRange    = IPS.ipsRecordsRange records
             }
         , patchSourceAdvisories    = []
+        , patchSourceNormalization = Nothing
         , patchMetadata       = Nothing
         , patchExtractedMeta  = noMetadataRequested
         }
@@ -641,6 +648,7 @@ parseSomePatchFromBPS metadataEncoding patchContents = do
         , infoRange    = Nothing
         }
     , patchSourceAdvisories    = []
+    , patchSourceNormalization = Nothing
     , patchMetadata       = bpsMetaBlob
     , patchExtractedMeta  = noMetadataRequested { requestedEmbeddedBlob = bpsMetaBlob }
     }
@@ -681,6 +689,7 @@ parseSomePatchFromUPS patchContents = do
         , infoRange    = Nothing
         }
     , patchSourceAdvisories    = []
+    , patchSourceNormalization = Nothing
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
     }
@@ -725,6 +734,7 @@ parseSomePatchFromVCDIFF metadataEncoding patchContents = do
         , infoRange    = Nothing
         }
     , patchSourceAdvisories = []
+    , patchSourceNormalization = Nothing
     , patchMetadata     = appHeaderBlob
     , patchExtractedMeta = noMetadataRequested
         { requestedEmbeddedBlob        = appHeaderBlob
@@ -801,6 +811,7 @@ parseSomePatchFromAPSN64 metadataEncoding patchContents = do
         , infoRange    = Nothing
         }
     , patchSourceAdvisories    = []
+    , patchSourceNormalization = Nothing
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
         { requestedDescription = presentField (APSN64.apsN64Description header) }
@@ -818,17 +829,25 @@ parseSomePatchFromNINJA2 metadataEncoding patchContents = do
         Just open -> NINJA2.openNewFileRomType open
         Nothing   -> NINJA2.NINJA2Raw
       (platformType, platformAdvisories) = ninja2ToPlatform romTypeForPlatformConversion
+      sourceMD5ForVerification = filterZeroMD5 (fmap NINJA2.openNewFileSourceMD5 openNewFile)
       romTypeAdvisories = case romTypeForPlatformConversion of
         NINJA2.NINJA2Raw                 -> []
         NINJA2.NINJA2UnknownRomType byte -> [UnrecognizedRomType LabelNINJA2 byte]
         romType
-          | NINJA2.ninja2RomTypeNeedsNormalization romType ->
-              [RomTypeNormalizationUnsupported LabelNINJA2 platformType]
+          | NINJA2.ninja2RomTypeNeedsNormalization romType -> []
+            -- The normalization runs at apply; its advisories narrate there.
           | otherwise ->
               [RomTypeWithoutNormalization LabelNINJA2 platformType]
-      romTypeUnrecognized = case romTypeForPlatformConversion of
-        NINJA2.NINJA2UnknownRomType _ -> Just LabelNINJA2
-        _                             -> Nothing
+      sourceNormalization
+        | NINJA2.ninja2RomTypeNeedsNormalization romTypeForPlatformConversion = Just SourceNormalization
+            { normalizationFormat       = LabelNINJA2
+            , normalizationPlatform     = platformType
+            , normalizationDiscipline   = RestoreStrippedContent
+            , normalizationConfirmation = case sourceMD5ForVerification of
+                Just _  -> ConfirmableBySourceChecksum
+                Nothing -> NoSourceChecksumToConfirm
+            }
+        | otherwise = Nothing
   Right SomePatch
     { patchFormat         = LabelNINJA2
     , patchAnalysis       = NINJA2.analyzeNINJA2 patch
@@ -837,9 +856,8 @@ parseSomePatchFromNINJA2 metadataEncoding patchContents = do
           { runApply = \source -> pure (fmap noAdvisories (NINJA2.applyNINJA2 patch source)) }
     , patchUndo           = Nothing
     , patchVerification   = noVerification
-        { verifySourceMD5 = filterZeroMD5 (fmap NINJA2.openNewFileSourceMD5 openNewFile)
+        { verifySourceMD5 = sourceMD5ForVerification
         , verifyTargetMD5 = filterZeroMD5 (fmap NINJA2.openNewFileTargetMD5 openNewFile)
-        , verifyRomTypeUnrecognized = romTypeUnrecognized
         }
     , patchAdvisories       = parseAdvisories
                              ++ [EmptyPatch LabelNINJA2 EmptyRecords | null (NINJA2.ninja2Records patch)]
@@ -855,6 +873,7 @@ parseSomePatchFromNINJA2 metadataEncoding patchContents = do
         , infoRange    = Nothing
         }
     , patchSourceAdvisories    = []
+    , patchSourceNormalization = sourceNormalization
     , patchMetadata       = Nothing
     , patchExtractedMeta  =
         let info = NINJA2.ninja2Header patch
@@ -881,14 +900,21 @@ parseSomePatchFromNINJA1 patchContents = do
         NINJA1.RomUnknown byte -> [UnrecognizedRomType LabelNINJA1 byte]
         NINJA1.RomUnknownName name -> [UnrecognizedRomTypeName LabelNINJA1 name]
         romType
-          | NINJA1.ninja1RomTypeNeedsNormalization romType ->
-              [RomTypeNormalizationUnsupported LabelNINJA1 (ninja1ToPlatform romType)]
+          | NINJA1.ninja1RomTypeNeedsNormalization romType -> []
+            -- The normalization runs at apply; its advisories narrate there.
           | otherwise ->
               [RomTypeWithoutNormalization LabelNINJA1 (ninja1ToPlatform romType)]
-      romTypeUnrecognized = case NINJA1.ninja1RomType patch of
-        NINJA1.RomUnknown _     -> Just LabelNINJA1
-        NINJA1.RomUnknownName _ -> Just LabelNINJA1
-        _                       -> Nothing
+      sourceNormalization
+        | NINJA1.ninja1RomTypeNeedsNormalization (NINJA1.ninja1RomType patch) = Just SourceNormalization
+            { normalizationFormat       = LabelNINJA1
+            , normalizationPlatform     = ninja1ToPlatform (NINJA1.ninja1RomType patch)
+            , normalizationDiscipline   = ForwardOnly
+            , normalizationConfirmation =
+                case (NINJA1.ninja1SourceCRC patch, NINJA1.ninja1SourceMD5 patch, NINJA1.ninja1SourceSHA1 patch) of
+                  (Nothing, Nothing, Nothing) -> NoSourceChecksumToConfirm
+                  _                           -> ConfirmableBySourceChecksum
+            }
+        | otherwise = Nothing
       warnings = concat
         [ parseAdvisories
         , [EmptyPatch LabelNINJA1 EmptyRecords | null records]
@@ -917,7 +943,6 @@ parseSomePatchFromNINJA1 patchContents = do
         , verifySourceMD5    = NINJA1.ninja1SourceMD5 patch
         , verifySourceSHA1   = NINJA1.ninja1SourceSHA1 patch
         , verifySourcePreHash = HashNINJA1Sample
-        , verifyRomTypeUnrecognized = romTypeUnrecognized
         }
     , patchAdvisories       = warnings
     , patchInfo           = PatchInfo
@@ -932,6 +957,7 @@ parseSomePatchFromNINJA1 patchContents = do
         , infoRange    = NINJA1.ninja1RecordsRange records
         }
     , patchSourceAdvisories    = sourceAdvisories
+    , patchSourceNormalization = sourceNormalization
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
         { requestedRomType = Just (ninja1ToPlatform (NINJA1.ninja1RomType patch)) }
@@ -960,6 +986,7 @@ parseSomePatchFromBSDiff patchContents = do
         , infoRange    = Nothing
         }
     , patchSourceAdvisories    = []
+    , patchSourceNormalization = Nothing
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
     }
@@ -987,6 +1014,7 @@ parseSomePatchFromGDIFF patchContents = do
         , infoRange    = Nothing
         }
     , patchSourceAdvisories    = []
+    , patchSourceNormalization = Nothing
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
     }
@@ -1028,6 +1056,7 @@ parseSomePatchFromXDelta1 metadataEncoding patchContents = do
         , infoRange    = Nothing
         }
     , patchSourceAdvisories    = dataNameNotices
+    , patchSourceNormalization = Nothing
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
         -- An xdelta1 source patch carries both display labels in its header;
@@ -1076,6 +1105,7 @@ parseSomePatchFromPMSR patchContents = do
         , infoRange    = PMSR.pmsrRecordsRange records
         }
     , patchSourceAdvisories    = []
+    , patchSourceNormalization = Nothing
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
     }
@@ -1110,6 +1140,7 @@ parseSomePatchFromAPSGBA patchContents = do
         , infoRange    = Nothing
         }
     , patchSourceAdvisories    = []
+    , patchSourceNormalization = Nothing
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
     }
@@ -1139,6 +1170,7 @@ parseSomePatchFromDPS metadataEncoding patchContents = do
         , infoRange    = Nothing
         }
     , patchSourceAdvisories    = []
+    , patchSourceNormalization = Nothing
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
              { requestedTitle     = presentField (DPS.dpsName    patch)

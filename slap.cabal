@@ -80,6 +80,7 @@ library slap-internal
     , Slap.IPS.Types
     , Slap.Measure
     , Slap.Narrow
+    , Slap.Normalize
     , Slap.MetadataField
     , Slap.MetadataInclusion
     , Slap.Constraint
@@ -196,6 +197,7 @@ test-suite props
                   , Props.Measure
                   , Props.Narrow
                   , Props.NegativeWireValues
+                  , Props.Normalize
                   , Props.ParseWarnings
                   , Props.ResolveCopyAddress
                   , Props.RoundTrip
@@ -209,6 +211,7 @@ test-suite props
   ghc-options:      -Wall -Werror -Wname-shadowing -threaded -rtsopts "-with-rtsopts=-N"
   build-depends:
       base                 >= 4.20 && < 5
+    , array                >= 0.5
     , bytestring           >= 0.11
     , directory            >= 1.3
     , encoding             >= 0.10 && < 0.11

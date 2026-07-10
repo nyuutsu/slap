@@ -35,6 +35,7 @@ import Slap.Convert (CreateFormat(..), DifferentialCreate(..),
                      noDialectsRequested,
                      acceptedDialects,
                      rejectIncompatibleDialects,
+                     rejectCrossPlatformRomTypeRetag,
                      createDefaultAdvisories, convertDirect,
                      mergeRequestedMetadata, rejectIncompatibleMetadata,
                      formatExtension, formatName)
@@ -58,6 +59,7 @@ import Slap.Status (SlapError(..), SlapAdvisory(..), CreateResult(..), Outcome(.
                    VerificationSide(..), HashAlgorithm(..),
                    ExpectedAdler32(..), ActualAdler32(..), ByteCheckLabel(..),
                    emitAdvisories, bail, bailError, orBail)
+import Slap.Normalize (NormalizedSource(..), normalizeApplySource, restoreStrippedContent)
 import Slap.Display.Glyph (emDash, spacePaddedRightwardsArrow)
 import Slap.FormatLabel (formatLabelName)
 import Slap.Header (addHeader, removeHeader)
@@ -260,13 +262,19 @@ doExplain parsedCommand = do
             (acceptedDialects (patchFormat parsed))
             (patchFormat parsed)
             (explainDialects parsedCommand))
-  maybeSource <- case explainSource parsedCommand of
+  -- The analysis reads "before" bytes at record offsets, and those offsets name positions in the normalized form, so the explain view normalizes the way apply does.
+  -- There is no output here, so nothing restores.
+  normalizedView <- case explainSource parsedCommand of
     Nothing   -> pure Nothing
-    Just path -> Just <$> readMaybeUnwrap (explainFileReading parsedCommand) path
-  let renderFunction = case explainVerbosity parsedCommand of
+    Just path -> do
+      handedBytes <- readMaybeUnwrap (explainFileReading parsedCommand) path
+      pure (Just (normalizeApplySource (patchSourceNormalization parsed) (InputFileContents handedBytes)))
+  let maybeSource = unInputFileContents . normalizedSourceBytes <$> normalizedView
+      renderFunction = case explainVerbosity parsedCommand of
         Summary     -> renderAnalysisSummary
         FullRecords -> renderAnalysisFull
   TextIO.putStr (renderFunction (patchInfo parsed) (patchAnalysis parsed) maybeSource)
+  emitAdvisories (maybe [] normalizedSourceAdvisories normalizedView)
   emitAdvisories (patchAdvisories parsed)
 
 ----------------------------------------------------------------------------
@@ -288,14 +296,21 @@ doApply parsedCommand = do
 
       applyAndWriteTo outputPath = do
         handedBytes <- readMaybeUnwrap (applyFileReading parsedCommand) (applySource parsedCommand)
-        sourceBytes <- reframeInput (applyHeaderDirective parsedCommand) handedBytes
-        let source = InputFileContents sourceBytes
+        reframedBytes <- reframeInput (applyHeaderDirective parsedCommand) handedBytes
+        -- ROM-type normalization comes before the source hashes are taken, so they cover the bytes the patch's checksums were computed over;
+        -- what it sets aside returns to the output only after target verification, whose stored hash also describes the clean form.
+        let normalized = normalizeApplySource (patchSourceNormalization parsed) (InputFileContents reframedBytes)
+        emitAdvisories (normalizedSourceAdvisories normalized)
+        let source = normalizedSourceBytes normalized
         verifySource verificationPolicy verification source
         outcome <- orBail =<< runApply (patchApply parsed) source
         emitAdvisories (outcomeAdvisories outcome)
         let target = outcomeValue outcome
         verifyTarget verificationPolicy verification target
-        ByteString.writeFile outputPath (unOutputFileContents target)
+        let (restoredTarget, restoreAdvisories) =
+              restoreStrippedContent (patchFormat parsed) (normalizedSourceRestore normalized) target
+        emitAdvisories restoreAdvisories
+        ByteString.writeFile outputPath (unOutputFileContents restoredTarget)
         TextIO.putStrLn (renderActionLine "applied" (patchInfo parsed) outputPath)
 
   case applyOutput parsedCommand of
@@ -449,6 +464,7 @@ doConvert parsedCommand = do
             (acceptedDialects (patchFormat parsed))
             (patchFormat parsed)
             (convertDialects parsedCommand))
+  orBail (rejectCrossPlatformRomTypeRetag cliMeta (patchExtractedMeta parsed))
   emitAdvisories (patchAdvisories parsed)
   let outputFile = case convertOutput parsedCommand of
         ConvertToExplicitFile explicit -> explicit
@@ -465,11 +481,18 @@ doConvert parsedCommand = do
   resolvedXDelta1Names <- orBail (resolveConvertXDelta1Names parsedCommand parsed mergedMeta)
   case chooseConvertDispatch parsedCommand parsed of
     ApplyAndRecreate withSource -> do
-      sourceBytes <- readMaybeUnwrap (convertFileReading parsedCommand) (convertWithSourcePath withSource)
-      let source = InputFileContents sourceBytes
+      handedSourceBytes <- readMaybeUnwrap (convertFileReading parsedCommand) (convertWithSourcePath withSource)
+      -- The source patch's records run against its normalized input, and the restored output is the file an apply would really produce,
+      -- so the re-create diffs the handed bytes against that restored output — reproducing the end-to-end behavior.
+      let normalized = normalizeApplySource (patchSourceNormalization parsed) (InputFileContents handedSourceBytes)
+      emitAdvisories (normalizedSourceAdvisories normalized)
+      let source = normalizedSourceBytes normalized
       verifySource (convertWithVerification withSource) (patchVerification parsed) source
       target <- applyForConvert parsed source
-      createResult <- orBail (createPatch (convertTo parsedCommand) resolvedXDelta1Names (InputFileContents sourceBytes) target mergedMeta (patchContentsOf parsed) (convertConstraints parsedCommand) noDialectsRequested)
+      let (restoredTarget, restoreAdvisories) =
+            restoreStrippedContent (patchFormat parsed) (normalizedSourceRestore normalized) target
+      emitAdvisories restoreAdvisories
+      createResult <- orBail (createPatch (convertTo parsedCommand) resolvedXDelta1Names (InputFileContents handedSourceBytes) restoredTarget mergedMeta (patchContentsOf parsed) (convertConstraints parsedCommand) noDialectsRequested)
       emitAdvisories (patchSourceAdvisories parsed
                         ++ createDefaultAdvisories (convertTo parsedCommand) mergedMeta
                         ++ resultAdvisories createResult)
@@ -591,12 +614,6 @@ verifySource verificationPolicy verification (InputFileContents sourceBytes) = d
     enforceHash verificationPolicy SourceSide MD5 expected (md5 preprocessed)
   forM_ (verifySourceSHA1 verification) $ \expected ->
     enforceHash verificationPolicy SourceSide SHA1 expected (sha1 preprocessed)
-  -- Only when no source checksum can vouch the input; a present checksum is the stronger gate and handles that case itself.
-  forM_ (verifyRomTypeUnrecognized verification) $ \label ->
-    case (verifySourceCRC32 verification, verifySourceMD5 verification, verifySourceSHA1 verification) of
-      (Nothing, Nothing, Nothing) ->
-        enforceMismatch verificationPolicy (UnrecognizedRomTypeWithoutChecksum label)
-      _ -> pure ()
   forM_ (verifyN64ByteOrder verification) $ \expected ->
     let v64LeadingMagic = ByteString.pack [0x37, 0x80, 0x40, 0x12]  -- V64 (byteswapped) leads with this; Z64/native do not
         sourceIsV64     = ByteString.take 4 sourceBytes == v64LeadingMagic

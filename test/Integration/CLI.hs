@@ -94,6 +94,10 @@ cliTests tier = do
     let codetableMaybes =
           map WillRun (customCodetableTests ++ vcdTargetTests ++ vcdiffCreateFlagTests)
 
+    -- ROM-type normalization tests build their dumps from whole cloth
+    -- (synthetic headered files in temp paths), so they need only slap.
+    let normalizationMaybes = map WillRun normalizationTests
+
     -- Explain-mode tests use dm4y paths but degrade to "no --with"
     -- mode when the base ROM is missing. They register
     -- unconditionally — the test bodies themselves carry the fixture
@@ -101,7 +105,7 @@ cliTests tier = do
     let explainMaybes = map WillRun
           (explainModeTests dm4yIps (Just (dm4yBase, dm4yUps, dm4yBps)))
 
-    pure (dm4yGated ++ archiveGated ++ codetableMaybes ++ explainMaybes)
+    pure (dm4yGated ++ archiveGated ++ codetableMaybes ++ normalizationMaybes ++ explainMaybes)
 
   pure (namedGroup "cli" (inProcessMaybes ++ subprocessMaybes))
 
@@ -762,6 +766,48 @@ ninja1VerifyTests tier base ips = quickCases ++ onlyAtFull tier fullTierCases
             expectOk ["apply", patch, wrong, "-o", out, "--no-verify"]
               "ninja1/--no-verify" "applied"
       ]
+
+-- | ROM-type normalization through the full CLI pipeline. The round trip is
+-- the whole feature in one breath: create from headered dumps (both sides
+-- canonicalized before the diff, hashes stored over the clean forms), apply
+-- to the headered original (normalize, verify, patch, restore), and read the
+-- headered modified back byte-for-byte. The retag rule rides along: convert
+-- refuses a cross-platform @--rom-type@ against a patch that carries one.
+normalizationTests :: [TestTree]
+normalizationTests =
+  [ testCase "normalize/ninja2 nes: headered pair round-trips through create and apply" $
+      withTempFile "slap-original" $ \original ->
+      withTempFile "slap-modified" $ \modified ->
+      withTempFile "slap-patch" $ \patch ->
+      withTempFile "slap-out" $ \out -> do
+        let header      = "NES\x1A" <> ByteString.replicate 12 0xEE
+            body        = ByteString.pack (take 0x400 (cycle [0 .. 255]))
+            patchedBody = ByteString.take 0x100 body <> "patched!" <> ByteString.drop 0x108 body
+        ByteString.writeFile original (header <> body)
+        ByteString.writeFile modified (header <> patchedBody)
+        _ <- runExternal SlapBinary
+               ["create", "--format", "ninja2", "--rom-type", "nes", original, modified, patch] Nothing ""
+        removeIfExists out
+        expectOk ["apply", patch, original, "-o", out] "normalize/ninja2-nes" "applied"
+        outBytes      <- ByteString.readFile out
+        expectedBytes <- ByteString.readFile modified
+        assertEqual "restored output equals the modified dump" expectedBytes outBytes
+
+  , testCase "normalize/convert refuses a cross-platform --rom-type retag" $
+      withTempFile "slap-original" $ \original ->
+      withTempFile "slap-modified" $ \modified ->
+      withTempFile "slap-patch" $ \patch ->
+      withTempFile "slap-out" $ \out -> do
+        let header = "NES\x1A" <> ByteString.replicate 12 0xEE
+            body   = ByteString.replicate 0x200 0x42
+        ByteString.writeFile original (header <> body)
+        ByteString.writeFile modified (header <> ByteString.replicate 0x200 0x24)
+        _ <- runExternal SlapBinary
+               ["create", "--format", "ninja2", "--rom-type", "nes", original, modified, patch] Nothing ""
+        removeIfExists out
+        expectFail ["convert", patch, "--to", "ninja1", "--rom-type", "snes", "-o", out]
+          "normalize/retag-refused" "does not retag"
+  ]
 
 descriptionTests :: FilePath -> FilePath -> [TestTree]
 descriptionTests base bps =

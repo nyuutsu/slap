@@ -3,6 +3,8 @@
 module Slap.PlatformType
   ( PlatformType(..)
   , platformName
+  , CarriedRomType(..)
+  , RequestedRomType(..)
   ) where
 
 import Data.Text (Text)
@@ -37,6 +39,15 @@ data PlatformType
   | PlatformJaguar           -- NINJA1 only
   | PlatformGP32             -- NINJA1 only
   deriving (Show, Eq)
+
+-- | The ROM type a source patch already declares, paired with 'RequestedRomType'
+-- in the 'Slap.Status.RomTypeRetagRejected' refusal so the two platforms cannot transpose.
+newtype CarriedRomType = CarriedRomType { unCarriedRomType :: PlatformType }
+  deriving (Eq, Show)
+
+-- | The ROM type the user asked for with @--rom-type@; see 'CarriedRomType'.
+newtype RequestedRomType = RequestedRomType { unRequestedRomType :: PlatformType }
+  deriving (Eq, Show)
 
 -- | The user-facing display name for a 'PlatformType',
 -- as 'Slap.Status' renders it in the 'PlatformNotAvailable' advisory.

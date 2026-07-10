@@ -34,6 +34,7 @@ module Slap.Convert
   , createPatch
   , createDefaultAdvisories
   , mergeRequestedMetadata
+  , rejectCrossPlatformRomTypeRetag
   , formatExtension
   , formatName
   , createFormatLabel
@@ -103,8 +104,9 @@ import qualified Slap.DPS.Create as DPS
 import qualified Slap.NINJA1.Types as NINJA1
 import Slap.NINJA1.Types (NINJA1Compression(..), ninja1RejectIncompatibleSizeChange)
 import qualified Slap.NINJA1.Create as NINJA1
-import Slap.PlatformType (PlatformType(..))
-import Slap.Platform (platformToNINJA1)
+import Slap.PlatformType (PlatformType(..), CarriedRomType(..), RequestedRomType(..))
+import Slap.Platform (platformToNINJA1, ninja1ToPlatform)
+import Slap.Normalize (normalizeCreatePair, sharesNormalizationLayout)
 import Slap.Binary (diffHunks, md5, sha1)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.FFI (crc32)
@@ -361,6 +363,22 @@ mergeRequestedMetadata cli source = RequestedPatchMetadata
   , requestedXDelta1FromName     = requestedXDelta1FromName cli     <|> requestedXDelta1FromName source
   , requestedXDelta1ToName       = requestedXDelta1ToName cli       <|> requestedXDelta1ToName source
   }
+
+-- | Refuse @--rom-type@ as a cross-platform retag on convert.
+-- A source patch that carries a ROM type keeps it;
+-- the CLI flag may only rename within a same-layout sibling pair (SMS and Game Gear, via 'Slap.Normalize.sharesNormalizationLayout').
+-- A patch's records are built against its platform's normalized form, so any other retag would tell appliers to normalize the input differently;
+-- a fresh @slap create@ from the ROM files is the way to target another platform.
+rejectCrossPlatformRomTypeRetag
+  :: RequestedPatchMetadata  -- ^ the CLI's requests
+  -> RequestedPatchMetadata  -- ^ the source patch's extracted metadata
+  -> Either SlapError ()
+rejectCrossPlatformRomTypeRetag cliMeta extractedMeta =
+  case (requestedRomType cliMeta, requestedRomType extractedMeta) of
+    (Just requested, Just carried)
+      | not (sharesNormalizationLayout carried requested) ->
+          Left (RomTypeRetagRejected (CarriedRomType carried) (RequestedRomType requested))
+    _ -> Right ()
 
 ----------------------------------------------------------------------------
 -- PatchContents helpers
@@ -1178,12 +1196,15 @@ createPatch :: CreateFormat
             -> RequestedPatchMetadata -> Maybe PatchContents
             -> RequestedConstraints -> RequestedDialects
             -> Either SlapError CreateResult
-createPatch (CreateDirect format) _resolvedNames source target meta sourceContents constraints dialects = do
+createPatch (CreateDirect format) _resolvedNames handedSource handedTarget meta sourceContents constraints dialects = do
+  let (source, target, normalizationAdvisories) =
+        normalizeDirectCreateInputs format meta sourceContents handedSource handedTarget
   rejectIncompatibleSizeChange format
     (byteFileSize (unInputFileContents  source))
     (byteFileSize (unOutputFileContents target))
   let contents = buildContents format source target meta sourceContents
-  encodeDirect contents source format meta (encodingLimits format) constraints dialects
+  result <- encodeDirect contents source format meta (encodingLimits format) constraints dialects
+  Right result { resultAdvisories = normalizationAdvisories ++ resultAdvisories result }
 createPatch (CreateDifferential format) maybeResolvedNames source target meta _sourceContents _constraints _dialects = case format of
   -- The constraints parameter is unused on the differential arm:
   -- 'acceptedConstraints' is empty for every 'CreateDifferential'
@@ -1239,6 +1260,21 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
     where
       verificationChoice = fromMaybe IncludeVerification (requestedVerificationInclusion meta)
       compressionChoice  = fromMaybe IncludeCompression  (requestedPatchCompression     meta)
+
+-- | Canonicalize the two files handed to a direct-format create, so the patch's records and checksums describe the normalized forms.
+-- NINJA1 is the one direct format with ROM types; its platform resolves as 'encodeDirect' resolves it (CLI flag, then the source patch's carried type),
+-- rounded through the format's own rom-type encoding so only platforms NINJA1 can express reach a procedure.
+normalizeDirectCreateInputs
+  :: DirectCreate -> RequestedPatchMetadata -> Maybe PatchContents
+  -> InputFileContents -> OutputFileContents
+  -> (InputFileContents, OutputFileContents, [SlapAdvisory])
+normalizeDirectCreateInputs CreateNINJA1 meta sourceContents source target
+  | NINJA1.ninja1RomTypeNeedsNormalization ninja1Type =
+      normalizeCreatePair LabelNINJA1 (ninja1ToPlatform ninja1Type) source target
+  where
+    ninja1Type = maybe NINJA1.RomRAW (fst . platformToNINJA1)
+                       (requestedRomType meta <|> (sourceContents >>= contentsRomType))
+normalizeDirectCreateInputs _ _ _ source target = (source, target, [])
 
 buildContents :: DirectCreate -> InputFileContents -> OutputFileContents
               -> RequestedPatchMetadata -> Maybe PatchContents -> PatchContents

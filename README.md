@@ -133,13 +133,13 @@ The list of metadata flags is below. The ones that need explaining are elaborate
 
 `--rom-type`: Tag the patch, with the platform its rom is from, and thus what preprocessing options to expose. There are 18 kinds of rom: `gb`, `gba`, `gbc`, `gg`, `gp32`, `jag`, `lynx`, `mega`, `n64`, `nes`, `ngp`, `ngpc`, `pce`, `raw`, `sms`, `snes`, `ws`, `wsc`. `raw` means "no preprocessing", so, if unspecified, slap tags the patch as `raw`.
 
-The non-`raw` modes are meant to correspond to *normalization procedures*. For example, if `gb`, then the patcher is to strip *GB Smart Card headers* before patching. Most values do not have defined behaviors. No-op if the input rom is already in the normalized form, which it probably is.
+The non-`raw` modes are meant to correspond to *normalization procedures[^NORMALIZE]*: deinterleaving, header removal or editing, etc. Most values do not have defined behaviors. No-op if the input rom is already in the normalized form, which it probably is.
 
 #### NINJA2
 
 `--rom-type`: Tag the patch, with the platform its rom is from, and thus what preprocessing options to expose. There are 11 kinds of rom: `fds`, `gb`, `gg`, `lynx`, `mega`, `n64`, `nes`, `pce`, `raw`, `sms`, `snes`. `raw` means "no preprocessing", so, if unspecified, slap tags the patch as `raw`.
 
-The non-`raw` modes are meant to correspond to *normalization procedures*. For example, if `gb`, then the patcher is to strip *GB Smart Card headers* before patching. Most values do not have defined behaviors. No-op if the input rom is already in the normalized form, which it probably is.
+The non-`raw` modes are meant to correspond to *normalization procedures*: deinterleaving, header removal or editing, etc. Most values do not have defined behaviors. No-op if the input rom is already in the normalized form, which it probably is.
 
 `--date`: The format is YYYYMMDD
 
@@ -393,6 +393,8 @@ The per-test durations are logged to `test-results/`.
 [^GOOGLE]: Google had (archived, as of April of 2026) an implementation of VCDIFF, which could *apply* patches that use these features. But, it doesn't *emit* patches containing them. Also, they added some extensions.
 
 [^XDELTA3]: `xdelta3` is a variation on the [O.G. RFC 3284 VCDIFF specification](https://datatracker.ietf.org/doc/html/rfc3284). It adds some things (adler32 checksums, three specific secondary compressor options, and the `appheader` field), and removes some things (custom code tables, `vcd_target`). If you have a patch and it has the extension `.vcdiff`: it is probably an `xdelta3` patch.
+
+[^NORMALIZE]: If the input is already *in* this normalized form then this tag is no-op.
 
 [^XDELTA1]: The versions we support are those with magics `%XDZ003%` or `%XDZ004%`. If you're trying to apply a pre-`%XDZ003%` patch, complain about my omission: [here](mailto:nyuu@nyuu.page). I will *probably* implement the older versions upon request. But, please include the patch you're trying to apply; I don't have any and suspect there *aren't* any.
 
