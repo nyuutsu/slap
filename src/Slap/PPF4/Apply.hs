@@ -20,7 +20,8 @@ import Data.Word (Word8)
 import System.IO.Unsafe (unsafePerformIO)
 
 -- | PPF4 is a two-phase format.
--- Replace records run first, each writing at its declared offset within the source bounds (Replaces that would write past source EOF fail with 'ApplyReplaceGrowsFile').
+-- Replace records run first, each writing at its declared offset within the source bounds
+-- (Replaces that would write past source EOF fail with 'ApplyReplaceGrowsFile').
 -- Append records run second, each writing sequentially starting at the snapshot of @sourceFileSize@ taken before any Replace runs.
 applyPPF4 :: PPF4Patch -> InputFileContents -> Either SlapError OutputFileContents
 applyPPF4 patch (InputFileContents source)

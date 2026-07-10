@@ -208,9 +208,10 @@ data NINJA2OpenNewFile = NINJA2OpenNewFile
   } deriving (Show)
 
 -- | The parsed fixed-header fields from a NINJA2 patch, decoded under the patch's declared 'TextMode'.
--- Each field carries its encoding tag on the value, so downstream conversion and display sites read the encoding directly off the value rather than consulting a side-channel.
--- Because NINJA2 declares a single @PATCH_ENC@ byte for the whole patch, every field of any given parsed 'NINJA2Info' shares the same tag,
--- but the type still models it per-field, which keeps the seam clean when the fields flow into formats whose encoding model is per-field rather than per-patch.
+-- Each field carries its encoding tag on the value, so downstream conversion and display sites read the encoding directly off the value
+-- rather than consulting a side-channel. Because NINJA2 declares a single @PATCH_ENC@ byte for the whole patch,
+-- every field of any given parsed 'NINJA2Info' shares the same tag, but the type still models it per-field,
+-- which keeps the seam clean when the fields flow into formats whose encoding model is per-field rather than per-patch.
 data NINJA2Info = NINJA2Info
   { ninja2Author      :: Maybe EncodedText
   , ninja2Version     :: Maybe EncodedText

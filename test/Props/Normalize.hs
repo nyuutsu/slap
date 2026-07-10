@@ -81,7 +81,8 @@ pairSwapTests = testGroup "swapAdjacentBytePairs"
         swapAdjacentBytePairs (swapAdjacentBytePairs bytes) === bytes
   ]
 
--- | The SMD layout 'deinterleaveSMDBlock' claims to undo: a block's first half holds the clean bytes' even positions, its second half the odd ones.
+-- | The SMD layout 'deinterleaveSMDBlock' claims to undo: a block's first half holds the clean bytes' even positions,
+-- its second half the odd ones.
 interleaveIntoSMDBlock :: ByteString -> ByteString
 interleaveIntoSMDBlock clean =
   evenPositions <> oddPositions
@@ -212,7 +213,8 @@ unifChunk chunkId payload =
       , fromIntegral ((value `div` 0x1000000) `mod` 0x100)
       ]
 
--- | A small synthetic UNIF container: 32-byte file header, a mapper chunk the merge must skip, one PRG and one CHR chunk, and a trailing non-ROM chunk.
+-- | A small synthetic UNIF container: 32-byte file header, a mapper chunk the merge must skip, one PRG and one CHR chunk,
+-- and a trailing non-ROM chunk.
 syntheticUNIF :: ByteString -> ByteString -> ByteString
 syntheticUNIF prgPayload chrPayload =
   "UNIF" <> ByteString.replicate 28 0
@@ -264,7 +266,8 @@ loROMBody = snesBodyWithProbe 0x00 2
 interleavedHiROMBody :: Int -> ByteString
 interleavedHiROMBody = snesBodyWithProbe 0x01
 
--- | Banks of distinct fill bytes with the 0x7FDC-area probe bytes planted: ROM state, then (inverse, checksum) = (0x1234, 0xEDCB), little-endian.
+-- | Banks of distinct fill bytes with the 0x7FDC-area probe bytes planted:
+-- ROM state, then (inverse, checksum) = (0x1234, 0xEDCB), little-endian.
 snesBodyWithProbe :: Word8 -> Int -> ByteString
 snesBodyWithProbe romstateByte bankCount =
   plantBytes 0x7FD5 (ByteString.singleton romstateByte)

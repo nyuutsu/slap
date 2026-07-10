@@ -82,12 +82,14 @@ import Data.Word (Word8, Word32, Word64)
 -- 'XDelta1Patch' value (computing MD5s and choosing the offset mode
 -- per source) and runs the wire encoder.
 --
--- The 'VerificationInclusion' and 'CompressionInclusion' choices gate the @FLAG_NO_VERIFY@ and @FLAG_PATCH_COMPRESSED@ wire effects; see the module header.
+-- The 'VerificationInclusion' and 'CompressionInclusion' choices gate the @FLAG_NO_VERIFY@ and @FLAG_PATCH_COMPRESSED@ wire effects;
+-- see the module header.
 createXDelta1 :: VerificationInclusion -> CompressionInclusion
               -> ResolvedXDelta1FileNames
                  -- ^ from-name and to-name, already resolved and cap-checked by the porcelain
                  -- via 'Slap.XDelta1.Types.resolveXDelta1FileNames' / 'Slap.XDelta1.Types.requireXDelta1FileNames'.
-                 -- Those two are the only constructors, so this function writes the names without re-checking (both bytes locale-encoded, each ≤ the u16 cap).
+                 -- Those two are the only constructors, so this function writes the names without re-checking
+                 -- (both bytes locale-encoded, each ≤ the u16 cap).
               -> InputFileContents -> OutputFileContents
               -> Either SlapError CreateResult
 createXDelta1 verificationChoice compressionChoice resolvedNames inputContents outputContents = do
@@ -291,8 +293,8 @@ narrowXDelta1ControlOffset value =
 -- and its sub-allocation accountant (@libedsio\/default.c@) caps every reconstructed pointer at the declared allocation bound.
 -- An all-zeros prelude is therefore rejected by canonical even though it carries no instruction data.
 --
--- The data-record's wire bytes don't live on 'XDelta1Patch': 'encodeDataRecord' derives them from the data-segment bytes and 'xdelta1DataRecordName'.
--- The source-file record's bytes come from the patch's flat @xdelta1Source*@ fields.
+-- The data-record's wire bytes don't live on 'XDelta1Patch': 'encodeDataRecord' derives them from the data-segment bytes
+-- and 'xdelta1DataRecordName'. The source-file record's bytes come from the patch's flat @xdelta1Source*@ fields.
 encodeControl :: XDelta1Patch -> ByteString
 encodeControl patch = LazyByteString.toStrict (toLazyByteString builder)
   where

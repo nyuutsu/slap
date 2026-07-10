@@ -101,7 +101,8 @@ import System.IO (Handle, SeekMode(AbsoluteSeek), hSeek)
 -- Newtypes
 ----------------------------------------------------------------------------
 
--- | A byte position in a zero-indexed buffer: an output buffer, a source or target 'ByteString', a region payload, or a parsed wire offset naming a position within one.
+-- | A byte position in a zero-indexed buffer: an output buffer, a source or target 'ByteString', a region payload,
+-- or a parsed wire offset naming a position within one.
 -- 'SignedOffset' exists separately to carry the may-be-negative temporary state across BPS's displace-then-examine pattern.
 newtype Offset = Offset { unOffset :: Int } deriving (Eq, Ord, Show)
 newtype Length   = Length   { unLength   :: Int } deriving (Eq, Ord, Show)
@@ -299,8 +300,10 @@ newtype EncodingMethodByte = EncodingMethodByte { unEncodingMethodByte :: Word8 
 -- Records
 ----------------------------------------------------------------------------
 
--- | A raw edit span — a target 'Offset' and the payload bytes to write there — as produced by 'Slap.Binary.diffHunks' before any per-record size check.
--- 'splitHunk' / 'splitHunks' refine it into a 'SplitHunk' whose payload respects a format's per-record cap; only that refined form reaches an encoder.
+-- | A raw edit span — a target 'Offset' and the payload bytes to write there —
+-- as produced by 'Slap.Binary.diffHunks' before any per-record size check.
+-- 'splitHunk' / 'splitHunks' refine it into a 'SplitHunk' whose payload respects a format's per-record cap;
+-- only that refined form reaches an encoder.
 data Hunk = Hunk
   { hunkOffset  :: !Offset
   , hunkPayload :: !ByteString
@@ -308,7 +311,8 @@ data Hunk = Hunk
 
 -- | A 'Hunk' whose payload has been validated against a format's per-record payload bound,
 -- or had that validation explicitly waived for a format whose wire encoding has no per-record cap (see 'splitHunksUnbounded').
--- The constructor is not exported: every 'SplitHunk' comes from one of this module's @split*@ functions, so an encoder's @fromIntegral length :: Word8/Word32@ can't silently truncate.
+-- The constructor is not exported: every 'SplitHunk' comes from one of this module's @split*@ functions,
+-- so an encoder's @fromIntegral length :: Word8/Word32@ can't silently truncate.
 data SplitHunk = SplitHunk
   { splitOffset  :: !Offset
   , splitPayload :: !ByteString
@@ -384,18 +388,21 @@ lengthToFileSize (Length lengthValue) = FileSize lengthValue
 lengthToOffset :: Length -> Offset
 lengthToOffset (Length lengthValue) = Offset lengthValue
 
--- | An 'Offset' as a 'FileSize': for a zero-indexed buffer with no gaps, the byte count is the cursor's position from the start (its last written byte sits one position before this 'Offset').
+-- | An 'Offset' as a 'FileSize': for a zero-indexed buffer with no gaps,
+-- the byte count is the cursor's position from the start (its last written byte sits one position before this 'Offset').
 -- Useful at end-of-apply diagnostics, where the position equals the number of bytes written.
 offsetToFileSize :: Offset -> FileSize
 offsetToFileSize (Offset position) = FileSize position
 
 -- | Widen an integer just decoded by a parser into an 'Offset'.
--- The named home for the parse-boundary 'fromIntegral': a format parser reads a raw 'Data.Word.Word32' (or 'Data.Int.Int64', or a varint) and wraps it here rather than inlining @Offset . fromIntegral@ at each call site.
--- Sibling to 'splitUndoHunkFromParsed'; both are where a parsed wire value crosses into a typed position.
+-- The named home for the parse-boundary 'fromIntegral': a format parser reads a raw 'Data.Word.Word32' (or 'Data.Int.Int64', or a varint)
+-- and wraps it here rather than inlining @Offset . fromIntegral@ at each call site. Sibling to 'splitUndoHunkFromParsed';
+-- both are where a parsed wire value crosses into a typed position.
 --
--- Pure widening, no validation.
--- A negative value is preserved as-is: PPF1/PPF2/PPF3/PPF4 carry signed offsets on the wire, and an out-of-range one is the apply layer's to reject (via 'Slap.Status.ApplyNegativeRecordOffset'), not the parser's to pre-empt.
--- The 'Integral' constraint lets one builder serve every wire width; the widening to host 'Int' is the same conversion the inline form performed.
+-- Pure widening, no validation. A negative value is preserved as-is: PPF1/PPF2/PPF3/PPF4 carry signed offsets on the wire,
+-- and an out-of-range one is the apply layer's to reject (via 'Slap.Status.ApplyNegativeRecordOffset'),
+-- not the parser's to pre-empt. The 'Integral' constraint lets one builder serve every wire width;
+-- the widening to host 'Int' is the same conversion the inline form performed.
 offsetFromParsed :: Integral a => a -> Offset
 offsetFromParsed = Offset . fromIntegral
 
@@ -680,7 +687,8 @@ splitUndoHunks maxLength source = concatMap pieces
           ByteString.take chunkLength (ByteString.drop position source)
 
 -- | Lift a parsed wire-format undo record to a 'SplitUndoHunk', trusting the parser's payload-bound guarantee.
--- PPF3's wire format prefixes the undo payload with a single byte naming its length, so any 'SplitUndoHunk' constructed here is ≤ 255 bytes by the parser's contract.
+-- PPF3's wire format prefixes the undo payload with a single byte naming its length,
+-- so any 'SplitUndoHunk' constructed here is ≤ 255 bytes by the parser's contract.
 -- A named lift rather than a bare constructor keeps every parse-built 'SplitUndoHunk' coming from this one site.
 splitUndoHunkFromParsed :: Offset -> ByteString -> ByteString -> SplitUndoHunk
 splitUndoHunkFromParsed = SplitUndoHunk

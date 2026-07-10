@@ -25,7 +25,8 @@ import System.IO.Unsafe (unsafePerformIO)
 
 -- | Walks two write streams: the XOR record list and (when present) the append-mode overflow payload.
 -- Both carry absolute wire offsets, so a malformed patch can name a write past the declared target end;
--- every such write is bounds-checked at its boundary, and the apply returns 'Left' with 'ApplyAbsoluteWritePastTarget' naming which write went out of bounds and by how much.
+-- every such write is bounds-checked at its boundary,
+-- and the apply returns 'Left' with 'ApplyAbsoluteWritePastTarget' naming which write went out of bounds and by how much.
 --
 -- Truncate-mode overflow is silent: its payload is the discarded source tail, preserved for round-trip and *not* applied.
 -- The smaller output buffer already encodes the truncation.
@@ -108,7 +109,8 @@ applyNINJA2 patch (InputFileContents source)
           executeXorRecord outputPointer writePosition xorPayload
           applyRecords outputPointer (nextAction actionIndex) remainingRecords
 
-    -- | Append-mode overflow: the payload is XOR'd with @0xFF@ on disk and written at the source-size boundary (or at 'sourceLength' if 'OPEN_NEW_FILE' is absent).
+    -- | Append-mode overflow: the payload is XOR'd with @0xFF@ on disk and written at the source-size boundary
+    -- (or at 'sourceLength' if 'OPEN_NEW_FILE' is absent).
     -- Truncate-mode overflow is a no-op here; see the function-level comment for why.
     applyOverflowAppend :: Ptr Word8 -> IO (Maybe ApplyError)
     applyOverflowAppend outputPointer =

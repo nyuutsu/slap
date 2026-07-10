@@ -31,11 +31,13 @@ import System.IO.Unsafe (unsafePerformIO)
 -- | Walks the instruction stream, copying bytes from the resolved source for each instruction.
 -- Which source an instruction reads is a total two-arm dispatch on 'XDelta1InstructionTarget':
 -- 'Slap.XDelta1.Parse.translateInstruction' rejects any other index at parse time, so apply needs no runtime check there.
--- The read within that source is bounds-checked per instruction: a length/offset past the source's end returns 'ApplySourceReadOutOfBounds' rather than partial output.
+-- The read within that source is bounds-checked per instruction:
+-- a length/offset past the source's end returns 'ApplySourceReadOutOfBounds' rather than partial output.
 --
 -- The recorded input pre-compression posture is checked first:
--- if either input was a gzip stream at delta time ('FLAG_FROM_COMPRESSED' or 'FLAG_TO_COMPRESSED' set), apply refuses with 'XDelta1InputPreCompressionUnsupported'.
--- Slap doesn't implement the apply-time gzip transparency canonical xdelta-1.x does, so proceeding against the user's literal source bytes would silently produce wrong output.
+-- if either input was a gzip stream at delta time ('FLAG_FROM_COMPRESSED' or 'FLAG_TO_COMPRESSED' set),
+-- apply refuses with 'XDelta1InputPreCompressionUnsupported'. Slap doesn't implement the apply-time gzip transparency canonical xdelta-1.x does,
+-- so proceeding against the user's literal source bytes would silently produce wrong output.
 applyXDelta1 :: XDelta1Patch -> InputFileContents -> Either SlapError OutputFileContents
 applyXDelta1 patch sourceContents =
   case (xdelta1FromAtDeltaTime patch, xdelta1ToAtDeltaTime patch) of

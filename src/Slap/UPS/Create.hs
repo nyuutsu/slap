@@ -29,7 +29,8 @@ import Foreign.Storable (pokeByteOff)
 -- Returns 'Left (UnencodeablePair LabelUPS UPSSourceTailNonZero)' when @source@ extends past @target@ with non-zero bytes:
 -- those bytes have nowhere to be encoded in the bi-directional XOR stream (the block stream only covers @[0, target_size)@),
 -- and accepting the pair would silently break the spec's bi-directional guarantee on undo.
--- Diff runs that extend all the way to @target@ end are accepted; 'diffToBlocks' documents that phantom-terminator shape and the tools that produce it.
+-- Diff runs that extend all the way to @target@ end are accepted;
+-- 'diffToBlocks' documents that phantom-terminator shape and the tools that produce it.
 createUPS :: InputFileContents -> OutputFileContents
           -> Either SlapError CreateResult
 createUPS inputContents@(InputFileContents original) outputContents@(OutputFileContents modified) = do
@@ -60,7 +61,8 @@ encodeUPSBlock (UPSBlock skipLength xorData) =
 -- it produces a block whose terminator's "phantom" position lands at @targetLength@, past the last written byte.
 -- This matches what beat, NUPS, and Tsukuyomi produce in practice
 -- (see @docs/ups/findings.md@: @crystalleaf@, @FE1+2_GBA@, @smbs-1.0~rc1@ all exhibit one such block at the tail).
--- The apply path in "Slap.UPS.Apply" already clips that terminator's write against the output buffer; 'detectOOBBlocks' summarises it as a warning.
+-- The apply path in "Slap.UPS.Apply" already clips that terminator's write against the output buffer;
+-- 'detectOOBBlocks' summarises it as a warning.
 -- Forward apply and reverse apply both reconstruct the original bytes cleanly under this shape.
 diffToBlocks :: InputFileContents -> OutputFileContents -> Either SlapError [UPSBlock]
 diffToBlocks (InputFileContents source) (OutputFileContents target)

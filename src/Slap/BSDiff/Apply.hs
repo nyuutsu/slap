@@ -59,7 +59,8 @@ initialCursors = BSDiffCursors
 ----------------------------------------------------------------------------
 
 -- | Each instruction in the patch's control stream describes one (ADD, COPY) pair plus a signed seek over the source;
--- the apply walks the stream and runs the per-instruction preconditions at the instruction boundary, returning 'Left' with a structured 'ApplyError' if any precondition fails.
+-- the apply walks the stream and runs the per-instruction preconditions at the instruction boundary,
+-- returning 'Left' with a structured 'ApplyError' if any precondition fails.
 -- The source cursor is unbounded; 'sourceByteOrZero' handles out-of-range source reads.
 applyBSDiff :: BSDiffPatch -> InputFileContents -> Either SlapError OutputFileContents
 applyBSDiff patch _
@@ -184,8 +185,8 @@ applyBSDiff patch (InputFileContents source) = unsafePerformIO $ do
 -- | Read a byte at @index@ from the source ByteString, returning 0 for out-of-bounds indices (negative or past the end).
 --
 -- This is the bsdiff matching-window extension rule.
--- An ADD region forms @new[i] = old[oldpos+i] + diff[i]@;
--- for a position past either end of the source, @old@ contributes 0, so a diff byte holding the target byte verbatim reconstructs that target byte.
+-- An ADD region forms @new[i] = old[oldpos+i] + diff[i]@; for a position past either end of the source, @old@ contributes 0,
+-- so a diff byte holding the target byte verbatim reconstructs that target byte.
 -- This lets one ADD region cover bytes whose source position falls outside @[0, sourceLength)@.
 --
 -- The extension-zero semantics are the source side only.

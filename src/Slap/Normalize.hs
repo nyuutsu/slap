@@ -3,7 +3,8 @@
 
 -- | ROM-image canonicalization for the NINJA formats.
 --
--- A NINJA patch's records are built against a canonical form of the ROM — headerless, deinterleaved, native byte order — named by the patch's ROM type.
+-- A NINJA patch's records are built against a canonical form of the ROM —
+-- headerless, deinterleaved, native byte order — named by the patch's ROM type.
 -- The procedures follow convroms.txt and the ninja2.php reference.
 -- Where that reference refuses an unfamiliar image, slap takes it as-is and warns instead: a wrong guess fails the patch's own source checksum,
 -- and an absent checksum is the creator's omission, not slap's reason to be stricter than the format.
@@ -181,7 +182,8 @@ restoreStrippedContent label (RestoreIntoUNIFContainer (OriginalUNIFImage contai
 -- Convert retag rule
 ----------------------------------------------------------------------------
 
--- | Whether two platforms normalize identically, so a patch tagged as one may be retagged as the other without changing what appliers do to its input.
+-- | Whether two platforms normalize identically,
+-- so a patch tagged as one may be retagged as the other without changing what appliers do to its input.
 -- SMS and Game Gear are the one such pair: NINJA2 stores them in a single combined slot, and @--rom-type@ on convert exists to pick a side of it.
 sharesNormalizationLayout :: PlatformType -> PlatformType -> Bool
 sharesNormalizationLayout PlatformSMS      PlatformGameGear = True
@@ -199,11 +201,13 @@ data ProcedureOutcome = ProcedureOutcome
   , procedureEvents  :: [ProcedureEvent]
   }
 
+-- | What a procedure reports: a transform it performed, an image it couldn't place, or a transform it had to skip.
 data ProcedureEvent
   = PerformedStep NormalizationStep
   | ShapeUnrecognized
   | SkippedBecause NormalizationSkipReason
 
+-- | The image already is the canonical form: nothing to do, and nothing to say.
 imageTakenAsIs :: ByteString -> ProcedureOutcome
 imageTakenAsIs image = ProcedureOutcome image NothingToRestore []
 
@@ -382,7 +386,7 @@ normalizeSNESImage image
       _ -> case snesInternalHeaderProbe 0xFFDC body of
         -- A valid pair at 0xFFDC with an odd romstate is a deinterleaved HiROM;
         -- a failing pair with an odd romstate is the reference's "possibly a beta cart".
-        -- Both pass through as-is, the second without a remark.
+        -- Both pass through as-is, the second quietly.
         Just (_, True) -> (body, [])
         _              -> (body, [ShapeUnrecognized])
 
@@ -407,8 +411,10 @@ normalizeSNESImage image
         bodyLength = ByteString.length body
         bankCount  = bodyLength `div` snesBankWidth
 
--- | Probe an SNES internal header at the given base: the inverse checksum at @base@, the checksum at @base + 2@ (both little-endian), and the ROM-state byte at @base - 7@.
--- Answers whether the pair sums to @0xFFFF@ and whether the state's low nibble is odd (odd marks HiROM); 'Nothing' when the image is too small to hold the header.
+-- | Probe an SNES internal header at the given base: the inverse checksum at @base@,
+-- the checksum at @base + 2@ (both little-endian), and the ROM-state byte at @base - 7@.
+-- Answers whether the pair sums to @0xFFFF@ and whether the state's low nibble is odd (odd marks HiROM);
+-- 'Nothing' when the image is too small to hold the header.
 snesInternalHeaderProbe :: Int -> ByteString -> Maybe (Bool, Bool)
 snesInternalHeaderProbe checksumBase body
   | ByteString.length body < checksumBase + 4 = Nothing
@@ -473,7 +479,8 @@ snesGD3Chart48Mbit = listArray (0, 191)
   , 104, 106, 108, 110, 112, 114, 116, 118, 120, 122, 124, 126
   ]
 
--- | The deinterleave an interleaved HiROM uses when no Game Doctor chart applies: the copier stored the odd banks first, then the even (@01234567@ becomes @13570246@).
+-- | The deinterleave an interleaved HiROM uses when no Game Doctor chart applies: the copier stored the odd banks first,
+-- then the even (@01234567@ becomes @13570246@).
 -- Computed rather than tabulated, since the scheme is defined at every even bank count.
 evenOddInterleaveChart :: Int -> Array Int Int
 evenOddInterleaveChart bankCount =
@@ -510,7 +517,8 @@ n64ByteswappedMagic = ByteString.pack [0x37, 0x80, 0x40, 0x12]
 -- Game Boy and PC-Engine: size-probed headers
 ----------------------------------------------------------------------------
 
--- | A Game Boy image whose size is not whole 16 KiB banks carries a 512-byte SmartCard header to remove; a bank-aligned image is already canonical.
+-- | A Game Boy image whose size is not whole 16 KiB banks carries a 512-byte SmartCard header to remove;
+-- a bank-aligned image is already canonical.
 -- The reference also probes the logo bytes at 0x104 and refuses on a mismatch, but that probe gates no transform, so slap does not run it.
 normalizeGameBoyImage :: ByteString -> ProcedureOutcome
 normalizeGameBoyImage image
@@ -527,7 +535,8 @@ normalizePCEngineImage image
 -- Sega: SMS/Game Gear and Genesis
 ----------------------------------------------------------------------------
 
--- | The offset of the SEGA signature that marks an already-canonical (BIN-format) image: 0x7FF4 for Master System and Game Gear, 0x100 for Genesis.
+-- | The offset of the SEGA signature that marks an already-canonical (BIN-format) image: 0x7FF4 for Master System and Game Gear,
+-- 0x100 for Genesis.
 -- The two procedures differ in nothing else.
 smsSEGASignatureOffset, genesisSEGASignatureOffset :: Int
 smsSEGASignatureOffset     = 0x7FF4

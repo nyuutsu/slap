@@ -93,7 +93,8 @@ decodeSignedVarint encoded =
 
 -- | Recognize the non-canonical @0x81@ encoding of zero in a BPS signed-delta varint.
 -- The sign-magnitude scheme used by 'decodeSignedVarint' admits two encodings for delta zero:
--- @0x80@ (sign 0, magnitude 0) is canonical, and @0x81@ (sign 1, magnitude 0) is "negative zero" — semantically identical to @0x80@ but distinct on the wire.
+-- @0x80@ (sign 0, magnitude 0) is canonical, and @0x81@ (sign 1, magnitude 0) is "negative zero" —
+-- semantically identical to @0x80@ but distinct on the wire.
 --
 -- The 'Int64' input is grandfathered from 'decodeSignedVarint': both
 -- functions consume the post-'byuuVarint' integer rather than the

@@ -276,7 +276,8 @@ occupancyGlyph :: ColumnOccupancy -> Char
 occupancyGlyph ColumnOccupied = '#'
 occupancyGlyph ColumnVacant   = '.'
 
--- | One sparkline column's contribution: whether any region touches it (this drives the bar and the run detection), plus the records and bytes attributed to it.
+-- | One sparkline column's contribution: whether any region touches it (this drives the bar and the run detection),
+-- plus the records and bytes attributed to it.
 data BucketTally = BucketTally
   { tallyOccupancy :: ColumnOccupancy
   , tallyRecords   :: Int

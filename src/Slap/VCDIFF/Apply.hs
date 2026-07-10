@@ -58,7 +58,8 @@ data TargetExpansion
   deriving (Eq, Show)
 
 -- | The downstream half of Parse's 'decodeCopyAddress': decode produces one absolute @U@ offset, this turns it into a physical read.
--- Assumes parse's core invariants hold and 'checkSourceSegment' has accepted the window: a COPY reading past the head or across the segment boundary resolves to garbage here.
+-- Assumes parse's core invariants hold and 'checkSourceSegment' has accepted the window:
+-- a COPY reading past the head or across the segment boundary resolves to garbage here.
 resolveCopyAddress
   :: Maybe SourceSegment
   -> WindowWriteContext
@@ -132,7 +133,8 @@ applyVCDIFF patch (InputFileContents source)
     settledBeforeWindow :: WritePosition -> FileSize
     settledBeforeWindow (WritePosition base) = offsetToFileSize base
 
-    -- | A source segment must lie within what it draws from: the source file, or for a target-backed window the target produced by earlier windows (everything before this window's base).
+    -- | A source segment must lie within what it draws from: the source file,
+    -- or for a target-backed window the target produced by earlier windows (everything before this window's base).
     checkSourceSegment :: WritePosition -> ActionIndex -> Window -> Maybe ApplyError
     checkSourceSegment windowBase windowIndex window =
       case windowSourceSegment window of

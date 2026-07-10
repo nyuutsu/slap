@@ -23,8 +23,9 @@ import Data.Text (Text)
 data Dialect
   = PPF1OriginAxis
     -- ^ PPF1's offset-field endianness.
-    -- PPF1's reference applier ('sources/applyppf.c' in docs/ppf/upstream/pdx-ppf1.zip) reads offsets with @fread(&Offset, sizeof(long), ...)@ — native-endian, no byte-swap —
-    -- so a patch produced on a PC writes offsets LE on disk and a patch produced on an Amiga writes them BE on disk.
+    -- PPF1's reference applier ('sources/applyppf.c' in docs/ppf/upstream/pdx-ppf1.zip) reads offsets with @fread(&Offset, sizeof(long), ...)@ —
+    -- native-endian, no byte-swap — so a patch produced on a PC writes offsets LE on disk
+    -- and a patch produced on an Amiga writes them BE on disk.
     -- The two are mutually incompatible cross-platform.
     -- Default is PC-origin (LE); the @--is-amiga-patch@ flag selects BE.
     --

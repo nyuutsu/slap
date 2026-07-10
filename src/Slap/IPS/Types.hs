@@ -165,8 +165,8 @@ ipsRecordOffset (IPSRecordCopy { ipsCopyOffset = offset }) = offset
 ipsRecordOffset (IPSRecordRLE  { ipsRleOffset  = offset }) = offset
 
 -- | The number of bytes a single 'IPSRecord' writes to the target when applied:
--- the payload length for a copy record, the run length for an RLE record.
--- Lives here for the same reason as 'ipsRecordOffset': variant-agnostic code in 'Slap.IPS.Parse' and 'Slap.IPS.Apply' reads it without pattern-matching per site.
+-- the payload length for a copy record, the run length for an RLE record. Lives here for the same reason as 'ipsRecordOffset':
+-- variant-agnostic code in 'Slap.IPS.Parse' and 'Slap.IPS.Apply' reads it without pattern-matching per site.
 recordPayloadLength :: IPSRecord -> Length
 recordPayloadLength IPSRecordCopy { ipsCopyPayload = payload   } = byteLength payload
 recordPayloadLength IPSRecordRLE  { ipsRleCount    = runLength } = runLength

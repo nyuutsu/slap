@@ -262,8 +262,8 @@ doExplain parsedCommand = do
             (acceptedDialects (patchFormat parsed))
             (patchFormat parsed)
             (explainDialects parsedCommand))
-  -- The analysis reads "before" bytes at record offsets, and those offsets name positions in the normalized form, so the explain view normalizes the way apply does.
-  -- There is no output here, so nothing restores.
+  -- The analysis reads "before" bytes at record offsets, and those offsets name positions in the normalized form,
+  -- so the explain view normalizes the way apply does. There is no output here, so nothing restores.
   normalizedView <- case explainSource parsedCommand of
     Nothing   -> pure Nothing
     Just path -> do
@@ -698,7 +698,8 @@ emitVerboseAnalysis Verbose parsed =
 emitVerboseAnalysis Quiet _ = pure ()
 
 -- | Emits no advisories itself, leaving warning-ordering to each caller:
--- 'doInfo' and 'doExplain' defer until after their stdout renders, while 'doApply', 'doUndo', and 'doConvert' emit immediately (each via 'emitAdvisories').
+-- 'doInfo' and 'doExplain' defer until after their stdout renders,
+-- while 'doApply', 'doUndo', and 'doConvert' emit immediately (each via 'emitAdvisories').
 readAndParsePatch :: RequestedDialects -> EncodingName -> FilePath -> IO SomePatch
 readAndParsePatch dialects metadataEncoding path = do
   patchBytes <- readUnwrap path
@@ -708,11 +709,11 @@ readAndParsePatch dialects metadataEncoding path = do
 -- Stdout and stderr encoding setup
 ----------------------------------------------------------------------------
 
--- | Bind 'stdout' and 'stderr' to UTF-8, transliterating on failure so a codepoint the encoder can't represent substitutes a placeholder rather than crashing with an @hPutChar@ invalid-argument error.
--- UTF-8 can only fail on a lone surrogate, and one is unlikely to reach output:
--- 'main' pins the filesystem encoding to UTF-8, so GHC's argv and filepath decoders reject malformed bytes rather than surrogate-escaping them, and slap's lenient decode substitutes U+FFFD.
--- Transliteration is cheap cover for a stray one.
--- Called once at startup, before any I/O.
+-- | Bind 'stdout' and 'stderr' to UTF-8, transliterating on failure so a codepoint the encoder can't represent substitutes a placeholder
+-- rather than crashing with an @hPutChar@ invalid-argument error.
+-- UTF-8 can only fail on a lone surrogate, and one is unlikely to reach output: 'main' pins the filesystem encoding to UTF-8,
+-- so GHC's argv and filepath decoders reject malformed bytes rather than surrogate-escaping them, and slap's lenient decode substitutes U+FFFD.
+-- Transliteration is cheap cover for a stray one. Called once at startup, before any I/O.
 setStdoutAndStderrToLenientUtf8 :: IO ()
 setStdoutAndStderrToLenientUtf8 = do
   hSetEncoding stdout lenientUtf8

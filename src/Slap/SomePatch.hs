@@ -201,7 +201,8 @@ newtype AdvisoryExpectedBytes = AdvisoryExpectedBytes
   deriving (Show, Eq)
 
 -- | A declared file-size expectation paired with how a mismatch is treated.
--- File size is the one verification check whose severity varies by format, so the severity rides on the value here rather than on which field carries it.
+-- File size is the one verification check whose severity varies by format,
+-- so the severity rides on the value here rather than on which field carries it.
 data FileSizeCheck
   = AdvisorySize !FileSize
     -- ^ The format has a stronger integrity gate (e.g. a CRC32), so a size mismatch only warns; the stronger check catches real corruption.
@@ -247,7 +248,9 @@ data SomePatch = SomePatch
   { patchFormat         :: FormatLabel
   , patchAnalysis       :: PatchAnalysis
     -- ^ The analytical-pass carrier consumed by @slap explain@.
-    -- Non-strict on purpose: @slap info@ and @slap apply@ never force it, so the per-record work each 'analyze\<Format\>' producer encodes is paid only when 'renderAnalysisFull' or 'renderAnalysisSummary' walks the 'analysisSections' / 'analysisSummary'.
+    -- Non-strict on purpose: @slap info@ and @slap apply@ never force it,
+    -- so the per-record work each 'analyze\<Format\>' producer encodes is paid only
+    -- when 'renderAnalysisFull' or 'renderAnalysisSummary' walks the 'analysisSections' / 'analysisSummary'.
   , patchKind           :: PatchKind
   , patchApply          :: ApplyStrategy
   , patchUndo           :: Maybe UndoStrategy
@@ -694,7 +697,8 @@ parseSomePatchFromUPS patchContents = do
     , patchExtractedMeta  = noMetadataRequested
     }
 
--- | The flavor surfaces through the format header's qualifier slot ('vcdiffFlavorQualifier'), so @slap info@ answers "which flavor" on its first line.
+-- | The flavor surfaces through the format header's qualifier slot ('vcdiffFlavorQualifier'),
+-- so @slap info@ answers "which flavor" on its first line.
 -- An xdelta3 patch's per-window Adler32 checksums are lifted into 'verifyWindowAdler32', the way the BPS seam lifts its CRCs;
 -- 'Slap.VCDIFF.Describe' gives the analytical and info carriers their voice.
 parseSomePatchFromVCDIFF :: EncodingName -> PatchFileContents -> Either SlapError SomePatch
@@ -753,8 +757,10 @@ vcdiffFlavorQualifier vcdiffPatch = case vcdiffPatch of
   VCDIFF.PatchRFC      _ _ -> Just " (RFC 3284)"
   VCDIFF.PatchXDelta3  _ _ -> Just " (xdelta3)"
 
--- | The per-window Adler32 checks a patch carries, lifted to the shared verification boundary; each present checksum covers its window's slice of the final target.
--- Reads the flavor-flattened window list ('VCDIFF.patchWindowsWithChecksums'), so it is itself flavor-blind: a core-only or RFC window pairs with no checksum and 'catMaybes' drops it.
+-- | The per-window Adler32 checks a patch carries, lifted to the shared verification boundary;
+-- each present checksum covers its window's slice of the final target.
+-- Reads the flavor-flattened window list ('VCDIFF.patchWindowsWithChecksums'), so it is itself flavor-blind:
+-- a core-only or RFC window pairs with no checksum and 'catMaybes' drops it.
 vcdiffWindowChecks :: VCDIFF.VCDIFFPatch -> [WindowCheck]
 vcdiffWindowChecks vcdiffPatch =
     catMaybes (zipWith windowCheckAt windowBases pairedWindows)
@@ -1060,8 +1066,9 @@ parseSomePatchFromXDelta1 metadataEncoding patchContents = do
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
         -- An xdelta1 source patch carries both display labels in its header;
-        -- threading them through 'requestedXDelta1*Name' lets 'mergeRequestedMetadata' inherit them across an xdelta1@→@xdelta1 convert without round-tripping through the locale-decode layer.
-        -- The bytes stay opaque, typed as 'XDelta1FromName' / 'XDelta1ToName' so the merge can't transpose them.
+        -- threading them through 'requestedXDelta1*Name' lets 'mergeRequestedMetadata' inherit them across an xdelta1@→@xdelta1 convert
+        -- without round-tripping through the locale-decode layer. The bytes stay opaque, typed as 'XDelta1FromName' / 'XDelta1ToName'
+        -- so the merge can't transpose them.
         { requestedXDelta1FromName = Just (XDelta1.xdelta1FromName patch)
         , requestedXDelta1ToName   = Just (XDelta1.xdelta1ToName   patch)
         -- Verification and compression are explicit wire postures (a flag bit each),

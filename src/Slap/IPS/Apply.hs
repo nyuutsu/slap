@@ -140,8 +140,8 @@ applyIPS (InputFileContents source) patch
 
         -- | Seed every byte of the output buffer before any record runs.
         -- The leading @min sourceSize effectiveSize@ bytes are a direct copy of the source ByteString;
-        -- the trailing @effectiveSize - sourceSize@ bytes (if any) are zero-filled.
-        -- After this call returns, every byte in the buffer holds a well-defined value, and subsequent record writes overlay that value at their declared offsets.
+        -- the trailing @effectiveSize - sourceSize@ bytes (if any) are zero-filled. After this call returns,
+        -- every byte in the buffer holds a well-defined value, and subsequent record writes overlay that value at their declared offsets.
         initialFill :: IO ()
         initialFill = do
           let targetLength      = Length (unFileSize effectiveSize)
@@ -203,7 +203,8 @@ applyIPS (InputFileContents source) patch
 
         -- | The per-record handler, chosen once for the whole walk.
         -- The disposition is loop-invariant, so the four-arm dispatch runs when 'selectedRecordHandler' is first forced, not on every record.
-        -- The match is explicit rather than a catch-all, so a future fifth disposition fires '-Wincomplete-patterns' here and the author must decide which class it belongs to.
+        -- The match is explicit rather than a catch-all, so a future fifth disposition fires '-Wincomplete-patterns' here
+        -- and the author must decide which class it belongs to.
         selectedRecordHandler :: ActionIndex -> IPSRecord -> IPSApply (Maybe ApplyError)
         selectedRecordHandler = case disposition of
           MarkerHonored _declared _natural  -> handleHonored

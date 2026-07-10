@@ -1496,7 +1496,8 @@ vcdiffInterleavedRoundTrips =
   in assertCoverRoundTrips source target coverPlan
 
 -- | Instruction selection pinned directly on 'coverToInstructions', across the RUN/ADD boundary.
--- A one-byte literal and a two-byte repeat both stay ADD, a three-byte repeat is the smallest RUN, a two-byte non-repeat stays ADD, and a copy passes through to COPY.
+-- A one-byte literal and a two-byte repeat both stay ADD, a three-byte repeat is the smallest RUN, a two-byte non-repeat stays ADD,
+-- and a copy passes through to COPY.
 vcdiffInstructionSelection :: Assertion
 vcdiffInstructionSelection =
   let target = ByteString.pack [0x41, 0x42, 0x42, 0x43, 0x43, 0x43, 0x44, 0x45]   -- "A" "BB" "CCC" "DE"

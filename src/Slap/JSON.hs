@@ -42,7 +42,8 @@ parseEBPMetadata bytes = case Aeson.eitherDecodeStrict bytes of
   _ -> (emptyEBPMetadata, [EBPMetadataMalformed LabelEBP])
 
 -- | The expected key name is given in lowercase;
--- each key in the parsed object is folded to lowercase before comparison so a producer using either lowercase or capitalised keys lands the same value.
+-- each key in the parsed object is folded to lowercase before comparison
+-- so a producer using either lowercase or capitalised keys lands the same value.
 -- The extracted text is tagged 'EncodingUtf8': aeson already decoded it under JSON's UTF-8 wire contract.
 lookupTopLevelStringField :: Text.Text -> Aeson.Object -> Maybe EncodedText
 lookupTopLevelStringField expectedLowercaseKey obj =

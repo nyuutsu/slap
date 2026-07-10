@@ -146,7 +146,8 @@ data BlockWrite = BlockWrite
 ----------------------------------------------------------------------------
 
 -- | Walks the block stream against @source@ and writes the result into a target-sized output buffer.
--- The reverse-direction sibling is 'undoUPS'; both go through the same internal walker ('runUPSXorWalk'), parameterised on the output buffer size.
+-- The reverse-direction sibling is 'undoUPS'; both go through the same internal walker ('runUPSXorWalk'),
+-- parameterised on the output buffer size.
 -- The direction choice lives in these two thin wrappers, not threaded through the walker.
 --
 -- Returns 'Left' with a structured error if the declared target size is negative (unreachable — the size is read from a non-negative varint).
@@ -363,8 +364,8 @@ type UPSApply = StateT Offset IO
 ----------------------------------------------------------------------------
 
 -- | Per-block walk state for 'detectOOBBlocks'.
--- Threaded through 'Vector.ifoldl'' over the patch's blocks;
--- each block either falls entirely within the declared target (cursor advances; counts unchanged) or extends past it (cursor still advances, counts update).
+-- Threaded through 'Vector.ifoldl'' over the patch's blocks; each block either falls entirely within the declared target
+-- (cursor advances; counts unchanged) or extends past it (cursor still advances, counts update).
 data OOBWalkState = OOBWalkState
   { oobPosition   :: !Offset
   , oobCount      :: !OOBBlockCount

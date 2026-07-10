@@ -238,8 +238,8 @@ data ParsedSourcePair = ParsedSourcePair
   } deriving (Show, Eq)
 
 -- | The control segment after the wire walk, before source-flag and shape validation.
--- 'parseControl' decodes the raw sources with 'validateSourceFlags', narrows them with 'requireDataAndFileRecords', and assembles the 'XDelta1Patch'.
--- Internal to the parser.
+-- 'parseControl' decodes the raw sources with 'validateSourceFlags', narrows them with 'requireDataAndFileRecords',
+-- and assembles the 'XDelta1Patch'. Internal to the parser.
 data ParsedControlBody = ParsedControlBody
   { parsedControlTargetMD5    :: !MD5Hash
   , parsedControlTargetLength :: !FileSize
@@ -258,10 +258,13 @@ data ParsedInstruction = ParsedInstruction
   } deriving (Show, Eq)
 
 -- | Parse the EDSIO-serialized XdeltaControl from the control segment.
--- The source list is narrowed to the canonical @[data, file]@ pair by 'requireDataAndFileRecords' and instructions are translated from a wider 'ParsedInstruction' by 'translateInstruction'; both reject off-spec input before the 'XDelta1Patch' record is assembled.
+-- The source list is narrowed to the canonical @[data, file]@ pair by 'requireDataAndFileRecords'
+-- and instructions are translated from a wider 'ParsedInstruction' by 'translateInstruction';
+-- both reject off-spec input before the 'XDelta1Patch' record is assembled.
 --
--- The data-record's wire fields are validated per-field rather than carried on the patch (see "Slap.XDelta1.Types" for the field-by-field rationale).
--- One subtlety the parser must honor: canonical's converter (xdelta.c:1433-1471) can emit absolute-mode data records, not only sequential ones.
+-- The data-record's wire fields are validated per-field rather than carried on the patch
+-- (see "Slap.XDelta1.Types" for the field-by-field rationale). One subtlety the parser must honor:
+-- canonical's converter (xdelta.c:1433-1471) can emit absolute-mode data records, not only sequential ones.
 --
 -- All xdelta1 parse warnings are emitted here.
 parseControl :: EncodingName
@@ -437,8 +440,8 @@ validateSourceFlags raw = do
 
 -- | Reduce a parsed source list to the canonical @[data segment, file source]@ pair.
 -- Anything else refuses with 'UnsupportedXDelta1Shape' carrying the 'XDelta1ShapeViolation' that names the malformation.
--- Canonical xdelta emits exactly that shape ('xdelta.c:241-251' adds the data source, 'xdmain.c:1539-1542' adds the from-file source — both unconditional);
--- any other count or ordering is off-spec and rejected at parse time.
+-- Canonical xdelta emits exactly that shape ('xdelta.c:241-251' adds the data source,
+-- 'xdmain.c:1539-1542' adds the from-file source — both unconditional); any other count or ordering is off-spec and rejected at parse time.
 requireDataAndFileRecords :: [ParsedSourceRecord] -> Either SlapError ParsedSourcePair
 requireDataAndFileRecords sources = case sources of
   [firstSource, secondSource] -> case (parsedSourceKind firstSource, parsedSourceKind secondSource) of

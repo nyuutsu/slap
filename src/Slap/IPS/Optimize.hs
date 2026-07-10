@@ -1,13 +1,12 @@
 -- | The DP optimizer for IPS records.
--- The encoder in 'Slap.IPS.Create' is a mechanical wire-translation pass;
--- the choices about /which/ regions of the target to emit, /what shape/ each record should take, and /where/ to merge or split runs all happen here.
+-- The encoder in 'Slap.IPS.Create' is a mechanical wire-translation pass; the choices about /which/ regions of the target to emit,
+-- /what shape/ each record should take, and /where/ to merge or split runs all happen here.
 --
--- The single exported function takes the variant's offset width (because the cost-model constants are width-dependent), the source bytes, and the target bytes,
--- and returns the partitioned record list as 'Hunk' values in offset order.
+-- The single exported function takes the variant's offset width (because the cost-model constants are width-dependent), the source bytes,
+-- and the target bytes, and returns the partitioned record list as 'Hunk' values in offset order.
 -- The encoder narrows each to an 'Slap.Narrow.EncodedHunk' before emission, applying the variant's wire-format offset bound,
 -- and then turns each narrowed hunk into the cheapest record at emission time using the same heuristic the DP itself used
--- (length-≥4 all-same payloads → RLE record, everything else → copy record),
--- so the encoder's choices and the DP's choices stay in lockstep.
+-- (length-≥4 all-same payloads → RLE record, everything else → copy record), so the encoder's choices and the DP's choices stay in lockstep.
 --
 -- The split between this module and 'Slap.IPS.Create' exists for three reasons:
 --

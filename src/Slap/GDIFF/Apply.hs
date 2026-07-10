@@ -18,8 +18,8 @@ import Data.ByteString.Internal (unsafeCreate)
 
 -- | The command stream is walked twice:
 -- once by 'validateCommands' to bounds-check every COPY's source range and compute the total output size, and once by the write loop below.
--- The split makes the write loop infallible:
--- by the time we reach 'unsafeCreate', every COPY has been proven to read inside @source@ and the buffer sized to fit every DATA payload plus every COPY length.
+-- The split makes the write loop infallible: by the time we reach 'unsafeCreate', every COPY has been proven to read inside @source@
+-- and the buffer sized to fit every DATA payload plus every COPY length.
 --
 -- A pre-flight pass is sound because GDIFF's command stream has no relative cursor and no target self-reference:
 -- each command's output size and source-read range are independent of prior commands' effects.

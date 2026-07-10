@@ -587,7 +587,8 @@ rejectUnencodableSecondaryCompressor _ _ = Right ()
 -- Constraints (CLI rejection / encoder gates)
 ----------------------------------------------------------------------------
 
--- | The constraint bag the user assembled from CLI flags, parallel to 'RequestedPatchMetadata' but for refuse-gates rather than embedded properties.
+-- | The constraint bag the user assembled from CLI flags, parallel to 'RequestedPatchMetadata'
+-- but for refuse-gates rather than embedded properties.
 -- 'requestedSMCShape' is the only field today; future constraints land here.
 -- Unlike 'RequestedPatchMetadata', constraints are entirely CLI-set, never inherited from a parsed source patch.
 data RequestedConstraints = RequestedConstraints
@@ -703,9 +704,10 @@ acceptsAnySizeChange _sourceSize _targetSize = Right ()
 -- Dialects (parser/encoder wire-format configuration)
 ----------------------------------------------------------------------------
 
--- | The dialect bag the user assembled from CLI flags, parallel to 'RequestedConstraints' but for parser/encoder wire-format configuration rather than refuse-gates.
--- 'requestedPPF1Origin' is the only field today; future dialect axes land here.
--- Like 'RequestedConstraints', dialects are entirely CLI-set: a source patch can't tell us how to decode itself; if it could, the dialect axis wouldn't exist.
+-- | The dialect bag the user assembled from CLI flags, parallel to 'RequestedConstraints'
+-- but for parser/encoder wire-format configuration rather than refuse-gates.
+-- 'requestedPPF1Origin' is the only field today; future dialect axes land here. Like 'RequestedConstraints', dialects are entirely CLI-set:
+-- a source patch can't tell us how to decode itself; if it could, the dialect axis wouldn't exist.
 data RequestedDialects = RequestedDialects
   { requestedPPF1Origin :: PPF1Origin
   }
@@ -1221,8 +1223,8 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
                       })
                     (maybe DPS.DPSStable stabilityToDPS (requestedStability meta))
   CreateNINJA2 -> do
-    -- Pick the wire @PATCH_ENC@ byte for the output patch.
-    -- The CLI flag wins outright; otherwise UTF-8, the portable default (the field bytes are written UTF-8 regardless, so a UTF-8 declaration matches the bytes).
+    -- Pick the wire @PATCH_ENC@ byte for the output patch. The CLI flag wins outright; otherwise UTF-8,
+    -- the portable default (the field bytes are written UTF-8 regardless, so a UTF-8 declaration matches the bytes).
     let detectedTextMode = fromMaybe TextModeUTF8 (requestedTextMode meta)
         ninja2Meta = NINJA2.NINJA2CreateMetadata
           { NINJA2.ninja2CreateMetadataAuthor      = requestedAuthor      meta
@@ -1262,8 +1264,9 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
       compressionChoice  = fromMaybe IncludeCompression  (requestedPatchCompression     meta)
 
 -- | Canonicalize the two files handed to a direct-format create, so the patch's records and checksums describe the normalized forms.
--- NINJA1 is the one direct format with ROM types; its platform resolves as 'encodeDirect' resolves it (CLI flag, then the source patch's carried type),
--- rounded through the format's own rom-type encoding so only platforms NINJA1 can express reach a procedure.
+-- NINJA1 is the one direct format with ROM types; its platform resolves as 'encodeDirect' resolves it (CLI flag,
+-- then the source patch's carried type), rounded through the format's own rom-type encoding
+-- so only platforms NINJA1 can express reach a procedure.
 normalizeDirectCreateInputs
   :: DirectCreate -> RequestedPatchMetadata -> Maybe PatchContents
   -> InputFileContents -> OutputFileContents
@@ -1287,8 +1290,9 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
   , contentsDestinationSize    = if needs FieldDestinationSize
                     then Just (byteFileSize target)
                     else Nothing
-  -- The block occupies [validationOffset, validationOffset + 1024), so a source ending exactly at validationOffset + 1024 supplies it whole: the bound is '>=', not '>'.
-  -- The same sum is the minimum 'SourceTooSmallForPPF2Validation' enforces in 'encodeDirect', so '>=' keeps this in step with what that encoder accepts.
+  -- The block occupies [validationOffset, validationOffset + 1024), so a source ending exactly at validationOffset + 1024 supplies it whole:
+  -- the bound is '>=', not '>'. The same sum is the minimum 'SourceTooSmallForPPF2Validation' enforces in 'encodeDirect',
+  -- so '>=' keeps this in step with what that encoder accepts.
   , contentsValidation  = if needs FieldValidation && ByteString.length source >= validationOffset + 1024
                     then Just (ByteString.take 1024 (ByteString.drop validationOffset source))
                     else Nothing

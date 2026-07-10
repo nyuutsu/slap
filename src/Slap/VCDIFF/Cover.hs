@@ -1,7 +1,8 @@
 -- | A /cover/ is a plan for rebuilding the target: an ordered run of copies and literals.
 -- A copy takes a stretch of bytes you already have, a literal writes a few fresh ones, and running them in order rebuilds the target exactly.
 --
--- It is its own type to keep two jobs apart: the matcher ('Slap.VCDIFF.FFI.vcdiffCover', Rust-backed) works out the plan, the emitter ('Slap.VCDIFF.Create') turns it into wire bytes.
+-- It is its own type to keep two jobs apart: the matcher ('Slap.VCDIFF.FFI.vcdiffCover', Rust-backed) works out the plan,
+-- the emitter ('Slap.VCDIFF.Create') turns it into wire bytes.
 -- That split keeps a wrong plan (a matcher bug) separate from garbled bytes (an encoder bug).
 --
 -- A literal holds no bytes: it names a slice of the target.

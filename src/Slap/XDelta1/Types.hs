@@ -122,7 +122,8 @@ newtype XDelta1ToName = XDelta1ToName
 --
 -- The bare constructor is not exported; the only paths to a value are 'resolveXDelta1FileNames' (create) and 'requireXDelta1FileNames' (convert).
 -- The wire encoder in "Slap.XDelta1.Create" writes the contents to the header without re-checking:
--- a value in hand came from one of those two resolvers, so both names are locale-encoded and within the u16 cap the wire's packed name-lengths header word imposes.
+-- a value in hand came from one of those two resolvers, so both names are locale-encoded
+-- and within the u16 cap the wire's packed name-lengths header word imposes.
 data ResolvedXDelta1FileNames = ResolvedXDelta1FileNames
   { resolvedXDelta1FromName :: !XDelta1FromName
   , resolvedXDelta1ToName   :: !XDelta1ToName
@@ -178,7 +179,8 @@ requireXDelta1FileNames mergedFromName mergedToName sourceLabel =
 
 -- | The one place the u16 byte-length cap is enforced; both exported resolvers funnel through here.
 -- The cap-check counts the encoded bytes by re-encoding (lenient) under the value's own encoding tag.
--- Substitution events are silent here (the resolver has no advisory channel), surfacing later through 'Slap.XDelta1.Create.encodeXDelta1''s 'CreateResult'.
+-- Substitution events are silent here (the resolver has no advisory channel),
+-- surfacing later through 'Slap.XDelta1.Create.encodeXDelta1''s 'CreateResult'.
 buildResolvedXDelta1FileNames
   :: EncodedText -> EncodedText
   -> Either SlapError ResolvedXDelta1FileNames
@@ -292,10 +294,12 @@ xdelta1EmptyInputMD5Sentinel :: MD5Hash
 xdelta1EmptyInputMD5Sentinel = MD5Hash
   "\xd4\x1d\x8c\xd9\x8f\x00\xb2\x04\xe9\x80\x09\x98\xec\xf8\x42\x7e"
 
--- | The fixed literal canonical xdelta writes into the data-record's @name@ slot — see @xdelta.c:246@ in @docs/xdelta1/upstream/xdelta-1.1.3.tar.gz@, where the data source is added with name @"(patch data)"@.
+-- | The fixed literal canonical xdelta writes into the data-record's @name@ slot —
+-- see @xdelta.c:246@ in @docs/xdelta1/upstream/xdelta-1.1.3.tar.gz@, where the data source is added with name @"(patch data)"@.
 -- The data record is the patch's inline literal-bytes source ('xdelta1DataSegment'), not an externally-named source,
 -- so a name field is meaningful only as a label in @xdelta info@-style displays rather than part of apply semantics.
--- Slap encodes the canonical bytes on create and surfaces an informational notice (no warning, no apply refusal) if the parsed patch carries anything else.
+-- Slap encodes the canonical bytes on create and surfaces an informational notice (no warning, no apply refusal)
+-- if the parsed patch carries anything else.
 xdelta1DataRecordName :: ByteString
 xdelta1DataRecordName = "(patch data)"
 

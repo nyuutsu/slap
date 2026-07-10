@@ -1,10 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | What a parsed VCDIFF patch has to say about itself, in the two registers slap reads it through: 'vcdiffMeta' for the cross-cutting facts @slap info@ shows in a glance, and 'analyzeVCDIFF' for the per-window walk @slap explain@ unfolds.
+-- | What a parsed VCDIFF patch has to say about itself, in the two registers slap reads it through:
+-- 'vcdiffMeta' for the cross-cutting facts @slap info@ shows in a glance, and 'analyzeVCDIFF' for the per-window walk @slap explain@ unfolds.
 --
--- The decoders already found everything (the flavor, every window's target size and source segment, every instruction, the per-window checksum, the application header), so nothing here re-derives; it only reads the decoded form and renders it.
+-- The decoders already found everything (the flavor, every window's target size and source segment, every instruction, the per-window checksum,
+-- the application header), so nothing here re-derives; it only reads the decoded form and renders it.
 --
--- The division of labor mirrors 'Slap.BPS.Describe': the meta side is cheap single passes (it rides every @slap info@ and @slap apply@), the analysis side the per-instruction walk only @slap explain@ forces.
+-- The division of labor mirrors 'Slap.BPS.Describe': the meta side is cheap single passes (it rides every @slap info@ and @slap apply@),
+-- the analysis side the per-instruction walk only @slap explain@ forces.
 module Slap.VCDIFF.Describe
   ( vcdiffMeta
   , vcdiffEmbeddedContent
@@ -46,9 +49,11 @@ import qualified Data.Vector as Vector
 -- Info: the cross-cutting glance
 ----------------------------------------------------------------------------
 
--- | The facts @slap info@ surfaces that the format header's flavor qualifier does not already carry.
--- What there is to say depends on the flavor: a core-only patch speaks only of where its windows draw their copies from (the source file, the produced target, or nowhere); an RFC patch adds the custom code table when it carries one; an xdelta3 patch adds the declared secondary compressor and the per-window checksums.
--- The application header is embedded content, surfaced through 'vcdiffEmbeddedContent'.
+-- | The facts @slap info@ surfaces that the format header's flavor qualifier does not already carry. What there is to say depends on the flavor:
+-- a core-only patch speaks only of where its windows draw their copies from (the source file, the produced target, or nowhere);
+-- an RFC patch adds the custom code table when it carries one;
+-- an xdelta3 patch adds the declared secondary compressor and the per-window checksums. The application header is embedded content,
+-- surfaced through 'vcdiffEmbeddedContent'.
 vcdiffMeta :: VCDIFFPatch -> [InfoLine]
 vcdiffMeta patch = case patch of
   PatchCoreOnly windows  -> originRollup (Vector.toList windows)
@@ -62,7 +67,9 @@ vcdiffMeta patch = case patch of
 
 -- | The @code table@ and @address cache@ lines, when a patch supplied its own table (RFC 3284 §7).
 -- The table line attests only that the patch decoded against a table of its own, not the default; the entries themselves were consumed at parse.
--- The cache line shows the geometry that table declared: the one place a VCDIFF patch's cache sizes depart from the default four-near\/three-same, since only a custom table can change them (xdelta3 and core-only patches always run the default geometry).
+-- The cache line shows the geometry that table declared:
+-- the one place a VCDIFF patch's cache sizes depart from the default four-near\/three-same,
+-- since only a custom table can change them (xdelta3 and core-only patches always run the default geometry).
 -- Both omitted for a patch on the default table, whose geometry is that implicit default.
 codeTableLines :: Maybe CustomCodeTable -> [InfoLine]
 codeTableLines Nothing            = []
@@ -77,8 +84,9 @@ renderCacheGeometry config =
      renderAsText (unNearSlotCount  (nearSlotCount  config)) <> " near, "
   <> renderAsText (unSameBlockCount (sameBlockCount config)) <> " same"
 
--- | An xdelta3 application header by presence alone, the one distinction VCDIFF's presence bit affords that the BPS blob cannot: 'AppHeaderAbsent' (the bit never set) is a different fact from 'AppHeaderEmpty' (the bit set over zero bytes), where BPS, having no such bit, reads an empty blob as simply absent.
--- The bytes are opaque, so reading them as text is the shared @--metadata-encoding@ lens's job at display.
+-- | An xdelta3 application header by presence alone, the one distinction VCDIFF's presence bit affords that the BPS blob cannot:
+-- 'AppHeaderAbsent' (the bit never set) is a different fact from 'AppHeaderEmpty' (the bit set over zero bytes), where BPS, having no such bit,
+-- reads an empty blob as simply absent. The bytes are opaque, so reading them as text is the shared @--metadata-encoding@ lens's job at display.
 data AppHeaderShape
   = AppHeaderAbsent
     -- ^ No VCD_APPHEADER: the patch declared none.
@@ -106,7 +114,9 @@ vcdiffEmbeddedContent metadataEncoding patch = case patch of
     appHeaderField AppHeaderEmpty           = FieldEmpty
     appHeaderField (AppHeaderPresent bytes) = FieldOpaque metadataEncoding bytes
 
--- | The @compression@ line, when a secondary compressor was declared, named as a /declaration/: the decoded form has turned the compressed sections back into plain bytes, so the patch can attest which compressor it announced but not which windows leaned on it. Omitted when none was declared.
+-- | The @compression@ line, when a secondary compressor was declared, named as a /declaration/:
+-- the decoded form has turned the compressed sections back into plain bytes,
+-- so the patch can attest which compressor it announced but not which windows leaned on it. Omitted when none was declared.
 compressorLines :: Maybe XDelta3SecondaryCompressor -> [InfoLine]
 compressorLines Nothing           = []
 compressorLines (Just compressor) =
@@ -132,7 +142,8 @@ originRollup windows =
            , Just segment <- [windowSourceSegment window]
            , sourceSegmentOrigin segment == origin ]
 
--- | How many of a patch's windows carry a per-window Adler32, against the total. Zero is a valid count: an xdelta3 patch whose creator omitted the checksums.
+-- | How many of a patch's windows carry a per-window Adler32, against the total. Zero is a valid count:
+-- an xdelta3 patch whose creator omitted the checksums.
 adlerRollup :: [XDelta3Window] -> [InfoLine]
 adlerRollup windowList =
   [InfoLine "adler32" (windowFraction checksummedCount (length windowList))]
@@ -148,9 +159,12 @@ windowFraction part whole =
 -- Analyze
 ----------------------------------------------------------------------------
 
--- | The full structural story: one labeled header per window, each followed by that window's instructions as a region list, plus the aggregate summary. Only @slap explain@ forces this.
+-- | The full structural story: one labeled header per window, each followed by that window's instructions as a region list,
+-- plus the aggregate summary. Only @slap explain@ forces this.
 --
--- The output cursor threads through every window's instructions unbroken: a window produces exactly its declared target size (the decoder guaranteed it), so where one window's last instruction leaves the cursor is where the next begins.
+-- The output cursor threads through every window's instructions unbroken:
+-- a window produces exactly its declared target size (the decoder guaranteed it),
+-- so where one window's last instruction leaves the cursor is where the next begins.
 -- Each region's offset is therefore the absolute output position, the same @AtOutput@ frame 'Slap.BPS.Describe' walks.
 analyzeVCDIFF :: VCDIFFPatch -> PatchAnalysis
 analyzeVCDIFF patch = PatchAnalysis
@@ -178,8 +192,9 @@ describeWindow outputCursor (windowNumber, pairedWindow) =
                 outputCursor
                 (Vector.toList (windowInstructions window))
 
--- | A window's header block: the roomy key-value shape 'SectionLabeled' exists for, VCDIFF being the one format with repeated structured sub-units to head.
--- Summary-mode explain drops 'SectionLabeled', so this is a @--records@-only detail.
+-- | A window's header block: the roomy key-value shape 'SectionLabeled' exists for,
+-- VCDIFF being the one format with repeated structured sub-units to head. Summary-mode explain drops 'SectionLabeled',
+-- so this is a @--records@-only detail.
 windowHeader :: Int -> Window -> Maybe Adler32 -> AnalysisSection
 windowHeader windowNumber window maybeAdler =
   SectionLabeled ("window " <> renderAsText windowNumber <> ":") $
@@ -217,8 +232,11 @@ makeVCDIFFRegion maybeSegment outputPosition instruction = case instruction of
        , AnalysisRegion outputPosition count "Copy " (PayloadCopy copySource)
            (AnnotationAt AtOutput outputPosition details) )
 
--- | Where a COPY's bytes come from, read off its decoded superstring address: a source-file read when the address lands inside a source-file segment (then 'DetailSource' carries the absolute source offset @--records --source@ resolves the real bytes through), a produced-target read otherwise.
--- A window with no segment, a target-backed segment, or an address past the segment all read from the produced target.
+-- | Where a COPY's bytes come from, read off its decoded superstring address:
+-- a source-file read when the address lands inside a source-file segment
+-- (then 'DetailSource' carries the absolute source offset @--records --source@ resolves the real bytes through),
+-- a produced-target read otherwise. A window with no segment, a target-backed segment,
+-- or an address past the segment all read from the produced target.
 describeCopyAddress :: Maybe SourceSegment -> Offset -> (CopySource, [AnnotDetail])
 describeCopyAddress maybeSegment (Offset address) = case maybeSegment of
   Just (SourceSegment FromSourceFile (Offset segmentPosition) segmentLength)

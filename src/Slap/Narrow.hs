@@ -59,7 +59,8 @@ data NarrowingFailure
   | NegativeOffset !FormatLabel !ActualOffset
     -- ^ A record offset is negative; encoding it would 'fromIntegral'-wrap into a large unsigned value and silently misplace the write.
     -- The source is a parsed PPF3 patch, whose offset is a signed @int64@ on the wire (spec, @PPF3.txt@):
-    -- a high-bit value decodes to a negative 'Offset', which apply rejects ('Slap.Status.ApplyNegativeRecordOffset') and convert to a bounded target refuses here.
+    -- a high-bit value decodes to a negative 'Offset', which apply rejects ('Slap.Status.ApplyNegativeRecordOffset')
+    -- and convert to a bounded target refuses here.
   | FieldValueExceedsBound !FormatLabel !FieldName !Integer !Integer
     -- ^ A header or trailer field's runtime value exceeded the
     -- wire-format width of the field. The two 'Integer's are the
