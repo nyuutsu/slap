@@ -150,52 +150,36 @@ import System.IO (stderr)
 -- Severity and emit pipeline
 ----------------------------------------------------------------------------
 
--- | The valence of a status item: error halts, warning and note do
--- not. Severity is a property of each 'SlapError' constructor
--- (always 'SeverityError') and each 'SlapAdvisory' constructor
--- (varies, projected by 'slapAdvisorySeverity'). The 'emitToStderr'
--- pipeline uses 'severityLabel' to translate severity into the
--- prefix the user sees.
+-- | The valence of a status item: error halts, warning and note do not.
+-- Every 'SlapError' is 'SeverityError'; a 'SlapAdvisory' varies by constructor, projected by 'slapAdvisorySeverity'.
 data Severity = SeverityError | SeverityWarning | SeverityNote
   deriving (Eq, Show)
 
--- | The user-facing label for each severity. Bare word; the
--- delimiters that surround it on the wire ('emitToStderr' adds
--- @": "@ after) are the formatter's responsibility.
 severityLabel :: Severity -> Text
 severityLabel SeverityError   = "error"
 severityLabel SeverityWarning = "warning"
 severityLabel SeverityNote    = "note"
 
--- | The single low-level stderr writer for slap. Every error,
--- warning, or note the program emits routes through this. The
--- program-name prefix @"slap: "@ and the severity-prefix delimiter
--- @": "@ are the only places those literals appear in the codebase.
+-- | The single stderr writer: every error, warning, or note slap emits routes through here.
 emitToStderr :: Severity -> Text -> IO ()
 emitToStderr severity body =
   TextIO.hPutStrLn stderr ("slap: " <> severityLabel severity <> ": " <> body)
 
--- | Emit a single advisory at its declared severity.
 emitAdvisory :: SlapAdvisory -> IO ()
 emitAdvisory advisory = emitToStderr severity body
   where severity = slapAdvisorySeverity advisory
         body     = renderSlapAdvisory advisory
 
--- | Emit a list of advisories in order.
 emitAdvisories :: [SlapAdvisory] -> IO ()
 emitAdvisories = traverse_ emitAdvisory
 
--- | Emit an ad-hoc error message and exit. Used at the IO boundary
--- for failures that don't yet have a typed 'SlapError' constructor
--- (e.g., file-system preconditions in @Main@).
+-- | Emit an ad-hoc error and exit — for failures that have no typed 'SlapError' constructor yet.
 bail :: Text -> IO a
 bail body = emitToStderr SeverityError body >> exitFailure
 
--- | Emit a typed 'SlapError' and exit.
 bailError :: SlapError -> IO a
 bailError = bail . renderSlapError
 
--- | Unwrap an 'Either SlapError' or terminate with a rendered error.
 orBail :: Either SlapError a -> IO a
 orBail = either bailError pure
 
@@ -212,10 +196,6 @@ data DroppedValue
   | DroppedEmpty
   deriving (Show, Eq)
 
--- | The text of a description field being dropped during conversion.
--- Wrapped so the opaque user-supplied content stays labeled and
--- non-pattern-matchable at the type level — peer to
--- 'DecompressionCause' and 'XDelta1DiffCause' in spirit.
 newtype DroppedDescriptionText = DroppedDescriptionText
   { unDroppedDescriptionText :: Text }
   deriving (Show, Eq)
@@ -232,11 +212,8 @@ renderDroppedValue DroppedEmpty                                    = ""
 -- CursorKind
 ----------------------------------------------------------------------------
 
--- | Which of BPS's relative cursors misbehaved. BPS tracks two
--- independent relative cursors — 'SourceCursor' points into the
--- source ByteString for 'SourceCopy' actions, 'TargetCursor' points
--- into the output buffer for 'TargetCopy' actions. Apply errors
--- related to cursor underflow carry this tag to disambiguate.
+-- | Which of BPS's two independent relative cursors underflowed:
+-- the source cursor ('SourceCopy' reads) or the target cursor ('TargetCopy' reads).
 data CursorKind = SourceCursor | TargetCursor
   deriving (Show, Eq)
 
@@ -244,70 +221,31 @@ data CursorKind = SourceCursor | TargetCursor
 -- UnencodeabilityReason
 ----------------------------------------------------------------------------
 
--- | Why a (source, target) pair cannot be encoded as a patch in some
--- format. Carried by 'UnencodeablePair' alongside the offending
--- format's 'FormatLabel'; the renderer reads both to compose the
--- user-visible refusal message.
---
--- Each variant names a specific structural reason a particular kind
--- of pair has no representation under at least one format slap can
--- emit. The variant set grows as new format-level refusals land;
--- adding one means adding a render arm in
--- 'renderUnencodeabilityReason' and (usually) a call site in the
--- format's create-path enforcer.
+-- | Why a (source, target) pair cannot be encoded in some format. Carried by 'UnencodeablePair'.
 data UnencodeabilityReason
   = UPSSourceTailNonZero
-    -- ^ UPS: source has non-zero bytes past target size. Refused to
-    -- preserve UPS's bi-directional undo guarantee (spec §2): the
-    -- block stream only covers @[0, target_size)@, so forward apply
-    -- produces the correct target, but reverse apply reconstructs a
-    -- source with zeros where the non-zero tail bytes used to be.
+    -- ^ UPS: the source has non-zero bytes past the target size. Refused to preserve UPS's bi-directional undo (spec §2):
+    -- the block stream covers only @[0, target_size)@, so forward apply produces the correct target,
+    -- but reverse apply would rebuild those tail bytes as zeros.
   | TargetGrowsBeyondSource  !ActualSize !ExpectedSize
-    -- ^ Target file is larger than the source. Raised by formats
-    -- whose 'Slap.Measure.SizeChangePolicy' is
-    -- 'Slap.Measure.ForbidTargetSizeChange' — PPF1, PPF2, PPF3 —
-    -- where the upstream reference encoders refuse on size mismatch
-    -- and the wire format has no growth marker. The 'ActualSize' is
-    -- the source's size; the 'ExpectedSize' is the would-be target's
-    -- size.
+    -- ^ The target is larger than the source and the format's 'Slap.Measure.SizeChangePolicy' is 'Slap.Measure.ForbidTargetSizeChange'.
+    -- The 'ActualSize' is the source's size; the 'ExpectedSize' is the would-be target's.
   | TargetShrinksBelowSource !ActualSize !ExpectedSize
-    -- ^ Target file is smaller than the source. Raised by formats
-    -- whose 'Slap.Measure.SizeChangePolicy' is
-    -- 'Slap.Measure.ForbidTargetShrinkage' (IPS32, EBP) or
-    -- 'Slap.Measure.ForbidTargetSizeChange' (PPF1, PPF2, PPF3) —
-    -- where the wire format has no truncation marker. The
-    -- 'ActualSize' is the source's size; the 'ExpectedSize' is the
-    -- would-be target's size.
+    -- ^ The target is smaller than the source and the format's policy is 'Slap.Measure.ForbidTargetShrinkage' or 'Slap.Measure.ForbidTargetSizeChange'.
+    -- Fields as in 'TargetGrowsBeyondSource'.
   | TruncationTargetUnrepresentable !DeclaredTargetSize !MaxOffset
-    -- ^ The pair shrinks, so the encoding needs a truncation marker,
-    -- and the marker spells the final size in the same width as the
-    -- variant's record offsets — a target size past that width's
-    -- maximum has no representation. 'StandardIPS''s 24-bit post-EOF
-    -- marker is the only marker-bearing format today. Raised by
-    -- 'Slap.IPS.Types.ipsRejectIncompatibleSizeChange'; without the
-    -- refusal, the encoder's offset field would mask the size to its
-    -- low bits and emit a patch that applies to a wrongly-sized
-    -- file, in a format with no checksum to notice.
+    -- ^ 'StandardIPS' only: the pair shrinks, so the encoding needs the post-EOF truncation marker,
+    -- and the marker spells the final size in the same 24-bit width as record offsets — a size past that maximum has no representation.
+    -- Without the refusal, the encoder would mask the size to its low bits and emit a patch that applies to a wrongly-sized file,
+    -- in a format with no checksum to notice.
   deriving (Eq, Show)
 
 ----------------------------------------------------------------------------
 -- ApplyError
 ----------------------------------------------------------------------------
 
--- | Format-agnostic errors encountered during patch application.
--- Paired with a 'FormatLabel' at the outer boundary via the
--- 'ApplyFailed' 'SlapError' constructor. Most variants carry an
--- 'ActionIndex' identifying which action in the patch's action
--- stream triggered the error — this is the first thing to look at
--- when debugging a malformed patch.
---
--- Where a variant would otherwise have two positional arguments of
--- the same base type (two 'Offset's, two 'Length's, two 'FileSize's),
--- the arguments are typed with role newtypes from 'Slap.Measure'
--- ('ReadOffset' vs 'WritePosition', 'RequestedLength' vs
--- 'RemainingLength', 'ActualSize' vs 'ExpectedSize') so the field
--- roles are visible at construction, pattern-match, and rendering
--- sites without needing to consult documentation.
+-- | Format-agnostic errors from patch application, paired with a 'FormatLabel' via 'ApplyFailed'.
+-- Most variants carry the 'ActionIndex' of the action that triggered them.
 data ApplyError
 
   -- | A relative cursor (source or target) went negative after applying the action's delta.
@@ -317,12 +255,10 @@ data ApplyError
   -- The 'Offset' is the would-be read end; the 'FileSize' is the actual source size.
   | ApplySourceReadOutOfBounds ActionIndex Offset FileSize
 
-  -- | A TargetCopy referenced an output position at or past the
-  -- current write position (i.e., unwritten memory).
+  -- | A TargetCopy referenced an output position at or past the write head — bytes not yet written.
   | ApplyTargetReadUnwritten ActionIndex ReadOffset WritePosition
 
-  -- | An action's output length would exceed the remaining space in
-  -- the target buffer.
+  -- | An action's output length would exceed the remaining space in the target buffer.
   | ApplyWritesPastTarget ActionIndex RequestedLength RemainingLength
 
   -- | The action stream was exhausted but the target buffer is not fully written.
@@ -330,63 +266,36 @@ data ApplyError
   -- (No corresponding @ApplyTargetOverfilled@: 'ApplyWritesPastTarget' catches over-writes per-action before they can happen.)
   | ApplyTargetUnderfilled WritePosition ExpectedSize
 
-  -- | A record's offset is negative. Possible for any format whose
-  -- offset encoding admits a negative value: PPF3's signed 64-bit
-  -- field, and NINJA2's packed integers, which decode into a signed
-  -- 'Int'. The 'Offset' is the negative value as parsed.
+  -- | A record's offset is negative. Possible only where the offset encoding admits one:
+  -- PPF3's signed 64-bit field, and NINJA2's packed integers, which decode into a signed 'Int'.
   | ApplyNegativeRecordOffset ActionIndex Offset
 
-  -- | A bsdiff control instruction declares a negative region length.
-  -- bsdiff stores its control values in sign-magnitude, so a set sign
-  -- bit makes a length negative on the wire; a region length is
-  -- non-negative by nature, so such a value is malformed. (The seek
-  -- delta in the same triple is legitimately signed and is not this.)
-  -- The 'RequestedLength' is the negative length as parsed.
+  -- | A bsdiff control instruction declares a negative region length — bsdiff's sign-magnitude wire encoding admits one,
+  -- but a region length is non-negative by nature. (The seek delta in the same triple is legitimately signed and is not this.)
   | ApplyNegativeControlLength ActionIndex RequestedLength
 
-  -- | A record's write reaches an offset slap cannot address. The
-  -- record's @offset + payload length@ exceeds 'maxBound' :: 'Int', the
-  -- ceiling slap can represent (it carries positions in a signed
-  -- 'Int'). Only a format whose wire offset is as wide as the carrier —
-  -- PPF3's signed 64-bit field — can name such a write; the format
-  -- admits the value, and slap declines to materialise an output it
-  -- cannot address. The apply-side sibling of
-  -- 'FileExceedsAddressableRange'. The 'Offset' and 'Length' are the
-  -- record's, carried separately because it is their sum that does not
-  -- fit; the renderer adds them in 'Integer'.
+  -- | A record's write end — offset plus payload length — exceeds 'maxBound' :: 'Int', the ceiling of slap's position carrier.
+  -- Only a wire offset as wide as the carrier (PPF3's signed 64-bit field) can name such a write;
+  -- the format admits it, and slap declines to materialise an output it cannot address.
+  -- The apply-side sibling of 'FileExceedsAddressableRange'.
+  -- The 'Offset' and 'Length' are carried separately because it is their sum that does not fit; the renderer adds them in 'Integer'.
   | ApplyOutputExceedsAddressableRange ActionIndex Offset Length
 
-  -- | A PPF4 Replace record would write past the source file's end.
-  -- PPF4 Replace records cannot grow the file (only Append records
-  -- can); the reference applier rejects this with ERROR_BAD_SIZE.
-  -- The 'Offset' is the record's start; the 'RequestedLength' is the
-  -- record's payload length; the 'FileSize' is the source size.
+  -- | A PPF4 Replace record would write past the source's end. Replace cannot grow the file — only Append can;
+  -- the reference applier rejects this with @ERROR_BAD_SIZE@.
   | ApplyReplaceGrowsFile ActionIndex Offset RequestedLength FileSize
 
-  -- | A BSDiff ADD instruction would read past the end of the diff
-  -- stream. The 'Offset' is the would-be read end; the 'FileSize' is
-  -- the actual diff-stream size. BSDiff-specific because no other
-  -- format carries a diff stream alongside the source.
+  -- | A BSDiff ADD instruction would read past the end of the diff stream.
+  -- The 'Offset' is the would-be read end; the 'FileSize' is the diff stream's size.
   | ApplyDiffReadOutOfBounds ActionIndex Offset FileSize
 
-  -- | A BSDiff COPY instruction would read past the end of the extra
-  -- stream. The 'Offset' is the would-be read end; the 'FileSize' is
-  -- the actual extra-stream size. BSDiff-specific (see comment on
-  -- 'ApplyDiffReadOutOfBounds').
+  -- | The extra-stream mirror of 'ApplyDiffReadOutOfBounds', for BSDiff COPY.
   | ApplyExtraReadOutOfBounds ActionIndex Offset FileSize
 
-  -- | A record whose wire-defined absolute write position, together
-  -- with its payload length, would extend past the target buffer's
-  -- declared end. The 'Offset' is the record's write start; the
-  -- 'RequestedLength' is the payload length; the 'FileSize' is the
-  -- declared target size. Used by formats that name absolute write
-  -- positions on the wire — NINJA2's XOR records, NINJA2's
-  -- overflow-append step, APSGBA's blocks — where the start position
-  -- itself can already sit past the declared target end. Distinct
-  -- from 'ApplyWritesPastTarget' (which assumes a forward-walking
-  -- cursor that always sits within the buffer) and
-  -- from 'ApplyReplaceGrowsFile' (PPF4-specific phrasing about
-  -- growing the file).
+  -- | A record's wire-declared absolute write position plus payload extends past the declared target end ('FileSize').
+  -- For formats that name absolute positions on the wire — NINJA2's XOR records and overflow-append step, APSGBA's blocks —
+  -- where the start alone can already sit past the end,
+  -- unlike 'ApplyWritesPastTarget', whose forward-walking cursor always sits within the buffer.
   | ApplyAbsoluteWritePastTarget ActionIndex Offset RequestedLength FileSize
 
   deriving (Show, Eq)
@@ -395,14 +304,9 @@ data ApplyError
 -- DecompressionFailure
 ----------------------------------------------------------------------------
 
--- | A decompression failure, modeled in the 'ApplyError' style — its
--- own narrower vocabulary, lifted into 'SlapError' via a single
--- constructor.  One constructor per real decompression site slap
--- knows about; each carries only the axes that actually vary at that
--- site.  'VCDIFFSectionFailed' is the one site whose algorithm
--- genuinely varies: a secondary stream is decoded by whichever
--- compressor the patch declared, so the 'CompressionAlgorithm' rides
--- in the value: LZMA, DJW, and FGK all through the same constructor.
+-- | One constructor per decompression site, each carrying only the axes that vary there.
+-- 'VCDIFFSectionFailed' is the one site whose algorithm varies — a secondary stream is decoded
+-- by whichever compressor the patch declared — so it alone carries a 'CompressionAlgorithm'.
 data DecompressionFailure
   = Yay0WrapperFailed                       DecompressionCause
   | NINJA1Failed                            DecompressionCause
@@ -415,48 +319,31 @@ data DecompressionFailure
 data BSDiffSection = BSDiffControl | BSDiffDiff | BSDiffExtra
   deriving (Show, Eq)
 
--- | The decompressor's diagnostic message. Carried verbatim from
--- flate2 / bzip2-rs / lzma-rs / slap's own Yay0 implementation; slap
--- relays the underlying library's 'Display' rather than
--- re-classifying. Across the FFI seam the bytes are decoded as UTF-8
--- (see 'Slap.FFI.readText'), so the 'Text' here carries real Unicode
--- codepoints from the moment it lands.
+-- | The decompressor's own diagnostic, relayed verbatim (flate2, bzip2-rs, lzma-rs, or slap's Yay0).
+-- Decoded as UTF-8 at the FFI seam ('Slap.FFI.readText').
 newtype DecompressionCause = DecompressionCause { unDecompressionCause :: Text }
   deriving (Show, Eq)
 
--- | The cause of an xdelta1 differ failure, carried verbatim from
--- the Rust side. Mirror of 'DecompressionCause' — slap relays the
--- underlying diagnostic rather than re-classifying. Lives at this
--- seam so consumers of 'SlapError' don't have to know about FFI;
--- raised by "Slap.XDelta1.FFI" and lifted into 'SlapError' via
--- 'XDelta1DiffFailed'.
+-- | The xdelta1 differ's failure cause, in the Rust side's own words —
+-- an allocation refusal while building the source index, or an internal-invariant violation surfaced rather than panicked.
 newtype XDelta1DiffCause = XDelta1DiffCause { unXDelta1DiffCause :: Text }
   deriving (Show, Eq)
 
--- | The cause of a bsdiff differ failure, carried verbatim from the
--- Rust side. Sibling of 'XDelta1DiffCause', same contract; raised by
--- "Slap.BSDiff.FFI" and lifted into 'SlapError' via
--- 'BSDiffDifferFailed'.
+-- | The bsdiff differ's counterpart of 'XDelta1DiffCause' — always an invariant violation:
+-- bsdiff's 64-bit wire fields outreach any input buffer, so there is no size refusal to relay.
 newtype BSDiffDifferCause = BSDiffDifferCause { unBSDiffDifferCause :: Text }
   deriving (Show, Eq)
 
--- | Which input file(s) the patch expected to be gzip streams at
--- apply time. Carried by 'XDelta1InputPreCompressionUnsupported' so
--- the renderer can name the affected side(s) precisely without
--- recomputing them from raw flag bits. The "neither" case is not
--- representable — that's the success path, not a failure shape.
+-- | Which input file(s) an xdelta1 patch expected to be gzip streams, for 'XDelta1InputPreCompressionUnsupported'.
+-- "Neither" is unrepresentable — that is the success path, not a failure shape.
 data XDelta1GzipStreamInputs
   = OnlyFromFileWasGzipStream
   | OnlyToFileWasGzipStream
   | BothFilesWereGzipStreams
   deriving (Show, Eq)
 
--- | The compression algorithms slap knows about.  Closed and
--- complete: the four with fixed decompression sites, plus the three
--- of xdelta3's secondary-compression catalog (DJW, LZMA, FGK), which
--- ride in 'VCDIFFSectionFailed' and the secondary-stream framing
--- malformations so the rendered failure names the algorithm that was
--- decoding when it fired.
+-- | Every compression algorithm slap knows: four with fixed decompression sites,
+-- plus xdelta3's secondary-compression catalog (DJW, LZMA, FGK).
 data CompressionAlgorithm
   = Zlib | Gzip | Bzip2 | Yay0
   | DJW  | LZMA | FGK
@@ -475,30 +362,19 @@ data ExtractionSubject
 data SlapError
 
   -- IO boundary
-  -- | The user pointed slap at a file that doesn't exist on the filesystem, before any parse or detection.
-  -- The 'FilePath' is the path the user typed and renders verbatim, so the message matches what their tab key (or fingers) produced.
   = MissingInputFile FilePath
-  -- | The file is present but slap couldn't open it: wrong
-  -- permissions, the path resolves to a directory, an underlying
-  -- filesystem error, and so on. The 'String' carries the OS-supplied
-  -- explanation ('System.IO.Error.ioeGetErrorString') so the user
-  -- sees the same words their kernel would have said.
+  -- | The file exists but could not be opened.
+  -- The 'String' is the OS's own explanation ('System.IO.Error.ioeGetErrorString').
   | UnreadableInputFile FilePath String
 
-  -- | slap could not write an output file it was asked to produce: wrong permissions, the path resolves to a directory,
-  -- the disk is full, and so on. The 'String' carries the OS-supplied explanation ('System.IO.Error.ioeGetErrorString') —
-  -- the write-side mirror of 'UnreadableInputFile'.
+  -- | The write-side mirror of 'UnreadableInputFile'.
   | UnwritableOutputFile FilePath String
 
-  -- | @info --extract-metadata@ or @--extract-diz@ was asked for, but the patch carries no such content, so nothing was written.
-  -- The 'ExtractionSubject' names which extraction came up empty.
+  -- | @info --extract-metadata@ or @--extract-diz@ found nothing to write.
   | NothingToExtract FilePath ExtractionSubject
 
-  -- | slap recognized the input as an archive and tried to unwrap the
-  -- single patch inside it, but couldn't. The 'FilePath' is the archive
-  -- the user pointed at, the 'ArchiveFormat' is what its magic bytes
-  -- identified, and the 'UnwrapError' is which way it failed. Raised by
-  -- @Archive.unwrapArchive@ and rendered at the boundary.
+  -- | The input was recognized as an archive, but unwrapping the single patch inside it failed;
+  -- the 'UnwrapError' says which way.
   | ArchiveUnwrapFailed FilePath ArchiveFormat UnwrapError
 
   -- Header flags
@@ -518,45 +394,19 @@ data SlapError
   | InputTooShort FormatLabel RequiredLength ActualLength
   | BadMagic FormatLabel ActualMagic
   | BadVersion FormatLabel FoundVersion
-  -- | xdelta1 magic identifies a known older subformat slap does not
-  -- read. One constructor per known-unsupported version; future
-  -- support graduates a version out of 'XDelta1KnownUnsupportedVersion'
-  -- and into its own parser.
+  -- | xdelta1 magic identifying a known older subformat slap does not read.
   | UnsupportedXDelta1Subformat XDelta1KnownUnsupportedVersion
-  -- | NINJA1's @subFormatIdentifier@ two-byte tag names a wire shape
-  -- slap does not implement. Canonical NINJA1 only emits @"B "@
-  -- (binary), @"BZ"@ (compressed binary), @"T\\n"@ (text), and
-  -- @"TZ"@ (compressed text); any other pair is off-spec or from a
-  -- newer revision.
+  -- | NINJA1's two-byte @subFormatIdentifier@ names a wire shape slap does not implement.
+  -- Canonical NINJA1 emits only @"B "@, @"BZ"@, @"T\\n"@, and @"TZ"@; any other pair is off-spec or from a newer revision.
   | UnsupportedNINJA1Subformat ByteString
   | NegativeSize FormatLabel FieldName ParsedSizeValue
   | DecompressionFailed DecompressionFailure
 
-  -- | The xdelta1 differ ('Slap.XDelta1.FFI.xdelta1Diff')
-  -- refused an input. Carries the underlying Rust-side cause
-  -- verbatim — at minimum, allocation refusals when building the
-  -- source index on memory-constrained hosts; also catches internal-
-  -- invariant violations (cumulative emit length \/= target length
-  -- at end, etc.) the differ surfaces rather than panicking.
   | XDelta1DiffFailed XDelta1DiffCause
-
-  -- | The bsdiff differ ('Slap.BSDiff.FFI.bsdiffDiff') failed.
-  -- Carries the Rust-side cause verbatim: internal-invariant
-  -- violations (an add region escaping the source, emitted regions
-  -- not covering the target) the differ surfaces rather than
-  -- panicking. Unlike 'XDelta1DiffFailed' there is no size refusal to
-  -- relay — bsdiff's 64-bit wire fields outreach any input buffer.
   | BSDiffDifferFailed BSDiffDifferCause
 
-  -- | A parsed record's effective end position lies beyond the
-  -- variant's wire-format spec ceiling. The 'ActionIndex' names the
-  -- offending record's position in the wire stream; the
-  -- 'ActualOffset' is the record's computed end position
-  -- (@offset + payloadLength@); the 'MaxOffset' is the variant's
-  -- maximum addressable end (typically @maxAddressableOffset +
-  -- maxRecordPayload@). Used by IPS-family parsers to reject
-  -- records that name a position the format cannot represent on
-  -- the wire, before they can flow through to the apply layer.
+  -- | A parsed record's end position — offset plus payload length — lies past the variant's own wire-format ceiling.
+  -- The 'ActualOffset' is that computed end; the 'MaxOffset' is the variant's maximum addressable end.
   | RecordExceedsAddressableRange FormatLabel ActionIndex ActualOffset MaxOffset
 
   -- | A parsed record's write end — offset plus payload length — exceeds 'maxBound' :: 'Int'.
@@ -570,18 +420,11 @@ data SlapError
   -- Distinct from 'NegativeSize' (a top-level header size was negative).
   | MalformedRecordField FormatLabel ActionIndex FieldName
 
-  -- | A parser found bytes after a recognized stream-closing trailer
-  -- marker that don't match any post-trailer shape the format
-  -- accepts. The motivating example is the IPS family: 'StandardIPS'
-  -- accepts an empty post-@"EOF"@ trailer, a 3-byte post-EOF truncation
-  -- marker, or an EBP JSON metadata blob, while 'IPS32' accepts only
-  -- the empty post-@"EEOF"@ trailer; bytes outside those shapes are
-  -- a structured parse failure rather than a 'Get'-monad
-  -- passthrough. The 'TrailerMarker' carries the marker bytes the
-  -- parser was anchored to so the renderer can name them ("after
-  -- EOF marker", "after EEOF marker") without knowing about
-  -- format-specific variants. The 'ActualLength' is the byte count
-  -- of the unrecognized trailer slice.
+  -- | Bytes after a recognized stream-closing trailer marker that match no post-trailer shape the format accepts.
+  -- 'StandardIPS' is the one format that raises this: it accepts an empty post-@"EOF"@ trailer,
+  -- a 3-byte truncation marker, or an EBP JSON metadata blob, and rejects anything else.
+  -- The 'TrailerMarker' carries the marker bytes, so the renderer can name them without knowing the variant;
+  -- the 'ActualLength' is the unrecognized slice's byte count.
   | UnrecognizedTrailer FormatLabel TrailerMarker ActualLength
 
   -- Parse: integrity
@@ -597,23 +440,12 @@ data SlapError
   -- because PATCH_ENC governs how every text field in the patch is decoded, and slap has no defined answer for an undefined value.
   | NINJA2UnrecognizedTextMode !Word8
 
-  -- | A structurally malformed text field in a NINJA1 textual patch —
-  -- every shape of "the bytes do not parse as the format expects" is
-  -- a constructor of 'NINJA1Malformation', enumerated as the failure
-  -- space is finite per the format spec.
+  -- | A structurally malformed text field in a NINJA1 textual patch; 'NINJA1Malformation' enumerates the shapes.
   | MalformedNINJA1Content NINJA1Malformation
 
   | NINJA1BinaryMissingEOFFooter
 
-  -- | A byte-parser failure surfaced from a per-format parser. The
-  -- payload is a structured 'ByteParserError' that enumerates each
-  -- shape the parser layer can fail in (underflow, terminator-not-
-  -- found, varint overrun, and so on), so the renderer and any
-  -- programmatic consumer can dispatch on the cause without scraping
-  -- a free-form string. The 'FormatLabel' names which format's parser
-  -- raised the failure; the constructor is per-format because the
-  -- same byte-parser primitive surfaces meaning differently depending
-  -- on which format-level call site invoked it.
+  -- | A byte-parser failure surfaced from the named format's parser.
   | ParseError FormatLabel ByteParserError
 
   -- | The xdelta1 parser rejected a source-list shape canonical xdelta cannot emit: duplicated kinds, the reversed pair, or more than two sources.
@@ -634,93 +466,43 @@ data SlapError
   -- 'VCDIFFCodeTableMalformation' names which failure it was and where each is checked.
   | MalformedVCDIFFCodeTable VCDIFFCodeTableMalformation
 
-  -- | Decoding a patch's custom code table failed, and this names the
-  -- failure it ran into while doing so. A custom table is built by
-  -- decoding an inner VCDIFF delta against the serialized default
-  -- table (RFC 3284 §7); that inner decode can fail in any of the
-  -- ordinary ways — it does not parse, it parses but an instruction
-  -- makes an invalid demand, it applies cleanly to bytes that are not
-  -- a valid 1536-byte table image. Rather than flatten those into one
-  -- opaque "bad code table," the precise inner 'SlapError' is carried
-  -- here verbatim and rendered with a phrase that points at the table,
-  -- so the inner precision survives. (The one custom-table failure
-  -- that does /not/ wrap this way is a nested table — the inner delta
-  -- declaring its own @VCD_CODETABLE@ — which surfaces as its own
-  -- 'VCDIFFNestedCustomCodeTable', the refusal being about the header,
-  -- not the inner body.) Raised by 'Slap.VCDIFF.Parse.parseVCDIFF'.
+  -- | Decoding a patch's custom code table failed. A custom table is an inner VCDIFF delta against the serialized default table (RFC 3284 §7),
+  -- so the decode can fail in any way a whole patch's can; the 'SlapError' is that inner failure.
   | VCDIFFCustomCodeTableDecodeFailed !SlapError
 
-  -- | A VCDIFF indicator byte set one or more bits the format reserves for future definition. slap implements only the bits defined today,
-  -- so it does not know what such a patch is asking. A sibling decline to 'VCDIFFUnknownSecondaryCompressor',
-  -- deliberately not a 'MalformedVCDIFF' arm: 'MalformedVCDIFF' means slap understands the claim a patch makes and the claim is invalid,
-  -- whereas a future-dialect patch could be well-formed, just unreadable here. Distinct from 'BadVersion' too:
-  -- a version byte names a whole generation of the format, while a reserved bit is an undefined flag within the generation slap does implement;
-  -- the two share only the disposition.
-  -- The 'VCDIFFIndicatorKind' names which of the three indicators;
-  -- the 'Word8' is the indicator byte as read.
-  -- Raised by 'Slap.VCDIFF.Parse.parseVCDIFF'.
+  -- | An indicator byte set bits the format reserves for future definition. Deliberately not a 'MalformedVCDIFF' arm:
+  -- malformed means slap understands a patch's claim and the claim is invalid,
+  -- while a future-dialect patch could be well-formed, just unreadable here —
+  -- the same decline as 'VCDIFFUnknownSecondaryCompressor'.
+  -- The 'VCDIFFIndicatorKind' names which of the three indicators; the 'Word8' is the byte as read.
   | VCDIFFReservedIndicatorBits !VCDIFFIndicatorKind !Word8
 
-  -- | A VCDIFF patch declared a secondary-compressor id outside
-  -- xdelta3's catalog (1 = DJW, 2 = LZMA, 16 = FGK — the only
-  -- registry that exists, since RFC 3284 registered none). slap does
-  -- not know what algorithm such an id names, so it cannot say the
-  -- patch is malformed — a future xdelta3 could define id 3 and the
-  -- patch would be well-formed, just unreadable here. The same
-  -- decline disposition as 'VCDIFFReservedIndicatorBits'; the 'Word8'
-  -- is the id byte as read. Raised by
-  -- 'Slap.VCDIFF.SecondaryCompression' through
-  -- 'Slap.VCDIFF.Parse.parseVCDIFF'.
+  -- | A declared secondary-compressor id outside xdelta3's catalog (1 = DJW, 2 = LZMA, 16 = FGK — the only registry there is; RFC 3284 registered none).
+  -- A future xdelta3 could define the id, so this is the 'VCDIFFReservedIndicatorBits' decline, not a malformation.
   | VCDIFFUnknownSecondaryCompressor !Word8
 
-  -- | A VCDIFF patch's wire bytes parsed but disagree with the core
-  -- semantics slap enforces: a window naming both copy sources at
-  -- once, a core invariant violated (a COPY reading unwritten output
-  -- or crossing the source-segment boundary, a window that does not
-  -- fill to its declared size), or a section that runs short of what
-  -- its instructions demand. The 'VCDIFFMalformation' names the
-  -- specific failure. Raised by 'Slap.VCDIFF.Parse.parseVCDIFF' after
-  -- the byte-level walk, the way 'UnsupportedVCDIFFShape' validates
-  -- window shape.
+  -- | Wire bytes that parsed but violate the core semantics slap enforces; 'VCDIFFMalformation' names the specific failure.
   | MalformedVCDIFF VCDIFFMalformation
 
-  -- | A VCDIFF patch mixes an RFC 3284 feature xdelta3 refuses — a
-  -- VCD_TARGET window or a custom code table — with an xdelta3
-  -- extension RFC 3284 never defined (a declared secondary compressor,
-  -- an application header, or a per-window Adler32). Each half is
-  -- well-formed on its own, so the patch is not malformed; it simply
-  -- belongs to neither dialect slap reads — a conformant RFC-3284 patch
-  -- carries no xdelta3 extension, and an xdelta3 patch carries neither
-  -- of the RFC-exclusive features. The 'VCDIFFRFCFeature' and
-  -- 'VCDIFFXDelta3Feature' name which of each it found, so the refusal's
-  -- reason is concrete on both sides. The Adler32 case in particular is
-  -- read and used to reach this verdict, never silently dropped:
-  -- 'Slap.VCDIFF.Types.XDelta3Window' makes an RFC-window-with-checksum
-  -- unrepresentable, so the checksum could not survive into a 'PatchRFC'
-  -- even if slap tried. Raised by 'Slap.VCDIFF.Parse.classifyFlavor'.
+  -- | A patch mixes an RFC 3284 feature xdelta3 refuses (a VCD_TARGET window, a custom code table)
+  -- with an xdelta3 extension the RFC never defined (a secondary compressor, an application header, a per-window Adler32).
+  -- Each half is well-formed on its own; the patch belongs to neither dialect slap reads.
+  -- The payload names one feature from each side, so the refusal is concrete on both.
   | VCDIFFRFCFeatureWithXDelta3Feature VCDIFFRFCFeature VCDIFFXDelta3Feature
 
   -- | A BSDiff patch's fixed-width header failed validation: a size field decoded negative,
-  -- or the declared control and diff blocks overrun the patch body. The 'BSDiffHeaderMalformation' says which,
-  -- and carries the offending values for the renderer. The check happens outside the byte parser
-  -- because the header is read with a fixed-offset signed-magnitude helper rather than the monadic primitives.
+  -- or the declared control and diff blocks overrun the patch body.
+  -- The 'BSDiffHeaderMalformation' says which, and carries the offending values for the renderer.
+  -- The check happens outside the byte parser: the header is read with a fixed-offset signed-magnitude helper, not the monadic primitives.
   | MalformedBSDiffHeader BSDiffHeaderMalformation
 
-  -- | An APS-N64 patch's header carried a value that did not decode
-  -- to a known variant. The 'APSN64HeaderMalformation' names which
-  -- header field rejected which byte. Validated outside the byte
-  -- parser at 'Slap.APSN64.Parse.parseAPSN64', using a pre-read of
-  -- the patch-type byte at the known fixed offset after the magic
-  -- bytes.
+  -- | An APS-N64 header value that decodes to no known variant;
+  -- 'APSN64HeaderMalformation' names which field rejected which byte.
   | MalformedAPSN64Header APSN64HeaderMalformation
 
-  -- | A PPF4 Replace record appeared after an Append record. PPF4 is
-  -- two-phase — every in-place Replace precedes every Append — and
-  -- the reference patchers both emit and consume that order, so a
-  -- Replace on the wrong side of the transition is a structural
-  -- claim slap understands and rejects. Judged outside the byte
-  -- parser by 'Slap.PPF4.Parse.partitionPhases', after the record
-  -- walk; the 'ActionIndex' names the offending record.
+  -- | A PPF4 Replace record appeared after an Append record. PPF4 is two-phase —
+  -- every in-place Replace precedes every Append — and the reference patchers both emit and consume that order.
+  -- The 'ActionIndex' names the offender.
   | PPF4ReplaceAfterAppend !ActionIndex
 
   -- | An xdelta1 instruction referenced a source index its own emitted list has no position for.
@@ -728,14 +510,9 @@ data SlapError
   -- the 'XDelta1SourceListShape' carries it, so the refusal names the indices this patch actually declared. The 'Int64' is the offending index.
   | XDelta1UnknownInstructionTarget !XDelta1SourceListShape !Int64
 
-  -- | An xdelta1 patch expected one or both input files to be gzip
-  -- streams at apply time (@FLAG_FROM_COMPRESSED@ bit 1 and\/or
-  -- @FLAG_TO_COMPRESSED@ bit 2 set in the wire header). Canonical
-  -- xdelta-1.x transparently decompresses gzip-magic inputs before
-  -- computing the delta and re-compresses after apply; slap doesn't
-  -- implement that transparency, so apply refuses rather than
-  -- silently producing wrong output against the user's literal
-  -- source bytes. The payload names which side(s) are affected.
+  -- | The patch expects one or both input files to be gzip streams (@FLAG_FROM_COMPRESSED@ \/ @FLAG_TO_COMPRESSED@).
+  -- Canonical xdelta-1.x transparently decompresses gzip-magic inputs before diffing and re-compresses after apply;
+  -- slap does not, and refuses rather than run the delta against the user's literal bytes and produce wrong output.
   | XDelta1InputPreCompressionUnsupported XDelta1GzipStreamInputs
 
   -- | An xdelta1 patch's envelope carries literal data bytes, but its source list has no data record to name them —
@@ -748,34 +525,16 @@ data SlapError
   -- The 'RequiredLength' is that floor; the 'ActualLength' is what the segment held.
   | XDelta1ControlSegmentTooShort !RequiredLength !ActualLength
 
-  -- | An xdelta1 patch's data-record declared a length that
-  -- disagrees with the actual byte count of the data segment slap
-  -- decompressed out of the patch envelope. Both values live in the
-  -- same patch — the data-record's @length@ field inside the EDSIO
-  -- control structure, and the byte count of the inline data
-  -- segment between the header and control segment — and they
-  -- describe the same bytes, so a disagreement is structural
-  -- inconsistency the parser cannot reconcile. Slap refuses with
-  -- this constructor rather than picking a winner; the 'ExpectedSize'
-  -- carries the wire-declared length and 'ActualSize' the segment-
-  -- bytes length.
+  -- | The data record's declared @length@ disagrees with the byte count of the data segment
+  -- slap decompressed from the envelope. Both describe the same bytes, so slap refuses rather than pick a winner.
+  -- The 'ExpectedSize' is the wire declaration; the 'ActualSize' is the segment's measure.
   | XDelta1DataRecordLengthMismatch ExpectedSize ActualSize
 
-  -- | An xdelta1 patch's data-record declared an MD5 that disagrees
-  -- with the MD5 of the data-segment bytes slap parsed from the
-  -- patch envelope. Both values describe the same bytes, so a
-  -- disagreement is structural inconsistency within the patch.
-  -- Slap fires only when the patch's verification posture is
-  -- 'VerifyAgainstStoredMD5s'; under 'CreatorOptedOutOfVerification'
-  -- the wire MD5 is the canonical empty-input sentinel
-  -- ('xdelta1EmptyInputMD5Sentinel') by convention and the
-  -- comparison is skipped entirely. Parse-time fatal, mirroring
-  -- 'PatchCRCMismatch' for UPS\/BPS — the user's apply-time
-  -- @--no-verify@ does not downgrade this, because the inconsistency
-  -- is between two fields of the patch itself, not between the
-  -- patch and any external bytes. The first 'MD5Hash' is the wire-
-  -- declared value; the second is the value computed from the
-  -- segment bytes.
+  -- | The data record's declared MD5 disagrees with the MD5 of the data-segment bytes —
+  -- a patch disagreeing with itself, so parse-time fatal like 'PatchCRCMismatch':
+  -- apply-time @--no-verify@ speaks to external bytes and does not downgrade this.
+  -- Only checked under 'VerifyAgainstStoredMD5s'; a creator opt-out stores the sentinel MD5 and the comparison is skipped.
+  -- The first 'MD5Hash' is the wire declaration; the second is computed from the segment bytes.
   | XDelta1DataRecordMD5Mismatch MD5Hash MD5Hash
 
   -- Apply
@@ -787,10 +546,7 @@ data SlapError
 
   -- Create / Encode
 
-  -- | A target format's create path refused this (source, target) pair, for the reason in the 'UnencodeabilityReason'.
-  -- The single carrier for every "this format cannot encode this pair" refusal: raised by 'Slap.UPS.Create' for the UPS tail invariant,
-  -- and by each format's @\<format\>RejectIncompatibleSizeChange@ checker
-  -- (via 'Slap.Convert.rejectIncompatibleSizeChange') for size-change refusals.
+  -- | A create path refused this (source, target) pair; the 'UnencodeabilityReason' says why.
   | UnencodeablePair FormatLabel UnencodeabilityReason
   | NarrowingError !NarrowingFailure
 
@@ -798,8 +554,6 @@ data SlapError
   -- slap threads every size and offset through a signed 'Int', so its true ceiling is 'maxBound' :: 'Int', about 9 EB on a 64-bit host.
   -- A wire size field wider than the carrier (a full 64-bit length) can name a file past that ceiling;
   -- rather than wrap or truncate it through 'fromIntegral', slap declines here.
-  -- The 'ActualSize' is the offending file;
-  -- the 'MaxAddressableSize' is the host's 'maxBound :: Int'.
   | FileExceedsAddressableRange FormatLabel ActualSize MaxAddressableSize
 
   -- | A VCDIFF create's (source, target) pair spans more bytes than slap can address at once.
@@ -807,28 +561,21 @@ data SlapError
   -- so the quantity slap's 'Int' must carry is the pair's combined size (plus the matcher's two sentinels) —
   -- and a pair whose sum exceeds 'maxBound' :: 'Int' would name positions the carrier cannot hold.
   -- The pair-wise sibling of 'FileExceedsAddressableRange': each size fits an 'Int' on its own (a ByteString's length is one),
-  -- and it is only their sum that does not, so the sizes are carried separately
-  -- and the renderer adds them in 'Integer', the way 'ApplyOutputExceedsAddressableRange' does.
+  -- and it is only their sum that does not, so the sizes are carried separately and the renderer adds them in 'Integer',
+  -- the way 'ApplyOutputExceedsAddressableRange' does.
   -- Raised by 'Slap.VCDIFF.Create.rejectUnaddressablePair'.
   | VCDIFFPairExceedsAddressableRange SourceFileSize TargetFileSize MaxAddressableSize
 
-  -- | A record's offset lands on the format's trailer sentinel and
-  -- the encoder has no way to shift it back: either the source bytes
-  -- needed for the shift-and-prepend fix are absent (source-less
-  -- conversion), the source is shorter than the preceding-byte index,
-  -- or the sentinel sits at offset @0@ so there is no preceding byte
-  -- to consume. IPS and IPS32 are the only affected formats today;
-  -- see 'Slap.IPS.Create.resolveSentinelCollisions' for the fix path
-  -- that this error is the failure mode of.
+  -- | A record's offset lands on the format's trailer sentinel and the encoder cannot shift it back:
+  -- the source bytes for the shift-and-prepend fix are absent (source-less conversion),
+  -- the source is shorter than the preceding-byte index,
+  -- or the sentinel sits at offset @0@ and there is no preceding byte to consume.
+  -- The failure mode of 'Slap.IPS.Create.resolveSentinelCollisions'.
   | SentinelCollisionUnfixable FormatLabel SentinelOffset
 
-  -- | The PPF2 wire format mandates a 1024-byte block sampled from
-  -- source offset 0x9320, so any source file shorter than 0x9720
-  -- (= 0x9320 + 0x400) bytes can't supply one — a boundary the format
-  -- never gave a defined behavior. slap names it with this structured
-  -- error rather than reading past the source's end. The 'ActualSize'
-  -- is the source's size, the 'ExpectedSize' is the @0x9720@-byte
-  -- minimum.
+  -- | PPF2 mandates a 1024-byte validation block sampled from source offset 0x9320,
+  -- so a source shorter than 0x9720 bytes cannot supply one — a boundary the format never gave a defined behavior.
+  -- The 'ExpectedSize' is that 0x9720-byte minimum.
   | SourceTooSmallForPPF2Validation FormatLabel ActualSize ExpectedSize
 
   | FieldTooLong FormatLabel FieldName EncodedLength MaxLength
@@ -836,52 +583,27 @@ data SlapError
   -- Convert
   | MissingRequiredField FormatLabel PatchField
 
-  -- | A refusal by the contract layer when the source patch carries
-  -- one or more 'PatchField' values that affect the output bytes of
-  -- the apply operation (see 'Slap.PatchField.affectsApplyOutput')
-  -- and that the target format has no wire representation for.
-  -- Silently dropping the fields would change what the resulting
-  -- patch produces on apply, so the conversion is refused outright
-  -- rather than papered over with a warning. The 'FormatLabel' names
-  -- the target format being refused; the inner list pairs each
-  -- offending field with the target formats that do preserve it
-  -- (possibly empty), so the renderer can point the user at a
-  -- target that would work. Only 'FieldTruncation' reaches this error
-  -- today; the list shape exists so future apply-output-affecting
-  -- fields drop into the same refusal path without new plumbing.
+  -- | The contract layer's refusal when the source patch carries fields that affect apply output ('Slap.PatchField.affectsApplyOutput')
+  -- and that the target format has no wire home for — dropping them silently would change what the converted patch produces,
+  -- so the conversion is refused, not warned.
+  -- Each offending field is paired with the formats that do preserve it, so the renderer can point at a target that would work.
   | ApplyOutputFieldsWouldBeDropped FormatLabel [(PatchField, [FormatLabel])]
 
   | DiffRequiresSource FormatLabel
 
-  -- | The user asked to convert a patch to PPF4 without supplying the
-  -- original ROM. PPF4 splits its records into in-place writes (Replace)
-  -- and appended bytes (Append) by where each falls relative to the
-  -- source's size; a source-less conversion has the source patch's
-  -- records but not the source's size, so it cannot make that split.
-  -- The 'FormatLabel' is 'LabelPPF4'. Corrective action: supply the
-  -- original ROM with @--with INPUT@, which applies the source patch
-  -- and re-diffs against real bytes.
+  -- | Converting to PPF4 without the original ROM.
+  -- PPF4 splits records into in-place Replace and appended-bytes Append by where each falls against the source's size,
+  -- and a source-less conversion has no source size to split by. @--with INPUT@ is the way out.
   | PPF4ConvertRequiresSource FormatLabel
 
-  -- | The user set one or more metadata fields via CLI flags that
-  -- the target format doesn't consume.  Surfaced before any IO so
-  -- the user learns what went wrong before their files are touched.
-  -- The 'NonEmpty MetadataField' names every concept the user
-  -- expressed; the 'FormatLabel' names the target format that would
-  -- silently drop them. Rendering enumerates each offending CLI flag
-  -- and the target, so the message points the user at every thing
-  -- to fix in one read.
+  -- | The user set metadata fields via CLI flags that the target format has no wire home for. Surfaced before any IO touches their files.
   | MetadataFieldRejected (NonEmpty MetadataField) FormatLabel
 
-  -- | The user opted into one or more 'Constraint's the target
-  -- format cannot honor. Same shape and rationale as
-  -- 'MetadataFieldRejected'.
+  -- | The user opted into 'Constraint's the target format cannot honor — same shape and rationale as 'MetadataFieldRejected'.
   | ConstraintNotSupported (NonEmpty Constraint) FormatLabel
 
-  -- | The user toggled one or more dialect axes via CLI flags that
-  -- the target (or, for convert, neither side of the chain) admits.
-  -- Surfaced by 'Slap.Convert.rejectIncompatibleDialects' before any
-  -- parsing or encoding work begins.
+  -- | The user toggled dialect axes that the target format (for convert, neither side of the chain) admits —
+  -- same shape and rationale as 'MetadataFieldRejected'.
   | DialectNotSupported (NonEmpty Dialect) FormatLabel
 
   -- | The user asked @slap convert@ to retag a patch's ROM type across platforms — the source patch declares one platform,
@@ -890,37 +612,24 @@ data SlapError
   -- The one retag convert honors is the same-layout sibling pair — SMS and Game Gear, whose procedures are identical.
   | RomTypeRetagRejected CarriedRomType RequestedRomType
 
-  -- | The user asked @slap convert@ to write an xdelta1 patch from a
-  -- non-xdelta1 source patch without supplying @--from-name@ /
-  -- @--to-name@. xdelta1's header carries two free-form display
-  -- labels (the from-file and to-file basenames at create time); no
-  -- other format slap reads carries equivalents, so there's nothing
-  -- to inherit during a cross-format convert. Slap refuses rather
-  -- than fabricate placeholders. The 'FormatLabel' names the source
-  -- format the conversion came from.
+  -- | Converting a non-xdelta1 patch to xdelta1 without @--from-name@ \/ @--to-name@.
+  -- xdelta1's header carries two free-form display labels no other format has an equivalent of,
+  -- so a cross-format convert has nothing to inherit, and slap refuses to fabricate placeholders.
+  -- The 'FormatLabel' is the source format.
   | XDelta1ConvertRequiresNames FormatLabel
 
   -- | The user selected a secondary compressor slap decodes but cannot yet encode — FGK today.
   -- 'Slap.VCDIFF.SecondaryCompression.encodableSectionCompressor' is the registry this refusal reads.
-  -- Distinct from 'MetadataFieldRejected': the flag and the name are both understood, and what is missing is slap's own encoder.
-  -- Surfaced before any IO, like the metadata and constraint rejections.
+  -- Distinct from 'MetadataFieldRejected': the flag and the name are both understood; what is missing is slap's own encoder.
   | XDelta3CompressorEncodingUnsupported !CompressionAlgorithm
 
-  -- | The IPS create gate refused a truncation marker whose declared
-  -- target size doesn't satisfy SNESTool's
-  -- @(size & 0xFFF) == 0x200@ shape filter. Surfaced by
-  -- 'Slap.Convert.rejectNonSMCShapedTruncation'; only fires when the
-  -- user opted into 'Slap.IPS.Types.RequireSMCShapedTruncation'.
+  -- | The IPS create gate refused a truncation marker whose declared target size fails SNESTool's @(size & 0xFFF) == 0x200@ shape filter.
+  -- Only fires when the user opted into 'Slap.IPS.Types.RequireSMCShapedTruncation'.
   | TruncationViolatesSMCShape !FileSize
 
-  -- | A verification check would have produced a 'SlapAdvisory' but
-  -- the user did not pass @--no-verify@, so the mismatch is fatal.
-  -- The embedded 'SlapAdvisory' is one of the four "downgraded fatal"
-  -- kinds: 'VerificationCRCMismatch', 'VerificationHashMismatch',
-  -- 'VerificationAdler32Mismatch', or 'VerificationFileSizeMismatch'.
-  -- The renderer delegates to 'renderSlapAdvisory' for the body and
-  -- appends the @--no-verify@ tail.
-  -- The field is a bare 'SlapAdvisory', so this membership is a documented invariant, not a type-level guarantee.
+  -- | A verification mismatch the user did not @--no-verify@ away, so it is fatal rather than advisory.
+  -- That the payload is one of 'VerificationCRCMismatch', 'VerificationHashMismatch',
+  -- 'VerificationAdler32Mismatch', or 'VerificationFileSizeMismatch' is a documented invariant, not a type-level one.
   | VerificationFatal SlapAdvisory
 
   deriving (Show, Eq)
@@ -929,30 +638,20 @@ data SlapError
 -- BPSMetadataDivergence
 ----------------------------------------------------------------------------
 
--- | How a BPS patch's metadata blob diverged from the spec-recommended
--- UTF-8 XML, carried by 'BPSMetadataNonConformant'. The BPS spec
--- recommends UTF-8 XML in the metadata field but explicitly permits
--- "literally anything", so neither case is an error — both are
--- spec-valid oddities slap remarks on, because a populated metadata
--- field is rare and a non-conforming one rarer still.
+-- | How a BPS patch's metadata blob diverged from the spec-recommended UTF-8 XML, carried by 'BPSMetadataNonConformant'.
 data BPSMetadataDivergence
   = MetadataIsNotUTF8
     -- ^ The bytes do not decode as UTF-8 at all.
   | MetadataIsValidUTF8ButNonText
-    -- ^ The bytes are valid UTF-8 but carry control or format
-    -- codepoints, so they are not the plain text the field is meant
-    -- to hold.
+    -- ^ Valid UTF-8 carrying control or format codepoints — not the plain text the field is meant to hold.
   deriving (Eq, Show)
 
 ----------------------------------------------------------------------------
 -- SlapAdvisory
 ----------------------------------------------------------------------------
 
--- | A non-halting status item slap raises about something it noticed
--- during work — covers both warning-severity ("you may want to know")
--- and note-severity ("informational") items. Severity is a property
--- of each constructor, projected by 'slapAdvisorySeverity'; the
--- 'emitToStderr' pipeline reads it to choose the user-facing prefix.
+-- | A non-halting status item — warning-severity ("you may want to know") or note-severity ("informational"),
+-- projected per constructor by 'slapAdvisorySeverity'.
 data SlapAdvisory
 
   -- Patch quality
@@ -965,98 +664,51 @@ data SlapAdvisory
   -- | Note: @--add-header@ prepended a blank header to the input before applying.
   | InputHeaderAdded ConsoleHeader
 
-  -- | A PPF1/PPF2/PPF3 patch produced an output longer than the
-  -- source at apply time. The format's wire vocabulary has no
-  -- command for declaring growth; a patch that produces growth
-  -- anyway sits outside what the upstream tooling intends. Slap
-  -- applies it but raises this advisory so the user knows the patch
-  -- is shaped unusually. The 'FileSize' is the source's actual
-  -- length; the 'Length' is how many bytes past that length the
-  -- output extends.
+  -- | A PPF patch's apply produced an output longer than the source; slap applies it and remarks.
+  -- The 'FileSize' is the source's length; the 'Length' is the overshoot.
   | PPFApplyGrewPastSource FormatLabel FileSize Length
 
-  -- | An IPS-family RLE record whose run-length field was zero was
-  -- accepted verbatim as a no-op. The spec does not speak to the
-  -- case, and slap's live encoder never emits it; the warning
-  -- signals a parsed oddity so the user can decide whether the
-  -- source patch is trustworthy. The 'ActionIndex' names the
-  -- offending record's position in the wire record stream.
+  -- | An IPS-family RLE record with a zero run length, accepted verbatim as a no-op.
+  -- The spec does not speak to the case, and slap's own encoder never emits it.
   | ZeroCountRLERecord FormatLabel ActionIndex
 
-  -- | A BPS patch carries the non-canonical @0x81@ encoding of zero
-  -- in a 'SourceCopy' or 'TargetCopy' signed-delta varint. Both
-  -- @0x80@ and @0x81@ decode to a delta of zero — the sign-magnitude
-  -- scheme treats @0x81@ as "negative zero" — but only @0x80@ is the
-  -- canonical form, and slap's encoder never emits @0x81@. The
-  -- warning fires once per patch (no payload) and signals either a
-  -- non-canonical producer or transit corruption; the parse itself
-  -- proceeds normally. See @docs/bps/questions.md@ → "two encodings
-  -- for zero-delta".
+  -- | A BPS signed-delta varint carried @0x81@, sign-magnitude "negative zero" — the same zero delta as the canonical @0x80@,
+  -- but no canonical encoder writes it, so it signals a non-canonical producer or transit corruption. Fires once per patch.
+  -- See @docs/bps/questions.md@, "two encodings for zero-delta".
   | NegativeZeroInBPS
 
-  -- | A VCDIFF varint was encoded in a non-canonical (overlong) form:
-  -- one or more leading zero-groups padded it longer than the value
-  -- needs. Base-128 admits this and xd3 accepts it, so slap does too;
-  -- the note is the house-consistent "weird thing happened" flag,
-  -- sibling to 'NegativeZeroInBPS'. A slap encoder emits only the
-  -- canonical form. The payload is the offending value, so the reader
-  -- can see what was padded.
+  -- | A VCDIFF varint in overlong form: leading zero-groups pad it longer than the value needs.
+  -- Base-128 admits it and xd3 accepts it, so slap does too and remarks; slap's own encoder emits only the canonical form.
+  -- The payload is the offending value.
   | NonCanonicalVCDIFFVarint Int64
 
-  -- | At least one pair of records in an IPS-family patch writes
-  -- to overlapping regions of the target. Overlap is permitted and
-  -- well-defined (later writes clobber earlier ones), but it's
-  -- unusual enough that slap flags it. The 'OverlapCount' carries
-  -- the total number of intersecting pairs found during the parse;
-  -- the warning is only emitted when that count is at least one.
-  -- Per-pair detail is intentionally omitted: a pathological
-  -- mutually-overlapping cluster of @k@ records would otherwise
-  -- produce @k*(k-1)/2@ near-identical warning lines that drown
-  -- everything else, and the reader's question is "does this patch
-  -- have overlapping writes" not "exactly which pairs".
+  -- | At least one pair of records in an IPS-family patch writes overlapping target regions.
+  -- Legal and well-defined (later writes win), but unusual enough to flag.
+  -- Per-pair detail is deliberately absent: a mutually-overlapping cluster of @k@ records would emit @k*(k-1)\/2@ near-identical lines,
+  -- and the reader's question is "does this patch overlap writes", not "which pairs".
   | OverlappingRecords FormatLabel OverlapCount
 
-  -- | An IPS-family record carries a smaller offset than the
-  -- record that preceded it in the wire stream. slap applies
-  -- records strictly in wire order, so unsorted records still
-  -- produce correct output, but well-formed patches are sorted by
-  -- offset; an unsorted stream is worth flagging. Only the first
-  -- out-of-order pair is reported per parse — one warning is enough
-  -- to tell the reader the stream is unsorted. The 'ActionIndex'
-  -- names the later-in-wire-order record whose offset is lower than
-  -- the record before it.
+  -- | An IPS-family record carries a smaller offset than its predecessor. slap applies in wire order, so the output is still correct,
+  -- but well-formed patches are sorted; one report per parse is enough, so only the first out-of-order pair fires.
+  -- The 'ActionIndex' names the later record of that pair.
   | UnsortedRecords FormatLabel ActionIndex
 
-  -- | An 'IPS32' patch had trailing bytes past the @"EEOF"@ marker
-  -- that did not match any recognized post-trailer shape. slap drops
-  -- the trailing slice and proceeds. 'StandardIPS' has three
-  -- well-attested post-@"EOF"@ shapes (empty, 3-byte post-EOF
-  -- truncation marker, EBP JSON blob) and keeps its strict rejection of
-  -- garbage trailers; 'IPS32' has none, and a lenient drop is the
-  -- useful choice in the absence of a shape to recognize. The
-  -- 'Length' is the byte count dropped.
+  -- | An IPS32 patch had trailing bytes past the @"EEOF"@ marker; slap drops the slice, warns, and proceeds.
+  -- 'StandardIPS' has three attested post-EOF shapes and rejects anything else ('UnrecognizedTrailer');
+  -- IPS32 has none, so there is no shape to hold a trailer against, and a lenient drop is the useful choice.
+  -- The 'Length' is the byte count dropped.
   | IPS32TrailingBytes FormatLabel Length
 
-  -- | Bytes after a VCDIFF patch's last window matching the one
-  -- trailing shape slap recognizes: four @0xFF@ marker bytes, then
-  -- nothing but zero padding to end of input — a harmless trailer some
-  -- patches carry. VCDIFF has no window count, total-size field, or
-  -- footer, so the format never says what trailing bytes mean;
-  -- xdelta3's applier writes the correct output and then errors on this
-  -- tail, while its printhdr ignores it.
-  -- slap consumes exactly this shape and says what it saw; any other
-  -- trailing bytes keep framing as a window and failing as one. The
-  -- 'Length' is the remnant's full byte count, marker included.
+  -- | Bytes after the last window matching the one trailing shape slap recognizes: four @0xFF@ marker bytes, then nothing but zero padding —
+  -- a harmless trailer some patches carry. VCDIFF has no window count, total-size field, or footer, so it never says what trailing bytes mean;
+  -- xdelta3's applier writes the correct output and then errors on this tail, while its printhdr ignores it.
+  -- slap consumes exactly this shape and says what it saw; any other trailing bytes keep framing as a window and failing as one.
+  -- The 'Length' is the remnant's full byte count, marker included.
   | VCDIFFTrailingRemnant !Length
 
-  -- | A VCD_TARGET window declares an empty (zero-length) source
-  -- segment, so it draws nothing from the produced target — a window
-  -- naming a copy source it cannot read a byte from. Legal (a
-  -- zero-length segment fits trivially) and the only shape a
-  -- first-window VCD_TARGET can take, there being no earlier output to
-  -- point at; pointless everywhere else. slap applies the window and
-  -- remarks. The 'ActionIndex' names the window's position in the
-  -- patch's window stream.
+  -- | A VCD_TARGET window declares a zero-length source segment — a window naming a copy source it cannot read a byte from.
+  -- Legal, and the only shape a first-window VCD_TARGET can take, there being no earlier output to point at; pointless everywhere else.
+  -- slap applies the window and remarks.
   | VCDIFFEmptyTargetWindowSegment ActionIndex
 
   -- | An xdelta3 patch declares an application header of zero bytes: the VCD_APPHEADER bit set over a length varint of zero.
@@ -1074,22 +726,15 @@ data SlapAdvisory
   -- The 'Length' is the requested window size; the 'MaxLength' is that build's ceiling.
   | XDelta3WindowSizePastReferenceDecoder Length MaxLength
 
-  -- | A patch's custom code table holds one or more entries that are
-  -- NOOP followed by NOOP — an entry that does nothing at all. The
-  -- shape breaks no rule (RFC 3284 §5.4 lets a NOOP fill either half
-  -- of an entry, so both halves NOOP is legal), and the default table
-  -- has no such entry, so seeing one means the patch shipped a table
-  -- deliberately shaped this way. slap builds the table and applies the
-  -- patch; it just remarks that the entries exist. The 'Int' is how
-  -- many of the 256 entries are NOOP+NOOP.
+  -- | A custom code table holds entries that are NOOP followed by NOOP — entries that do nothing at all.
+  -- Legal (RFC 3284 §5.4 lets NOOP fill either half), and absent from the default table,
+  -- so the patch shipped a table deliberately shaped this way. slap builds the table, applies the patch, and remarks.
+  -- The 'Int' is how many of the 256 entries are NOOP+NOOP.
   | VCDIFFCustomTableNoopNoopEntries !Int
 
-  -- | Bytes at the end of an APS-N64 patch too few to begin another
-  -- record (a record header is five bytes: a four-byte offset and a
-  -- length byte). The reference applier ends its walk the same way in
-  -- most cases — its next record read returns short and the loop
-  -- stops — but silently; slap stops and says so. The 'Length' is the
-  -- fragment's byte count (one to four).
+  -- | Bytes at the end of an APS-N64 patch too few to begin another record (a record header is five bytes).
+  -- The reference applier's next record read returns short and its loop stops, silently; slap stops and says so.
+  -- The 'Length' is the fragment's byte count (one to four).
   | APSN64TrailingFragment !Length
 
   -- | Bytes at the end of a BSDiff control stream too few to form another
@@ -1100,59 +745,31 @@ data SlapAdvisory
   -- The 'Length' is the fragment's byte count (1 to 23).
   | BSDiffTrailingControlFragment !Length
 
-  -- | An EBP patch's metadata trailer existed (the post-@"EOF"@
-  -- byte stream began with @{@, the shape signature of an EBPatcher
-  -- JSON blob) but was not valid JSON, or its root was not an
-  -- object. The underlying IPS records are unaffected: apply and
-  -- convert paths proceed normally, only with empty metadata. The
-  -- user can supply @--title@, @--author@, @--description@ on a
-  -- convert-to-EBP to populate the target's metadata fields. The
-  -- 'FormatLabel' is always 'LabelEBP' at construction; the type
-  -- carries it for consistency with the rest of the advisory
-  -- family.
+  -- | An EBP patch's post-@"EOF"@ trailer began with @{@ — the shape signature of an EBPatcher JSON blob — but was not valid JSON,
+  -- or its root was not an object. The IPS records underneath are unaffected; apply and convert proceed with empty metadata.
   | EBPMetadataMalformed FormatLabel
 
-  -- | A BPS patch carries embedded metadata that isn't the spec-
-  -- recommended UTF-8 XML. The BPS spec recommends UTF-8 XML in this
-  -- field but explicitly permits "literally anything", so this is a
-  -- spec-valid oddity, not an error: slap carries the blob byte-exact
-  -- on every payload path and only remarks here, because a populated
-  -- metadata field is rare and a non-conforming one rarer still. The
-  -- 'BPSMetadataDivergence' names how it diverged; the 'Length' is the
-  -- blob's byte count. The 'FormatLabel' is always 'LabelBPS', carried
-  -- for consistency with the rest of the advisory family.
+  -- | A BPS patch's embedded metadata is not the spec-recommended UTF-8 XML, which the spec itself permits ("literally anything" is legal),
+  -- so this is a spec-valid oddity, not an error: slap carries the blob byte-exact on every payload path and only remarks.
+  -- The 'BPSMetadataDivergence' names how it diverged; the 'Length' is the blob's byte count.
   | BPSMetadataNonConformant FormatLabel BPSMetadataDivergence Length
 
-  -- | A 'StandardIPS' patch's post-EOF truncation marker declared a
-  -- target size smaller than the natural size, and slap honored it.
-  -- Surfaces the truncation as a deliberate diagnostic even when no
-  -- records cross the boundary. Pairs with 'IPSRecordsClippedByMarker'
-  -- when records were also clipped.
+  -- | A 'StandardIPS' post-EOF truncation marker declared a target size below the natural size, and slap honored it.
+  -- Surfaces the truncation even when no records cross the boundary; 'IPSRecordsClippedByMarker' fires when they do.
   | IPSTruncationMarkerHonored FormatLabel DeclaredTargetSize NaturalTargetSize
 
-  -- | One or more records' write regions extended past the
-  -- truncation boundary that slap honored, and were clipped to fit.
-  -- Aggregate count in the style of 'OverlappingRecords'; per-record
-  -- detail omitted to keep a pathological patch from drowning
-  -- everything else. Only fires when at least one record crossed the
-  -- boundary; the 'ActionIndex' names the first such record in wire
-  -- order.
+  -- | Records' write regions extended past the honored truncation boundary and were clipped to fit.
+  -- An aggregate count in the style of 'OverlappingRecords'; the 'ActionIndex' names the first crossing record in wire order.
   | IPSRecordsClippedByMarker FormatLabel ClippedRecordCount ActionIndex MarkerOvershootBytes
 
-  -- | A 'StandardIPS' patch's truncation marker declared a target
-  -- size larger than the natural size, which would grow the output
-  -- via zero-fill. Per the docs/ips/questions.md policy, slap ignores
-  -- the marker for sizing and emits this warning so the user learns
-  -- the patch declared something slap chose not to act on.
+  -- | A 'StandardIPS' truncation marker declared a target size above the natural size, which would grow the output via zero-fill;
+  -- per the docs/ips/questions.md ruling, slap ignores the marker for sizing and says so.
   | IPSTruncationMarkerIgnored FormatLabel DeclaredTargetSize NaturalTargetSize
 
-  -- | An xdelta 1.1.x patch had bit 0 (@FLAG_NO_VERIFY@) of the header's flags word set.
-  -- But at least one of its stored MD5 slots (target MD5 in the control structure,
-  -- or any source MD5 in the source-info records) did not equal 'Slap.XDelta1.Types.xdelta1EmptyInputMD5Sentinel'.
-  -- Canonical xdelta writes that empty-input sentinel into every slot under @--noverify@;
-  -- divergent bytes mean a non-canonical producer or transit corruption that left @FLAG_NO_VERIFY@ intact. Slap's behavior is unaffected —
-  -- the flag is honored regardless of slot contents, 'VerificationOptedOutByCreator' fires as usual. The curio is purely informational,
-  -- naming the structural oddity so a reader wondering about the patch's provenance learns it wasn't produced by canonical xdelta.
+  -- | An xdelta 1.1.x patch has @FLAG_NO_VERIFY@ set, but a stored MD5 slot does not hold 'Slap.XDelta1.Types.xdelta1EmptyInputMD5Sentinel'.
+  -- Canonical xdelta writes that sentinel into every slot under @--noverify@,
+  -- so divergent bytes mean a non-canonical producer or transit corruption that left the flag intact.
+  -- The flag is honored regardless; the note is purely informational.
   | XDelta1NoVerifyWithDivergentSentinel
 
   -- | A source-less patch (@[data]@ or @[]@) was applied: its output is fully determined by the patch, so the handed input was never read.
@@ -1160,18 +777,9 @@ data SlapAdvisory
   -- The 'XDelta1SourcelessShape' names which shape it is.
   | XDelta1InputFileNotConsulted !XDelta1SourcelessShape
 
-  -- | An xdelta 1.1.x patch's data-record carried a @name@ field
-  -- that wasn't the canonical literal 'xdelta1DataRecordName'
-  -- (@"(patch data)"@). The data-record names the patch's inline
-  -- literal-bytes source, not an externally-named file, so the
-  -- field is purely a display label — canonical xdelta-1.x consults
-  -- it only in @xdelta info@-style displays and never at apply
-  -- time. Slap honors the wire bytes (no verification, no apply
-  -- refusal) and surfaces this as an informational note (routed
-  -- through 'patchSourceAdvisories' at the porcelain boundary, not
-  -- through the warning lane) so the reader learns the patch's
-  -- data-record carries a non-canonical label. The 'ByteString' is
-  -- what was read.
+  -- | An xdelta 1.1.x data-record's @name@ field is not the canonical @"(patch data)"@ ('xdelta1DataRecordName').
+  -- The data-record names the patch's inline literal bytes, not an external file, so the field is purely a display label;
+  -- slap honors the wire bytes and notes the non-canonical producer. The 'ByteString' is what was read.
   | XDelta1DataRecordNameDiverges !ByteString
 
   -- Conversion: dropped fields
@@ -1192,36 +800,17 @@ data SlapAdvisory
   -- Encoding
   | FieldTruncated FormatLabel FieldName OriginalLength TruncatedLength
 
-  -- | A text field's wire bytes contained one or more byte sequences
-  -- that the declared encoding couldn't decode; slap substituted
-  -- 'U+FFFD' for each and continued parsing. Fires from format parse
-  -- paths that decode locale-encoded fields (PPF1\/2\/3\/4 description
-  -- and the PPF2\/PPF3 FILE_ID.DIZ trailer body). The count is the
-  -- number of byte sequences that were substituted; the position
-  -- detail in 'Slap.Text.LossNotice' is folded down at the advisory
-  -- boundary because the field-level "how many" is what the user
-  -- needs at this layer.
+  -- | A text field's wire bytes held sequences the declared encoding cannot decode;
+  -- slap substituted U+FFFD for each and parsed on. The 'SubstitutionCount' is how many.
   | FieldDecodedSubstituted FormatLabel FieldName SubstitutionCount
 
-  -- | A text field's source 'Text' contained one or more codepoints
-  -- that the target encoding couldn't represent; slap substituted
-  -- the encoding's replacement character (U+FFFD where representable,
-  -- @\'?\'@ otherwise) for each and continued encoding. Fires from
-  -- format create paths that encode locale-targeted fields. Sibling
-  -- of 'FieldDecodedSubstituted' for the symmetric encode-side
-  -- substitution event.
+  -- | The encode-side sibling of 'FieldDecodedSubstituted': source codepoints the target encoding cannot represent,
+  -- each replaced with the encoding's replacement character (U+FFFD where representable, @\'?\'@ otherwise).
   | FieldEncodedSubstituted FormatLabel FieldName SubstitutionCount
 
-  -- | A fixed-width text field carried content past a NUL terminator:
-  -- after the trailing space-and-NUL padding was trimmed, bytes that
-  -- decode to real text still followed the field's first @0x00@. slap
-  -- keeps the content up to that terminator and sets the tail aside,
-  -- re-padding the field canonically on any re-encode; the advisory
-  -- marks the field as structurally odd so the reader knows content was
-  -- dropped. The 'Length' is how many characters past the terminator
-  -- were set aside. (A field merely padded with the "wrong" byte —
-  -- zeros where the format spaces — leaves nothing past a NUL and is
-  -- not flagged.)
+  -- | A fixed-width text field carried real text past its first NUL terminator. slap keeps the content up to the terminator,
+  -- sets the tail aside, and re-pads canonically on any re-encode; the 'Length' is how many characters were set aside.
+  -- (A field merely padded with the "wrong" byte — zeros where the format spaces — leaves nothing past a NUL and is not flagged.)
   | FieldContentPastEnd FormatLabel FieldName Length
 
   -- Platform conversion
@@ -1281,23 +870,17 @@ data SlapAdvisory
 
   -- Format-specific
   --
-  -- | A NINJA1 textual subformat was converted to its binary peer at
-  -- parse time; the wire bytes the user reads will still describe
-  -- the same patch but the in-memory shape is the binary one.
+  -- | A NINJA1 textual subformat was converted to its binary peer at parse time;
+  -- the wire bytes still describe the same patch, but the in-memory shape is the binary one.
   | SubformatConverted NINJA1SubformatConversion
 
   -- Verification: source/target integrity check mismatches
   --
-  -- These fire from app/Main.hs's verification helpers. The four
-  -- "downgraded fatal" kinds (CRC, hash, Adler32, file-size) emit
-  -- as warnings when the user passed --no-verify; the same mismatch
-  -- promotes to 'VerificationFatal' under EnforceVerification. The
-  -- four "advisory" kinds always emit as warnings under either
-  -- policy; they have no fatal counterpart because the underlying
-  -- check is advisory by design (block CRC16, PPF validation block,
-  -- file-size advisory, source-bytes byte-range comparison), and
-  -- --no-verify does not silence them — the flag's contract is the
-  -- fatal-vs-warning axis for fatal-class checks only.
+  -- The first four kinds are fatal-class: under 'EnforceVerification' they promote to 'VerificationFatal',
+  -- and @--no-verify@ demotes them to warnings.
+  -- The other four are advisory by design (block CRC16, PPF validation block, file-size advisory, source-bytes comparison)
+  -- and always emit as warnings — @--no-verify@ does not silence them;
+  -- the flag's contract is the fatal-vs-warning axis for the fatal-class checks only.
   | VerificationCRCMismatch       VerificationSide ExpectedCRC32 ActualCRC32
   | VerificationHashMismatch      VerificationSide HashAlgorithm
   | VerificationAdler32Mismatch   Offset ExpectedAdler32 ActualAdler32
@@ -1307,17 +890,9 @@ data SlapAdvisory
   | VerificationFileSizeAdvisory  ExpectedSize ActualSize
   | VerificationSourceBytesMismatch ByteCheckLabel Offset
 
-  -- | The patch declares no verification data at the format level
-  -- (e.g. xdelta1's @FLAG_NO_VERIFY@ header bit, set by canonical's
-  -- @--noverify@; PPF3's absent validation block, set by slap's
-  -- create-side @--omit-verification@). Slap honors the declaration by
-  -- skipping verification entirely; the warning
-  -- reports that slap cannot attest the output matches the creator's
-  -- intent. Family sibling of 'VerificationCRCMismatch' and the
-  -- other verification warnings: same category from the user's seat
-  -- ("a thing about whether the integrity check worked"), different
-  -- mechanism (the patch said not to check, vs. the check ran and
-  -- failed).
+  -- | The patch declares no verification data at the format level — xdelta1's @FLAG_NO_VERIFY@ bit, PPF3's absent validation block.
+  -- slap honors the declaration and skips verification;
+  -- the warning reports that nothing attests the output matches the creator's intent.
   | VerificationOptedOutByCreator !FormatLabel
 
   deriving (Show, Eq)
@@ -1344,26 +919,15 @@ data Parsed value = Parsed !value ![SlapAdvisory]
 -- Outcome
 ----------------------------------------------------------------------------
 
--- | The value and advisory channels of an apply or undo operation.
--- Mirrors 'CreateResult' on the create side and 'Parsed' on the parse
--- side — every value-producing operation in slap pairs its value with
--- an advisory channel. The polymorphic parameter lets a single envelope
--- serve both apply (carrying 'OutputFileContents') and undo (carrying
--- 'InputFileContents') without duplicating the shape.
---
--- Wrap sites that don't emit advisories use 'noAdvisories' to lift
--- their bare value into the envelope; sites that do construct
--- 'Outcome' directly with the advisory list.
+-- | The value and advisory channels of an apply or undo operation — the apply-side companion of 'CreateResult' and 'Parsed'.
+-- The polymorphic parameter lets one envelope serve both apply (carrying 'OutputFileContents') and undo (carrying 'InputFileContents').
 data Outcome a = Outcome
   { outcomeValue      :: !a
   , outcomeAdvisories :: ![SlapAdvisory]
   }
   deriving (Eq, Show, Functor)
 
--- | Wrap an advisory-free value in the 'Outcome' envelope. Every
--- wrap site at the apply/undo boundary uses this so the @[]@ list
--- has exactly one home; specific apply or undo paths that actually
--- emit advisories will construct 'Outcome' directly.
+-- | Wrap an advisory-free value in the 'Outcome' envelope.
 noAdvisories :: a -> Outcome a
 noAdvisories value = Outcome value []
 
@@ -1371,26 +935,18 @@ noAdvisories value = Outcome value []
 -- OverlapCount — payload of the OverlappingRecords warning
 ----------------------------------------------------------------------------
 
--- | The number of overlapping record pairs detected during an
--- IPS-family parse. Carried by the 'OverlappingRecords' warning so
--- the reader sees both that the patch contains overlapping writes
--- and how many such intersections were found, without enumerating
--- every pair. A value of zero is structurally impossible:
--- the warning is only emitted when at least one pair was found.
+-- | The number of overlapping record pairs an IPS-family parse found.
+-- Never zero: 'OverlappingRecords' only fires when at least one pair exists.
 newtype OverlapCount = OverlapCount { unOverlapCount :: Int }
   deriving (Eq, Ord, Show)
 
--- | The number of IPS records clipped to fit a honored truncation
--- marker. Value-zero is structurally impossible: the warning is
--- only emitted when at least one record crossed the boundary.
+-- | The number of IPS records clipped to fit a honored truncation marker.
+-- Never zero: 'IPSRecordsClippedByMarker' only fires when at least one record crossed the boundary.
 newtype ClippedRecordCount = ClippedRecordCount { unClippedRecordCount :: Int }
   deriving (Eq, Ord, Show)
 
--- | The number of UPS blocks whose write region extends past the
--- declared target file size. Value-zero is structurally impossible:
--- the warning is only emitted when at least one block was OOB.
--- Peer to 'ClippedRecordCount' — both count records-or-blocks that
--- a format's apply path skipped under a defined policy.
+-- | The number of UPS blocks whose write region extends past the declared target file size.
+-- Never zero: 'ApplyOOBBlocksSkipped' only fires when at least one block was out of bounds.
 newtype OOBBlockCount = OOBBlockCount { unOOBBlockCount :: Int }
   deriving (Eq, Ord, Show)
 
@@ -1399,28 +955,12 @@ newtype OOBBlockCount = OOBBlockCount { unOOBBlockCount :: Int }
 newtype UndoRecordCount = UndoRecordCount { unUndoRecordCount :: Int }
   deriving (Eq, Ord, Show)
 
--- | The total byte length lost across all records clipped by an
--- honored IPS truncation marker. Sums the per-record overshoots
--- (each record's "bytes beyond effective target"), so a single
--- record clipped by 100 bytes and ten records each clipped by 10
--- both report 100. Carried by 'IPSRecordsClippedByMarker' so the
--- user sees not just "records were clipped" but "this much was
--- thrown away." Peer to 'OOBOvershootBytes' — both sum per-event
--- overshoots under a format-specific apply-time policy.
---
--- 'Semigroup' and 'Monoid' are derived through to 'Length' so walk
--- sites accumulating overshoots can use '<>' and 'mempty' directly.
+-- | The total byte length lost across all records clipped by an honored IPS truncation marker — per-record overshoots, summed.
+-- 'Semigroup' and 'Monoid' pass through to 'Length' so accumulating walks can use '<>' and 'mempty'.
 newtype MarkerOvershootBytes = MarkerOvershootBytes { unMarkerOvershootBytes :: Length }
   deriving (Eq, Ord, Show, Semigroup, Monoid)
 
--- | The total byte length lost across all UPS blocks whose write
--- region extended past the declared target file size. Sums the
--- per-block overshoots, so a single block clipped by 100 bytes and
--- ten blocks each clipped by 10 both report 100. Carried by
--- 'ApplyOOBBlocksSkipped'. Peer to 'MarkerOvershootBytes'.
---
--- 'Semigroup' and 'Monoid' are derived through to 'Length' so the
--- 'detectOOBBlocks' walk can use '<>' and 'mempty' directly.
+-- | The UPS counterpart of 'MarkerOvershootBytes': the total byte length lost across blocks that extended past the declared target size.
 newtype OOBOvershootBytes = OOBOvershootBytes { unOOBOvershootBytes :: Length }
   deriving (Eq, Ord, Show, Semigroup, Monoid)
 
@@ -1440,11 +980,7 @@ data ApplyDirection
   | Reverse  -- ^ The inverse operation: 'undoUPS', 'undoBPS', etc.
   deriving (Eq, Show)
 
--- | The verb describing operations of each direction, suitable for
--- inclusion in rendered advisory text. Returns @"apply"@ and @"undo"@
--- (rather than @"forward"@ and @"reverse"@) because those are the
--- words slap uses elsewhere in user-facing text, including the CLI
--- subcommands that drive each direction.
+-- | The user-facing verb for each direction: @"apply"@ and @"undo"@, the CLI's own words, not "forward" and "reverse".
 directionVerb :: ApplyDirection -> Text
 directionVerb Forward = "apply"
 directionVerb Reverse = "undo"
@@ -1453,12 +989,8 @@ directionVerb Reverse = "undo"
 -- Verification: shared payload types
 ----------------------------------------------------------------------------
 
--- | Which side of the apply (input ROM or output ROM) a verification
--- check fired against. Carried by the verification 'SlapAdvisory'
--- constructors so the renderer can name "input" vs "output" without
--- callers passing strings. The constructor names retain slap's older
--- source\/target vocabulary; the rendered labels track the CLI's
--- input\/output vocabulary.
+-- | Which side of the apply a verification check fired against.
+-- The constructors keep slap's source\/target vocabulary; the rendered labels track the CLI's input\/output.
 data VerificationSide = SourceSide | TargetSide
   deriving (Show, Eq)
 
@@ -1466,9 +998,6 @@ verificationSideLabel :: VerificationSide -> Text
 verificationSideLabel SourceSide = "input"
 verificationSideLabel TargetSide = "output"
 
--- | Which hash algorithm a verification check used. Carried by
--- 'VerificationHashMismatch' so the renderer can name "MD5" vs "SHA1"
--- without callers passing strings.
 data HashAlgorithm = MD5 | SHA1
   deriving (Show, Eq)
 
@@ -1476,20 +1005,15 @@ hashAlgorithmLabel :: HashAlgorithm -> Text
 hashAlgorithmLabel MD5  = "MD5"
 hashAlgorithmLabel SHA1 = "SHA1"
 
--- | An Adler32 value that a patch declared or stored. Peer to
--- 'ExpectedCRC32'; carried by 'VerificationAdler32Mismatch'.
+-- | An Adler32 value a patch declared or stored — 'ExpectedCRC32''s peer.
 newtype ExpectedAdler32 = ExpectedAdler32 { unExpectedAdler32 :: Adler32 }
   deriving (Show, Eq)
 
--- | An Adler32 value that was computed from the actual data. Peer to
--- 'ActualCRC32'; carried by 'VerificationAdler32Mismatch'.
+-- | An Adler32 value computed from the actual data — 'ActualCRC32''s peer.
 newtype ActualAdler32 = ActualAdler32 { unActualAdler32 :: Adler32 }
   deriving (Show, Eq)
 
--- | The label of an advisory byte-range check ("N64 cart ID",
--- "N64 country", "N64 CRC", \[future\] ...). Carried by
--- 'VerificationSourceBytesMismatch' so the renderer names the check
--- without callers passing bare strings.
+-- | The label of an advisory byte-range check ("N64 cart ID", "N64 country", "N64 CRC"), for 'VerificationSourceBytesMismatch'.
 newtype ByteCheckLabel = ByteCheckLabel { unByteCheckLabel :: Text }
   deriving (Show, Eq)
 
@@ -1580,8 +1104,6 @@ renderApplyError (ApplyAbsoluteWritePastTarget actionIndex writeStart (Requested
 -- renderByteParserError
 ----------------------------------------------------------------------------
 
--- | Human-readable name for the primitive that surfaced an error.
--- Renderer-private; no consumer dispatches on the string form.
 byteParserOperationLabel :: ByteParserOperation -> Text
 byteParserOperationLabel GetBytesOperation        = "getBytes"
 byteParserOperationLabel SkipOperation            = "skip"
@@ -1661,8 +1183,6 @@ renderByteParserError (ByteParserUnexpectedDoPatternFailure message) =
 -- renderSlapError
 ----------------------------------------------------------------------------
 
--- | Render an archive-unwrap failure: name the archive and its format,
--- and give the corrective action that fits each failure shape.
 renderUnwrapError :: FilePath -> ArchiveFormat -> UnwrapError -> Text
 renderUnwrapError path format NoToolForArchive =
   archiveFormatName format <> " archive " <> pathText path
@@ -1687,8 +1207,6 @@ renderUnwrapError path format (ArchiveUnreadable (UnreadableReason reason)) =
   "could not read the " <> archiveFormatName format <> " archive "
     <> pathText path <> ": " <> reason
 
--- | The tools that could open a format, as a grammatical alternative:
--- a lone tool stands alone, two are joined with "or", and any longer list gets an Oxford "a, b, or c".
 renderToolAlternatives :: [ToolName] -> Text
 renderToolAlternatives tools = case map unToolName tools of
   []                      -> "a supported tool"
@@ -1864,10 +1382,7 @@ renderSlapError (UnsupportedVCDIFFShape violation) =
       "nested custom code tables are not allowed (RFC 3284 §7c)"
 
 renderSlapError (VCDIFFCustomCodeTableDecodeFailed innerError) =
-  -- No format-label prefix of its own: the inner error already carries
-  -- one (every parse/apply/deserialize failure of the inner delta is
-  -- VCDIFF-labeled), so this leads with the context phrase and lets the
-  -- precise inner failure speak for itself.
+  -- No format-label prefix of its own: the inner error already carries one.
   "while decoding the custom code table: " <> renderSlapError innerError
 
 renderSlapError (VCDIFFRFCFeatureWithXDelta3Feature rfcFeature xdelta3Feature) =
@@ -2180,7 +1695,6 @@ renderSlapError (VerificationFatal advisory) =
 ----------------------------------------------------------------------------
 
 -- | The compression algorithm in flight at a given failure site.
--- The exhaustive match is the seam that fires '-Wincomplete-patterns' when a new 'DecompressionFailure' constructor lands.
 decompressionAlgorithm :: DecompressionFailure -> CompressionAlgorithm
 decompressionAlgorithm Yay0WrapperFailed{}                 = Yay0
 decompressionAlgorithm NINJA1Failed{}                      = Zlib
@@ -2188,9 +1702,6 @@ decompressionAlgorithm XDelta1Failed{}                     = Gzip
 decompressionAlgorithm BSDiffSectionFailed{}               = Bzip2
 decompressionAlgorithm (VCDIFFSectionFailed _ algorithm _) = algorithm
 
--- | Read by the 'VCDIFFSectionFailed' renderer arm and the secondary-stream malformation renders, where the algorithm genuinely varies;
--- the four fixed-algorithm arms render their algorithm name as a literal in their site description instead.
--- Exhaustive over 'CompressionAlgorithm' so that adding a new compression algorithm fires '-Wincomplete-patterns' here.
 compressionAlgorithmName :: CompressionAlgorithm -> Text
 compressionAlgorithmName Zlib  = "zlib"
 compressionAlgorithmName Gzip  = "gzip"
@@ -2205,10 +1716,8 @@ bsDiffSectionName BSDiffControl = "control"
 bsDiffSectionName BSDiffDiff    = "diff"
 bsDiffSectionName BSDiffExtra   = "extra"
 
--- | How a compressor's stream relates to the payloads that carry it:
--- one continuous stream whose carried pieces are slices of it ('GatheredAcrossSections'),
--- or a self-contained stream per piece ('EachSectionItsOwn'). A total projection over 'CompressionAlgorithm',
--- so a new algorithm must declare its shape before anything can speak about its streams — there is no wildcard to inherit one silently.
+-- | How a compressor's stream relates to the sections that carry it: one continuous stream whose sections are slices of it
+-- ('GatheredAcrossSections'), or a self-contained stream per section ('EachSectionItsOwn').
 data SecondaryStreamGranularity
   = GatheredAcrossSections
   | EachSectionItsOwn
@@ -2222,9 +1731,8 @@ secondaryStreamGranularity DJW   = EachSectionItsOwn
 secondaryStreamGranularity LZMA  = GatheredAcrossSections
 secondaryStreamGranularity FGK   = GatheredAcrossSections
 
--- | The possessive subject of a secondary-stream message: which sections own the stream being spoken of.
--- The grammatical number follows 'secondaryStreamGranularity', because it is a fact about the stream's shape:
--- a gathered stream belongs to all sections of that kind, a per-section stream to just one.
+-- | The possessive subject of a secondary-stream message. The grammatical number follows 'secondaryStreamGranularity':
+-- a gathered stream belongs to all sections of its kind, a per-section stream to just one.
 secondaryStreamPossessive :: VCDIFFSection -> CompressionAlgorithm -> Text
 secondaryStreamPossessive section algorithm =
   vcdiffSectionName section <> ownerSuffix <> " "
@@ -2234,13 +1742,6 @@ secondaryStreamPossessive section algorithm =
       GatheredAcrossSections -> " sections'"
       EachSectionItsOwn      -> " section's"
 
--- | Render a decompression failure as a user-facing line.  The four
--- fixed-algorithm arms supply their site description as a literal —
--- NINJA1's description contains the word "zlib" because NINJA1 uses
--- zlib, and that fact is restated at the renderer rather than
--- threaded through the 'compressionAlgorithmName' indirection.  The
--- VCDIFF arm reads the name off the value, because there the
--- algorithm genuinely varies.
 renderDecompressionFailure :: DecompressionFailure -> Text
 renderDecompressionFailure failure = case failure of
   Yay0WrapperFailed       cause -> render "Yay0 wrapper"        cause
@@ -2299,9 +1800,7 @@ renderSlapAdvisory (PPFApplyGrewPastSource label (FileSize sourceSize) (Length o
   <> renderHexAsText sourceSize <> " bytes, output extends 0x"
   <> renderHexAsText overflow <> " bytes further)"
   <> case label of
-       -- PPF2 permits growth (its size check is advisory), so this is
-       -- purely informational. PPF1/PPF3 are intended for same-size
-       -- patches, so growth there is worth flagging as unusual.
+       -- PPF2 tolerates growth, so there the line above says everything; the other labels earn the extra remark.
        LabelPPF2 -> ""
        _         -> "; growth is unusual for this format, which is"
                     <> " intended for same-size patching"
@@ -2615,18 +2114,12 @@ renderSlapAdvisory (VerificationOptedOutByCreator label) =
 -- Helpers
 ----------------------------------------------------------------------------
 
--- | Choose the singular or plural label for a count.
--- Each call site supplies the leading space (or absence thereof) inside the singular and plural strings,
--- so the helper composes uniformly into the surrounding sentence
--- whether the number is followed by @" record"@ / @" records"@ or @" byte"@ / @" bytes"@.
--- Used by every 'renderSlapAdvisory' equation whose prose carries a count.
+-- | Choose the singular or plural label for a count. Call sites carry any leading space inside the two label strings.
 plural :: Int -> Text -> Text -> Text
 plural n singular pluralForm = if n == 1 then singular else pluralForm
 
 -- | Render the reason a (source, target) pair was refused.
--- Takes the 'FormatLabel' so an arm can vary its wording per format where the real explanation differs;
--- arms that don't need to differentiate ignore the label.
--- Wording is deliberately plain here and refined per case as the need arises.
+-- The 'FormatLabel' lets an arm vary its wording per format; arms with one wording ignore it.
 renderUnencodeabilityReason :: FormatLabel -> UnencodeabilityReason -> Text
 renderUnencodeabilityReason _label UPSSourceTailNonZero =
   "the input has non-zero bytes past the end of the output;"
@@ -2651,17 +2144,11 @@ renderUnencodeabilityReason _label
   <> " bytes — its field caps at 0x"
   <> renderHexAsText (unOffset markerMaximum)
 
--- | Render a trailer marker's raw bytes for inclusion in an error
--- message. The 'StandardIPS' and 'IPS32' markers are ASCII-printable
--- (@"EOF"@, @"EEOF"@), so the common case is the literal string. For
--- a hypothetical future trailer marker that contained any non-
--- printable byte, the renderer falls back to a hex dump rather than
--- emitting raw control characters into the error stream.
+-- | The markers in the wild are ASCII-printable (@"EOF"@, @"EEOF"@), so the common case is the literal string;
+-- a marker with a non-printable byte falls back to hex rather than putting control characters in the error stream.
 renderTrailerMarkerName :: ByteString -> Text
 renderTrailerMarkerName = renderPrintableASCIIOrHex
 
--- | Render the apply-output-field-drop refusal body.
--- A single drop produces one clean sentence; multiple drops are bulleted, each field on its own line so nothing gets lost.
 renderApplyOutputDrops :: FormatLabel -> [(PatchField, [FormatLabel])] -> Text
 renderApplyOutputDrops target [singleDrop] = renderOneDrop target singleDrop
 renderApplyOutputDrops target manyDrops =
@@ -2695,11 +2182,7 @@ commaList items  = Text.concat (map (<> ", ") (init items)) <> "or " <> last ite
 -- Restructured payload types
 ----------------------------------------------------------------------------
 
--- | The semantic unit a patch enumerates. Used by the 'EmptyPatch'
--- advisory so the renderer can name the right noun for the format
--- ("records", "blocks", "windows", ...) without callers passing
--- strings. Each constructor's 'emptyUnitLabel' gives the noun used
--- in the rendered text.
+-- | The semantic unit a patch enumerates, so 'EmptyPatch' can name the right noun ("records", "blocks", "windows", ...).
 data EmptyUnit
   = EmptyRecords
   | EmptyActions
@@ -2719,11 +2202,7 @@ emptyUnitLabel EmptyCommands     = "commands"
 emptyUnitLabel EmptyInstructions = "instructions"
 emptyUnitLabel EmptyEntries      = "entries"
 
--- | The xdelta1 versions whose magic slap recognizes but whose body
--- shape it does not parse. The constructor's stable property is
--- "slap does not implement this version" rather than "older"; if
--- support for any of them lands later, that constructor graduates
--- to its own parser and leaves this sum.
+-- | The xdelta1 versions whose magic slap recognizes but whose body shape it does not parse.
 data XDelta1KnownUnsupportedVersion
   = XDelta1_1_0_4
   | XDelta1_1_0
@@ -2767,52 +2246,28 @@ data VCDIFFShapeViolation
   = VCDIFFNestedCustomCodeTable
   deriving (Eq, Show)
 
--- | The structural failures slap raises when decoding a VCDIFF
--- custom code table, validated outside the byte parser. All but the
--- last are decidable from the 1536-byte image alone and surface from
--- 'Slap.VCDIFF.CodeTable.deserializeCodeTable', which receives a
--- bytestring slice and returns 'Either SlapError ...' directly. The
--- last — 'VCDIFFCodeTableCopyModeOutOfRange' — depends on the table's
--- declared cache sizes, so it is checked at table-build in
--- 'Slap.VCDIFF.Parse', which holds them.
+-- | The structural failures of decoding a VCDIFF custom code table, validated outside the byte parser.
+-- All but the last are decidable from the 1536-byte image alone and surface from 'Slap.VCDIFF.CodeTable.deserializeCodeTable';
+-- 'VCDIFFCodeTableCopyModeOutOfRange' depends on the declared cache sizes, so it is checked at table-build in 'Slap.VCDIFF.Parse'.
 data VCDIFFCodeTableMalformation
-  -- | The serialized code-table bytes did not have the spec-
-  -- mandated 1536-byte width (six 256-entry slices: types1,
-  -- types2, sizes1, sizes2, modes1, modes2). The 'ActualLength'
-  -- carries the observed length.
+  -- | The serialized code-table bytes are not the spec-mandated 1536-byte width (six 256-entry slices).
   = VCDIFFCodeTableWrongLength !ActualLength
-  -- | A byte in the types1 or types2 slice did not decode to a
-  -- valid instruction type tag (Noop=0, Add=1, Run=2, Copy=3).
-  -- The 'Word8' is the offending byte value.
+  -- | A byte in a types slice outside the valid instruction type tags (Noop=0, Add=1, Run=2, Copy=3).
   | VCDIFFCodeTableInvalidInstructionType !Word8
-  -- | The custom-code-table data section was shorter than the
-  -- 2-byte header (near-cache size byte, same-cache size byte)
-  -- it must begin with.
+  -- | The custom-code-table data section is shorter than the 2-byte header (near-cache size, same-cache size) it must begin with.
   | VCDIFFCodeTableHeaderTooShort
-  -- | A size or mode byte was nonzero for a template type that
-  -- carries no such field — a size on a NOOP, a mode on a NOOP, ADD,
-  -- or RUN. The grammar gives those bytes exactly one well-formed
-  -- value (zero, matching the default-table image a custom image is
-  -- delta-encoded against), so a nonzero value is not an alternative
-  -- spelling of anything: it is evidence the table bytes are damaged,
-  -- and with no checksum in this arc the table check is the tripwire
-  -- (docs/vcdiff/rfc-vcdiff/questions.md, "invalid decoded-table
-  -- entries"). The 'Word8' is the offending byte.
+  -- | A size or mode byte was nonzero for a template type that carries no such field — a size on a NOOP; a mode on a NOOP, ADD, or RUN.
+  -- The grammar gives those bytes exactly one well-formed value (zero, matching the default-table image a custom image is delta-encoded against),
+  -- so a nonzero value is not an alternative spelling of anything: it is evidence the table bytes are damaged,
+  -- and with no checksum in this arc the table check is the tripwire (docs/vcdiff/rfc-vcdiff/questions.md, "invalid decoded-table entries").
   | VCDIFFCodeTableUnusedFieldSet !VCDIFFCodeTableField !Word8
-  -- | A COPY template named an address mode the table's declared
-  -- caches do not reach: a mode at or above @2 + s_near + s_same@,
-  -- the band 'Slap.VCDIFF.Parse.classifyAddressMode' admits. The bound
-  -- depends on the cache sizes the custom table declares, so it cannot
-  -- be judged from the 1536-byte image alone — it is checked once at
-  -- table-build, used or not, since a mode no window could decode is
-  -- damage evidence and, with no checksum in this arc, the table check
-  -- is the tripwire (docs/vcdiff/rfc-vcdiff/questions.md, "invalid
-  -- decoded-table entries").
+  -- | A COPY template named an address mode the declared caches do not reach: at or above @2 + s_near + s_same@,
+  -- the band 'Slap.VCDIFF.Parse.classifyAddressMode' admits. Checked once at table-build, used or not —
+  -- damage evidence on the same reasoning as 'VCDIFFCodeTableUnusedFieldSet'.
   | VCDIFFCodeTableCopyModeOutOfRange !Word8 !Word8
   deriving (Eq, Show)
 
--- | Which per-template byte of the serialized code-table image a
--- malformation names: the size byte or the mode byte.
+-- | Which per-template byte of the serialized code-table image a malformation names: the size byte or the mode byte.
 data VCDIFFCodeTableField = CodeTableSizeField | CodeTableModeField
   deriving (Eq, Show)
 
@@ -2820,63 +2275,40 @@ codeTableFieldName :: VCDIFFCodeTableField -> Text
 codeTableFieldName CodeTableSizeField = "size"
 codeTableFieldName CodeTableModeField = "mode"
 
--- | Which RFC-3284-exclusive feature a patch carried — the two
--- features the standard defines that xdelta3 refuses. Carried by
--- 'VCDIFFRFCFeatureWithXDelta3Feature' to name the RFC half of a patch
--- that is neither dialect, the mirror of 'VCDIFFXDelta3Feature' naming
--- the xdelta3 half.
+-- | The two RFC 3284 features xdelta3 refuses — the RFC half of 'VCDIFFRFCFeatureWithXDelta3Feature'.
 data VCDIFFRFCFeature
   = RFCFeatureTargetWindow    -- ^ Win_Indicator VCD_TARGET: a window copying earlier target output.
   | RFCFeatureCustomCodeTable -- ^ Hdr_Indicator VCD_CODETABLE: a custom code table.
   deriving (Eq, Show)
 
--- | Which xdelta3 extension an RFC-feature-bearing patch also carried,
--- making it neither dialect. Carried by
--- 'VCDIFFRFCFeatureWithXDelta3Feature' (alongside the 'VCDIFFRFCFeature'
--- naming the RFC half); the renderer names the specific extension so the
--- refusal's reason is concrete. Priority of detection (compressor, then
--- header, then checksum) is the classifier's — any one of them is enough
--- to eject the patch from the RFC arc.
+-- | The xdelta3-extension half of 'VCDIFFRFCFeatureWithXDelta3Feature'.
+-- When a patch carries several, the classifier reports whichever it met first: compressor, then header, then checksum.
 data VCDIFFXDelta3Feature
   = XDelta3FeatureSecondaryCompressor  -- ^ a declared secondary compressor (VCD_DECOMPRESS).
   | XDelta3FeatureApplicationHeader    -- ^ an application header (VCD_APPHEADER).
   | XDelta3FeatureWindowChecksum       -- ^ a per-window Adler32 (VCD_ADLER32).
   deriving (Eq, Show)
 
--- | A semantics failure in a VCDIFF patch that parsed at the byte level, carried by 'MalformedVCDIFF'.
--- These are the loud refusals the core invariants demand (docs/vcdiff/core/spec.md "Core invariants"):
--- a window naming both copy sources at once, a COPY that reads unwritten output or crosses the source-segment boundary,
--- a window that does not fill to its declared size, an oversize section reference, an address mode the table cannot name;
--- the self-consistency refusals, where a window's own declarations disagree with its contents (the delta-encoding length,
--- section bytes never consumed);
--- plus the secondary-compression framing contradictions (docs/vcdiff/xdelta3/questions.md "Secondary compression — the framing"):
--- a compressed section whose own declarations cannot be honored, or a gathered stream whose decode disagrees with what its sections declared.
--- Every arm is a claim slap understands and finds invalid;
--- a reserved indicator bit or an uncataloged compressor id (claims slap cannot interpret) are the separate declines
--- 'VCDIFFReservedIndicatorBits' and 'VCDIFFUnknownSecondaryCompressor'. The 'ActionIndex' an arm carries counts decoded instructions,
--- not instruction-section bytes: one code byte can carry two instructions, and an inline size varint widens others,
+-- | A semantics failure in a VCDIFF patch that parsed at the byte level, carried by 'MalformedVCDIFF' —
+-- the loud refusals the core invariants demand (docs/vcdiff/core/spec.md "Core invariants").
+-- Every arm is a claim slap understands and finds invalid; the claims it cannot interpret decline instead,
+-- through 'VCDIFFReservedIndicatorBits' and 'VCDIFFUnknownSecondaryCompressor'.
+-- The 'ActionIndex' an arm carries counts decoded instructions, not instruction-section bytes:
+-- one code byte can carry two instructions, and an inline size varint widens others,
 -- so the index names what the stream means rather than where it sits.
 data VCDIFFMalformation
-  -- | A window's indicator set both VCD_SOURCE and VCD_TARGET, which
-  -- RFC 3284 §4.2 forbids.
+  -- | A window's indicator set both VCD_SOURCE and VCD_TARGET, which RFC 3284 §4.2 forbids.
   = VCDIFFBothSourceAndTargetWindowBits
-  -- | Core invariant 1: a COPY address must point strictly inside the
-  -- already-produced superstring. The 'ActualOffset' is the decoded
-  -- address; the 'MaxOffset' is @here@ (the current write position in
-  -- the superstring), so the valid range is @[0, here)@.
+  -- | Core invariant 1: a COPY address must point strictly inside the already-produced superstring.
+  -- The 'ActualOffset' is the decoded address; the 'MaxOffset' is @here@, the current write position, so the valid range is @[0, here)@.
   | VCDIFFCopyAddressOutOfRange !ActionIndex !ActualOffset !MaxOffset
-  -- | Core invariant 2: a COPY that begins inside the source segment
-  -- must not run past its end.
+  -- | Core invariant 2: a COPY that begins inside the source segment must not run past its end.
   | VCDIFFCopyCrossesSourceSegmentEnd !ActionIndex
-  -- | Core invariant 3: a window's instructions must produce exactly
-  -- its declared target size. The 'ExpectedSize' is the declared size;
-  -- the 'ActualSize' is what the instructions produced.
+  -- | Core invariant 3: a window's instructions must produce exactly its declared target size ('ExpectedSize' declared, 'ActualSize' produced).
   | VCDIFFWindowSizeMismatch !ExpectedSize !ActualSize
-  -- | An instruction demanded more bytes than its 'VCDIFFSection'
-  -- holds — the data, instruction, or address section ran short.
+  -- | An instruction demanded more bytes than its 'VCDIFFSection' holds — the data, instruction, or address section ran short.
   | VCDIFFSectionExhausted !VCDIFFSection !ActionIndex
-  -- | A COPY's code-table entry named an address mode outside the
-  -- range the cache configuration defines. The 'Word8' is the mode.
+  -- | A COPY's code-table entry named an address mode outside the range the cache configuration defines. The 'Word8' is the mode.
   | VCDIFFInvalidCopyAddressMode !Word8
   -- | A window's declared delta-encoding length disagrees with the measured span of its own fields.
   -- A self-consistency check the core ruling demands, not a boundary slap navigates by:
@@ -2889,11 +2321,8 @@ data VCDIFFMalformation
   -- the sibling of 'VCDIFFDeltaEncodingLengthMismatch' (docs/vcdiff/core/questions.md, "leftover bytes").
   -- The instruction section cannot be named here: it drives the walk, which ends exactly when it is spent.
   | VCDIFFSectionUnconsumedBytes !VCDIFFSection !Length
-  -- | A section flagged secondary-compressed whose bytes cannot
-  -- supply the decompressed-size varint every compressed section
-  -- begins with — the zero-length section is the canonical case
-  -- (nothing to read a varint from). Rejected per
-  -- docs/vcdiff/xdelta3/questions.md, "compressed-but-empty section".
+  -- | A section flagged secondary-compressed whose bytes cannot supply the decompressed-size varint every compressed section begins with —
+  -- the zero-length section is the canonical case. Rejected per docs/vcdiff/xdelta3/questions.md, "compressed-but-empty section".
   | VCDIFFCompressedSectionWithoutDeclaredSize !VCDIFFSection
   -- | A section flagged secondary-compressed whose decompressed-size varint is zero.
   -- A category error rather than a no-op: compressing nothing yields framing bytes, never zero bytes, so a section cannot decompress to empty.
@@ -2908,23 +2337,18 @@ data VCDIFFMalformation
   -- The 'CompressionAlgorithm' names the decoder that was running, and fixes the stream's granularity:
   -- a windows-spanning gathered stream for LZMA, one section's own self-contained stream for DJW.
   | VCDIFFSecondaryStreamUnconsumedInput !VCDIFFSection !CompressionAlgorithm !Length
-  -- | A secondary stream decoded to a byte count other than its
-  -- framing declared. Mirrors xd3's "short output" verdict; the
-  -- 'ExpectedSize' is the declared size (the sections' sum for
-  -- LZMA's gathered kind, the one section's own for DJW), the
-  -- 'ActualSize' what the decoder produced.
+  -- | A secondary stream decoded to a byte count other than its framing declared. Mirrors xd3's "short output" verdict;
+  -- the 'ExpectedSize' is the declared size (the sections' sum for LZMA's gathered kind, the one section's own for DJW),
+  -- the 'ActualSize' what the decoder produced.
   | VCDIFFSecondaryStreamOutputSizeMismatch !VCDIFFSection !CompressionAlgorithm !ExpectedSize !ActualSize
   deriving (Eq, Show)
 
--- | Which of a VCDIFF patch's three indicator bytes carried a
--- reserved bit (see 'VCDIFFReservedIndicatorBits').
+-- | Which of a VCDIFF patch's three indicator bytes carried a reserved bit, for 'VCDIFFReservedIndicatorBits'.
 data VCDIFFIndicatorKind = HeaderIndicator | WindowIndicator | DeltaIndicator
   deriving (Eq, Show)
 
--- | One of a VCDIFF window's three data sections (see
--- 'VCDIFFSectionExhausted') — and, since the sections of one kind
--- form a continuous secondary stream across windows, also the name
--- of that kind in the secondary-compression arms above.
+-- | One of a VCDIFF window's three data sections — and, since sections of one kind form a continuous secondary stream across windows,
+-- also the name of that kind in the secondary-compression arms above.
 data VCDIFFSection = VCDIFFDataSection | VCDIFFInstructionSection | VCDIFFAddressSection
   deriving (Eq, Show)
 
@@ -2976,17 +2400,13 @@ data NINJA1Malformation
   | NINJA1MalformedTextRecord       LineText
   deriving (Eq, Show)
 
--- | The shape of a NINJA1 subformat conversion noticed at parse time.
--- NINJA1's textual variants are decoded into their binary peers
--- before slap's per-format machinery sees them; this advisory
--- surfaces that change. The FormatLabel is implicit (always NINJA1).
+-- | Which textual-to-binary decode 'SubformatConverted' reports.
 data NINJA1SubformatConversion
   = NINJA1TextToBinary
   | NINJA1CompressedTextToCompressedBinary
   deriving (Eq, Show)
 
--- | One canonicalization a ROM type's normalization procedure performed, carried by 'RomImageNormalized'
--- so each transform narrates itself the way @--remove-header@ does through 'InputHeaderRemoved'.
+-- | One canonicalization a ROM type's normalization procedure performed, carried by 'RomImageNormalized'.
 -- The header widths are fixed per arm (the iNES header is 16 bytes, the copier-era headers 512), so no arm carries a length.
 -- The procedures live in "Slap.Normalize".
 data NormalizationStep
@@ -3086,14 +2506,11 @@ data RestoredContent
   | RestoredUNIFContainer
   deriving (Eq, Show)
 
--- | A line of textual-patch input, carried verbatim for inclusion in
--- a malformation diagnostic. Labeled so the wire content stays
--- non-pattern-matchable at the type level.
+-- | A line of textual-patch input, carried verbatim for a malformation diagnostic.
 newtype LineText = LineText { unLineText :: Text }
   deriving (Eq, Show)
 
--- | A hex-offset token slice from a textual-patch line, carried
--- verbatim for inclusion in a malformation diagnostic.
+-- | A hex-offset token slice from a textual-patch line, carried verbatim for a malformation diagnostic.
 newtype OffsetTokenText = OffsetTokenText { unOffsetTokenText :: Text }
   deriving (Eq, Show)
 
@@ -3105,14 +2522,7 @@ newtype ChecksumTokenText = ChecksumTokenText { unChecksumTokenText :: Text }
 -- ByteParserError
 ----------------------------------------------------------------------------
 
--- | Which primitive of 'Slap.ByteParser' surfaced an underflow.
--- Carried by 'ByteParserUnderflow' so the renderer can name which
--- call site the failure came from. All four primitives can
--- genuinely underflow; the parallel "negative length requested"
--- failure is split into per-primitive constructors instead
--- ('ByteParserNegativeLengthRequestedInGetBytes',
--- 'ByteParserNegativeLengthRequestedInSkip') because only those
--- two primitives accept a caller-supplied length.
+-- | Which primitive of 'Slap.ByteParser' surfaced an underflow, for 'ByteParserUnderflow'.
 data ByteParserOperation
   = GetBytesOperation
   | SkipOperation
@@ -3120,39 +2530,19 @@ data ByteParserOperation
   | VarintReadOperation
   deriving (Eq, Show)
 
--- | The structured failure type for 'Slap.ByteParser.ByteParser'.
--- Lifted into 'SlapError' via the per-format 'ParseError' constructor;
--- each format's 'Parse.hs' wraps it with its own 'FormatLabel' at the
--- @runByteParser@ seam.
---
--- Constructors are 'ByteParser'-prefixed to match slap's per-domain
--- convention ('ApplyError' constructors are @Apply*@, 'NINJA1Malformation'
--- are @NINJA1*@, and so on). Shared underflow shape is parameterized
--- over 'ByteParserOperation' rather than split into a constructor per
--- primitive — the axes the consumer wants to dispatch on are the
--- failure kind and the surfacing primitive, in that order.
+-- | The structured failure type for 'Slap.ByteParser.ByteParser',
+-- lifted into 'SlapError' via 'ParseError' with the wrapping format's 'FormatLabel'.
 data ByteParserError
 
-  -- | A read could not be satisfied: 'RequestedLength' bytes were
-  -- asked for at 'Position', but only 'RemainingLength' bytes were
-  -- left in the input. The 'ByteParserOperation' names which
-  -- primitive surfaced the underflow.
+  -- | A read asked for 'RequestedLength' bytes at 'Position' with only 'RemainingLength' left.
   = ByteParserUnderflow ByteParserOperation RequestedLength RemainingLength Position
 
-  -- | A record declares more bytes than the stream holds. Raised by
-  -- format walkers through 'Slap.ByteParser.throwByteParserError'
-  -- ahead of the doomed read, so the failure names the record (and
-  -- its full declared size) rather than the byte offset a raw
-  -- underflow would have named. The 'RequiredLength' is the whole
-  -- record's byte count, header included; the 'RemainingLength' is
-  -- what the stream had where the record began.
+  -- | A record declares more bytes than the stream holds. Format walkers raise it ahead of the doomed read,
+  -- so the failure names the record and its full declared size ('RequiredLength', header included)
+  -- rather than the byte offset a raw underflow would have named.
   | ByteParserTruncatedRecord !ActionIndex !RequiredLength !RemainingLength
 
-  -- | A command-coded stream's next code byte is outside the
-  -- format's command table. Raised by format walkers through
-  -- 'Slap.ByteParser.throwByteParserError'; the 'ActionIndex' names
-  -- the offending record in wire order and the 'Word8' carries the
-  -- byte as read.
+  -- | A command-coded stream's next code byte is outside the format's command table.
   | ByteParserUnknownCommandByte !ActionIndex !Word8
 
   -- | A width-prefixed integer field decoded a value past 'maxBound' :: 'Int' — the sibling of 'ByteParserVarintExceededWidth'.
@@ -3160,63 +2550,34 @@ data ByteParserError
   -- the reader decodes at 'Integer' and declines rather than wrapping. The 'ActionIndex' names the record and the 'FieldName' which field.
   | ByteParserFieldExceedsAddressableRange !ActionIndex !FieldName
 
-  -- | 'Slap.ByteParser.getUntilByte' scanned for the given terminator
-  -- byte from 'Position' to end-of-input and did not find it.
+  -- | 'Slap.ByteParser.getUntilByte' scanned from 'Position' to end of input without finding the terminator byte.
   | ByteParserTerminatorNotFound Word8 Position
 
-  -- | A 'Slap.ByteParser.setPosition' target was outside the half-
-  -- open interval @[0, inputLength]@. The 'Position' is the
-  -- offending target; the 'ActualLength' is the input's total length.
+  -- | A 'Slap.ByteParser.setPosition' target outside @[0, inputLength]@.
   | ByteParserPositionOutOfBounds Position ActualLength
 
-  -- | 'Slap.ByteParser.getBytes' was asked for a negative number
-  -- of bytes. The 'Length' is the offending value as received.
-  -- Split from the parallel 'Skip' variant below so the only
-  -- representable shapes are the ones the byte-parser can
-  -- actually surface — fixed-width and varint reads don't take a
-  -- caller-supplied length, so they can't produce this failure.
+  -- | 'Slap.ByteParser.getBytes' was asked for a negative count. Split from the 'Slap.ByteParser.skip' variant below
+  -- because only those two primitives accept a caller-supplied length; the fixed-width and varint reads cannot produce this failure.
   | ByteParserNegativeLengthRequestedInGetBytes Length
 
-  -- | 'Slap.ByteParser.skip' was asked to advance by a negative
-  -- number of bytes. The 'Length' is the offending value.
+  -- | 'Slap.ByteParser.skip' was asked to advance by a negative count.
   | ByteParserNegativeLengthRequestedInSkip Length
 
-  -- | A varint started inside the buffer but its continuation bytes
-  -- ran past the end. The 'Position' is where the varint started.
-  -- Distinct from 'ByteParserUnderflow'\@'VarintReadOperation', which
-  -- fires when the read started at or past EOF.
+  -- | A varint started inside the buffer but its continuation bytes ran past the end; the 'Position' is where it started.
+  -- Distinct from 'ByteParserUnderflow' at 'VarintReadOperation', which fires when the read started at or past EOF.
   | ByteParserVarintOverranBuffer Position
 
-  -- | A varint decoded a value too large to represent at all. Raised
-  -- by all three slap varint readers (byuu, VCDIFF, EDSIO): byuu and
-  -- EDSIO use it as their single over-width verdict, VCDIFF only for
-  -- values @>= 2^64@ beyond even xd3's @uint64@ (a value in @[2^63, 2^64)@
-  -- is the apologetic 'ByteParserVarintExceedsSignedRange'). byuu
-  -- and VCDIFF detect the condition by value; EDSIO still bails on its
-  -- bit-offset. The constructor takes no payload because the only
-  -- thing the variant says is "the value can't be represented".
+  -- | A varint decoded a value too large to represent at all. All three varint readers (byuu, VCDIFF, EDSIO) raise it;
+  -- for VCDIFF it means a value at or past @2^64@, beyond even xd3's @uint64@ —
+  -- the @[2^63, 2^64)@ band is the separate 'ByteParserVarintExceedsSignedRange'.
   | ByteParserVarintExceededWidth
 
-  -- | A VCDIFF varint decoded a value in @[2^63, 2^64)@ — one that
-  -- xd3's unsigned @uint64@ reader accepts but slap's signed 'Int'
-  -- declines. The apologetic arm: distinct from
-  -- 'ByteParserVarintExceededWidth' (which is values @>= 2^64@,
-  -- beyond xd3 too) precisely so the renderer can concede the one bit
-  -- slap gives up rather than blame the input. Only the VCDIFF reader
-  -- raises it; the byuu reader caps at the same value as a plain
-  -- over-width and never reaches this arm.
+  -- | A VCDIFF varint decoded a value in @[2^63, 2^64)@ — xd3's unsigned reader accepts it, slap's signed 'Int' cannot.
+  -- Kept apart from 'ByteParserVarintExceededWidth' so the renderer can concede the one bit slap gives up rather than blame the input.
   | ByteParserVarintExceedsSignedRange
 
-  -- | An EDSIO varint decoded a value past @0xFFFFFFFF@. Every integer
-  -- in the xdelta1 wire format is a @guint32@ — offsets, lengths,
-  -- counts alike (upstream @xd_edsio.h@; the reader reconstructs into
-  -- a @guint32@ in @libedsio/default.c@) — so a value wider than 32
-  -- bits is not a representable xdelta1 quantity, and slap declines it
-  -- rather than carry a number the format has no field for.
-  -- (Canonical xdelta truncates such a value into its @guint32@
-  -- silently; slap refuses, the same posture it takes wherever a wire
-  -- field overflows its defined width.) The 'Int64' is the offending
-  -- decoded value. Only the EDSIO reader raises it.
+  -- | An EDSIO varint decoded a value past @0xFFFFFFFF@. Every integer in the xdelta1 wire format is a @guint32@ (upstream @xd_edsio.h@),
+  -- so a wider value is not a representable xdelta1 quantity; canonical xdelta truncates such a value silently, slap declines it.
   | ByteParserEdsioVarintExceeds32Bits !Int64
 
   -- | The xdelta1 control segment opened with a type tag that isn't @ST_XdeltaControl@.
@@ -3224,12 +2585,8 @@ data ByteParserError
   -- slap declines the same way. The 'Word32' is the tag as read.
   | ByteParserXDelta1UnexpectedControlTypeTag !Word32
 
-  -- | 'MonadFail'\@'fail' fallback for @do@-notation pattern-match
-  -- failures inside slap's parser code. Reaching this arm means a
-  -- refutable pattern bind in a parser body didn't match — i.e.
-  -- slap has a bug, not that the wire input was malformed. The
-  -- string is the desugared @fail@ message; the renderer prefixes
-  -- it as an internal failure.
+  -- | The 'MonadFail' fallback for @do@-pattern failures in parser code.
+  -- Reaching this arm means slap has a bug, not that the wire input was malformed.
   | ByteParserUnexpectedDoPatternFailure String
 
   deriving (Eq, Show)
@@ -3238,20 +2595,15 @@ data ByteParserError
 -- Severity assignment
 ----------------------------------------------------------------------------
 
--- | Map each 'SlapAdvisory' constructor to its severity: the single source of truth 'Severity' names as the per-advisory projection.
 slapAdvisorySeverity :: SlapAdvisory -> Severity
 slapAdvisorySeverity advisory = case advisory of
 
-  -- Warnings: something happened the user should look at. Patch
-  -- shape that suggests truncation, decisions slap made at apply
-  -- time that altered output bytes vs the wire, or integrity checks
-  -- that didn't agree with the patch's stored hashes.
+  -- Warnings: something happened the user should look at.
   NoEOFMarker{}                        -> SeverityWarning
   BSDiffTrailingControlFragment{}      -> SeverityWarning
   APSN64TrailingFragment{}             -> SeverityWarning
   IPS32TrailingBytes{}                 -> SeverityWarning
-  -- PPF2 permits growth, so its apply-grow advisory is a note; PPF1/PPF3
-  -- are intended same-size, so growth there warns.
+  -- PPF2 tolerates growth, so its apply-grow advisory is a note; the other labels warn.
   PPFApplyGrewPastSource LabelPPF2 _ _ -> SeverityNote
   PPFApplyGrewPastSource{}             -> SeverityWarning
   IPSTruncationMarkerHonored{}         -> SeverityWarning
@@ -3269,11 +2621,7 @@ slapAdvisorySeverity advisory = case advisory of
   VerificationSourceBytesMismatch{}    -> SeverityWarning
   VerificationOptedOutByCreator{}      -> SeverityWarning
 
-  -- Notes: informational. Spec-level oddities accepted as no-ops,
-  -- conversions that dropped a field with no equivalent in the
-  -- target format, defaults slap chose when the user didn't specify,
-  -- truncations and encoding gaps that did happen but are reported
-  -- so the reader knows rather than because anything needs fixing.
+  -- Notes: informational — reported so the reader knows, not because anything needs fixing.
   EmptyPatch{}                         -> SeverityNote
   InputHeaderRemoved{}                 -> SeverityNote
   InputHeaderAdded{}                   -> SeverityNote
@@ -3305,9 +2653,8 @@ slapAdvisorySeverity advisory = case advisory of
   FieldDecodedSubstituted{}            -> SeverityNote
   FieldEncodedSubstituted{}            -> SeverityNote
 
-  -- Format-specific field, rom-type, image, and platform handling.
-  -- Severity turns on whether slap could act cleanly: a recognized default or a clean normalization is a note;
-  -- an unrecognized shape, an unconfirmable retag, a truncation, or a dropped container warns.
+  -- Field, rom-type, image, and platform handling, where severity turns on whether slap could act cleanly:
+  -- a recognized default or a clean normalization is a note; anything unrecognized, unconfirmable, or dropped warns.
   FieldContentPastEnd{}                -> SeverityWarning
   PlatformNotAvailable{}               -> SeverityWarning
   NINJA2SMSGameGearAmbiguity           -> SeverityNote
