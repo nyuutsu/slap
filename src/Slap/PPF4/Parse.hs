@@ -16,18 +16,21 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runFormatParser, throwByteParserError,
                         getByte, getBytes, skip, remaining, word32LE)
 import Slap.Measure (offsetFromParsed, Length(..),
+                     EncodingMethodByte(..), RawFlagByte(..),
                      RequiredLength(..), ActualLength(..), RemainingLength(..),
                      ActionIndex, firstAction, nextAction,
                      byteLength)
 import Slap.Text (EncodedText, EncodingName(..), decodeFixedWidthTextField)
 
 import Control.Monad (when)
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 
 -- | Intermediate result of running the PPF4 body parser.
 data PPF4ParsedBody = PPF4ParsedBody
   { ppf4BodyDescription           :: !EncodedText
   , ppf4BodyDescriptionAdvisories :: ![SlapAdvisory]
+  , ppf4BodyPostDescriptionBytes  :: !ByteString
   , ppf4BodyWireRecords           :: ![PPF4WireRecord]
   }
 
@@ -47,7 +50,9 @@ parsePPF4 metadataEncoding (PatchFileContents input)
               (RequiredLength minPPF4Length)
               (ActualLength (byteLength input)))
   | otherwise = do
+      () <- checkEncodingByte input
       body <- runFormatParser LabelPPF4 parsePPF4Body input
+      () <- requirePostDescriptionZero (ppf4BodyPostDescriptionBytes body)
       (replaces, appends) <- partitionPhases (ppf4BodyWireRecords body)
       pure (Parsed
         PPF4Patch
@@ -63,19 +68,36 @@ parsePPF4 metadataEncoding (PatchFileContents input)
       descriptionBytes <- getBytes ppf4DescriptionLength
       let (descriptionText, descriptionAdvisories) =
             decodeFixedWidthTextField metadataEncoding LabelPPF4 FieldDescription descriptionBytes
-      skip ppf4PostDescriptionLength
+      postDescriptionBytes <- getBytes ppf4PostDescriptionLength
       wireRecords <- parsePPF4Records firstAction []
       pure PPF4ParsedBody
         { ppf4BodyDescription           = descriptionText
         , ppf4BodyDescriptionAdvisories = descriptionAdvisories
+        , ppf4BodyPostDescriptionBytes  = postDescriptionBytes
         , ppf4BodyWireRecords           = wireRecords
         }
 
--- | Minimum bytes required before 'parsePPF4' can index into the
--- input. PPF4 has no encoding-byte check, but the body still skips
--- the 6-byte preamble before reading anything.
+-- | Minimum bytes 'parsePPF4' needs before indexing in: the 6-byte preamble,
+-- so 'checkEncodingByte' can read the encoding byte at offset 5 and the body can skip past it.
 minPPF4Length :: Length
 minPPF4Length = ppf4PreambleLength
+
+-- | The encoding byte (offset 5) must be @0xFF@ — the reference (patcher.lua) rejects anything else with @ERROR_BAD_VERSION@,
+-- and @0xFF@ was chosen upstream so incompatible tools fail loudly rather than misread the patch.
+checkEncodingByte :: ByteString -> Either SlapError ()
+checkEncodingByte input
+  | actual == 0xFF = Right ()
+  | otherwise      = Left (UnsupportedEncodingMethod LabelPPF4 (EncodingMethodByte actual))
+  where actual = ByteString.index input 5
+
+-- | The four post-description header bytes (offsets 56–59) are reserved and required zero:
+-- the reference reads them as one word and rejects nonzero with @ERROR_BAD_FLAGS@.
+-- PPF4 supports none of the features they nominally carry, so any nonzero byte is off-spec.
+requirePostDescriptionZero :: ByteString -> Either SlapError ()
+requirePostDescriptionZero postDescriptionBytes =
+  case ByteString.find (/= 0) postDescriptionBytes of
+    Just offendingByte -> Left (UnknownFlag LabelPPF4 FieldReservedHeader (RawFlagByte offendingByte))
+    Nothing            -> Right ()
 
 -- | Parse PPF4 records (1-byte command, 4-byte offset, 1-byte
 -- count, N data bytes) in wire order, commands attached. Truncation

@@ -109,6 +109,7 @@ import Slap.Status (CreateResult(..), Parsed(..), SlapError(..), Outcome(..),
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
+                     EncodingMethodByte(..), RawFlagByte(..),
                      Hunk(..), SentinelOffset(..),
                      OriginalLength(..), TruncatedLength(..),
                      SourceFileSize(..), TargetFileSize(..),
@@ -284,6 +285,8 @@ roundTripTests = testGroup "RoundTrip"
       ]
   , testGroup "PPF4"
       [ testProperty "round-trip" prop_ppf4
+      , testProperty "encoding byte other than 0xFF is refused" prop_ppf4RejectsBadEncodingByte
+      , testProperty "nonzero reserved header byte is refused" prop_ppf4RejectsNonzeroReservedByte
       , testCase "straddling hunk splits at the source boundary"
                  ppf4StraddleRoundTrip
       ]
@@ -2379,6 +2382,43 @@ ppf4StraddleRoundTrip =
            assertEqual "straddle round-trip"
              (Right (OutputFileContents target))
              (PPF4.applyPPF4 parsed (InputFileContents source))
+
+-- | PPF4's encoding byte (offset 5) must be @0xFF@;
+-- any other value is refused with 'UnsupportedEncodingMethod' carrying the offending byte (the reference's @ERROR_BAD_VERSION@).
+prop_ppf4RejectsBadEncodingByte :: Property
+prop_ppf4RejectsBadEncodingByte =
+  forAll genPairNoShrink $ \(source, target) ->
+    forAll (fromIntegral <$> chooseInt (0, 0xFE)) $ \badEncodingByte ->
+      withCreatedPPF4 source target $ \patchBytes ->
+        case PPF4.parsePPF4 SlapText.EncodingUtf8 (PatchFileContents (setByteAt 5 badEncodingByte patchBytes)) of
+          Left slapError -> slapError === UnsupportedEncodingMethod LabelPPF4 (EncodingMethodByte badEncodingByte)
+          Right _        -> counterexample "expected a refusal, but the patch parsed" $ property False
+
+-- | PPF4's four reserved post-description bytes (56–59) must be zero;
+-- a nonzero byte anywhere in that range is refused with 'UnknownFlag' carrying it (the reference's @ERROR_BAD_FLAGS@).
+prop_ppf4RejectsNonzeroReservedByte :: Property
+prop_ppf4RejectsNonzeroReservedByte =
+  forAll genPairNoShrink $ \(source, target) ->
+    forAll (chooseInt (56, 59)) $ \position ->
+      forAll (fromIntegral <$> chooseInt (1, 0xFF)) $ \badByte ->
+        withCreatedPPF4 source target $ \patchBytes ->
+          case PPF4.parsePPF4 SlapText.EncodingUtf8 (PatchFileContents (setByteAt position badByte patchBytes)) of
+            Left slapError -> slapError === UnknownFlag LabelPPF4 FieldReservedHeader (RawFlagByte badByte)
+            Right _        -> counterexample "expected a refusal, but the patch parsed" $ property False
+
+-- | Create a valid PPF4 patch from a (source, target) pair and hand its wire bytes to the check.
+-- A create failure fails the property loudly rather than letting it pass vacuously.
+withCreatedPPF4 :: ByteString.ByteString -> ByteString.ByteString -> (ByteString.ByteString -> Property) -> Property
+withCreatedPPF4 source target check =
+  case createPatch (CreateDirect CreatePPF4) Nothing (InputFileContents source) (OutputFileContents target)
+                   noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
+    Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
+    Right (CreateResult patch _) -> check (unPatchFileContents patch)
+
+-- | Overwrite the byte at a position, leaving the rest intact.
+setByteAt :: Int -> Word.Word8 -> ByteString.ByteString -> ByteString.ByteString
+setByteAt position newByte bytes =
+  ByteString.take position bytes <> ByteString.singleton newByte <> ByteString.drop (position + 1) bytes
 
 -- | The wire bytes of an IPS patch carrying one real write and one
 -- zero-count RLE record at a far offset: a 1-byte copy at offset 0,

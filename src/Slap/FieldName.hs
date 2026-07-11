@@ -36,6 +36,7 @@ data FieldName
   | FieldCartId
   | FieldCountry
   | FieldEncodingMethod
+  | FieldReservedHeader
   -- Sizes
   | FieldSourceSize
   | FieldTargetSize
@@ -90,6 +91,7 @@ fieldNameLabel FieldImageFormat      = "image format"
 fieldNameLabel FieldCartId           = "cart ID"
 fieldNameLabel FieldCountry          = "country"
 fieldNameLabel FieldEncodingMethod   = "encoding method"
+fieldNameLabel FieldReservedHeader   = "reserved header"
 fieldNameLabel FieldSourceSize       = "source size"
 fieldNameLabel FieldTargetSize       = "target size"
 fieldNameLabel FieldDestinationSize  = "destination size"
