@@ -66,6 +66,17 @@ library slap-internal
     , Slap.Display.Info
     , Slap.FileContents
     , Slap.Status
+    , Slap.Status.Advisory
+    , Slap.Status.ApplyError
+    , Slap.Status.ByteParserError
+    , Slap.Status.Decompression
+    , Slap.Status.Error
+    , Slap.Status.Render.Advisory
+    , Slap.Status.Render.Error
+    , Slap.Status.Severity
+    , Slap.Status.VCDIFF
+    , Slap.Status.Vocabulary
+    , Slap.Status.XDelta1
     , Slap.GDIFF.Apply
     , Slap.GDIFF.Create
     , Slap.GDIFF.Describe
