@@ -117,14 +117,14 @@ corruptTests :: [TestTree]
 corruptTests =
   [ testCase "corrupt/empty file" $
       case parseSome noDialectsRequested EncodingUtf8 (PatchFileContents ByteString.empty) of
-        Left slapError -> assertBool "expected 'unknown'" (ciContains "unknown" (Text.unpack (renderSlapError slapError)))
+        Left slapError -> assertBool "expected the unrecognized-format message" (ciContains "any patch format slap knows" (Text.unpack (renderSlapError slapError)))
         Right _ -> assertFailure "expected parse failure for empty file"
 
   , testCase "corrupt/random garbage" $ do
       let garbageBytes = ByteString.pack $ take 256 $ map fromIntegral $
                  iterate (\seed -> (seed * 1103515245 + 12345) `mod` 256) (42 :: Int)
       case parseSome noDialectsRequested EncodingUtf8 (PatchFileContents garbageBytes) of
-        Left slapError -> assertBool "expected 'unknown'" (ciContains "unknown" (Text.unpack (renderSlapError slapError)))
+        Left slapError -> assertBool "expected the unrecognized-format message" (ciContains "any patch format slap knows" (Text.unpack (renderSlapError slapError)))
         Right _ -> assertFailure "expected parse failure for random garbage"
 
   , testCase "corrupt/info truncated IPS (graceful)" $ do
@@ -569,12 +569,12 @@ customCodetableTests =
   , testCase "custom-codetable/nested table refused" $
       expectFail [ "apply", customTableFixture "fixtureB-nested.vcdiff"
                  , customTableFixture "sourceA.bin", "-o", "/dev/null" ]
-        "custom-codetable/nested" "nested custom code tables"
+        "custom-codetable/nested" "a place to start reading"
 
   , testCase "custom-codetable/invalid entry refused with context" $
       expectFail [ "apply", customTableFixture "fixtureC-invalid-entry.vcdiff"
                  , customTableFixture "sourceA.bin", "-o", "/dev/null" ]
-        "custom-codetable/invalid-entry" "invalid instruction type"
+        "custom-codetable/invalid-entry" "names an instruction that doesn't exist"
 
   , testCase "custom-codetable/do-nothing entry applies with a note" $
       withTempFile "slap-out" $ \out -> do
@@ -597,7 +597,7 @@ customCodetableTests =
   , testCase "custom-codetable/mode past the declared caches refused" $
       expectFail [ "apply", customTableFixture "fixtureF-mode-out-of-range.vcdiff"
                  , customTableFixture "sourceA.bin", "-o", "/dev/null" ]
-        "custom-codetable/mode-out-of-range" "reach only mode 8"
+        "custom-codetable/mode-out-of-range" "modes 0 through 8"
   ]
   where
     customTableFixture name = "test/data/vcdiff-custom-table/" ++ name
@@ -696,7 +696,7 @@ vcdTargetTests =
       withTempFile "slap-empty-source" $ \emptySource ->
         expectFail [ "apply", vcdTargetFixture "fixture3-target-plus-adler.vcdiff"
                    , emptySource, "-o", "/dev/null" ]
-          "vcd-target/neither-dialect" "neither a conformant"
+          "vcd-target/neither-dialect" "mixes two different flavors"
   ]
   where
     vcdTargetFixture name = "test/data/vcdiff-vcd-target/" ++ name

@@ -32,7 +32,7 @@ import Slap.Status.ApplyError (ApplyError)
 import Slap.Status.ByteParserError (ByteParserError)
 import Slap.Status.Decompression (DecompressionFailure, XDelta1DiffCause, BSDiffDifferCause)
 import Slap.Status.VCDIFF (VCDIFFShapeViolation, VCDIFFCodeTableMalformation,
-                           VCDIFFIndicatorKind, VCDIFFMalformation,
+                           VCDIFFIndicatorKind, ReservedBitsSet, VCDIFFMalformation,
                            VCDIFFRFCFeature, VCDIFFXDelta3Feature)
 import Slap.Status.Vocabulary (ExtractionSubject, CompressionAlgorithm,
                                BSDiffHeaderMalformation, APSN64HeaderMalformation, NINJA1Malformation)
@@ -178,8 +178,8 @@ data SlapError
   -- malformed means slap understands a patch's claim and the claim is invalid,
   -- while a future-dialect patch could be well-formed, just unreadable here —
   -- the same decline as 'VCDIFFUnknownSecondaryCompressor'.
-  -- The 'VCDIFFIndicatorKind' names which of the three indicators; the 'Word8' is the byte as read.
-  | VCDIFFReservedIndicatorBits !VCDIFFIndicatorKind !Word8
+  -- The 'VCDIFFIndicatorKind' names which of the three indicators; the 'Word8' is the byte as read, the 'ReservedBitsSet' its undefined bits.
+  | VCDIFFReservedIndicatorBits !VCDIFFIndicatorKind !Word8 !ReservedBitsSet
 
   -- | A declared secondary-compressor id outside xdelta3's catalog (1 = DJW, 2 = LZMA, 16 = FGK — the only registry there is; RFC 3284 registered none).
   -- A future xdelta3 could define the id, so this is the 'VCDIFFReservedIndicatorBits' decline, not a malformation.

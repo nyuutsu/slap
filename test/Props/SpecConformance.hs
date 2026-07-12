@@ -27,7 +27,9 @@ import Slap.Checksum (CRC32(..), Adler32(..))
 import Slap.Status (SlapError(..), SlapAdvisory(..), ApplyError(..), CursorKind(..), Parsed(..), Outcome(..),
                    ClippedRecordCount(..), MarkerOvershootBytes(..), renderSlapError,
                    renderByteParserError, VCDIFFMalformation(..), VCDIFFIndicatorKind(..),
-                   VCDIFFSection(..), VCDIFFCodeTableMalformation(..), VCDIFFCodeTableField(..))
+                   ReservedBitsSet(..), VCDIFFOnDemandSection(..),
+                   VCDIFFCodeTableMalformation(..), VCDIFFCodeTableField(..),
+                   VCDIFFCodeTableTemplateKind(..))
 import Slap.FFI (crc32, adler32)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -201,7 +203,7 @@ specConformanceTests = testGroup "SpecConformance"
           , testCase "self-referential-copy-distance-two-expands-forward"
               test_vcdiffForwardExpansionCopy
           , testCase "copy-address-at-or-past-here-rejected"
-              test_vcdiffCopyAddressOutOfRange
+              test_vcdiffCopyReadsUnwrittenOutput
           , testCase "copy-crossing-source-segment-end-rejected"
               test_vcdiffCopyCrossesSegmentEnd
           , testCase "window-underproducing-target-rejected"
@@ -1330,8 +1332,6 @@ upsTooShortForFooter :: Assertion
 upsTooShortForFooter =
   assertParseRejects parseUPS (PatchFileContents "UPS1") ""
 
--- | A block whose xorData run is not terminated by 0x00 before end of
--- body. 'getUntilByte' must fail with "terminator not found".
 upsBlockMissingTerminator :: Assertion
 upsBlockMissingTerminator =
   let source = ByteString.pack [0x00, 0x00]
@@ -1664,11 +1664,11 @@ codeTableUnusedFieldRejected :: Assertion
 codeTableUnusedFieldRejected = do
   assertEqual "nonzero mode byte on a RUN"
     (Left (MalformedVCDIFFCodeTable
-             (VCDIFFCodeTableUnusedFieldSet CodeTableModeField 0x05)))
+             (VCDIFFCodeTableUnusedFieldSet CodeTableRunTemplate CodeTableModeField 0x05)))
     (deserializeCodeTable (pokeImageByte (1024 + 0) 0x05 defaultCodeTableImage))
   assertEqual "nonzero size byte on a NOOP"
     (Left (MalformedVCDIFFCodeTable
-             (VCDIFFCodeTableUnusedFieldSet CodeTableSizeField 0x07)))
+             (VCDIFFCodeTableUnusedFieldSet CodeTableNoopTemplate CodeTableSizeField 0x07)))
     (deserializeCodeTable (pokeImageByte (768 + 0) 0x07 defaultCodeTableImage))
 
 -- | An input that is not 1536 bytes wide is refused with the length
@@ -1724,7 +1724,7 @@ vcdiffPatch windowBytes =
 test_vcdiffReservedHeaderBitDeclined :: Assertion
 test_vcdiffReservedHeaderBitDeclined =
   case parseVCDIFF patch of
-    Left (VCDIFFReservedIndicatorBits HeaderIndicator 0x08) -> pure ()
+    Left (VCDIFFReservedIndicatorBits HeaderIndicator 0x08 (ReservedBitsSet 0x08)) -> pure ()
     Left otherError -> assertFailureT
       ("expected VCDIFFReservedIndicatorBits, got: " <> renderSlapError otherError)
     Right _ -> assertFailure "expected the reserved header bit to be declined"
@@ -1739,7 +1739,7 @@ test_vcdiffReservedHeaderBitDeclined =
 test_vcdiffReservedWindowBitDeclined :: Assertion
 test_vcdiffReservedWindowBitDeclined =
   case parseVCDIFF patch of
-    Left (VCDIFFReservedIndicatorBits WindowIndicator 0x08) -> pure ()
+    Left (VCDIFFReservedIndicatorBits WindowIndicator 0x08 (ReservedBitsSet 0x08)) -> pure ()
     Left otherError -> assertFailureT
       ("expected VCDIFFReservedIndicatorBits, got: " <> renderSlapError otherError)
     Right _ -> assertFailure "expected the reserved window bit to be declined"
@@ -1826,11 +1826,11 @@ test_vcdiffForwardExpansionCopy =
 -- | A first instruction COPYing from address 0 when nothing has been
 -- produced (here = 0): the address is not strictly before the write
 -- position. Core invariant 1.
-test_vcdiffCopyAddressOutOfRange :: Assertion
-test_vcdiffCopyAddressOutOfRange =
+test_vcdiffCopyReadsUnwrittenOutput :: Assertion
+test_vcdiffCopyReadsUnwrittenOutput =
   case parseVCDIFF patch of
-    Left (MalformedVCDIFF VCDIFFCopyAddressOutOfRange{}) -> pure ()
-    _ -> assertFailure "expected VCDIFFCopyAddressOutOfRange"
+    Left (MalformedVCDIFF VCDIFFCopyReadsUnwrittenOutput{}) -> pure ()
+    _ -> assertFailure "expected VCDIFFCopyReadsUnwrittenOutput"
   where
     -- win 0x00 | deltaEncLen 07 | target 04 | deltaInd 00 | A 00 I 01 C 01
     --   | inst [COPY mode0 size4] | addr [0]
@@ -1886,7 +1886,7 @@ test_vcdiffEncodingLengthMismatch =
 test_vcdiffDataSectionUnconsumedBytes :: Assertion
 test_vcdiffDataSectionUnconsumedBytes =
   case parseVCDIFF patch of
-    Left (MalformedVCDIFF (VCDIFFSectionUnconsumedBytes VCDIFFDataSection _)) -> pure ()
+    Left (MalformedVCDIFF (VCDIFFSectionUnconsumedBytes OnDemandDataSection _ _)) -> pure ()
     Left otherError -> assertFailureT
       ("expected VCDIFFSectionUnconsumedBytes, got: " <> renderSlapError otherError)
     Right _ -> assertFailure "expected the unconsumed data byte to be refused"
@@ -1900,7 +1900,7 @@ test_vcdiffDataSectionUnconsumedBytes =
 test_vcdiffAddressSectionUnconsumedBytes :: Assertion
 test_vcdiffAddressSectionUnconsumedBytes =
   case parseVCDIFF patch of
-    Left (MalformedVCDIFF (VCDIFFSectionUnconsumedBytes VCDIFFAddressSection _)) -> pure ()
+    Left (MalformedVCDIFF (VCDIFFSectionUnconsumedBytes OnDemandAddressSection _ _)) -> pure ()
     Left otherError -> assertFailureT
       ("expected VCDIFFSectionUnconsumedBytes, got: " <> renderSlapError otherError)
     Right _ -> assertFailure "expected the unconsumed address byte to be refused"

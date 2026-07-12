@@ -193,8 +193,8 @@ readContribution _ (CarriedPlain sectionBytes) =
   Right (PlainContribution sectionBytes)
 readContribution kind (CarriedCompressed sectionBytes) =
   case getVcdiffVarint 0 sectionBytes of
-    Left _ ->
-      Left (MalformedVCDIFF (VCDIFFCompressedSectionWithoutDeclaredSize kind))
+    Left varintFailure ->
+      Left (MalformedVCDIFF (VCDIFFCompressedSectionWithoutDeclaredSize kind varintFailure))
     Right (VarintResult declaredSize consumed)
       | declaredSize == 0 ->
           Left (MalformedVCDIFF (VCDIFFCompressedSectionDeclaresEmptyOutput kind))

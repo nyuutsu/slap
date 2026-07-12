@@ -53,13 +53,14 @@ import Slap.Status
   ( SlapError(..), SlapAdvisory(..), Parsed(..)
   , VCDIFFRFCFeature(..), VCDIFFXDelta3Feature(..), VCDIFFMalformation(..)
   , VCDIFFShapeViolation(..), VCDIFFCodeTableMalformation(..)
-  , VCDIFFIndicatorKind(..), VCDIFFSection(..) )
+  , VCDIFFIndicatorKind(..), ReservedBitsSet(..)
+  , VCDIFFSection(..), VCDIFFOnDemandSection(..) )
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.VCDIFF.Apply (applyVCDIFF)
 import Slap.FileContents (PatchFileContents(..), InputFileContents(..), OutputFileContents(..))
 import Slap.Measure
   ( Offset(..), Length(..), FileSize(..)
-  , ActualOffset(..), MaxOffset(..), ExpectedSize(..), ActualSize(..)
+  , ActualOffset(..), ExpectedSize(..), ActualSize(..)
   , ActionIndex, firstAction, nextAction, actionAtPosition
   , Cursor(..), fitsWithin, remainingFromOffset, lengthToFileSize
   , lengthToOffset
@@ -406,7 +407,8 @@ classifyAndDecode tablePolicy rawPatch
   | rawVersion rawPatch /= 0 =
       Left (BadVersion LabelVCDIFF (FoundVersion (rawVersion rawPatch)))
   | headerIndicator .&. reservedIndicatorMask /= 0 =
-      Left (VCDIFFReservedIndicatorBits HeaderIndicator headerIndicator)
+      Left (VCDIFFReservedIndicatorBits HeaderIndicator headerIndicator
+              (ReservedBitsSet (headerIndicator .&. reservedIndicatorMask)))
   | otherwise = do
       resolvedTable <- resolveActiveTable tablePolicy headerIndicator (rawCodeTableData rawPatch)
       declaredCompressor <- lookupDeclaredCompressor (rawCompressorId rawPatch)
@@ -466,22 +468,20 @@ resolveActiveTable tablePolicy headerIndicator maybeTableData
 -- | Build a patch's custom code table from its data section (RFC 3284 §7): peel the two cache-size bytes,
 -- decode the inner delta (itself a self-contained VCDIFF patch) against the serialized default table,
 -- read the 1536-byte result back into a table, and check the one thing the image alone could not (a COPY mode the declared caches do not reach).
--- Everything from the inner decode onward (the inner-delta parse and apply, the read-back,
--- the mode check) is wrapped with the custom-code-table context so its precision survives; only the cache-size peel, failing before any of that,
--- keeps its own bare error.
+-- Only the inner parse and apply take the custom-code-table wrapper ('decodeInnerTableImage'):
+-- their failures speak of the inner delta as though it were a whole patch and need the context,
+-- while a 'VCDIFFCodeTableMalformation' already names the table it is about.
 buildCustomTable :: Maybe ByteString -> Either SlapError ResolvedTable
 buildCustomTable maybeTableData = do
   (config, innerDelta) <- peelCodeTableHeader maybeTableData
   image <- decodeInnerTableImage innerDelta
-  table <- wrapTableDecode (Table.deserializeCodeTable image)
-  wrapTableDecode (checkCustomTableCopyModes config table)
+  table <- Table.deserializeCodeTable image
+  checkCustomTableCopyModes config table
   Right ResolvedTable
     { resolvedActiveTable = ActiveTable table config
     , resolvedCustomTable = Just (CustomCodeTable table config)
     , resolvedTableNotes  = noopNoopAdvisories table
     }
-  where
-    wrapTableDecode = either (Left . VCDIFFCustomCodeTableDecodeFailed) Right
 
 -- | Peel the two cache-size bytes (@s_near@, @s_same@) off the front of the code-table data, leaving the inner delta.
 -- The data must hold at least those two bytes (RFC 3284 §7); fewer cannot name a cache configuration at all,
@@ -629,11 +629,13 @@ classifyFlavor maybeCustomTable declaredCompressor maybeAppHeader decodedWindows
 vetWindowFraming :: RawWindow -> Either SlapError ()
 vetWindowFraming rawWindow
   | windowIndicator .&. reservedIndicatorMask /= 0 =
-      Left (VCDIFFReservedIndicatorBits WindowIndicator windowIndicator)
+      Left (VCDIFFReservedIndicatorBits WindowIndicator windowIndicator
+              (ReservedBitsSet (windowIndicator .&. reservedIndicatorMask)))
   | testBit windowIndicator vcdSourceBit && testBit windowIndicator vcdTargetBit =
       Left (MalformedVCDIFF VCDIFFBothSourceAndTargetWindowBits)
   | rawDeltaIndicator rawWindow .&. reservedIndicatorMask /= 0 =
-      Left (VCDIFFReservedIndicatorBits DeltaIndicator (rawDeltaIndicator rawWindow))
+      Left (VCDIFFReservedIndicatorBits DeltaIndicator (rawDeltaIndicator rawWindow)
+              (ReservedBitsSet (rawDeltaIndicator rawWindow .&. reservedIndicatorMask)))
   | rawDeclaredEncodingLength rawWindow /= rawMeasuredEncodingLength rawWindow =
       Left (MalformedVCDIFF (VCDIFFDeltaEncodingLengthMismatch
               (ExpectedSize (lengthToFileSize (rawDeclaredEncodingLength rawWindow)))
@@ -910,20 +912,19 @@ decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection 
                       (ExpectedSize targetWindowSize)
                       (ActualSize producedSize))
       DataSectionCursor dataPosition <- gets dataCursor
-      requireSectionConsumed VCDIFFDataSection dataPosition dataSectionSize
+      requireSectionConsumed OnDemandDataSection dataPosition dataSectionSize
       AddressSectionCursor addressPosition <- gets addrCursor
-      requireSectionConsumed VCDIFFAddressSection addressPosition addressSectionSize
+      requireSectionConsumed OnDemandAddressSection addressPosition addressSectionSize
       gets (\decodeState ->
               ( Vector.fromList (reverse (emittedReversed decodeState))
               , reverse (notesReversed decodeState) ))
 
-    -- | Refuse a section whose cursor stopped short of its declared end; data and address only —
-    -- 'VCDIFFSectionUnconsumedBytes' has the why, including why the instruction section goes unnamed.
-    requireSectionConsumed :: VCDIFFSection -> Offset -> FileSize -> WindowDecode ()
+    -- | Refuse a section whose cursor stopped short of its declared end.
+    requireSectionConsumed :: VCDIFFOnDemandSection -> Offset -> FileSize -> WindowDecode ()
     requireSectionConsumed section cursorPosition sectionSize =
       let leftoverLength = remainingFromOffset cursorPosition sectionSize
       in when (leftoverLength /= Length 0) $
-           failDecode (VCDIFFSectionUnconsumedBytes section leftoverLength)
+           failDecode (VCDIFFSectionUnconsumedBytes section (ExpectedSize sectionSize) leftoverLength)
 
     -- | Read one code byte and apply both of its templates ('Noop'
     -- fills the unused slot of a single-instruction entry).
@@ -969,10 +970,10 @@ decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection 
       thisInstruction <- gets instructionIndex
       let address = copyAddressDecoded reading
           copyEnd = advance address size
-      when (address < Offset 0 || address >= here) $
-        failDecode (VCDIFFCopyAddressOutOfRange thisInstruction
-                      (ActualOffset address)
-                      (MaxOffset here))
+      when (address < Offset 0) $
+        failDecode (VCDIFFCopyAddressNegative thisInstruction (ActualOffset address))
+      when (address >= here) $
+        failDecode (VCDIFFCopyReadsUnwrittenOutput thisInstruction)
       when (address < segmentEnd && copyEnd > segmentEnd) $
         failDecode (VCDIFFCopyCrossesSourceSegmentEnd thisInstruction)
       modify (adoptCopyAddressReading reading)
@@ -999,7 +1000,9 @@ decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection 
       case decodeCopyAddress cache here mode addrSection cursor of
         Left AddressSectionExhausted ->
           sectionExhausted VCDIFFAddressSection
-        Left (UnknownAddressMode modeByte) ->
-          failDecode (VCDIFFInvalidCopyAddressMode modeByte)
+        Left (UnknownAddressMode modeByte) -> do
+          thisInstruction <- gets instructionIndex
+          failDecode (VCDIFFInvalidCopyAddressMode thisInstruction modeByte
+                        (highestValidAddressMode (activeCacheConfig activeTable)))
         Right reading -> pure reading
 

@@ -7,7 +7,7 @@ module Slap.Status.Render.Advisory
   ) where
 
 import Slap.Checksum (showCRC32, showAdler32, ExpectedCRC32(..), ActualCRC32(..))
-import Slap.Display.Common (renderAsText, renderHexAsText)
+import Slap.Display.Common (renderAsText)
 import Slap.Display.Primitives (padHex)
 import Slap.FieldName (fieldNameLabel)
 import Slap.FormatLabel (FormatLabel(..), formatLabelName)
@@ -51,9 +51,9 @@ renderSlapAdvisory (InputHeaderAdded console) =
 
 renderSlapAdvisory (PPFApplyGrewPastSource label (FileSize sourceSize) (Length overflow)) =
   formatLabelName label
-  <> ": this patch makes the output longer than the input (input 0x"
-  <> renderHexAsText sourceSize <> " bytes, output extends 0x"
-  <> renderHexAsText overflow <> " bytes further)"
+  <> ": this patch makes the output longer than the input (input "
+  <> renderAsText sourceSize <> " bytes, output extends "
+  <> renderAsText overflow <> " bytes further)"
   <> case label of
        -- PPF2 tolerates growth, so there the line above says everything; the other labels earn the extra remark.
        LabelPPF2 -> ""
@@ -167,7 +167,7 @@ renderSlapAdvisory (IPSRecordsClippedByMarker label
     (ClippedRecordCount count) firstIndex (MarkerOvershootBytes overshoot)) =
   formatLabelName label <> " apply: "
   <> renderAsText count <> plural count " record" " records"
-  <> " clipped by truncation marker (first at step #"
+  <> " clipped by truncation marker (first at record "
   <> renderAsText (unActionIndex firstIndex) <> ", "
   <> renderAsText (unLength overshoot)
   <> plural (unLength overshoot) " byte" " bytes"
@@ -316,7 +316,7 @@ renderSlapAdvisory (ApplyOOBBlocksSkipped label direction (OOBBlockCount count) 
   formatLabelName label <> " " <> directionVerb direction <> ": "
   <> renderAsText count <> plural count " block writes" " blocks write"
   <> " past declared output size ("
-  <> renderAsText (unFileSize declaredSize) <> " bytes); first at step #"
+  <> renderAsText (unFileSize declaredSize) <> " bytes); first at record "
   <> renderAsText (unActionIndex firstIndex) <> ", "
   <> renderAsText (unLength overshoot) <> plural (unLength overshoot) " byte" " bytes"
   <> " total overshoot — clipped to output bounds"

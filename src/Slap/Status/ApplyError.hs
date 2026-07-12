@@ -10,6 +10,8 @@ module Slap.Status.ApplyError
   ) where
 
 import Slap.Display.Common (renderAsText, renderHexAsText)
+import Slap.Status.Render.Advisory (plural)
+import Slap.Status.Vocabulary (slapAddressableCeiling)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      SignedOffset(..), ActionIndex(unActionIndex),
                      ReadOffset(..), WritePosition(..),
@@ -86,41 +88,48 @@ renderCursorKind TargetCursor = "target-relative"
 renderApplyError :: ApplyError -> Text
 
 renderApplyError (ApplyCursorUnderflow cursorKind actionIndex cursor) =
-  "at step #" <> renderAsText (unActionIndex actionIndex) <> ": "
-  <> renderCursorKind cursorKind <> " cursor underflowed (value "
+  "record " <> renderAsText (unActionIndex actionIndex)
+  <> " reads from before the start of the " <> addressedFile
+  <> " (the " <> renderCursorKind cursorKind <> " cursor lands at "
   <> renderAsText (unSignedOffset cursor) <> ")"
+  where
+    addressedFile = case cursorKind of
+      SourceCursor -> "input"
+      TargetCursor -> "output"
 
 renderApplyError (ApplySourceReadOutOfBounds actionIndex readEndOffset sourceSize) =
-  "at step #" <> renderAsText (unActionIndex actionIndex)
-  <> ": input read would end at offset 0x"
-  <> renderHexAsText (unOffset readEndOffset)
-  <> " but input is " <> renderAsText (unFileSize sourceSize) <> " bytes"
+  "record " <> renderAsText (unActionIndex actionIndex)
+  <> " reads past the end of the input (the input ends at offset 0x"
+  <> renderHexAsText (unFileSize sourceSize)
+  <> "; this read runs to 0x" <> renderHexAsText (unOffset readEndOffset) <> ")"
 
 renderApplyError (ApplyTargetReadUnwritten actionIndex (ReadOffset readOffset) (WritePosition writePosition)) =
-  "at step #" <> renderAsText (unActionIndex actionIndex)
-  <> ": TargetCopy read at offset 0x"
-  <> renderHexAsText (unOffset readOffset)
-  <> " references position at or past current write position 0x"
-  <> renderHexAsText (unOffset writePosition)
+  "record " <> renderAsText (unActionIndex actionIndex)
+  <> ": the patch copies from a part of the output it hasn't produced yet"
+  <> " (a TargetCopy reads at offset 0x" <> renderHexAsText (unOffset readOffset)
+  <> ", but the output ends at 0x" <> renderHexAsText (unOffset writePosition)
+  <> " so far)"
 
 renderApplyError (ApplyWritesPastTarget actionIndex (RequestedLength requestedLength) (RemainingLength remainingLength)) =
-  "at step #" <> renderAsText (unActionIndex actionIndex)
-  <> ": action of length " <> renderAsText (unLength requestedLength)
-  <> " would write past output ("
-  <> renderAsText (unLength remainingLength) <> " bytes remaining)"
+  "record " <> renderAsText (unActionIndex actionIndex)
+  <> " writes " <> renderAsText (unLength requestedLength)
+  <> plural (unLength requestedLength) " byte" " bytes"
+  <> ", with only " <> renderAsText (unLength remainingLength)
+  <> " left in the output"
 
 renderApplyError (ApplyTargetUnderfilled (WritePosition cursor) (ExpectedSize expectedSize)) =
-  "output under-filled ("
+  "the patch ends before the output is complete ("
   <> renderAsText (unOffset cursor) <> " of "
-  <> renderAsText (unFileSize expectedSize) <> " bytes written before action stream exhausted)"
+  <> renderAsText (unFileSize expectedSize) <> " bytes written)"
 
 renderApplyError (ApplyNegativeRecordOffset actionIndex offset) =
   "record " <> renderAsText (unActionIndex actionIndex)
-  <> " has negative offset " <> renderAsText (unOffset offset)
+  <> " writes at offset " <> renderAsText (unOffset offset)
 
 renderApplyError (ApplyNegativeControlLength actionIndex (RequestedLength regionLength)) =
-  "control instruction " <> renderAsText (unActionIndex actionIndex)
-  <> " declares a negative region length " <> renderAsText (unLength regionLength)
+  "record " <> renderAsText (unActionIndex actionIndex)
+  <> " declares a region length of " <> renderAsText (unLength regionLength)
+  <> " bytes; a record's seek may be negative, but a length may not"
 
 renderApplyError (ApplyOutputExceedsAddressableRange actionIndex offset payloadLength) =
   "record " <> renderAsText (unActionIndex actionIndex)
@@ -128,32 +137,35 @@ renderApplyError (ApplyOutputExceedsAddressableRange actionIndex offset payloadL
   <> " plus " <> renderAsText (unLength payloadLength)
   <> " bytes, reaching "
   <> renderAsText (toInteger (unOffset offset) + toInteger (unLength payloadLength))
-  <> " — past the " <> renderAsText (maxBound :: Int)
-  <> "-byte limit slap can address"
+  <> "; that is past " <> slapAddressableCeiling
+  <> ", the largest position slap can address"
 
 renderApplyError (ApplyReplaceGrowsFile actionIndex offset (RequestedLength payloadLength) sourceSize) =
   "record " <> renderAsText (unActionIndex actionIndex)
-  <> ": Replace at offset 0x" <> renderHexAsText (unOffset offset)
-  <> " writes " <> renderAsText (unLength payloadLength) <> " bytes"
-  <> ", which would extend past the source size of "
-  <> renderAsText (unFileSize sourceSize) <> " bytes"
-  <> " (PPF4 Replaces cannot grow the file; use Append records)"
+  <> " writes past the end of the input (a Replace at offset 0x"
+  <> renderHexAsText (unOffset offset)
+  <> " writes " <> renderAsText (unLength payloadLength)
+  <> plural (unLength payloadLength) " byte" " bytes"
+  <> ", running past the input's "
+  <> renderAsText (unFileSize sourceSize) <> "-byte end;"
+  <> " a Replace cannot grow the file, only an Append can)"
 
 renderApplyError (ApplyDiffReadOutOfBounds actionIndex readEndOffset diffSize) =
-  "at step #" <> renderAsText (unActionIndex actionIndex)
-  <> ": diff-stream read would end at offset 0x"
-  <> renderHexAsText (unOffset readEndOffset)
-  <> " but diff stream is " <> renderAsText (unFileSize diffSize) <> " bytes"
+  "record " <> renderAsText (unActionIndex actionIndex)
+  <> " reads past the end of the patch's data (the diff block, which holds the changed bytes, ends at offset 0x"
+  <> renderHexAsText (unFileSize diffSize)
+  <> "; this read runs to 0x" <> renderHexAsText (unOffset readEndOffset) <> ")"
 
 renderApplyError (ApplyExtraReadOutOfBounds actionIndex readEndOffset extraSize) =
-  "at step #" <> renderAsText (unActionIndex actionIndex)
-  <> ": extra-stream read would end at offset 0x"
-  <> renderHexAsText (unOffset readEndOffset)
-  <> " but extra stream is " <> renderAsText (unFileSize extraSize) <> " bytes"
+  "record " <> renderAsText (unActionIndex actionIndex)
+  <> " reads past the end of the patch's data (the extra block, which holds the brand-new bytes, ends at offset 0x"
+  <> renderHexAsText (unFileSize extraSize)
+  <> "; this read runs to 0x" <> renderHexAsText (unOffset readEndOffset) <> ")"
 
 renderApplyError (ApplyAbsoluteWritePastTarget actionIndex writeStart (RequestedLength payloadLength) targetSize) =
   "record " <> renderAsText (unActionIndex actionIndex)
-  <> ": write at offset 0x" <> renderHexAsText (unOffset writeStart)
-  <> " of " <> renderAsText (unLength payloadLength) <> " bytes"
-  <> " would extend past the target size of "
+  <> " writes " <> renderAsText (unLength payloadLength)
+  <> plural (unLength payloadLength) " byte" " bytes"
+  <> " at offset 0x" <> renderHexAsText (unOffset writeStart)
+  <> ", running past the output's declared size of "
   <> renderAsText (unFileSize targetSize) <> " bytes"

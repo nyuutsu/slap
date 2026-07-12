@@ -30,7 +30,8 @@ module Slap.VCDIFF.CodeTable
   ) where
 
 import Slap.Measure (Length(..), ActualLength(..), byteLength)
-import Slap.Status (SlapError(..), VCDIFFCodeTableMalformation(..), VCDIFFCodeTableField(..))
+import Slap.Status (SlapError(..), VCDIFFCodeTableMalformation(..), VCDIFFCodeTableField(..),
+                    VCDIFFCodeTableTemplateKind(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -283,24 +284,24 @@ sizeWireByte (SizeIs (FixedInstructionSize fixedSize)) = fixedSize
 decodeInstructionTemplate :: Word8 -> Word8 -> Word8 -> Either SlapError InstructionTemplate
 decodeInstructionTemplate typeByte sizeByte modeByte
   | typeByte == noopWireCode = do
-      requireUnusedFieldZero CodeTableSizeField sizeByte
-      requireUnusedFieldZero CodeTableModeField modeByte
+      requireUnusedFieldZero CodeTableNoopTemplate CodeTableSizeField sizeByte
+      requireUnusedFieldZero CodeTableNoopTemplate CodeTableModeField modeByte
       Right Noop
   | typeByte == addWireCode = do
-      requireUnusedFieldZero CodeTableModeField modeByte
+      requireUnusedFieldZero CodeTableAddTemplate CodeTableModeField modeByte
       Right (Add (decodeSize sizeByte))
   | typeByte == runWireCode = do
-      requireUnusedFieldZero CodeTableModeField modeByte
+      requireUnusedFieldZero CodeTableRunTemplate CodeTableModeField modeByte
       Right (Run (decodeSize sizeByte))
   | typeByte == copyWireCode = Right (Copy (decodeSize sizeByte) (CopyAddressMode modeByte))
   | otherwise =
       Left (MalformedVCDIFFCodeTable (VCDIFFCodeTableInvalidInstructionType typeByte))
 
 -- | Refuse a nonzero byte in a field its template type does not carry.
-requireUnusedFieldZero :: VCDIFFCodeTableField -> Word8 -> Either SlapError ()
-requireUnusedFieldZero _ 0 = Right ()
-requireUnusedFieldZero field byte =
-  Left (MalformedVCDIFFCodeTable (VCDIFFCodeTableUnusedFieldSet field byte))
+requireUnusedFieldZero :: VCDIFFCodeTableTemplateKind -> VCDIFFCodeTableField -> Word8 -> Either SlapError ()
+requireUnusedFieldZero _ _ 0 = Right ()
+requireUnusedFieldZero templateKind field byte =
+  Left (MalformedVCDIFFCodeTable (VCDIFFCodeTableUnusedFieldSet templateKind field byte))
 
 decodeSize :: Word8 -> InstructionSize
 decodeSize 0        = SizeCodedSeparately

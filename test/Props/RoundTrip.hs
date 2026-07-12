@@ -3310,5 +3310,4 @@ xdelta1RejectsWrongControlTypeTag =
           let rendered = Text.unpack (renderSlapError parseError)
           in assertBool
                ("rejection should name the type tag (got: " ++ rendered ++ ")")
-               (   "type tag"        `isInfixOf` rendered
-                || "ST_XdeltaControl" `isInfixOf` rendered)
+               ("type tag" `isInfixOf` rendered)

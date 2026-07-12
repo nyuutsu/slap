@@ -9,6 +9,7 @@ import Slap.Archive.Types (ArchiveFormat, archiveFormatName, toolsFor,
                            ToolName(..), ToolDiagnostic(..),
                            EntryName(..), SeenEntryCount(..),
                            UnreadableReason(..), UnwrapError(..))
+import Slap.Binary (VarintReadFailure(..))
 import Slap.Checksum (showCRC32, MD5Hash(..), ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Constraint (Constraint(..), constraintFlagName, constraintName)
 import Slap.Dialect (dialectFlagName, dialectName)
@@ -40,9 +41,11 @@ import Slap.Status.Decompression (renderDecompressionFailure,
 import Slap.Status.Error (SlapError(..), UnencodeabilityReason(..))
 import Slap.Status.Render.Advisory (renderSlapAdvisory, plural)
 import Slap.Status.VCDIFF (VCDIFFShapeViolation(..), VCDIFFCodeTableMalformation(..),
-                           codeTableFieldName, indicatorKindName, vcdiffSectionName,
+                           codeTableFieldName, codeTableTemplateKindPhrase, indicatorKindName,
+                           vcdiffSectionName, ReservedBitsSet(..), VCDIFFOnDemandSection(..),
                            VCDIFFMalformation(..), VCDIFFRFCFeature(..), VCDIFFXDelta3Feature(..))
 import Slap.Status.Vocabulary (ExtractionSubject(..), compressionAlgorithmName,
+                               slapAddressableCeiling,
                                ControlSectionSize(..), DiffSectionSize(..), TargetSectionSize(..),
                                BSDiffHeaderMalformation(..), APSN64HeaderMalformation(..),
                                NINJA1Malformation(..),
@@ -51,7 +54,9 @@ import Slap.Status.XDelta1 (XDelta1KnownUnsupportedVersion(..), XDelta1ShapeViol
                             XDelta1SourceListShape(..), XDelta1SourceFlag(..),
                             XDelta1GzipStreamInputs(..))
 
+import Data.Bits (testBit)
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as ByteString
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -66,7 +71,8 @@ renderUnwrapError path format (ArchiveToolFailed (ToolName tool) (ToolDiagnostic
     <> " archive " <> pathText path <> ": " <> diagnostic
 renderUnwrapError path format (ArchiveHasNoCandidate (SeenEntryCount entryCount)) =
   "no usable file in the " <> archiveFormatName format <> " archive " <> pathText path
-    <> " (" <> renderAsText entryCount <> " entries, all filtered as chaff)."
+    <> " (" <> renderAsText entryCount <> plural entryCount " entry" " entries"
+    <> ", none that looks like a patch)."
     <> " If this isn't really an archive, pass --raw."
 renderUnwrapError path format (ArchiveHasManyCandidates names) =
   pathText path <> " is a " <> archiveFormatName format <> " archive with "
@@ -116,61 +122,68 @@ renderSlapError HeaderDirectiveRequiresSeparateOutput =
   "--add-header and --remove-header don't combine with --in-place: the output would replace the original with a differently-shaped file"
 
 renderSlapError UnrecognizedFormat =
-  "unknown patch format"
+  "this file doesn't look like any patch format slap knows"
 
 renderSlapError (AmbiguousDetection labels) =
-  "ambiguous format: could be "
+  "this file looks like more than one patch format: could be "
   <> commaList (map formatLabelName labels)
 
 renderSlapError (InputTooShort label (RequiredLength needed) (ActualLength actual)) =
-  formatLabelName label <> ": input too short (need "
-  <> renderAsText (unLength needed) <> " bytes, have "
-  <> renderAsText (unLength actual) <> ")"
+  formatLabelName label <> ": the patch is too short (at least "
+  <> renderAsText (unLength needed) <> " bytes needed; the file is "
+  <> renderAsText (unLength actual) <> plural (unLength actual) " byte" " bytes" <> ")"
 
 renderSlapError (XDelta1ControlSegmentTooShort (RequiredLength needed) (ActualLength actual)) =
-  formatLabelName LabelXDelta1 <> ": control segment too short (need "
-  <> renderAsText (unLength needed) <> " bytes, have "
+  formatLabelName LabelXDelta1
+  <> ": the patch's instructions are cut short (the control segment, which holds them, needs at least "
+  <> renderAsText (unLength needed) <> " bytes; this one holds "
   <> renderAsText (unLength actual) <> ")"
 
-renderSlapError (BadMagic label (ActualMagic actualBytes)) =
-  "not a " <> formatLabelName label <> " file (bad magic: "
-  <> renderAsText actualBytes <> ")"
+renderSlapError (BadMagic label (ActualMagic actualBytes))
+  | ByteString.null actualBytes =
+      "this file is empty, so it cannot open with the "
+      <> formatLabelName label <> " signature"
+  | otherwise =
+      "this file doesn't open with the " <> formatLabelName label
+      <> " signature (it begins with "
+      <> renderPrintableASCIIOrHex actualBytes <> ")"
 
 renderSlapError (BadVersion label (FoundVersion versionByte)) =
-  formatLabelName label <> ": unsupported version "
-  <> renderAsText versionByte
+  formatLabelName label <> ": the patch declares version "
+  <> renderAsText versionByte <> ", which slap does not know"
 
 renderSlapError (UnsupportedXDelta1Subformat version) =
-  formatLabelName LabelXDelta1 <> ": unsupported subformat: "
-  <> case version of
-       XDelta1_1_0_4 -> "version 1.0.4"
-       XDelta1_1_0   -> "version 1.0"
-       XDelta1_0_14  -> "version 0.14"
+  formatLabelName LabelXDelta1 <> ": this patch is the "
+  <> (case version of
+        XDelta1_1_0_4 -> "version 1.0.4"
+        XDelta1_1_0   -> "version 1.0"
+        XDelta1_0_14  -> "version 0.14")
+  <> " subformat, which slap does not read"
 
 renderSlapError (UnsupportedNINJA1Subformat subformatBytes) =
-  formatLabelName LabelNINJA1 <> ": unsupported subformat: "
-  <> renderAsText subformatBytes
+  formatLabelName LabelNINJA1 <> ": this patch declares subformat "
+  <> renderAsText subformatBytes <> ", which slap does not read"
 
 renderSlapError NINJA1BinaryMissingEOFFooter =
-  formatLabelName LabelNINJA1 <> ": binary patch ends without the EOF footer"
+  formatLabelName LabelNINJA1 <> ": the patch ends without its closing marker (an EOF footer)"
 
 renderSlapError (NegativeSize label name (ParsedSizeValue value)) =
-  formatLabelName label <> ": negative "
-  <> fieldNameLabel name <> ": " <> renderAsText value
+  formatLabelName label <> ": the patch declares a "
+  <> fieldNameLabel name <> " of " <> renderAsText value
 
 renderSlapError (DecompressionFailed failure) =
   renderDecompressionFailure failure
 
 renderSlapError (XDelta1DiffFailed (XDelta1DiffCause causeMessage)) =
-  "xdelta1 differ failed: " <> causeMessage
+  "the xdelta1 differ failed: " <> causeMessage
 
 renderSlapError (BSDiffDifferFailed (BSDiffDifferCause causeMessage)) =
-  "bsdiff differ failed: " <> causeMessage
+  "the bsdiff differ failed: " <> causeMessage
 
 renderSlapError (RecordExceedsAddressableRange label recordIndex (ActualOffset endOffset) (MaxOffset maxEndOffset)) =
   formatLabelName label <> ": record " <> renderAsText (unActionIndex recordIndex)
   <> " ends at offset 0x" <> renderHexAsText (unOffset endOffset)
-  <> ", exceeding the variant's maximum addressable end 0x"
+  <> "; the format cannot address past 0x"
   <> renderHexAsText (unOffset maxEndOffset)
 
 renderSlapError (RecordEndExceedsAddressableRange label recordIndex offset payloadLength) =
@@ -179,50 +192,55 @@ renderSlapError (RecordEndExceedsAddressableRange label recordIndex offset paylo
   <> " plus " <> renderAsText (unLength payloadLength)
   <> " bytes, reaching "
   <> renderAsText (toInteger (unOffset offset) + toInteger (unLength payloadLength))
-  <> " — past the " <> renderAsText (maxBound :: Int)
-  <> "-byte limit slap can address"
+  <> "; that is past " <> slapAddressableCeiling
+  <> ", the largest position slap can address"
 
 renderSlapError (MalformedRecordField label recordIndex name) =
   formatLabelName label <> ": record " <> renderAsText (unActionIndex recordIndex)
-  <> " has malformed " <> fieldNameLabel name
+  <> " has a malformed " <> fieldNameLabel name
 
 renderSlapError (UnrecognizedTrailer label (TrailerMarker markerBytes) (ActualLength actualLength)) =
-  formatLabelName label <> ": unrecognized trailing bytes after "
-  <> renderTrailerMarkerName markerBytes <> " marker ("
-  <> renderAsText (unLength actualLength) <> " bytes)"
+  formatLabelName label <> ": the patch carries "
+  <> renderAsText (unLength actualLength)
+  <> plural (unLength actualLength) " unrecognized byte" " unrecognized bytes"
+  <> " after its " <> renderTrailerMarkerName markerBytes <> " end marker"
 
 renderSlapError (PatchCRCMismatch label (ExpectedCRC32 stored) (ActualCRC32 computed)) =
-  formatLabelName label <> ": patch CRC mismatch (stored "
+  formatLabelName label <> ": the patch's own checksum doesn't match its contents (stored CRC "
   <> showCRC32 stored <> ", computed " <> showCRC32 computed <> ")"
 
 renderSlapError (TrailingMagicMismatch label (ExpectedMagic expected) (ActualMagic actual)) =
-  formatLabelName label <> ": trailing magic mismatch (expected "
+  formatLabelName label <> ": the patch's closing signature is wrong (expected "
   <> renderAsText expected <> ", found " <> renderAsText actual <> ")"
 
 renderSlapError (UnknownFlag label name (RawFlagByte flagByte)) =
-  formatLabelName label <> ": unknown "
-  <> fieldNameLabel name <> " flag: 0x"
+  formatLabelName label <> ": the patch's "
+  <> fieldNameLabel name <> " byte is 0x"
   <> renderHexAsText flagByte
+  <> ", a value the format does not define"
 
 renderSlapError (UnsupportedEncodingMethod label (EncodingMethodByte methodByte)) =
-  formatLabelName label <> ": unsupported encoding method: 0x"
+  formatLabelName label <> ": the patch declares encoding method 0x"
   <> renderHexAsText methodByte
+  <> ", which slap does not support"
 
 renderSlapError (NINJA2UnrecognizedTextMode byte) =
-  "NINJA2 PATCH_ENC byte is 0x" <> padHex 2 byte
-    <> " (expected 0 for undeclared or 1 for UTF-8); the NINJA2 spec defines no other values, "
-    <> "and slap will not guess how to decode text fields under an undefined encoding"
+  formatLabelName LabelNINJA2
+    <> ": the patch doesn't say how its text is encoded: its PATCH_ENC byte is 0x" <> padHex 2 byte
+    <> ", and the spec defines only 0 (undeclared) and 1 (UTF-8); slap won't guess at an undefined encoding"
 
 renderSlapError (MalformedNINJA1Content malformation) =
-  formatLabelName LabelNINJA1 <> ": malformed text: " <> case malformation of
-    NINJA1EmptyTextualPatch                          -> "empty textual patch"
-    NINJA1InvalidOffsetInTextRecord (OffsetTokenText t) -> "invalid offset in text record: " <> t
+  formatLabelName LabelNINJA1 <> ": " <> case malformation of
+    NINJA1EmptyTextualPatch -> "the textual patch is empty"
+    NINJA1InvalidOffsetInTextRecord (OffsetTokenText t) ->
+      "a text record's offset token \"" <> t <> "\" cannot be read as a number"
     NINJA1UnaddressableOffsetInTextRecord (OffsetTokenText t) ->
-      "offset " <> t <> " in text record is past the "
-      <> renderAsText (maxBound :: Int) <> "-byte limit slap can address"
+      "offset " <> t <> " in a text record is past "
+      <> slapAddressableCeiling <> ", the largest position slap can address"
     NINJA1MalformedChecksum field (ChecksumTokenText t) ->
-      fieldNameLabel field <> " token \"" <> t <> "\" is neither unk nor a valid hex checksum"
-    NINJA1MalformedTextRecord       (LineText line)  -> "malformed text record: " <> line
+      "the " <> fieldNameLabel field <> " token \"" <> t <> "\" is neither \"unk\" nor a valid hex checksum"
+    NINJA1MalformedTextRecord (LineText line) ->
+      "a text record cannot be read: \"" <> line <> "\""
 
 renderSlapError (ParseError label parserError) =
   formatLabelName label <> ": " <> renderByteParserError parserError
@@ -252,127 +270,195 @@ renderSlapError (XDelta1NonBooleanSourceFlag flag byteValue) =
 renderSlapError (UnsupportedVCDIFFShape violation) =
   formatLabelName LabelVCDIFF <> ": " <> case violation of
     VCDIFFNestedCustomCodeTable ->
-      "nested custom code tables are not allowed (RFC 3284 §7c)"
+      "slap can't find a place to start reading this patch's instruction table:"
+      <> " the table arrives as a small patch of its own, and reading that small patch"
+      <> " needs a table too, which this patch also says is custom"
+      <> " (a custom code table is a delta against the standard table;"
+      <> " that delta must itself use the standard table)"
 
 renderSlapError (VCDIFFCustomCodeTableDecodeFailed innerError) =
   -- No format-label prefix of its own: the inner error already carries one.
-  "while decoding the custom code table: " <> renderSlapError innerError
+  "while reading the instruction table this patch brought with it: "
+  <> renderSlapError innerError
 
 renderSlapError (VCDIFFRFCFeatureWithXDelta3Feature rfcFeature xdelta3Feature) =
   formatLabelName LabelVCDIFF
-  <> ": " <> rfcFeaturePhrase rfcFeature <> " (an RFC 3284 feature) together with "
-  <> xdelta3FeaturePhrase xdelta3Feature
-  <> " (an xdelta3 extension) — neither a conformant RFC-3284 patch nor"
-  <> " an xdelta3 patch, and slap applies only conformant patches of either dialect"
+  <> ": this patch mixes two different flavors of VCDIFF, and slap doesn't know"
+  <> " which one it is meant to be read as (" <> rfcFeaturePhrase rfcFeature
+  <> ", which only the RFC flavor has; and " <> xdelta3FeaturePhrase xdelta3Feature
+  <> ", which only xdelta3 has)"
   where
-    rfcFeaturePhrase RFCFeatureTargetWindow    = "a VCD_TARGET window"
-    rfcFeaturePhrase RFCFeatureCustomCodeTable = "a custom code table"
-    xdelta3FeaturePhrase XDelta3FeatureSecondaryCompressor = "a declared secondary compressor"
-    xdelta3FeaturePhrase XDelta3FeatureApplicationHeader   = "an application header"
-    xdelta3FeaturePhrase XDelta3FeatureWindowChecksum      = "a per-window Adler32 checksum"
+    rfcFeaturePhrase RFCFeatureTargetWindow =
+      "it uses a VCD_TARGET window, a stretch of output copied from output built earlier"
+    rfcFeaturePhrase RFCFeatureCustomCodeTable =
+      "it uses a custom code table, its own coding for its instructions"
+    xdelta3FeaturePhrase XDelta3FeatureSecondaryCompressor =
+      "it declares a secondary compressor, a second layer of packing inside the patch"
+    xdelta3FeaturePhrase XDelta3FeatureApplicationHeader =
+      "it carries an application header, a note from the tool that made it"
+    xdelta3FeaturePhrase XDelta3FeatureWindowChecksum =
+      "it carries a per-window Adler32 checksum"
 
-renderSlapError (VCDIFFReservedIndicatorBits indicatorKind rawByte) =
-  formatLabelName LabelVCDIFF <> ": reserved bits set in the "
-  <> indicatorKindName indicatorKind <> " (0x" <> padHex 2 rawByte
-  <> "); the format leaves those bits undefined, so slap cannot"
-  <> " interpret what the patch is asking"
+renderSlapError (VCDIFFReservedIndicatorBits indicatorKind rawByte (ReservedBitsSet undefinedBits)) =
+  formatLabelName LabelVCDIFF
+  <> ": this patch is flagged as carrying something slap doesn't know how to read."
+  <> " An indicator byte's bits say what fields come next, so slap can't skip"
+  <> " an unknown one and read on. (the " <> indicatorKindName indicatorKind
+  <> " is 0x" <> padHex 2 rawByte <> "; " <> reservedBitsClause <> ")"
+  where
+    reservedBitsClause =
+      case [bitNumber | bitNumber <- [0 .. 7 :: Int], testBit undefinedBits bitNumber] of
+        [loneBit] -> "its bit " <> renderAsText loneBit
+                     <> " is reserved, and nothing has defined it yet"
+        manyBits  -> "its bits " <> joinedWithAnd (map renderAsText manyBits)
+                     <> " are reserved, and nothing has defined them yet"
+    joinedWithAnd :: [Text] -> Text
+    joinedWithAnd []                    = ""
+    joinedWithAnd [only]                = only
+    joinedWithAnd [nextToLast, final]   = nextToLast <> " and " <> final
+    joinedWithAnd (leading : remaining) = leading <> ", " <> joinedWithAnd remaining
 
 renderSlapError (VCDIFFUnknownSecondaryCompressor idByte) =
-  formatLabelName LabelVCDIFF <> ": secondary compressor id "
-  <> renderAsText idByte
-  <> " is not in xdelta3's catalog (1 = DJW, 2 = LZMA, 16 = FGK);"
-  <> " slap does not know what algorithm it names"
+  formatLabelName LabelVCDIFF
+  <> ": slap doesn't know how to unpack this patch (it declares secondary compressor "
+  <> renderAsText idByte <> ", and slap knows only three: 1 for DJW, 2 for LZMA, 16 for FGK)"
 
 renderSlapError (MalformedVCDIFF malformation) =
   formatLabelName LabelVCDIFF <> ": " <> case malformation of
     VCDIFFBothSourceAndTargetWindowBits ->
-      "window sets both VCD_SOURCE and VCD_TARGET (RFC 3284 §4.2 forbids both)"
-    VCDIFFCopyAddressOutOfRange actionIndex (ActualOffset address) (MaxOffset here) ->
-      "decoded instruction " <> renderAsText (unActionIndex actionIndex)
-      <> ": copy address " <> renderAsText (unOffset address)
-      <> " out of range [0, " <> renderAsText (unOffset here) <> ")"
+      "slap can't tell where part of this patch copies from: it marks off a slice of material"
+      <> " for its copies to read, and claims that slice is in the input and in the output"
+      <> " at once (a window's indicator sets both VCD_SOURCE, meaning the input,"
+      <> " and VCD_TARGET, meaning the output built so far)"
+    VCDIFFCopyReadsUnwrittenOutput actionIndex ->
+      "record " <> renderAsText (unActionIndex actionIndex)
+      <> "'s copy reads from a part of the output the patch hasn't produced yet"
+    VCDIFFCopyAddressNegative actionIndex (ActualOffset address) ->
+      "record " <> renderAsText (unActionIndex actionIndex)
+      <> "'s copy asks to read from position " <> renderAsText (unOffset address)
     VCDIFFCopyCrossesSourceSegmentEnd actionIndex ->
-      "decoded instruction " <> renderAsText (unActionIndex actionIndex)
-      <> ": copy crosses the source-segment boundary"
+      "record " <> renderAsText (unActionIndex actionIndex)
+      <> "'s copy reads past the end of the material it copies from"
+      <> " (it starts inside the source segment and its length carries it past the segment's end)"
     VCDIFFWindowSizeMismatch (ExpectedSize expected) (ActualSize actual) ->
-      "window produced " <> renderAsText (unFileSize actual)
-      <> " bytes, declared " <> renderAsText (unFileSize expected)
+      "this patch promises one amount of output and builds another (one of its windows declares "
+      <> renderAsText (unFileSize expected) <> " bytes; its instructions produce "
+      <> renderAsText (unFileSize actual) <> ")"
     VCDIFFSectionExhausted section actionIndex ->
-      "decoded instruction " <> renderAsText (unActionIndex actionIndex)
-      <> ": " <> vcdiffSectionName section <> " section exhausted"
-    VCDIFFInvalidCopyAddressMode modeByte ->
-      "invalid copy address mode " <> renderAsText modeByte
+      "record " <> renderAsText (unActionIndex actionIndex)
+      <> " runs out of bytes partway through (the " <> vcdiffSectionName section
+      <> " section it draws on ends before the record does)"
+    VCDIFFInvalidCopyAddressMode actionIndex modeByte highestValidMode ->
+      "record " <> renderAsText (unActionIndex actionIndex)
+      <> "'s copy names a way of writing its address that this patch never set up"
+      <> " (it uses address mode " <> renderAsText modeByte
+      <> ", and the patch's address caches define only modes 0 through "
+      <> renderAsText highestValidMode <> ")"
     VCDIFFDeltaEncodingLengthMismatch (ExpectedSize declared) (ActualSize measured) ->
-      "window declares a delta-encoding length of "
-      <> renderAsText (unFileSize declared) <> " bytes but its fields span "
-      <> renderAsText (unFileSize measured)
-    VCDIFFSectionUnconsumedBytes section (Length leftover) ->
-      "window's instructions finished with " <> renderAsText leftover
-      <> plural leftover " byte" " bytes"
-      <> " of its " <> vcdiffSectionName section <> " section unconsumed"
-    VCDIFFCompressedSectionWithoutDeclaredSize section ->
-      "a compressed " <> vcdiffSectionName section
-      <> " section has no readable decompressed-size varint"
+      "one chunk of this patch says it is " <> renderAsText (unFileSize declared)
+      <> " bytes long and measures " <> renderAsText (unFileSize measured)
+      <> " (a window's declared delta-encoding length doesn't match the span of its own fields)"
+    VCDIFFSectionUnconsumedBytes onDemandSection (ExpectedSize declared) (Length leftover) ->
+      let (sectionName, sectionReaders) = case onDemandSection of
+            OnDemandDataSection    -> ("data", "its ADD and RUN instructions")
+            OnDemandAddressSection -> ("address", "its COPY instructions")
+      in "this patch sets aside " <> renderAsText leftover
+         <> plural leftover " byte" " bytes"
+         <> " that nothing reads. Each part of a VCDIFF patch is exactly as long as"
+         <> " what it holds, so something has gone wrong here. (one window's "
+         <> sectionName <> " section declares " <> renderAsText (unFileSize declared)
+         <> " bytes; " <> sectionReaders <> " read "
+         <> renderAsText (unFileSize declared - leftover) <> ")"
+    VCDIFFCompressedSectionWithoutDeclaredSize section varintFailure ->
+      "part of this patch is compressed, and it doesn't say how big it unpacks to."
+      <> " VCDIFF works by having every part announce its own size in advance;"
+      <> " without that number there is no way to read what follows. (the "
+      <> vcdiffSectionName section <> " section is flagged compressed, and the size varint"
+      <> " that should open it "
+      <> (case varintFailure of
+            VarintRanPastEndOfInput ->
+              "runs off the end of the section"
+            VarintTooManyContinuationBytes ->
+              "names a number of 2^64 or more, too big to be a size"
+            VarintExceedsSignedButFitsUnsigned ->
+              "names a number that needs the 64th bit, which slap cannot carry")
+      <> ")"
     VCDIFFCompressedSectionDeclaresEmptyOutput section ->
-      "a compressed " <> vcdiffSectionName section
-      <> " section declares a decompressed size of 0"
-      <> " (compressing nothing yields framing bytes, never zero)"
+      "this patch says one of its compressed pieces unpacks to nothing, which no compressor"
+      <> " produces: squeezing even an empty run of bytes leaves a little framing behind"
+      <> " (the " <> vcdiffSectionName section
+      <> " section is flagged compressed and declares an unpacked size of 0)"
     VCDIFFCompressedSectionWithoutCompressor section ->
-      "a window marks its " <> vcdiffSectionName section
-      <> " section secondary-compressed, but the header declares no compressor"
+      "part of this patch is marked compressed, and the patch never says what compressed it"
+      <> " (a window flags its " <> vcdiffSectionName section
+      <> " section compressed; the header names no secondary compressor)"
     VCDIFFSecondaryStreamUnconsumedInput section algorithm (Length leftover) ->
-      "the " <> secondaryStreamPossessive section algorithm
-      <> " finished with "
-      <> renderAsText leftover <> plural leftover " byte" " bytes"
-      <> " of input unused"
+      "this patch holds " <> renderAsText leftover
+      <> plural leftover " byte" " bytes"
+      <> " of compressed data that nothing unpacks. A compressed stream is exactly as long"
+      <> " as what it encodes, so something has gone wrong here. (the "
+      <> secondaryStreamPossessive section algorithm
+      <> " finished with " <> renderAsText leftover
+      <> plural leftover " byte" " bytes" <> " of its input unused)"
     VCDIFFSecondaryStreamOutputSizeMismatch section algorithm
         (ExpectedSize declared) (ActualSize produced) ->
-      "the " <> secondaryStreamPossessive section algorithm
-      <> " decoded to "
-      <> renderAsText (unFileSize produced) <> " bytes; "
+      "this patch says how big its compressed data unpacks to, and it's wrong (the "
+      <> secondaryStreamPossessive section algorithm
+      <> " decoded to " <> renderAsText (unFileSize produced) <> " bytes; "
       <> (case secondaryStreamGranularity algorithm of
             GatheredAcrossSections -> "the sections declare "
             EachSectionItsOwn      -> "the section declares ")
-      <> renderAsText (unFileSize declared)
+      <> renderAsText (unFileSize declared) <> ")"
 
 renderSlapError (MalformedVCDIFFCodeTable malformation) =
   formatLabelName LabelVCDIFF <> ": " <> case malformation of
     VCDIFFCodeTableWrongLength (ActualLength (Length actualLength)) ->
-      "code table must be 1536 bytes, got " <> renderAsText actualLength
+      "the instruction table this patch brought with it is the wrong size"
+      <> " (a code table is always 1536 bytes, six 256-byte slices; this one comes out "
+      <> renderAsText actualLength <> ")"
     VCDIFFCodeTableInvalidInstructionType typeCode ->
-      "invalid instruction type in code table: " <> renderAsText typeCode
+      "the instruction table this patch brought with it names an instruction"
+      <> " that doesn't exist (an entry's type byte reads " <> renderAsText typeCode
+      <> "; VCDIFF has only four instructions: 0 no-op, 1 add, 2 run, 3 copy)"
     VCDIFFCodeTableHeaderTooShort ->
-      "custom code table data too short"
-    VCDIFFCodeTableUnusedFieldSet field byte ->
-      "code table sets the " <> codeTableFieldName field
-      <> " byte (0x" <> padHex 2 byte
-      <> ") of a template that carries no " <> codeTableFieldName field
+      "the instruction table this patch brought with it is cut off at the very start"
+      <> " (a table opens with two bytes naming its address-cache sizes, and they aren't both there)"
+    VCDIFFCodeTableUnusedFieldSet templateKind field byte ->
+      "an entry in the instruction table this patch brought with it puts a value in a slot"
+      <> " that entry doesn't use (its " <> codeTableFieldName field
+      <> " byte reads 0x" <> padHex 2 byte <> " on " <> codeTableTemplateKindPhrase templateKind
+      <> ", an instruction that takes no " <> codeTableFieldName field
+      <> ", where the only meaningful value is zero)"
     VCDIFFCodeTableCopyModeOutOfRange mode highestValidMode ->
-      "code table names COPY address mode " <> renderAsText mode
-      <> ", but the declared caches reach only mode " <> renderAsText highestValidMode
+      "the instruction table this patch brought with it doesn't agree with itself about"
+      <> " how copy addresses are written (one of its entries gives copies address mode "
+      <> renderAsText mode <> ", while the table's own cache sizes only create modes 0 through "
+      <> renderAsText highestValidMode <> ")"
 
 renderSlapError (MalformedBSDiffHeader (BSDiffNegativeHeaderSizes control diff target)) =
   formatLabelName LabelBSDiff
-  <> ": invalid header (negative size: control="
-  <> renderAsText (unControlSectionSize control) <> ", diff=" <> renderAsText (unDiffSectionSize diff)
-  <> ", target=" <> renderAsText (unTargetSectionSize target) <> ")"
+  <> ": the header declares a negative size (control "
+  <> renderAsText (unControlSectionSize control) <> ", diff " <> renderAsText (unDiffSectionSize diff)
+  <> ", target " <> renderAsText (unTargetSectionSize target) <> ")"
 
 renderSlapError (MalformedBSDiffHeader (BSDiffControlOverrunsPatch overrunBytes)) =
   formatLabelName LabelBSDiff
-  <> ": invalid header (the control block's declared size reaches "
+  <> ": the header describes more data than the patch holds (the control block's declared size reaches "
   <> renderAsText overrunBytes <> plural (fromIntegral overrunBytes) " byte" " bytes"
   <> " past the end of the patch)"
 
 renderSlapError (MalformedBSDiffHeader (BSDiffDiffOverrunsPatch overrunBytes)) =
   formatLabelName LabelBSDiff
-  <> ": invalid header (the diff block's declared size reaches "
+  <> ": the header describes more data than the patch holds (the diff block's declared size reaches "
   <> renderAsText overrunBytes <> plural (fromIntegral overrunBytes) " byte" " bytes"
   <> " past the end of the patch)"
 
 renderSlapError (MalformedAPSN64Header malformation) =
   formatLabelName LabelAPSN64 <> ": " <> case malformation of
-    APSN64UnknownPatchType byte    -> "unknown patch type: " <> renderAsText byte
-    APSN64UnsupportedEncoding byte -> "unsupported encoding method: " <> renderAsText byte
+    APSN64UnknownPatchType byte ->
+      "the patch declares patch type " <> renderAsText byte <> ", which the format does not define"
+    APSN64UnsupportedEncoding byte ->
+      "the patch declares encoding method " <> renderAsText byte <> ", which slap does not support"
 
 renderSlapError (PPF4ReplaceAfterAppend recordIndex) =
   formatLabelName LabelPPF4 <> ": record "

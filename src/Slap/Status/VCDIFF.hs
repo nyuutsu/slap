@@ -7,16 +7,21 @@ module Slap.Status.VCDIFF
   , VCDIFFCodeTableMalformation(..)
   , VCDIFFCodeTableField(..)
   , codeTableFieldName
+  , VCDIFFCodeTableTemplateKind(..)
+  , codeTableTemplateKindPhrase
   , VCDIFFRFCFeature(..)
   , VCDIFFXDelta3Feature(..)
   , VCDIFFMalformation(..)
   , VCDIFFIndicatorKind(..)
   , indicatorKindName
+  , ReservedBitsSet(..)
   , VCDIFFSection(..)
   , vcdiffSectionName
+  , VCDIFFOnDemandSection(..)
   ) where
 
-import Slap.Measure (Length, ActionIndex, ActualOffset, MaxOffset,
+import Slap.Binary (VarintReadFailure)
+import Slap.Measure (Length, ActionIndex, ActualOffset,
                      ExpectedSize, ActualSize, ActualLength)
 import Slap.Status.Vocabulary (CompressionAlgorithm)
 
@@ -31,8 +36,9 @@ data VCDIFFShapeViolation
   deriving (Eq, Show)
 
 -- | The structural failures of decoding a VCDIFF custom code table, validated outside the byte parser.
--- All but the last are decidable from the 1536-byte image alone and surface from 'Slap.VCDIFF.CodeTable.deserializeCodeTable';
--- 'VCDIFFCodeTableCopyModeOutOfRange' depends on the declared cache sizes, so it is checked at table-build in 'Slap.VCDIFF.Parse'.
+-- Most are decidable from the 1536-byte image alone and surface from 'Slap.VCDIFF.CodeTable.deserializeCodeTable';
+-- 'VCDIFFCodeTableHeaderTooShort' fails before the image exists, and 'VCDIFFCodeTableCopyModeOutOfRange' after it,
+-- against the declared cache sizes — both in 'Slap.VCDIFF.Parse'.
 data VCDIFFCodeTableMalformation
   -- | The serialized code-table bytes are not the spec-mandated 1536-byte width (six 256-entry slices).
   = VCDIFFCodeTableWrongLength !ActualLength
@@ -40,11 +46,11 @@ data VCDIFFCodeTableMalformation
   | VCDIFFCodeTableInvalidInstructionType !Word8
   -- | The custom-code-table data section is shorter than the 2-byte header (near-cache size, same-cache size) it must begin with.
   | VCDIFFCodeTableHeaderTooShort
-  -- | A size or mode byte was nonzero for a template type that carries no such field — a size on a NOOP; a mode on a NOOP, ADD, or RUN.
+  -- | A size or mode byte was nonzero for a template type that carries no such field.
   -- The grammar gives those bytes exactly one well-formed value (zero, matching the default-table image a custom image is delta-encoded against),
   -- so a nonzero value is not an alternative spelling of anything: it is evidence the table bytes are damaged,
   -- and with no checksum in this arc the table check is the tripwire (docs/vcdiff/rfc-vcdiff/questions.md, "invalid decoded-table entries").
-  | VCDIFFCodeTableUnusedFieldSet !VCDIFFCodeTableField !Word8
+  | VCDIFFCodeTableUnusedFieldSet !VCDIFFCodeTableTemplateKind !VCDIFFCodeTableField !Word8
   -- | A COPY template named an address mode the declared caches do not reach: at or above @2 + s_near + s_same@,
   -- the band 'Slap.VCDIFF.Parse.classifyAddressMode' admits. Checked once at table-build, used or not —
   -- damage evidence on the same reasoning as 'VCDIFFCodeTableUnusedFieldSet'.
@@ -58,6 +64,17 @@ data VCDIFFCodeTableField = CodeTableSizeField | CodeTableModeField
 codeTableFieldName :: VCDIFFCodeTableField -> Text
 codeTableFieldName CodeTableSizeField = "size"
 codeTableFieldName CodeTableModeField = "mode"
+
+-- | The instruction type of the template whose unused byte held a value.
+-- COPY has no place here: its templates carry both a size and a mode, so neither byte is ever unused.
+data VCDIFFCodeTableTemplateKind = CodeTableNoopTemplate | CodeTableAddTemplate | CodeTableRunTemplate
+  deriving (Eq, Show)
+
+-- | The template kind as the message speaks of it, article included.
+codeTableTemplateKindPhrase :: VCDIFFCodeTableTemplateKind -> Text
+codeTableTemplateKindPhrase CodeTableNoopTemplate = "a no-op"
+codeTableTemplateKindPhrase CodeTableAddTemplate  = "an ADD"
+codeTableTemplateKindPhrase CodeTableRunTemplate  = "a RUN"
 
 -- | The two RFC 3284 features xdelta3 refuses — the RFC half of 'Slap.Status.VCDIFFRFCFeatureWithXDelta3Feature'.
 data VCDIFFRFCFeature
@@ -83,31 +100,32 @@ data VCDIFFXDelta3Feature
 data VCDIFFMalformation
   -- | A window's indicator set both VCD_SOURCE and VCD_TARGET, which RFC 3284 §4.2 forbids.
   = VCDIFFBothSourceAndTargetWindowBits
-  -- | Core invariant 1: a COPY address must point strictly inside the already-produced superstring.
-  -- The 'ActualOffset' is the decoded address; the 'MaxOffset' is @here@, the current write position, so the valid range is @[0, here)@.
-  | VCDIFFCopyAddressOutOfRange !ActionIndex !ActualOffset !MaxOffset
+  -- | Core invariant 1's upper edge: a COPY address at or past the current write position, naming bytes no instruction has produced yet.
+  | VCDIFFCopyReadsUnwrittenOutput !ActionIndex
+  -- | Core invariant 1's lower edge: a COPY address decoded below zero.
+  -- Only the HERE mode can land there — its address is a subtraction from the write position.
+  | VCDIFFCopyAddressNegative !ActionIndex !ActualOffset
   -- | Core invariant 2: a COPY that begins inside the source segment must not run past its end.
   | VCDIFFCopyCrossesSourceSegmentEnd !ActionIndex
   -- | Core invariant 3: a window's instructions must produce exactly its declared target size ('ExpectedSize' declared, 'ActualSize' produced).
   | VCDIFFWindowSizeMismatch !ExpectedSize !ActualSize
   -- | An instruction demanded more bytes than its 'VCDIFFSection' holds — the data, instruction, or address section ran short.
   | VCDIFFSectionExhausted !VCDIFFSection !ActionIndex
-  -- | A COPY's code-table entry named an address mode outside the range the cache configuration defines. The 'Word8' is the mode.
-  | VCDIFFInvalidCopyAddressMode !Word8
+  -- | A COPY named an address mode past the highest one the cache configuration defines (the mode as read, then that highest mode) —
+  -- the mid-decode sibling of 'VCDIFFCodeTableCopyModeOutOfRange', which catches the same excess at table-build.
+  | VCDIFFInvalidCopyAddressMode !ActionIndex !Word8 !Word8
   -- | A window's declared delta-encoding length disagrees with the measured span of its own fields.
   -- A self-consistency check the core ruling demands, not a boundary slap navigates by:
   -- a mismatch catches corruption (docs/vcdiff/core/questions.md, "delta-encoding-length"). The 'ExpectedSize' is the wire declaration;
   -- the 'ActualSize' is the span the framer measured.
   | VCDIFFDeltaEncodingLengthMismatch !ExpectedSize !ActualSize
-  -- | A window's instructions finished with bytes still unconsumed in its data or address section: the named 'Length' of them.
-  -- The decode is complete and the output correct; what fails is self-consistency —
-  -- the window declared section lengths its own instructions contradict —
+  -- | A window's instructions finished with a section's declared 'ExpectedSize' not fully consumed: the leftover 'Length' nothing read.
+  -- The window declared section lengths its own instructions contradict —
   -- the sibling of 'VCDIFFDeltaEncodingLengthMismatch' (docs/vcdiff/core/questions.md, "leftover bytes").
-  -- The instruction section cannot be named here: it drives the walk, which ends exactly when it is spent.
-  | VCDIFFSectionUnconsumedBytes !VCDIFFSection !Length
-  -- | A section flagged secondary-compressed whose bytes cannot supply the decompressed-size varint every compressed section begins with —
-  -- the zero-length section is the canonical case. Rejected per docs/vcdiff/xdelta3/questions.md, "compressed-but-empty section".
-  | VCDIFFCompressedSectionWithoutDeclaredSize !VCDIFFSection
+  | VCDIFFSectionUnconsumedBytes !VCDIFFOnDemandSection !ExpectedSize !Length
+  -- | A section flagged secondary-compressed whose bytes cannot supply the decompressed-size varint every compressed section begins with.
+  -- Rejected per docs/vcdiff/xdelta3/questions.md, "compressed-but-empty section".
+  | VCDIFFCompressedSectionWithoutDeclaredSize !VCDIFFSection !VarintReadFailure
   -- | A section flagged secondary-compressed whose decompressed-size varint is zero.
   -- A category error rather than a no-op: compressing nothing yields framing bytes, never zero bytes, so a section cannot decompress to empty.
   -- xd3 rejects it as "invalid output size"; slap does too.
@@ -131,9 +149,18 @@ data VCDIFFMalformation
 data VCDIFFIndicatorKind = HeaderIndicator | WindowIndicator | DeltaIndicator
   deriving (Eq, Show)
 
+-- | An indicator byte's set reserved bits, masked free of the defined ones, for 'Slap.Status.VCDIFFReservedIndicatorBits'.
+newtype ReservedBitsSet = ReservedBitsSet Word8
+  deriving (Eq, Show)
+
 -- | One of a VCDIFF window's three data sections — and, since sections of one kind form a continuous secondary stream across windows,
 -- also the name of that kind in the secondary-compression arms above.
 data VCDIFFSection = VCDIFFDataSection | VCDIFFInstructionSection | VCDIFFAddressSection
+  deriving (Eq, Show)
+
+-- | The two sections instructions pull from on demand, and so the two a finished walk can leave unconsumed.
+-- The instruction section has no place here: it drives the walk, which ends exactly when it is spent.
+data VCDIFFOnDemandSection = OnDemandDataSection | OnDemandAddressSection
   deriving (Eq, Show)
 
 indicatorKindName :: VCDIFFIndicatorKind -> Text

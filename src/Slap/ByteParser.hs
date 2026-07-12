@@ -277,29 +277,18 @@ liftRead readWidth@(Length width) reader = do
             (RemainingLength (Length (inputLength - startAt)))
             currentPosition)
 
--- | Adapt a variable-length pure varint reader, keeping only the
--- decoded value. Failure modes are surfaced through typed
--- 'ByteParserError' arms: starting the read at or past EOF is
--- 'ByteParserUnderflow' tagged with 'VarintReadOperation' (the
--- request asked for at least one byte, none were available); a varint
--- that starts inside the buffer but whose continuation bytes run past
--- the end is 'ByteParserVarintOverranBuffer'; a value too large to
--- represent at all is 'ByteParserVarintExceededWidth'; and a VCDIFF
--- value in the unsigned-only @[2^63, 2^64)@ is the apologetic
--- 'ByteParserVarintExceedsSignedRange'. The mapping lives in the
--- shared 'readVarintAdvancing' core.
-liftReadVarint :: (Int -> ByteString -> Either VarintReadFailure VarintResult)
+-- | Adapt a pure varint reader, keeping only the decoded value. The over-width verdict is
+-- caller-supplied because the readers cross different ceilings; each verdict's constructor says whose.
+liftReadVarint :: ByteParserError
+               -> (Int -> ByteString -> Either VarintReadFailure VarintResult)
                -> ByteParser Int64
-liftReadVarint reader = varintDecodedValue <$> readVarintAdvancing reader
+liftReadVarint overWidthVerdict reader =
+  varintDecodedValue <$> readVarintAdvancing overWidthVerdict reader
 
--- | Run a pure varint reader, advance the cursor past what it consumed,
--- and map its failure space into the typed 'ByteParserError' arms. The
--- shared core behind 'liftReadVarint' and
--- 'vcdiffVarintReportingCanonicality': the former throws away the
--- consumed-byte count, the latter inspects it for an overlong encoding.
-readVarintAdvancing :: (Int -> ByteString -> Either VarintReadFailure VarintResult)
+readVarintAdvancing :: ByteParserError
+                    -> (Int -> ByteString -> Either VarintReadFailure VarintResult)
                     -> ByteParser VarintResult
-readVarintAdvancing reader = do
+readVarintAdvancing overWidthVerdict reader = do
   input            <- askInput
   currentPosition  <- ByteParser get
   let inputLength      = ByteString.length input
@@ -314,7 +303,7 @@ readVarintAdvancing reader = do
             currentPosition)
     else case reader startAt input of
       Left VarintTooManyContinuationBytes ->
-        throwByteParserError ByteParserVarintExceededWidth
+        throwByteParserError overWidthVerdict
       Left VarintRanPastEndOfInput ->
         throwByteParserError (ByteParserVarintOverranBuffer currentPosition)
       Left VarintExceedsSignedButFitsUnsigned ->
@@ -349,10 +338,10 @@ int64BE = liftRead (Length 8) getInt64BE
 ----------------------------------------------------------------------------
 
 byuuVarint :: ByteParser Int64
-byuuVarint = liftReadVarint getByuuVarint
+byuuVarint = liftReadVarint ByteParserVarintExceedsSignedRange getByuuVarint
 
 vcdiffVarint :: ByteParser Int64
-vcdiffVarint = liftReadVarint getVcdiffVarint
+vcdiffVarint = liftReadVarint ByteParserVCDIFFVarintExceedsUnsignedRange getVcdiffVarint
 
 -- | The outcome of reading a VCDIFF varint at the parser seam: the
 -- decoded value, plus the overlong-encoding FYI advisory — present
@@ -378,32 +367,20 @@ nonCanonicalVcdiffVarintNote value consumed
 -- 'nonCanonicalVcdiffVarintNote' turns an over-long span into the note.
 vcdiffVarintReportingCanonicality :: ByteParser VcdiffVarintReading
 vcdiffVarintReportingCanonicality = do
-  result <- readVarintAdvancing getVcdiffVarint
+  result <- readVarintAdvancing ByteParserVCDIFFVarintExceedsUnsignedRange getVcdiffVarint
   let value = varintDecodedValue result
   pure (VcdiffVarintReading value
           (nonCanonicalVcdiffVarintNote value (varintBytesConsumed result)))
 
--- | EDSIO variable-length unsigned int (LEB128-like, used by xdelta1).
--- 7 bits per byte, LSB first, high bit = continuation. Decoded inline
--- because the byuu and VCDIFF varints have a single combined reader
--- in 'Slap.Binary' but EDSIO's continuation discipline is bespoke.
---
--- The xdelta1 wire format stores every integer this reads — offsets,
--- lengths, counts — as a @guint32@, so a decoded value above
--- 'edsioMaxValue' (@0xFFFFFFFF@) is not a representable xdelta1
--- quantity and surfaces as 'ByteParserEdsioVarintExceeds32Bits',
--- carrying the value the wire asked for. The ceiling is checked on
--- the terminal byte, where the value is complete, so the verdict
--- names the whole number rather than the partial accumulation; the
--- pre-existing 63-bit guard bounds the read to nine bytes regardless,
--- and a value needing more than that ('Int64' overflow territory)
--- still surfaces as the wider 'ByteParserVarintExceededWidth'.
+-- | EDSIO variable-length unsigned integer, xdelta1's wire encoding: 7 bits per byte, LSB first, high bit = continuation.
+-- Decoded inline rather than in 'Slap.Binary' because its continuation discipline matches neither the byuu nor the VCDIFF reader.
+-- The 32-bit ceiling is checked once the value is complete, so the verdict can name the whole number rather than a partial accumulation.
 edsioVarint :: ByteParser Int64
 edsioVarint = accumulate 0 0
   where
     accumulate accumulated bitOffset
       | bitOffset >= 63 =
-          throwByteParserError ByteParserVarintExceededWidth
+          throwByteParserError ByteParserEdsioVarintEncodingTooWide
       | otherwise = do
           byte <- getByte
           let value = accumulated .|. (payloadBits byte `shiftL` bitOffset)

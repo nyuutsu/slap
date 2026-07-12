@@ -332,16 +332,16 @@ corruptPatchCRCTests bps ups =
       -- Flip byte 10 (somewhere in the body, well before the footer)
       let corrupted = flipByte 10 patchBytes
       case parseSome noDialectsRequested EncodingUtf8 (PatchFileContents corrupted) of
-        Left slapError -> assertBool "expected 'patch CRC mismatch'"
-          (ciContains "patch CRC mismatch" (Text.unpack (renderSlapError slapError)))
+        Left slapError -> assertBool "expected the patch-checksum message"
+          (ciContains "checksum doesn't match" (Text.unpack (renderSlapError slapError)))
         Right _ -> assertFailure "expected BPS parse failure for corrupted patch"
 
   , testCase "corrupt-crc/UPS flipped byte" $ do
       patchBytes <- ByteString.readFile ups
       let corrupted = flipByte 10 patchBytes
       case parseSome noDialectsRequested EncodingUtf8 (PatchFileContents corrupted) of
-        Left slapError -> assertBool "expected 'patch CRC mismatch'"
-          (ciContains "patch CRC mismatch" (Text.unpack (renderSlapError slapError)))
+        Left slapError -> assertBool "expected the patch-checksum message"
+          (ciContains "checksum doesn't match" (Text.unpack (renderSlapError slapError)))
         Right _ -> assertFailure "expected UPS parse failure for corrupted patch"
 
   , testCase "corrupt-crc/BPS last data byte" $ do
@@ -350,8 +350,8 @@ corruptPatchCRCTests bps ups =
       let position = ByteString.length patchBytes - 13
       let corrupted = flipByte position patchBytes
       case parseSome noDialectsRequested EncodingUtf8 (PatchFileContents corrupted) of
-        Left slapError -> assertBool "expected 'patch CRC mismatch'"
-          (ciContains "patch CRC mismatch" (Text.unpack (renderSlapError slapError)))
+        Left slapError -> assertBool "expected the patch-checksum message"
+          (ciContains "checksum doesn't match" (Text.unpack (renderSlapError slapError)))
         Right _ -> assertFailure "expected BPS parse failure for corrupted patch"
   ]
   where

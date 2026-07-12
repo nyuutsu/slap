@@ -8,8 +8,10 @@ module Slap.Status.ByteParserError
   , renderByteParserError
   ) where
 
-import Slap.Display.Common (renderAsText)
+import Slap.Display.Common (renderAsText, renderHexAsText)
 import Slap.Display.Primitives (padHex)
+import Slap.Status.Render.Advisory (plural)
+import Slap.Status.Vocabulary (slapAddressableCeiling)
 import Slap.FieldName (FieldName, fieldNameLabel)
 import Slap.Measure (Length(..), Position(..), ActionIndex(unActionIndex),
                      RequestedLength(..), RemainingLength(..),
@@ -44,9 +46,9 @@ data ByteParserError
   -- | A command-coded stream's next code byte is outside the format's command table.
   | ByteParserUnknownCommandByte !ActionIndex !Word8
 
-  -- | A width-prefixed integer field decoded a value past 'maxBound' :: 'Int' — the sibling of 'ByteParserVarintExceededWidth'.
+  -- | A width-prefixed integer field decoded a value past 'maxBound' :: 'Int' — the sibling of 'ByteParserVarintExceedsSignedRange'.
   -- The width prefix has no ceiling, so the wire can name a value no 'Int' holds;
-  -- the reader decodes at 'Integer' and declines rather than wrapping. The 'ActionIndex' names the record and the 'FieldName' which field.
+  -- the reader decodes at 'Integer' and declines rather than wrapping.
   | ByteParserFieldExceedsAddressableRange !ActionIndex !FieldName
 
   -- | 'Slap.ByteParser.getUntilByte' scanned from 'Position' to end of input without finding the terminator byte.
@@ -66,22 +68,24 @@ data ByteParserError
   -- Distinct from 'ByteParserUnderflow' at 'VarintReadOperation', which fires when the read started at or past EOF.
   | ByteParserVarintOverranBuffer Position
 
-  -- | A varint decoded a value too large to represent at all. All three varint readers (byuu, VCDIFF, EDSIO) raise it;
-  -- for VCDIFF it means a value at or past @2^64@, beyond even xd3's @uint64@ —
-  -- the @[2^63, 2^64)@ band is the separate 'ByteParserVarintExceedsSignedRange'.
-  | ByteParserVarintExceededWidth
+  -- | A VCDIFF varint decoded a value at or past @2^64@, beyond even xd3's unsigned @uint64@;
+  -- the @[2^63, 2^64)@ band is 'ByteParserVarintExceedsSignedRange'.
+  | ByteParserVCDIFFVarintExceedsUnsignedRange
 
-  -- | A VCDIFF varint decoded a value in @[2^63, 2^64)@ — xd3's unsigned reader accepts it, slap's signed 'Int' cannot.
-  -- Kept apart from 'ByteParserVarintExceededWidth' so the renderer can concede the one bit slap gives up rather than blame the input.
+  -- | A varint decoded a value at or past @2^63@ — slap's ceiling, not necessarily the wire's.
+  -- Kept apart from 'ByteParserVCDIFFVarintExceedsUnsignedRange' so the renderer can concede the range slap gives up rather than blame the input.
   | ByteParserVarintExceedsSignedRange
 
   -- | An EDSIO varint decoded a value past @0xFFFFFFFF@. Every integer in the xdelta1 wire format is a @guint32@ (upstream @xd_edsio.h@),
   -- so a wider value is not a representable xdelta1 quantity; canonical xdelta truncates such a value silently, slap declines it.
   | ByteParserEdsioVarintExceeds32Bits !Int64
 
-  -- | The xdelta1 control segment opened with a type tag that isn't @ST_XdeltaControl@.
-  -- Canonical's EDSIO reader rejects an unregistered library number (the tag's low byte) with "Unregistered library: N";
-  -- slap declines the same way. The 'Word32' is the tag as read.
+  -- | An EDSIO varint's encoding ran past nine continuation bytes.
+  -- A zero-padded overlong encoding of a small number lands here too.
+  | ByteParserEdsioVarintEncodingTooWide
+
+  -- | The xdelta1 control segment opens with a type tag other than 'Slap.XDelta1.Types.xdelta1ControlTypeTag',
+  -- whose comment holds the tag's full story. The 'Word32' is the tag as read.
   | ByteParserXDelta1UnexpectedControlTypeTag !Word32
 
   -- | The 'MonadFail' fallback for @do@-pattern failures in parser code.
@@ -90,11 +94,11 @@ data ByteParserError
 
   deriving (Eq, Show)
 
-byteParserOperationLabel :: ByteParserOperation -> Text
-byteParserOperationLabel GetBytesOperation        = "getBytes"
-byteParserOperationLabel SkipOperation            = "skip"
-byteParserOperationLabel FixedWidthReadOperation  = "fixed-width read"
-byteParserOperationLabel VarintReadOperation      = "varint read"
+byteParserOperationNounPhrase :: ByteParserOperation -> Text
+byteParserOperationNounPhrase GetBytesOperation        = "a read"
+byteParserOperationNounPhrase SkipOperation            = "a skip"
+byteParserOperationNounPhrase FixedWidthReadOperation  = "a fixed-width field"
+byteParserOperationNounPhrase VarintReadOperation      = "a variable-width integer"
 
 renderByteParserError :: ByteParserError -> Text
 
@@ -104,9 +108,11 @@ renderByteParserError
       (RequestedLength (Length requested))
       (RemainingLength (Length available))
       (Position cursor)) =
-  byteParserOperationLabel operation
-  <> ": need " <> renderAsText requested <> " bytes at offset " <> renderAsText cursor
-  <> " but only " <> renderAsText available <> " available"
+  "the patch runs out of bytes ("
+  <> byteParserOperationNounPhrase operation
+  <> " at offset 0x" <> renderHexAsText cursor
+  <> " needs " <> renderAsText requested <> plural requested " byte" " bytes"
+  <> ", with only " <> renderAsText available <> " left)"
 
 renderByteParserError
   (ByteParserTruncatedRecord
@@ -114,53 +120,66 @@ renderByteParserError
       (RequiredLength (Length needed))
       (RemainingLength (Length available))) =
   "record " <> renderAsText (unActionIndex recordIndex)
-  <> " truncated (need " <> renderAsText needed
-  <> " bytes, have " <> renderAsText available <> ")"
+  <> " is truncated (it declares " <> renderAsText needed
+  <> plural needed " byte" " bytes"
+  <> ", with only " <> renderAsText available <> " left in the patch)"
 
 renderByteParserError (ByteParserUnknownCommandByte recordIndex commandByte) =
   "record " <> renderAsText (unActionIndex recordIndex)
-  <> ": unknown command byte 0x" <> padHex 2 commandByte
+  <> " begins with an instruction the format does not define (command byte 0x"
+  <> padHex 2 commandByte <> ")"
 
 renderByteParserError (ByteParserFieldExceedsAddressableRange recordIndex field) =
   "record " <> renderAsText (unActionIndex recordIndex)
-  <> ": " <> fieldNameLabel field <> " past the "
-  <> renderAsText (maxBound :: Int) <> "-byte limit slap can address"
+  <> ": the " <> fieldNameLabel field <> " names a value past "
+  <> slapAddressableCeiling <> ", the largest slap can hold"
 
 renderByteParserError (ByteParserTerminatorNotFound terminatorByte (Position cursor)) =
-  "getUntilByte: terminator 0x" <> padHex 2 terminatorByte
-  <> " not found from offset " <> renderAsText cursor
+  "a field starting at offset 0x" <> renderHexAsText cursor
+  <> " never ends (no 0x" <> padHex 2 terminatorByte
+  <> " terminator between there and the end of the patch)"
 
 renderByteParserError
   (ByteParserPositionOutOfBounds (Position target) (ActualLength (Length inputLength))) =
-  "setPosition: " <> renderAsText target
-  <> " out of bounds (input length " <> renderAsText inputLength <> ")"
+  "the patch seeks to offset " <> renderAsText target
+  <> ", but the patch is only " <> renderAsText inputLength
+  <> plural inputLength " byte" " bytes"
 
 renderByteParserError
   (ByteParserNegativeLengthRequestedInGetBytes (Length amount)) =
-  "getBytes: negative length " <> renderAsText amount
+  "the patch asks to read " <> renderAsText amount <> " bytes"
 
 renderByteParserError
   (ByteParserNegativeLengthRequestedInSkip (Length amount)) =
-  "skip: negative length " <> renderAsText amount
+  "the patch asks to skip " <> renderAsText amount <> " bytes;"
+  <> " a skip is a length to pass over, not a signed move,"
+  <> " so a negative one is not a rewind but a value with no meaning"
 
 renderByteParserError (ByteParserVarintOverranBuffer (Position cursor)) =
-  "varint read overran buffer at offset " <> renderAsText cursor
+  "a number in the patch is cut short (a variable-width integer starting at offset 0x"
+  <> renderHexAsText cursor <> " runs past the end of the patch)"
 
-renderByteParserError ByteParserVarintExceededWidth =
-  "varint overflow (too many continuation bytes)"
+renderByteParserError ByteParserVCDIFFVarintExceedsUnsignedRange =
+  "a number in the patch is 2^64 or more, past what any VCDIFF reader holds"
+  <> " (xdelta3 carries these as unsigned 64-bit integers; this one needs more than 64 bits)"
 
 renderByteParserError ByteParserVarintExceedsSignedRange =
-  "varint decoded a value in [2^63, 2^64): xd3 admits it as an unsigned"
-  <> " uint64, but slap carries sizes as a signed Int and declines it"
+  "a number in the patch is 2^63 or more; the format can express"
+  <> " a number that needs the 64th bit, but slap cannot"
 
 renderByteParserError (ByteParserEdsioVarintExceeds32Bits value) =
-  "EDSIO varint decoded " <> renderAsText value
-  <> ", past the 0xFFFFFFFF ceiling of xdelta1's 32-bit fields"
+  "a number in the patch decodes to " <> renderAsText value
+  <> "; every integer in the format is 32 bits, so no value past 0xFFFFFFFF can be meant"
+
+renderByteParserError ByteParserEdsioVarintEncodingTooWide =
+  "a number in the patch is encoded in more than nine bytes;"
+  <> " the format's integers are 32 bits, which fit in five"
 
 renderByteParserError (ByteParserXDelta1UnexpectedControlTypeTag observedTag) =
-  "xdelta1 control segment opens with type tag 0x" <> Text.pack (showHex observedTag "")
-  <> ", not ST_XdeltaControl; canonical's EDSIO reader rejects an unregistered library number "
-  <> "(the tag's low byte) with \"Unregistered library: N\""
+  "the patch doesn't say what to do (the control segment, where the instructions live,"
+  <> " is malformed: it should open with type tag 0x8003 and instead opens with 0x"
+  <> Text.pack (showHex observedTag "") <> ")"
 
 renderByteParserError (ByteParserUnexpectedDoPatternFailure message) =
-  "internal: do-pattern match failed in slap's parser: " <> Text.pack message
+  "slap hit a bug in its own parser; this is slap's fault, not your patch's."
+  <> " Please report it: " <> Text.pack message

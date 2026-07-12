@@ -51,6 +51,8 @@ module Slap.Status.Vocabulary
   , LineText(..)
   , OffsetTokenText(..)
   , ChecksumTokenText(..)
+    -- * Shared phrases
+  , slapAddressableCeiling
   ) where
 
 import Slap.Checksum (CRC32, Adler32, MD5Hash(..), SHA1Hash(..), showCRC32)
@@ -59,9 +61,15 @@ import Slap.Display.Primitives (hexByteString)
 import Slap.FieldName (FieldName)
 import Slap.Measure (Length, FileSize(..))
 
+import Data.Bits (finiteBitSize)
 import Data.Int (Int64)
 import Data.Text (Text)
 import Data.Word (Word8)
+
+-- | The numeral every addressable-range refusal names — @2^63-1@ on a 64-bit host.
+-- Derived from the width of 'Int' so a 32-bit build tells its own truth.
+slapAddressableCeiling :: Text
+slapAddressableCeiling = "2^" <> renderAsText (finiteBitSize (0 :: Int) - 1) <> "-1"
 
 -- | Which @info@ extraction found nothing to write, for 'Slap.Status.NothingToExtract'.
 data ExtractionSubject
