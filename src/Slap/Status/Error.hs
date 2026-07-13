@@ -4,6 +4,7 @@
 module Slap.Status.Error
   ( SlapError(..)
   , UnencodeabilityReason(..)
+  , SourceRequiredCause(..)
   ) where
 
 import Slap.Archive.Types (ArchiveFormat, UnwrapError)
@@ -54,11 +55,13 @@ data UnencodeabilityReason
     -- ^ The target is larger than the source and the format's 'Slap.Measure.SizeChangePolicy' is 'Slap.Measure.ForbidTargetSizeChange'.
     -- The 'ActualSize' is the source's size; the 'ExpectedSize' is the would-be target's.
   | TargetShrinksBelowSource !ActualSize !ExpectedSize
-    -- ^ The target is smaller than the source and the format's policy is 'Slap.Measure.ForbidTargetShrinkage' or 'Slap.Measure.ForbidTargetSizeChange'.
+    -- ^ The target is smaller than the source,
+    -- and the format's policy is 'Slap.Measure.ForbidTargetShrinkage' or 'Slap.Measure.ForbidTargetSizeChange'.
     -- Fields as in 'TargetGrowsBeyondSource'.
   | TruncationTargetUnrepresentable !DeclaredTargetSize !MaxOffset
     -- ^ 'Slap.IPS.Types.StandardIPS' only: the pair shrinks, so the encoding needs the post-EOF truncation marker,
-    -- and the marker spells the final size in the same 24-bit width as record offsets — a size past that maximum has no representation.
+    -- and the marker spells the final size in the same 24-bit width as record offsets —
+    -- a size past that maximum has no representation.
     -- Without the refusal, the encoder would mask the size to its low bits and emit a patch that applies to a wrongly-sized file,
     -- in a format with no checksum to notice.
   deriving (Eq, Show)
@@ -73,6 +76,9 @@ data SlapError
 
   -- | The write-side mirror of 'UnreadableInputFile'.
   | UnwritableOutputFile FilePath String
+
+  -- | The destination already exists and the user did not pass @--force@.
+  | OutputFileExists FilePath
 
   -- | @info --extract-metadata@ or @--extract-diz@ found nothing to write.
   | NothingToExtract FilePath ExtractionSubject
@@ -182,7 +188,8 @@ data SlapError
   -- The 'VCDIFFIndicatorKind' names which of the three indicators; the 'Word8' is the byte as read, the 'ReservedBitsSet' its undefined bits.
   | VCDIFFReservedIndicatorBits !VCDIFFIndicatorKind !Word8 !ReservedBitsSet
 
-  -- | A declared secondary-compressor id outside xdelta3's catalog (1 = DJW, 2 = LZMA, 16 = FGK — the only registry there is; RFC 3284 registered none).
+  -- | A declared secondary-compressor id outside xdelta3's catalog
+  -- (1 = DJW, 2 = LZMA, 16 = FGK — the only registry there is; RFC 3284 registered none).
   -- A future xdelta3 could define the id, so this is the 'VCDIFFReservedIndicatorBits' decline, not a malformation.
   | VCDIFFUnknownSecondaryCompressor !Word8
 
@@ -249,6 +256,12 @@ data SlapError
   -- Undo
   | UndoFailed FormatLabel ApplyError
 
+  -- | @slap undo@ where the format can carry undo data but this patch's author omitted it (PPF3 without its payloads).
+  -- The other refusal, 'NoUndoForFormat', is for formats with no reverse at all.
+  | PatchCarriesNoUndoData FormatLabel
+
+  | NoUndoForFormat FormatLabel
+
   -- Create / Encode
 
   -- | A create path refused this (source, target) pair; the 'UnencodeabilityReason' says why.
@@ -301,6 +314,10 @@ data SlapError
   -- and a source-less conversion has no source size to split by. @--with INPUT@ is the way out.
   | PPF4ConvertRequiresSource FormatLabel
 
+  -- | Converting /from/ this patch needs the original ROM (@--with INPUT@).
+  -- The target-side mirror is 'DiffRequiresSource' \/ 'PPF4ConvertRequiresSource'; this is the input side.
+  | ConvertRequiresSource FormatLabel SourceRequiredCause
+
   -- | The user set metadata fields via CLI flags that the target format has no wire home for. Surfaced before any IO touches their files.
   | MetadataFieldRejected (NonEmpty MetadataField) FormatLabel
 
@@ -338,4 +355,12 @@ data SlapError
   -- is a documented invariant, not a type-level one.
   | VerificationFatal SlapAdvisory
 
+  deriving (Show, Eq)
+
+-- | Why converting from a patch needs the original ROM.
+data SourceRequiredCause
+  = SourcePatchIsDifferential
+    -- ^ Its records say what to change in an input, not what the result should be.
+  | SourcePatchNotReencodable
+    -- ^ Direct, but carrying records only an apply can place (PPF4's Appends, which have no offset until a source gives them one).
   deriving (Show, Eq)

@@ -38,7 +38,7 @@ import Slap.Status.Decompression (renderDecompressionFailure,
                                   XDelta1DiffCause(..), BSDiffDifferCause(..), GDIFFDiffCause(..),
                                   SecondaryStreamGranularity(..),
                                   secondaryStreamGranularity, secondaryStreamPossessive)
-import Slap.Status.Error (SlapError(..), UnencodeabilityReason(..))
+import Slap.Status.Error (SlapError(..), UnencodeabilityReason(..), SourceRequiredCause(..))
 import Slap.Status.Render.Advisory (renderSlapAdvisory, plural)
 import Slap.Status.VCDIFF (VCDIFFShapeViolation(..), VCDIFFCodeTableMalformation(..),
                            codeTableFieldName, codeTableTemplateKindPhrase, indicatorKindName,
@@ -103,6 +103,9 @@ renderSlapError (UnreadableInputFile path reason) =
 
 renderSlapError (UnwritableOutputFile path reason) =
   "cannot write " <> Text.pack path <> ": " <> Text.pack reason
+
+renderSlapError (OutputFileExists path) =
+  pathText path <> " already exists (use --force to overwrite)"
 
 renderSlapError (NothingToExtract path subject) =
   "no " <> subjectText <> " to extract to " <> Text.pack path
@@ -523,6 +526,14 @@ renderSlapError (ApplyFailed label applyErr) =
 renderSlapError (UndoFailed label applyErr) =
   formatLabelName label <> " undo: " <> renderApplyError applyErr
 
+renderSlapError (PatchCarriesNoUndoData label) =
+  "this " <> formatLabelName label <> " patch carries no undo data\n"
+  <> formatLabelName label <> " patches can carry the bytes each record replaced,"
+  <> " but including them was up to the patch's author, and this one was made without them"
+
+renderSlapError (NoUndoForFormat label) =
+  "no undo for " <> formatLabelName label <> " patches"
+
 renderSlapError (UnencodeablePair label reason) =
   formatLabelName label <> ": won't produce a patch for this input→output: "
   <> renderUnencodeabilityReason label reason
@@ -582,6 +593,17 @@ renderSlapError (PPF4ConvertRequiresSource label) =
   <> " splits its records into in-place writes and appended bytes by"
   <> " where they fall relative to the source's size, which a"
   <> " source-less conversion can't determine"
+
+renderSlapError (ConvertRequiresSource label cause) =
+  "converting from " <> formatLabelName label
+  <> " requires the original ROM (--with INPUT)\n"
+  <> formatLabelName label <> " " <> causeClause <> "."
+  <> " To convert it, we'd apply the patch to the input first and convert the result"
+  <> " — which is why we need the input."
+  where
+    causeClause = case cause of
+      SourcePatchIsDifferential -> "tells us what to change in the input ROM, not what the result should be"
+      SourcePatchNotReencodable -> "can't be converted directly into another patch format"
 
 renderSlapError (MetadataFieldRejected fields target) =
   let renderOne field =

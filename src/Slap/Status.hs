@@ -11,11 +11,11 @@ module Slap.Status
   , emitToStderr
   , emitAdvisory
   , emitAdvisories
-  , bail
   , bailError
   , orBail
     -- Status values
   , SlapError(..)
+  , SourceRequiredCause(..)
   , ExtractionSubject(..)
   , SlapAdvisory(..)
   , ApplyError(..)
@@ -130,12 +130,8 @@ emitAdvisory advisory = emitToStderr severity body
 emitAdvisories :: [SlapAdvisory] -> IO ()
 emitAdvisories = traverse_ emitAdvisory
 
--- | Emit an ad-hoc error and exit — for failures that have no typed 'SlapError' constructor yet.
-bail :: Text -> IO a
-bail body = emitToStderr SeverityError body >> exitFailure
-
 bailError :: SlapError -> IO a
-bailError = bail . renderSlapError
+bailError slapError = emitToStderr SeverityError (renderSlapError slapError) >> exitFailure
 
 orBail :: Either SlapError a -> IO a
 orBail = either bailError pure

@@ -26,7 +26,8 @@ import Slap.Status (SlapError, SlapAdvisory(..), NormalizationStep(..),
 import Slap.PlatformType (PlatformType(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
-import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), Verification(..), parseSome)
+import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), parseSome)
+import Slap.Verify (Verification(..))
 import Slap.Convert (CreateFormat(..), DirectCreate(..), RequestedPatchMetadata(..),
                      noMetadataRequested, noConstraintsRequested, noDialectsRequested,
                      createPatch)

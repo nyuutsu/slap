@@ -29,7 +29,6 @@ module CLI
   , CreateMetadataInputs(..)
   , ConvertMetadataInputs(..)
   , OverwritePolicy(..)
-  , VerificationPolicy(..)
   , Verbosity(..)
     -- Turning argv into the above
   , parseCommandLine
@@ -54,6 +53,7 @@ import Slap.IPS.Types (SMCShapeRequirement(..))
 import Slap.PPF3.Types (PPF3ImageType(..))
 import Slap.PlatformType (PlatformType(..))
 import Slap.Header (ConsoleHeader, consoleHeaderToken)
+import Slap.Verify (VerificationPolicy(..))
 -- The parsers below wrap incoming 'String' as 'EncodedText' tagged 'EncodingUtf8' at the boundary:
 -- text slap writes is always UTF-8, with no write-side encoding choice.
 import Slap.Text (EncodedText(..), EncodingName(..), resolveEncodingName,
@@ -198,18 +198,6 @@ data ConvertMetadataInputs = ConvertMetadataInputs
 data OverwritePolicy
   = RefuseOverwrite
   | ForceOverwrite
-  deriving (Show, Eq)
-
--- | The user's runtime posture toward verification mismatches.
--- @EnforceVerification@ (default) fails with a readable error on a hash mismatch;
--- @SkipVerification@ (set by @--no-verify@) downgrades the mismatch to a warning and applies anyway.
--- Formats without source checksums are unaffected either way.
---
--- The enforcement axis of slap's @--no-verify@ family, set on apply, undo, and convert (the @--with INPUT@ check).
--- The embed-side counterpart and the full family map live on 'VerificationInclusion'.
-data VerificationPolicy
-  = EnforceVerification
-  | SkipVerification
   deriving (Show, Eq)
 
 -- | How much progress output apply and undo emit to stderr during operation.

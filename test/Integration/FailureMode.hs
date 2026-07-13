@@ -37,8 +37,8 @@ import Slap.FileContents
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.SomePatch
   (parseSome, patchKind, patchFormat, patchAdvisories
-  , patchVerification, verifySourceMD5, verifyTargetMD5, verifyFileSize
-  , FileSizeCheck(..), PatchKind(..))
+  , patchVerification, PatchKind(..))
+import Slap.Verify (verifySourceMD5, verifyTargetMD5, verifyFileSize, FileSizeCheck(..))
 import Slap.XDelta1.Parse
   ( parseControl
   , parseXDelta1

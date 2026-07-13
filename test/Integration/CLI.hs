@@ -308,7 +308,7 @@ verboseTests base ips =
 undoErrorTests :: FilePath -> FilePath -> FilePath -> [TestTree]
 undoErrorTests base ips _bps =
   [ testCase "undo/unsupported IPS" $
-      expectFail ["undo", ips, base] "undo/unsupported IPS" "undo not supported"
+      expectFail ["undo", ips, base] "undo/unsupported IPS" "no undo for"
   ]
 
 compoundTests :: FilePath -> FilePath -> FilePath -> [TestTree]

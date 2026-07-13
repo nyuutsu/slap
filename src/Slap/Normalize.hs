@@ -27,6 +27,8 @@ module Slap.Normalize
   , restoreStrippedContent
     -- * Convert retag rule
   , sharesNormalizationLayout
+    -- * N64 byte-order probe
+  , isV64Image
     -- * Exercised directly by the property suite
   , deinterleaveByChart
   , snesGD3Chart20Mbit
@@ -512,6 +514,10 @@ n64NativeOrderMagic = ByteString.pack [0x80, 0x37, 0x12, 0x40]
 
 n64ByteswappedMagic :: ByteString
 n64ByteswappedMagic = ByteString.pack [0x37, 0x80, 0x40, 0x12]
+
+-- | Whether the image leads with the V64 (byteswapped) magic — the one N64 byte order APS-N64's gate must tell apart.
+isV64Image :: ByteString -> Bool
+isV64Image image = ByteString.take 4 image == n64ByteswappedMagic
 
 ----------------------------------------------------------------------------
 -- Game Boy and PC-Engine: size-probed headers

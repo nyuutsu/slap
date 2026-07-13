@@ -7,24 +7,16 @@ import Slap.SomePatch
   , PatchKind(..)
   , ApplyStrategy(..)
   , UndoStrategy(..)
-  , Verification(..)
-  , BlockCheck(..)
-  , ValidationBlock(..)
-  , WindowCheck(..)
-  , ByteCheck(..)
-  , AdvisoryExpectedBytes(..)
-  , FileSizeCheck(..)
-  , ExpectedN64ByteOrder(..)
-  , applySourcePreHash
+  , UndoAvailability(..)
   , parseSome
   )
+import Slap.Verify (verifySource, verifyTarget)
 import Slap.Display.Common (pathText)
 import Slap.Display.Info (renderPatchInfo, renderActionLine)
 import Slap.Display.Analysis (renderAnalysisFull, renderAnalysisSummary)
 import Slap.Display.EmbeddedContent (EmbeddedDepth(SizeOnly))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
-import Slap.Measure (Offset(..), Length(..), FileSize(..),
-                     ExpectedSize(..), ActualSize(..), byteFileSize)
+import Slap.Measure (ActualSize(..), byteFileSize)
 import Slap.Convert (CreateFormat(..), DifferentialCreate(..),
                      PatchContents, contentsFileIdDiz,
                      RequestedPatchMetadata(..),
@@ -47,21 +39,13 @@ import Slap.Create (createPatch)
 import Slap.Text (EncodingName(EncodingUtf8),
                   decodeTextLenient, encodeTextLenient,
                   encodedTextEncoding, encodedTextContent)
-import Data.Text (Text)
-import qualified Data.Text as Text
 import qualified Data.Text.IO as TextIO
 import Slap.Archive.Types (detectArchive, EntryName(unEntryName))
-import Slap.Binary (crc16, md5, sha1, viewBytesInRange, zeroExtendedBlock)
-import Slap.Checksum (CRC32(..), CRC16, Adler32(..),
-                      ExpectedCRC32(..), ActualCRC32(..))
-import Slap.FFI (crc32, adler32)
-import Slap.Status (SlapError(..), ExtractionSubject(..), SlapAdvisory(..), CreateResult(..), Outcome(..),
-                   VerificationSide(..), HashAlgorithm(..),
-                   ExpectedAdler32(..), ActualAdler32(..), ByteCheckLabel(..),
-                   emitAdvisories, bail, bailError, orBail)
+import Slap.Status (SlapError(..), SourceRequiredCause(..), ExtractionSubject(..),
+                   SlapAdvisory(..), CreateResult(..), Outcome(..),
+                   emitAdvisories, bailError, orBail)
 import Slap.Normalize (NormalizedSource(..), normalizeApplySource, restoreStrippedContent)
-import Slap.Display.Glyph (emDash, spacePaddedRightwardsArrow)
-import Slap.FormatLabel (formatLabelName)
+import Slap.Display.Glyph (spacePaddedRightwardsArrow)
 import Slap.Header (addHeader, removeHeader)
 
 import CLI
@@ -84,7 +68,6 @@ import CLI
   , ArchiveHandling(..)
   , InputHeaderDirective(..)
   , ExplainVerbosity(..)
-  , VerificationPolicy(..)
   , Verbosity(..)
   , OverwritePolicy(..)
   , BackupBehavior(..)
@@ -95,7 +78,7 @@ import Archive (unwrapArchive)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Control.Exception (try, bracketOnError)
-import Control.Monad (when, forM_)
+import Control.Monad (when)
 import System.Directory (copyFile, doesFileExist, renameFile, removeFile)
 import System.FilePath (dropExtension, replaceExtension, takeBaseName, takeExtension, takeDirectory, takeFileName)
 import System.IO (IOMode(ReadMode), hFileSize, hSetEncoding, stderr, stdout, withFile, openBinaryTempFile, hClose)
@@ -337,11 +320,11 @@ doApply parsedCommand = do
         let normalized = normalizeApplySource (patchSourceNormalization parsed) (InputFileContents reframedBytes)
         emitAdvisories (normalizedSourceAdvisories normalized)
         let source = normalizedSourceBytes normalized
-        verifySource verificationPolicy verification source
+        settleVerification (verifySource verificationPolicy verification source)
         outcome <- orBail =<< runApply (patchApply parsed) source
         emitAdvisories (outcomeAdvisories outcome)
         let target = outcomeValue outcome
-        verifyTarget verificationPolicy verification target
+        settleVerification (verifyTarget verificationPolicy verification target)
         let (restoredTarget, restoreAdvisories) =
               restoreStrippedContent (patchFormat parsed) (normalizedSourceRestore normalized) target
         emitAdvisories restoreAdvisories
@@ -380,24 +363,21 @@ doUndo parsedCommand = do
             (undoDialects parsedCommand))
   emitAdvisories (patchAdvisories parsed)
   emitVerboseAnalysis (undoVerbosity parsedCommand) parsed
-  case patchUndo parsed of
-    Nothing -> bail "undo not supported for this format"
-    Just undo -> do
-      let verification       = patchVerification parsed
-          verificationPolicy = undoVerificationPolicy parsedCommand
+  let verification       = patchVerification parsed
+      verificationPolicy = undoVerificationPolicy parsedCommand
 
-          undoAndWriteTo outputPath = do
-            modified <- readMaybeUnwrap (undoFileReading parsedCommand) (undoSource parsedCommand)
-            verifyTarget verificationPolicy verification (OutputFileContents modified)
-            outcome <- orBail (runUndo undo (OutputFileContents modified))
-            emitAdvisories (outcomeAdvisories outcome)
-            let revertedSource = outcomeValue outcome
-            verifySource verificationPolicy verification revertedSource
-            let InputFileContents result = revertedSource
-            writeFileAtomicallyOver outputPath result
-            TextIO.putStrLn (renderActionLine "reverted" (patchInfo parsed) outputPath)
+      undoAndWriteTo undo outputPath = do
+        modified <- readMaybeUnwrap (undoFileReading parsedCommand) (undoSource parsedCommand)
+        settleVerification (verifyTarget verificationPolicy verification (OutputFileContents modified))
+        outcome <- orBail (runUndo undo (OutputFileContents modified))
+        emitAdvisories (outcomeAdvisories outcome)
+        let revertedSource = outcomeValue outcome
+        settleVerification (verifySource verificationPolicy verification revertedSource)
+        let InputFileContents result = revertedSource
+        writeFileAtomicallyOver outputPath result
+        TextIO.putStrLn (renderActionLine "reverted" (patchInfo parsed) outputPath)
 
-      case undoOutput parsedCommand of
+      undoUsing undo = case undoOutput parsedCommand of
         UndoInPlace backupBehavior -> do
           case backupBehavior of
             WriteBackup -> do
@@ -405,14 +385,20 @@ doUndo parsedCommand = do
               copyFile (undoSource parsedCommand) backupPath
               TextIO.hPutStrLn stderr ("slap: backup: " <> pathText backupPath)
             NoBackup -> pure ()
-          undoAndWriteTo (undoSource parsedCommand)
+          undoAndWriteTo undo (undoSource parsedCommand)
         UndoToExplicitFile outputPath overwritePolicy -> do
           refuseOverwrite overwritePolicy outputPath
-          undoAndWriteTo outputPath
+          undoAndWriteTo undo outputPath
         UndoToDerivedFile overwritePolicy -> do
           let outputPath = deriveUndoOutput (undoSource parsedCommand)
           refuseOverwrite overwritePolicy outputPath
-          undoAndWriteTo outputPath
+          undoAndWriteTo undo outputPath
+
+  case patchUndo parsed of
+    UndoBySelfInversion undo -> undoUsing undo
+    UndoFromCarriedData undo -> undoUsing undo
+    UndoAbsentFromPatch      -> bailError (PatchCarriesNoUndoData (patchFormat parsed))
+    UndoUnsupportedByFormat  -> bailError (NoUndoForFormat (patchFormat parsed))
 
 ----------------------------------------------------------------------------
 -- Create
@@ -468,20 +454,19 @@ data ConvertDispatch
     -- ^ User supplied @--with INPUT@.
   | SourceLessConvert PatchContents
     -- ^ No source supplied; the parsed patch carries 'PatchContents'.
-  | ConvertRequiresSource SomePatch
-    -- ^ No source supplied, and the parsed patch carries no 'PatchContents'.
+  | SourceRequiredToConvert SourceRequiredCause
+    -- ^ No source supplied, and the parsed patch carries no 'PatchContents'; the cause says which way.
 
 -- | Decide which convert path runs from the parsed patch and the CLI command.
 -- The @--with INPUT@ flag commits to apply-and-recreate outright; without it the parsed 'PatchKind' decides.
--- 'needSourceMessage' renders the user-visible reason for the source-required cases.
 chooseConvertDispatch :: ConvertCommand -> SomePatch -> ConvertDispatch
 chooseConvertDispatch parsedCommand parsed =
   case convertWithSource parsedCommand of
     Just withSource -> ApplyAndRecreate withSource
     Nothing -> case patchKind parsed of
       Direct (Just contents) -> SourceLessConvert contents
-      Direct Nothing         -> ConvertRequiresSource parsed
-      Differential           -> ConvertRequiresSource parsed
+      Direct Nothing         -> SourceRequiredToConvert SourcePatchNotReencodable
+      Differential           -> SourceRequiredToConvert SourcePatchIsDifferential
 
 -- | Project the optional 'PatchContents' bag out of a 'SomePatch'.
 patchContentsOf :: SomePatch -> Maybe PatchContents
@@ -526,7 +511,7 @@ doConvert parsedCommand = do
       let normalized = normalizeApplySource (patchSourceNormalization parsed) (InputFileContents handedSourceBytes)
       emitAdvisories (normalizedSourceAdvisories normalized)
       let source = normalizedSourceBytes normalized
-      verifySource (convertWithVerification withSource) (patchVerification parsed) source
+      settleVerification (verifySource (convertWithVerification withSource) (patchVerification parsed) source)
       target <- applyForConvert parsed source
       let (restoredTarget, restoreAdvisories) =
             restoreStrippedContent (patchFormat parsed) (normalizedSourceRestore normalized) target
@@ -542,8 +527,8 @@ doConvert parsedCommand = do
       emitAdvisories (patchSourceAdvisories parsed ++ resultAdvisories convertResult)
       writeOutputFile outputFile (unPatchFileContents (resultBytes convertResult))
       TextIO.putStrLn ("converted to " <> formatName (convertTo parsedCommand) <> ": " <> pathText outputFile)
-    ConvertRequiresSource somePatch ->
-      bail (needSourceMessage somePatch)
+    SourceRequiredToConvert cause ->
+      bailError (ConvertRequiresSource (patchFormat parsed) cause)
 
 -- | Resolve the xdelta1 file-name pair for @slap convert@.
 -- Unlike 'resolveCreateXDelta1Names', this refuses rather than falling back to basenames;
@@ -567,31 +552,6 @@ applyForConvert somePatch source = do
   outcome <- orBail =<< runApply (patchApply somePatch) source
   emitAdvisories (outcomeAdvisories outcome)
   pure (outcomeValue outcome)
-
--- | Local helper for 'needSourceMessage'.
-data SourceRequiredReason = SourceRequiredReason
-  { sourceRequiredCause       :: Text
-  , sourceRequiredConsequence :: Text
-  }
-
--- | Error message when @--with@ is required but not provided.
-needSourceMessage :: SomePatch -> Text
-needSourceMessage somePatch =
-  "converting from " <> name <> " requires the original ROM (--with INPUT)\n"
-  <> name <> " " <> sourceRequiredCause reason <> ". "
-  <> sourceRequiredConsequence reason
-  where
-    name   = formatLabelName (patchFormat somePatch)
-    convertConsequence = "To convert it, we'd apply the patch to the input first and convert the result " <> Text.pack [emDash] <> " which is why we need the input."
-    reason = case patchKind somePatch of
-      Differential -> SourceRequiredReason
-        { sourceRequiredCause       = "tells us what to change in the input ROM, not what the result should be"
-        , sourceRequiredConsequence = convertConsequence
-        }
-      Direct _ -> SourceRequiredReason
-        { sourceRequiredCause       = "can't be converted directly into another patch format"
-        , sourceRequiredConsequence = convertConsequence
-        }
 
 ----------------------------------------------------------------------------
 -- Helpers
@@ -620,115 +580,17 @@ refuseOverwrite :: OverwritePolicy -> FilePath -> IO ()
 refuseOverwrite ForceOverwrite  _          = pure ()
 refuseOverwrite RefuseOverwrite outputPath = do
   exists <- doesFileExist outputPath
-  when exists $
-    bail (pathText outputPath <> " already exists (use --force to overwrite)")
+  when exists (bailError (OutputFileExists outputPath))
 
 ----------------------------------------------------------------------------
--- Verification helpers
+-- Verification
 ----------------------------------------------------------------------------
 
-verifySource :: VerificationPolicy -> Verification -> InputFileContents -> IO ()
-verifySource verificationPolicy verification (InputFileContents sourceBytes) = do
-  let preprocessed = applySourcePreHash (verifySourcePreHash verification) sourceBytes
-  -- Advisory-class checks first: per-spec non-fatal diagnostics that the format chose to populate.
-  -- --no-verify doesn't gate these; it operates only on the fatal-class checks below.
-  forM_ (verifySourceBlocks verification) $ \(BlockCheck blockOffset blockLength expectedCRC) ->
-    noteBlockCRC SourceSide blockOffset expectedCRC (crc16 (zeroExtendedBlock blockOffset blockLength sourceBytes))
-  forM_ (verifyPPFBlock verification) $ \(ValidationBlock blockOffset expectedData) ->
-    notePPFBlock blockOffset expectedData sourceBytes
-  forM_ (verifySourceBytes verification) $ \(ByteCheck checkOffset (AdvisoryExpectedBytes expectedData) checkLabel) ->
-    noteSourceBytes (ByteCheckLabel checkLabel) checkOffset expectedData sourceBytes
-  -- File size straddles the advisory/fatal boundary: 'AdvisorySize' warns, 'RequiredSize' enforces ('FileSizeCheck' carries which).
-  -- It runs before the hash checks, so a size warning prints ahead of any fatal mismatch.
-  forM_ (verifyFileSize verification) $ \fileSizeCheck ->
-    let actualSize = FileSize (fromIntegral (ByteString.length sourceBytes))
-    in case fileSizeCheck of
-         AdvisorySize expectedSize -> noteFileSize expectedSize actualSize
-         RequiredSize expectedSize -> enforceFileSize verificationPolicy SourceSide expectedSize actualSize
-  -- Fatal-class checks.
-  -- The format's choice to populate these slots expresses the spec's "this mismatch invalidates the patch" judgment.
-  forM_ (verifySourceCRC32 verification) $ \expected ->
-    enforceCRC verificationPolicy SourceSide expected (crc32 preprocessed)
-  forM_ (verifySourceMD5 verification) $ \expected ->
-    enforceHash verificationPolicy SourceSide MD5 expected (md5 preprocessed)
-  forM_ (verifySourceSHA1 verification) $ \expected ->
-    enforceHash verificationPolicy SourceSide SHA1 expected (sha1 preprocessed)
-  forM_ (verifyN64ByteOrder verification) $ \expected ->
-    let v64LeadingMagic = ByteString.pack [0x37, 0x80, 0x40, 0x12]  -- V64 (byteswapped) leads with this; Z64/native do not
-        sourceIsV64     = ByteString.take 4 sourceBytes == v64LeadingMagic
-        mismatched      = case expected of
-          SourceMustBeV64    -> not sourceIsV64
-          SourceMustNotBeV64 -> sourceIsV64
-    in when mismatched (enforceMismatch verificationPolicy APSN64ImageFormatMismatch)
-
-verifyTarget :: VerificationPolicy -> Verification -> OutputFileContents -> IO ()
-verifyTarget verificationPolicy verification (OutputFileContents targetBytes) = do
-  -- Advisory-class checks first; see verifySource for the discipline.
-  forM_ (verifyTargetBlocks verification) $ \(BlockCheck blockOffset blockLength expectedCRC) ->
-    noteBlockCRC TargetSide blockOffset expectedCRC (crc16 (zeroExtendedBlock blockOffset blockLength targetBytes))
-  -- Fatal-class checks.
-  forM_ (verifyTargetCRC32 verification) $ \expected ->
-    enforceCRC verificationPolicy TargetSide expected (crc32 targetBytes)
-  forM_ (verifyTargetMD5 verification) $ \expected ->
-    enforceHash verificationPolicy TargetSide MD5 expected (md5 targetBytes)
-  forM_ (verifyWindowAdler32 verification) $ \(WindowCheck windowOffset windowLength expectedChecksum) ->
-    enforceAdler verificationPolicy windowOffset expectedChecksum (adler32 (viewBytesInRange windowOffset windowLength targetBytes))
-
--- | Emit a verification-mismatch warning: the single point all mismatch warnings funnel through.
-noteMismatch :: SlapAdvisory -> IO ()
-noteMismatch warning = emitAdvisories [warning]
-
--- | The policy gate every @enforce*@ helper routes mismatches through.
--- 'EnforceVerification' makes the mismatch fatal; 'SkipVerification' (@--no-verify@) falls through to 'noteMismatch'.
-enforceMismatch :: VerificationPolicy -> SlapAdvisory -> IO ()
-enforceMismatch SkipVerification    = noteMismatch
-enforceMismatch EnforceVerification = bailError . VerificationFatal
-
-enforceCRC :: VerificationPolicy -> VerificationSide -> CRC32 -> CRC32 -> IO ()
-enforceCRC verificationPolicy side expected actual
-  | expected == actual = pure ()
-  | otherwise          = enforceMismatch verificationPolicy
-                           (VerificationCRCMismatch side (ExpectedCRC32 expected) (ActualCRC32 actual))
-
-enforceHash :: Eq a => VerificationPolicy -> VerificationSide -> HashAlgorithm -> a -> a -> IO ()
-enforceHash verificationPolicy side algorithm expected actual
-  | expected == actual = pure ()
-  | otherwise          = enforceMismatch verificationPolicy
-                           (VerificationHashMismatch side algorithm)
-
-enforceAdler :: VerificationPolicy -> Offset -> Adler32 -> Adler32 -> IO ()
-enforceAdler verificationPolicy windowOffset expected actual
-  | expected == actual = pure ()
-  | otherwise          = enforceMismatch verificationPolicy
-                           (VerificationAdler32Mismatch windowOffset (ExpectedAdler32 expected) (ActualAdler32 actual))
-
-enforceFileSize :: VerificationPolicy -> VerificationSide -> FileSize -> FileSize -> IO ()
-enforceFileSize verificationPolicy side expected actual
-  | expected == actual = pure ()
-  | otherwise          = enforceMismatch verificationPolicy
-                           (VerificationFileSizeMismatch side (ExpectedSize expected) (ActualSize actual))
-
-noteBlockCRC :: VerificationSide -> Offset -> CRC16 -> CRC16 -> IO ()
-noteBlockCRC side blockOffset expected actual
-  | expected == actual = pure ()
-  | otherwise          = noteMismatch (VerificationBlockCRC16Mismatch side blockOffset)
-
-notePPFBlock :: Offset -> ByteString -> ByteString -> IO ()
-notePPFBlock blockOffset expectedData sourceBytes =
-  let actual = viewBytesInRange blockOffset (Length (ByteString.length expectedData)) sourceBytes
-  in when (actual /= expectedData) $
-       noteMismatch (VerificationPPFBlockMismatch blockOffset)
-
-noteFileSize :: FileSize -> FileSize -> IO ()
-noteFileSize expected actual =
-  when (expected /= actual) $
-    noteMismatch (VerificationFileSizeAdvisory (ExpectedSize expected) (ActualSize actual))
-
-noteSourceBytes :: ByteCheckLabel -> Offset -> ByteString -> ByteString -> IO ()
-noteSourceBytes label checkOffset expectedData sourceBytes =
-  let actual = viewBytesInRange checkOffset (Length (ByteString.length expectedData)) sourceBytes
-  in when (actual /= expectedData) $
-       noteMismatch (VerificationSourceBytesMismatch label checkOffset)
+-- | Emit a verification pass's advisories, then bail on its verdict — advisories first, since 'orBail' exits.
+settleVerification :: Outcome (Either SlapError ()) -> IO ()
+settleVerification verificationOutcome = do
+  emitAdvisories (outcomeAdvisories verificationOutcome)
+  orBail (outcomeValue verificationOutcome)
 
 -- | Render the full per-record analysis to stderr, gated on 'Verbose'.
 emitVerboseAnalysis :: Verbosity -> SomePatch -> IO ()

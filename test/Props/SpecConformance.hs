@@ -43,8 +43,8 @@ import qualified Slap.NINJA2.Parse as NINJA2
 import qualified Slap.APSGBA.Apply as APSGBA
 import qualified Slap.APSGBA.Parse as APSGBA
 import Slap.APSGBA.Types (apsGbaBlockSize)
-import Slap.SomePatch (parseSome, patchVerification, Verification(..), FileSizeCheck(..),
-                       WindowCheck(..))
+import Slap.SomePatch (parseSome, patchVerification)
+import Slap.Verify (Verification(..), FileSizeCheck(..), WindowCheck(..))
 import Slap.Text (EncodingName(EncodingUtf8))
 import Slap.Convert (noDialectsRequested)
 import Slap.UPS.Apply (applyUPS)

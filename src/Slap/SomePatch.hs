@@ -5,17 +5,7 @@ module Slap.SomePatch
   , PatchKind(..)
   , ApplyStrategy(..)
   , UndoStrategy(..)
-  , Verification(..)
-  , BlockCheck(..)
-  , ValidationBlock(..)
-  , WindowCheck(..)
-  , ByteCheck(..)
-  , AdvisoryExpectedBytes(..)
-  , FileSizeCheck(..)
-  , ExpectedN64ByteOrder(..)
-  , SourcePreHash(..)
-  , applySourcePreHash
-  , noVerification
+  , UndoAvailability(..)
   , parseSome
   ) where
 
@@ -99,11 +89,14 @@ import qualified Slap.DPS.Describe as DPS
 import qualified Slap.NINJA1.Types as NINJA1
 import qualified Slap.NINJA1.Parse as NINJA1
 import qualified Slap.NINJA1.Apply as NINJA1
-import qualified Slap.NINJA1.Create as NINJA1
 import qualified Slap.NINJA1.Describe as NINJA1
 import Slap.Platform (ninja1ToPlatform, ninja2ToPlatform)
 import Slap.Normalize (SourceNormalization(..), RestoreDiscipline(..),
                        NormalizationConfirmation(..))
+import Slap.Verify (Verification(..), noVerification, SourcePreHash(..),
+                    BlockCheck(..), ValidationBlock(..), WindowCheck(..),
+                    ByteCheck(..), AdvisoryExpectedBytes(..),
+                    FileSizeCheck(..), ExpectedN64ByteOrder(..))
 import Slap.Display.Analysis (PatchAnalysis(..))
 import Slap.Display.Common (FormatHeader(..),
                              Tally(..), CountUnit(..), ByteCount(..))
@@ -120,7 +113,7 @@ import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 import Data.List (partition)
 import Data.Maybe (catMaybes, fromMaybe, isJust, mapMaybe)
-import Slap.Checksum (CRC32, CRC16, Adler32, MD5Hash(..), SHA1Hash(..))
+import Slap.Checksum (MD5Hash(..))
 
 ----------------------------------------------------------------------------
 -- Types
@@ -132,100 +125,20 @@ import Slap.Checksum (CRC32, CRC16, Adler32, MD5Hash(..), SHA1Hash(..))
 newtype ApplyStrategy = ApplyStrategy
   { runApply :: InputFileContents -> IO (Either SlapError (Outcome OutputFileContents)) }
 
--- | How the source bytes are transformed before the source hashes are
--- computed — data, not a bare function, so 'Verification' stays
--- inspectable. 'HashNINJA1Sample' is NINJA1's large-file sampling rule
--- (see 'Slap.NINJA1.Create.ninja1HashInput'); 'HashWholeSource' is the
--- default for every other format.
-data SourcePreHash = HashWholeSource | HashNINJA1Sample
-  deriving (Eq, Show)
-
-applySourcePreHash :: SourcePreHash -> ByteString -> ByteString
-applySourcePreHash HashWholeSource  = id
-applySourcePreHash HashNINJA1Sample = NINJA1.ninja1HashInput
-
--- | Verification data extracted from a parsed patch.
--- All fields are optional; formats populate whichever they carry.
-data Verification = Verification
-  { verifySourceCRC32  :: Maybe CRC32
-  , verifySourceMD5    :: Maybe MD5Hash
-  , verifySourceSHA1   :: Maybe SHA1Hash
-  , verifyTargetCRC32  :: Maybe CRC32
-  , verifyTargetMD5    :: Maybe MD5Hash
-  , verifySourceBlocks  :: [BlockCheck]
-  , verifyTargetBlocks  :: [BlockCheck]
-  , verifyPPFBlock      :: Maybe ValidationBlock
-    -- | File-size check, present when the format declares an expected source size.
-    -- The 'FileSizeCheck' carries its own advisory-or-required severity.
-  , verifyFileSize :: Maybe FileSizeCheck
-  , verifyWindowAdler32 :: [WindowCheck]
-  , verifySourceBytes   :: [ByteCheck]
-  , verifySourcePreHash :: SourcePreHash
-    -- | Set for an APS-N64 Type-1 source; gates its byte-order on apply, 'Nothing' otherwise.
-  , verifyN64ByteOrder :: Maybe ExpectedN64ByteOrder
-  }
-
--- | The N64 image byte-order an APS-N64 Type-1 patch was built against.
--- Its record offsets assume one order, so applying to a source in the other would corrupt it;
--- the format distinguishes only V64 (the byteswapped "Doctor" image) from everything else.
-data ExpectedN64ByteOrder = SourceMustBeV64 | SourceMustNotBeV64
-  deriving (Show, Eq)
-
--- | Per-block CRC16 check (APS-GBA): the CRC16 covers the zero-extended block, not the clipped tail.
-data BlockCheck = BlockCheck !Offset !Length !CRC16
-  deriving (Show)
-
--- | Validation block comparison (PPF2 and PPF3). The bytes are
--- carried as a raw 'ByteString' at this cross-cutting layer; each
--- format wraps them in its own role newtype during parse and emit.
-data ValidationBlock = ValidationBlock !Offset !ByteString
-  deriving (Show)
-
--- | Per-window Adler32 check (VCDIFF).
-data WindowCheck = WindowCheck
-  { windowCheckTargetBase    :: !Offset
-  , windowCheckOutputLength  :: !Length
-  , windowCheckStoredAdler32 :: !Adler32
-  }
-  deriving (Show)
-
--- | Advisory byte-range comparison (APS-N64 cart ID, country, CRC).
--- The trailing 'Text' field is the check's label.
-data ByteCheck = ByteCheck !Offset !AdvisoryExpectedBytes !Text
-  deriving (Show)
-
--- | The bytes an advisory 'ByteCheck' expects to find at its offset in the source file.
--- Advisory, not required: a mismatch emits a warning and the apply proceeds.
-newtype AdvisoryExpectedBytes = AdvisoryExpectedBytes
-  { unAdvisoryExpectedBytes :: ByteString }
-  deriving (Show, Eq)
-
--- | A declared file-size expectation paired with how a mismatch is treated.
--- File size is the one verification check whose severity varies by format,
--- so the severity rides on the value here rather than on which field carries it.
-data FileSizeCheck
-  = AdvisorySize !FileSize
-    -- ^ The format has a stronger integrity gate (e.g. a CRC32), so a size mismatch only warns; the stronger check catches real corruption.
-  | RequiredSize !FileSize
-    -- ^ The format treats the declared size as a hard precondition of apply, so a mismatch fails unless @--no-verify@ is set.
-    -- DPS's size is its only integrity gate; xdelta1's reference applier refuses a wrong-length from file even with MD5s present.
-  deriving (Show, Eq)
-
-noVerification :: Verification
-noVerification = Verification
-  { verifySourceCRC32 = Nothing, verifySourceMD5 = Nothing, verifySourceSHA1 = Nothing
-  , verifyTargetCRC32 = Nothing, verifyTargetMD5 = Nothing
-  , verifySourceBlocks = [], verifyTargetBlocks = []
-  , verifyPPFBlock = Nothing, verifyFileSize = Nothing
-  , verifyWindowAdler32 = [], verifySourceBytes = []
-  , verifySourcePreHash = HashWholeSource
-  , verifyN64ByteOrder = Nothing
-  }
-
--- | Takes the modified file and returns the original, or 'Left' on malformed undo data (bounds violations, negative offsets).
--- For self-inverse formats like UPS (XOR-based), the apply function itself serves as the undo.
+-- | Takes the modified file and returns the original, or 'Left' on malformed undo data.
 newtype UndoStrategy = UndoStrategy
   { runUndo :: OutputFileContents -> Either SlapError (Outcome InputFileContents) }
+
+-- | Whether a parsed patch can run in reverse, kept as four states rather than a @Maybe UndoStrategy@:
+-- the two ways of having no undo are different facts a frontend must tell apart.
+data UndoAvailability
+  = UndoBySelfInversion UndoStrategy
+    -- ^ The records are their own inverse (UPS's XOR), so the patch reverses itself.
+  | UndoFromCarriedData UndoStrategy
+    -- ^ The patch carries the bytes each record replaced (PPF3 with undo payloads).
+  | UndoAbsentFromPatch
+    -- ^ The format can carry undo data; this patch's author left it out.
+  | UndoUnsupportedByFormat
 
 -- | How the patch's records relate to the target file.
 --
@@ -253,7 +166,7 @@ data SomePatch = SomePatch
     -- when 'renderAnalysisFull' or 'renderAnalysisSummary' walks the 'analysisSections' / 'analysisSummary'.
   , patchKind           :: PatchKind
   , patchApply          :: ApplyStrategy
-  , patchUndo           :: Maybe UndoStrategy
+  , patchUndo           :: UndoAvailability
   , patchVerification   :: Verification
   , patchSourceNormalization :: Maybe SourceNormalization
     -- ^ 'Just' when the patch's ROM type has a normalization procedure ("Slap.Normalize").
@@ -312,7 +225,7 @@ bareSomePatch format analysis kind applyStrategy advisories info = SomePatch
   , patchAnalysis            = analysis
   , patchKind                = kind
   , patchApply               = applyStrategy
-  , patchUndo                = Nothing
+  , patchUndo                = UndoUnsupportedByFormat
   , patchVerification        = noVerification
   , patchAdvisories          = advisories
   , patchInfo                = info
@@ -441,8 +354,8 @@ parseSomePatchFromPPF3 (Parsed patch parseAdvisories) =
           }
   in Right (bareSomePatch LabelPPF3 (PPF3.analyzePPF3 patch) kind applyStrategy advisories info)
       { patchUndo          = if PPF3.ppf3HasUndo patch
-                              then Just (UndoStrategy (fmap noAdvisories . PPF3.undoPPF3 patch))
-                              else Nothing
+                              then UndoFromCarriedData (UndoStrategy (fmap noAdvisories . PPF3.undoPPF3 patch))
+                              else UndoAbsentFromPatch
       , patchVerification  = ppfVerification
       , patchExtractedMeta = noMetadataRequested
             { requestedDescription           = presentField (PPF3.ppf3Description patch)
@@ -606,18 +519,13 @@ parseSomePatchFromUPS patchContents = do
         , infoRange    = Nothing
         }
   Right (bareSomePatch LabelUPS (UPS.analyzeUPS patch) Differential applyStrategy advisories info)
-    { patchUndo         = Just $ UndoStrategy (UPS.undoUPS patch)
-        -- UPS is self-inverse (XOR): walking the same block stream
-        -- against the target reconstructs the source. The only
-        -- direction-dependent choice is the output buffer size, and
-        -- 'undoUPS' passes sourceSize instead of targetSize so
-        -- size-changing patches round-trip.
+    { patchUndo         = UndoBySelfInversion (UndoStrategy (UPS.undoUPS patch))
+        -- The one direction-dependent choice is the output buffer size:
+        -- 'undoUPS' passes sourceSize where apply passes targetSize, so size-changing patches round-trip.
     , patchVerification = noVerification
         { verifySourceCRC32 = Just (UPS.upsSourceCRC patch)
         , verifyTargetCRC32 = Just (UPS.upsTargetCRC patch)
         -- Advisory like BPS's: the size doesn't gate rejection.
-        -- Undo bypasses the Verification layer (Main.doUndo), so it
-        -- never consults verifyFileSize.
         , verifyFileSize = Just (AdvisorySize (UPS.upsSourceSize patch))
         }
     }

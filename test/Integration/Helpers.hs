@@ -44,11 +44,9 @@ import Integration.External (ExternalTool(..), ExternalRun(..), runExternal)
 
 import Slap.Binary (sha1)
 import Slap.Checksum (SHA1Hash(..))
-import Slap.Status (SlapError, CreateResult(..), Outcome(..), renderSlapError)
+import Slap.Status (SlapError(..), SourceRequiredCause(..), CreateResult(..), Outcome(..), renderSlapError)
 import Slap.Display.Primitives (padHex)
-import Slap.Display.Glyph (emDash)
-import Slap.FormatLabel (formatLabelName)
-import Slap.SomePatch (SomePatch(..), PatchKind(..), ApplyStrategy(..), UndoStrategy(..))
+import Slap.SomePatch (SomePatch(..), PatchKind(..), ApplyStrategy(..), UndoStrategy(..), UndoAvailability(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Convert (CreateFormat(..), PatchContents, RequestedPatchMetadata(..), convertDirect, lookupCreateFormatToken, noConstraintsRequested, noDialectsRequested)
 import Slap.Create (createPatch)
@@ -192,10 +190,14 @@ applyPatch somePatch source =
 -- | Undo a parsed patch.
 undoPatch :: SomePatch -> OutputFileContents -> IO (Either String InputFileContents)
 undoPatch somePatch target = case patchUndo somePatch of
-  Nothing -> pure (Left "undo not supported")
-  Just undo -> case runUndo undo target of
-    Left err -> pure (Left (Text.unpack (renderSlapError err)))
-    Right outcome -> pure (Right (outcomeValue outcome))
+  UndoBySelfInversion undo -> pure (undoUsing undo)
+  UndoFromCarriedData undo -> pure (undoUsing undo)
+  UndoAbsentFromPatch      -> pure (Left (Text.unpack (renderSlapError (PatchCarriesNoUndoData (patchFormat somePatch)))))
+  UndoUnsupportedByFormat  -> pure (Left (Text.unpack (renderSlapError (NoUndoForFormat (patchFormat somePatch)))))
+  where
+    undoUsing undo = case runUndo undo target of
+      Left err -> Left (Text.unpack (renderSlapError err))
+      Right outcome -> Right (outcomeValue outcome)
 
 removeIfExists :: FilePath -> IO ()
 removeIfExists filePath = removeFile filePath `catch` (\(_ :: IOException) -> pure ())
@@ -203,13 +205,6 @@ removeIfExists filePath = removeFile filePath `catch` (\(_ :: IOException) -> pu
 ----------------------------------------------------------------------------
 -- Conversion
 ----------------------------------------------------------------------------
-
--- | Local helper for 'attemptConvert' — the cause/consequence pair
--- of why source-less convert fails for a given 'PatchKind'.
-data SourceRequiredReason = SourceRequiredReason
-  { sourceRequiredCause       :: String
-  , sourceRequiredConsequence :: String
-  }
 
 -- | Peer copy of @Main.patchContentsOf@: project the optional
 -- 'PatchContents' bag out of a 'SomePatch'.  'Differential' patches
@@ -242,24 +237,11 @@ attemptConvert somePatch targetFormat maybeBase meta = case maybeBase of
     Direct (Just patchContent) -> pure $ case convertDirect patchContent targetFormat meta noConstraintsRequested noDialectsRequested of
       Left slapErr -> Left (Text.unpack (renderSlapError slapErr))
       Right result -> Right result
-    Direct Nothing             -> pure (Left (needWithMsg somePatch))
-    Differential               -> pure (Left (needWithMsg somePatch))
+    Direct Nothing             -> pure (Left (needWithMsg SourcePatchNotReencodable))
+    Differential               -> pure (Left (needWithMsg SourcePatchIsDifferential))
   where
-    needWithMsg thePatch =
-      "converting from " ++ name ++ " requires the original ROM (--with INPUT)\n"
-      ++ name ++ " " ++ sourceRequiredCause reason ++ ". "
-      ++ sourceRequiredConsequence reason
-      where
-        name   = Text.unpack (formatLabelName (patchFormat thePatch))
-        reason = case patchKind thePatch of
-          Differential -> SourceRequiredReason
-            { sourceRequiredCause       = "tells us what to change in the source ROM, not what the result should be"
-            , sourceRequiredConsequence = "To convert it, we'd apply the patch to the source first and convert the result " ++ [emDash] ++ " which is why we need the source."
-            }
-          Direct _ -> SourceRequiredReason
-            { sourceRequiredCause       = "can't be converted directly into another patch format"
-            , sourceRequiredConsequence = "To convert it, we'd apply the patch to the source first and convert the result " ++ [emDash] ++ " which is why we need the source."
-            }
+    needWithMsg cause =
+      Text.unpack (renderSlapError (ConvertRequiresSource (patchFormat somePatch) cause))
 
 ----------------------------------------------------------------------------
 -- File discovery
