@@ -59,7 +59,7 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.VCDIFF.Apply (applyVCDIFF)
 import Slap.FileContents (PatchFileContents(..), InputFileContents(..), OutputFileContents(..))
 import Slap.Measure
-  ( Offset(..), Length(..), FileSize(..)
+  (offsetToInt,  Offset(..), Length(..), FileSize(..)
   , ActualOffset(..), ExpectedSize(..), ActualSize(..)
   , ActionIndex, firstAction, nextAction, actionAtPosition
   , Cursor(..), fitsWithin, remainingFromOffset, lengthToFileSize
@@ -103,7 +103,7 @@ parseVCDIFFWith :: CustomTablePolicy -> PatchFileContents -> Either SlapError (P
 parseVCDIFFWith tablePolicy (PatchFileContents input)
   | ByteString.length input < magicLength =
       Left (InputTooShort LabelVCDIFF
-              (RequiredLength (Length magicLength))
+              (RequiredLength (Length (fromIntegral magicLength)))
               (ActualLength (byteLength input)))
   | ByteString.take magicLength input /= vcdiffMagicBytes =
       Left (BadMagic LabelVCDIFF (ActualMagic (ByteString.take magicLength input)))
@@ -939,9 +939,9 @@ decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection 
     -- 'walkInstructionSection' only descends here when the cursor is strictly inside the section.
     nextInstructionByte :: WindowDecode Table.Opcode
     nextInstructionByte = do
-      InstructionSectionCursor (Offset codeBytePosition) <- gets instCursor
+      InstructionSectionCursor codeBytePosition <- gets instCursor
       modify (advanceInstCursor (Length 1))
-      pure (Table.Opcode (ByteString.index instSection codeBytePosition))
+      pure (Table.Opcode (ByteString.index instSection (offsetToInt codeBytePosition)))
 
     applyTemplate :: Table.InstructionTemplate -> WindowDecode ()
     applyTemplate Table.Noop = pure ()
@@ -961,7 +961,7 @@ decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection 
         sectionExhausted VCDIFFDataSection
       modify (advanceDataCursor (Length 1))
       modify (emitInstruction
-                (Run size (ByteString.index dataSection (unOffset fillStart)))
+                (Run size (ByteString.index dataSection (offsetToInt fillStart)))
                 size)
     applyTemplate (Table.Copy sizeTemplate (Table.CopyAddressMode mode)) = do
       size            <- resolveSize sizeTemplate
@@ -984,11 +984,11 @@ decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection 
     resolveSize (Table.SizeIs (Table.FixedInstructionSize fixed)) =
       pure (Length (fromIntegral fixed))
     resolveSize Table.SizeCodedSeparately = do
-      InstructionSectionCursor (Offset sizePosition) <- gets instCursor
-      case getVcdiffVarint sizePosition instSection of
+      InstructionSectionCursor sizePosition <- gets instCursor
+      case getVcdiffVarint (offsetToInt sizePosition) instSection of
         Left _ -> sectionExhausted VCDIFFInstructionSection
         Right (VarintResult value consumed) -> do
-          modify (advanceInstCursor (Length consumed))
+          modify (advanceInstCursor (Length (fromIntegral consumed)))
           traverse_ (modify . noteAdvisory) (nonCanonicalVcdiffVarintNote value consumed)
           pure (Length (fromIntegral value))
 

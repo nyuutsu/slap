@@ -62,7 +62,8 @@ import qualified Data.ByteArray as ByteArray
 import Slap.Checksum (CRC16(..), MD5Hash(..), SHA1Hash(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Hunk(..),
-                     advance, byteLength, distance)
+                     advance, byteLength, distance,
+                     offsetToInt, lengthToInt, fileSizeToInt)
 
 ----------------------------------------------------------------------------
 -- Little-endian readers
@@ -356,9 +357,9 @@ copyRegion :: Ptr Word8 -> Offset -> ByteString -> Offset -> Length -> IO ()
 copyRegion destination destinationOffset source sourcePosition regionLength =
   when (unLength regionLength > 0) $
     UnsafeByteString.unsafeUseAsCStringLen source $ \(sourcePointer, _) ->
-      copyBytes (destination `plusPtr` unOffset destinationOffset)
-                (castPtr sourcePointer `plusPtr` unOffset sourcePosition)
-                (unLength regionLength)
+      copyBytes (destination `plusPtr` offsetToInt destinationOffset)
+                (castPtr sourcePointer `plusPtr` offsetToInt sourcePosition)
+                (lengthToInt regionLength)
 
 -- | The bytes in a given range of a 'ByteString' — the subrange
 -- starting at 'Offset' and continuing for 'Length' bytes. The input
@@ -369,13 +370,13 @@ copyRegion destination destinationOffset source sourcePosition regionLength =
 -- 'Length' that runs past the end yields the bytes that exist.
 viewBytesInRange :: Offset -> Length -> ByteString -> ByteString
 viewBytesInRange rangeStart rangeLength input =
-  ByteString.take (unLength rangeLength) (ByteString.drop (unOffset rangeStart) input)
+  ByteString.take (lengthToInt rangeLength) (ByteString.drop (offsetToInt rangeStart) input)
 
 -- | The @regionLength@-byte block starting at @rangeStart@, always exactly that long:
 -- a range that runs past the end of the input is zero-extended rather than clipped.
 zeroExtendedBlock :: Offset -> Length -> ByteString -> ByteString
 zeroExtendedBlock rangeStart regionLength input =
-  present <> ByteString.replicate (unLength regionLength - ByteString.length present) 0
+  present <> ByteString.replicate (lengthToInt regionLength - ByteString.length present) 0
   where present = viewBytesInRange rangeStart regionLength input
 
 -- | Copy @regionLength@ bytes from one position in a buffer to
@@ -389,9 +390,9 @@ zeroExtendedBlock rangeStart regionLength input =
 copyInPlace :: Ptr Word8 -> Offset -> Offset -> Length -> IO ()
 copyInPlace buffer sourceOffset destinationOffset regionLength =
   when (unLength regionLength > 0) $
-    moveBytes (buffer `plusPtr` unOffset destinationOffset)
-              (buffer `plusPtr` unOffset sourceOffset)
-              (unLength regionLength)
+    moveBytes (buffer `plusPtr` offsetToInt destinationOffset)
+              (buffer `plusPtr` offsetToInt sourceOffset)
+              (lengthToInt regionLength)
 
 -- | Allocate an output buffer of exactly @size@ bytes, run a fill
 -- action over it, and return the filled buffer paired with whatever
@@ -409,9 +410,9 @@ copyInPlace buffer sourceOffset destinationOffset regionLength =
 -- between.
 fillNewBuffer :: FileSize -> (Ptr Word8 -> IO a) -> IO (ByteString, a)
 fillNewBuffer size fill =
-  Internal.createAndTrim' (unFileSize size) $ \bufferPointer -> do
+  Internal.createAndTrim' (fileSizeToInt size) $ \bufferPointer -> do
     extra <- fill bufferPointer
-    pure (0, unFileSize size, extra)
+    pure (0, fileSizeToInt size, extra)
 
 ----------------------------------------------------------------------------
 -- Byte permutations
@@ -473,8 +474,8 @@ crc16Table = listArray (0, 255) [computeEntry entry | entry <- [0..255]]
 -- Diff
 ----------------------------------------------------------------------------
 
-mergeGapThreshold :: Int
-mergeGapThreshold = 5
+mergeGapThreshold :: Length
+mergeGapThreshold = Length 5
 
 -- | Find contiguous regions where two ByteStrings differ.
 -- Merges nearby hunks (gap <= mergeGapThreshold bytes) to reduce record count.
@@ -487,14 +488,14 @@ diffHunks (InputFileContents original) (OutputFileContents modified) =
     modifiedLength = ByteString.length modified
     sharedLength = min originalLength modifiedLength
     extension
-      | modifiedLength > originalLength = [Hunk (Offset originalLength) (ByteString.drop originalLength modified)]
+      | modifiedLength > originalLength = [Hunk (Offset (fromIntegral originalLength)) (ByteString.drop originalLength modified)]
       | otherwise                       = []
     scanDiffs position
       | position >= sharedLength = []
       | ByteString.index original position == ByteString.index modified position = scanDiffs (position + 1)
       | otherwise =
           let diffEnd = findDiffEnd (position + 1)
-          in Hunk (Offset position) (ByteString.take (diffEnd - position) (ByteString.drop position modified)) : scanDiffs diffEnd
+          in Hunk (Offset (fromIntegral position)) (ByteString.take (diffEnd - position) (ByteString.drop position modified)) : scanDiffs diffEnd
     findDiffEnd position
       | position >= sharedLength = sharedLength
       | ByteString.index original position /= ByteString.index modified position = findDiffEnd (position + 1)
@@ -502,9 +503,9 @@ diffHunks (InputFileContents original) (OutputFileContents modified) =
     mergeNearby [] = []
     mergeNearby [hunk] = [hunk]
     mergeNearby (Hunk firstOffset firstPayload : Hunk nextOffset nextPayload : remainingHunks)
-      | gapBetween <= Length mergeGapThreshold =
-          let merged = ByteString.take (unLength mergedLength)
-                         (ByteString.drop (unOffset firstOffset) modified)
+      | gapBetween <= mergeGapThreshold =
+          let merged = ByteString.take (lengthToInt mergedLength)
+                         (ByteString.drop (offsetToInt firstOffset) modified)
           in mergeNearby (Hunk firstOffset merged : remainingHunks)
       | otherwise = Hunk firstOffset firstPayload : mergeNearby (Hunk nextOffset nextPayload : remainingHunks)
       where

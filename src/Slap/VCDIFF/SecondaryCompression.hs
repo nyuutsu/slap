@@ -33,7 +33,7 @@ import Slap.Compression.Stream (LzmaDecoded(..), lzmaDecompress,
                                 LzmaSectionStream(..), lzmaCompressSections,
                                 DjwDecoded(..), djwDecompress, djwCompress,
                                 FgkDecoded(..), fgkDecompress)
-import Slap.Measure (Length(..), byteLength, lengthToFileSize, subtractLength,
+import Slap.Measure (lengthToInt, Length(..), byteLength, lengthToFileSize, subtractLength,
                      ExpectedSize(..), ActualSize(..))
 import Slap.Status
   ( SlapError(..), VCDIFFMalformation(..), VCDIFFSection(..)
@@ -285,7 +285,7 @@ handOutDecodedSlices decodedStream contributions =
       (remainingDecoded, sectionBytes)
     handOneContribution remainingDecoded (CompressedContribution piece) =
       let (slice, restDecoded) =
-            ByteString.splitAt (unLength (pieceDeclaredOutputSize piece)) remainingDecoded
+            ByteString.splitAt (lengthToInt (pieceDeclaredOutputSize piece)) remainingDecoded
       in (restDecoded, slice)
 
 ----------------------------------------------------------------------------

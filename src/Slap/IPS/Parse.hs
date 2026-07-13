@@ -41,7 +41,7 @@ import Slap.ByteParser
   , remaining
   )
 import Slap.Measure
-  ( Offset(unOffset)
+  (lengthToInt,  Offset(unOffset)
   , Length(..)
   , FileSize(..)
   , ActionIndex
@@ -83,7 +83,7 @@ import Data.Word (Word8)
 -- looked up via 'variantSpec'.
 parseIPS :: PatchFileContents -> Either SlapError (Parsed IPSParseResult)
 parseIPS (PatchFileContents inputBytes)
-  | ByteString.length inputBytes < unLength ipsMagicLength =
+  | ByteString.length inputBytes < lengthToInt ipsMagicLength =
       Left (InputTooShort LabelIPS
               (RequiredLength ipsMagicLength)
               (ActualLength (byteLength inputBytes)))
@@ -95,11 +95,11 @@ parseIPS (PatchFileContents inputBytes)
       Left (BadMagic LabelIPS (ActualMagic leadingMagicBytes))
   where
     leadingMagicBytes =
-      ByteString.take (unLength ipsMagicLength) inputBytes
+      ByteString.take (lengthToInt ipsMagicLength) inputBytes
 
     runVariantParser variant =
       let bodyAfterMagic =
-            ByteString.drop (unLength ipsMagicLength) inputBytes
+            ByteString.drop (lengthToInt ipsMagicLength) inputBytes
       in runFormatParser (labelForIPSVariant variant) (parseIPSBody variant) bodyAfterMagic
            >>= finalizeBodyShape variant
 
@@ -673,7 +673,7 @@ assembleCleanResult StandardIPS recordVector trailingBytes
                                }
         , ipsCleanAdvisories = []
         }
-  | ByteString.length trailingBytes == unLength ipsTruncationMarkerLength =
+  | ByteString.length trailingBytes == lengthToInt ipsTruncationMarkerLength =
       let truncatedTargetSize =
             FileSize (fromIntegral (getWord24BE 0 trailingBytes))
       in Right IPSCleanResult
@@ -713,7 +713,7 @@ assembleCleanResult IPS32 recordVector trailingBytes =
       trailingWarnings
         | trailerLength == 0 = []
         | otherwise          =
-            [IPS32TrailingBytes LabelIPS32 (Length trailerLength)]
+            [IPS32TrailingBytes LabelIPS32 (Length (fromIntegral trailerLength))]
   in Right IPSCleanResult
        { ipsCleanResult   = ips32Patch
        , ipsCleanAdvisories = trailingWarnings

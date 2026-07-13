@@ -101,7 +101,7 @@ parseXDelta1 metadataEncoding patchContents@(PatchFileContents input)
     -- coarse floor; the real minimum is checked in parseVersion1Point1
   | ByteString.length input < xdelta1MagicLength + xdelta1TrailerSize =
       Left (InputTooShort LabelXDelta1
-              (RequiredLength (Length (xdelta1MagicLength + xdelta1TrailerSize)))
+              (RequiredLength (Length (fromIntegral (xdelta1MagicLength + xdelta1TrailerSize))))
               (ActualLength (byteLength input)))
   | magic == "%XDZ004%" = parseVersion1Point1 metadataEncoding patchContents (ExpectedMagic magic)
   | magic == "%XDZ003%" = Left (UnsupportedXDelta1Subformat XDelta1_1_0_4)
@@ -119,8 +119,8 @@ parseVersion1Point1 :: EncodingName -> PatchFileContents -> ExpectedMagic -> Eit
 parseVersion1Point1 metadataEncoding (PatchFileContents input) expectedMagic
   | totalLength < xdelta1MagicLength + xdelta1HeaderBlockLength + xdelta1TrailerSize =
       Left (InputTooShort LabelXDelta1
-              (RequiredLength (Length (xdelta1MagicLength + xdelta1HeaderBlockLength + xdelta1TrailerSize)))
-              (ActualLength (Length totalLength)))
+              (RequiredLength (Length (fromIntegral (xdelta1MagicLength + xdelta1HeaderBlockLength + xdelta1TrailerSize))))
+              (ActualLength (Length (fromIntegral totalLength))))
   | trailingMagic /= unExpectedMagic expectedMagic = Left (TrailingMagicMismatch LabelXDelta1 expectedMagic (ActualMagic trailingMagic))
   | otherwise = do
       decompressedData    <- safeDecompressGZip dataSegmentRaw
@@ -277,7 +277,7 @@ parseControl :: EncodingName
 parseControl metadataEncoding noVerifyFlag compressionPosture controlSegment dataSegment fromName toName
   | ByteString.length controlBytes < xdelta1ControlSegmentFloor =
       Left (XDelta1ControlSegmentTooShort
-              (RequiredLength (Length xdelta1ControlSegmentFloor))
+              (RequiredLength (Length (fromIntegral xdelta1ControlSegmentFloor)))
               (ActualLength (byteLength controlBytes)))
   | otherwise = do
       parsedBody <- runFormatParser LabelXDelta1 parseControlBody controlBytes
@@ -293,13 +293,13 @@ parseControl metadataEncoding noVerifyFlag compressionPosture controlSegment dat
       -- The data area and the source list must agree: a data record's length is the segment's byte count, and no data record means no segment bytes.
       case maybeDataRecord of
         Just dataRecord ->
-          unless (unFileSize (parsedSourceLength dataRecord) == dataSegmentLength) $
+          unless (unFileSize (parsedSourceLength dataRecord) == fromIntegral dataSegmentLength) $
             Left $ XDelta1DataRecordLengthMismatch
               (ExpectedSize (parsedSourceLength dataRecord))
-              (ActualSize (FileSize dataSegmentLength))
+              (ActualSize (FileSize (fromIntegral dataSegmentLength)))
         Nothing ->
           unless (dataSegmentLength == 0) $
-            Left (XDelta1DanglingDataSegment (ActualSize (FileSize dataSegmentLength)))
+            Left (XDelta1DanglingDataSegment (ActualSize (FileSize (fromIntegral dataSegmentLength))))
       let verificationPosture = case noVerifyFlag of
             NoVerifyFlagSet   -> CreatorOptedOutOfVerification
             NoVerifyFlagClear -> VerifyAgainstStoredMD5s toMD5
@@ -529,6 +529,6 @@ fixSequentialOffsets dataOffsetMode fileOffsetMode instructions =
 -- | Per-target running positions for 'fixSequentialOffsets'.
 -- There are only ever two sources, so the structure is fixed-shape.
 data SequentialPositions = SequentialPositions
-  { dataPosition :: !Int
-  , filePosition :: !Int
+  { dataPosition :: !Int64
+  , filePosition :: !Int64
   }

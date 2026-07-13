@@ -41,7 +41,7 @@ import Data.Word (Word8, Word32)
 import Slap.Status (SlapError(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), Length(..), FileSize(..), FoundVersion(..),
+import Slap.Measure (lengthToInt, Offset(..), Length(..), FileSize(..), FoundVersion(..),
                      advance, byteLength, offsetToFileSize)
 import Slap.Narrow (narrowToWord32)
 import Slap.Text (EncodedText)
@@ -158,7 +158,7 @@ narrowDPSRecord (DPSEnclosedData outputOffset payload) = do
   _       <- narrowDPSField FieldRecordLength (ByteString.length payload)
   pure (EncodedDPSEnclosedData outputW payload)
 
-narrowDPSField :: FieldName -> Int -> Either SlapError Word32
+narrowDPSField :: Integral value => FieldName -> value -> Either SlapError Word32
 narrowDPSField field value =
   case narrowToWord32 LabelDPS field value of
     Left  failure -> Left (NarrowingError failure)
@@ -180,7 +180,7 @@ dpsFieldCount = 3
 
 -- | Total metadata size: 3 × 64 = 192 bytes.
 dpsMetadataSize :: Int
-dpsMetadataSize = dpsFieldCount * unLength dpsFieldWidth
+dpsMetadataSize = dpsFieldCount * lengthToInt dpsFieldWidth
 
 -- | Minimum valid DPS file: 192 (metadata) + 1 (flag) + 1 (version) + 4 (orig size).
 dpsMinimumFileSize :: Int

@@ -16,7 +16,7 @@ import Slap.Display.Analysis
     )
 import Slap.Display.Common (InfoLine(..),
                      Tally(..), CountUnit(..), ByteCount(..), renderAsText)
-import Slap.Measure (Length(..), FileSize(..), byteLength)
+import Slap.Measure (lengthToInt, Length(..), FileSize(..), byteLength)
 import Slap.Text (EncodedText, encodedTextContent)
 
 import Data.Text (Text)
@@ -60,13 +60,13 @@ dpsMeta patch = concat
 analyzeDPS :: DPSPatch -> PatchAnalysis
 analyzeDPS patch = PatchAnalysis
   { analysisSections = [SectionRegions (map makeDPSRegion (dpsRecords patch))]
-  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes (Length totalBytes))))
+  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes (Length (fromIntegral totalBytes)))))
   }
   where
     recordCount = length (dpsRecords patch)
     totalBytes = sum (map recordBytes (dpsRecords patch))
     recordBytes DPSEnclosedData { dpsDataPayload } = ByteString.length dpsDataPayload
-    recordBytes DPSCopyFromROM { dpsCopyLength }   = unLength dpsCopyLength
+    recordBytes DPSCopyFromROM { dpsCopyLength }   = lengthToInt dpsCopyLength
 
 makeDPSRegion :: DPSRecord -> AnalysisRegion
 makeDPSRegion (DPSEnclosedData outputOffset payload) = AnalysisRegion

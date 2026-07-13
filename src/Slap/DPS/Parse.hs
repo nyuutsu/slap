@@ -77,7 +77,7 @@ isDPS input
 
 parseDPS :: EncodingName -> PatchFileContents -> Either SlapError (Parsed DPSPatch)
 parseDPS metadataEncoding (PatchFileContents input)
-  | ByteString.length input < dpsMinimumFileSize = Left (InputTooShort LabelDPS (RequiredLength (Length dpsMinimumFileSize)) (ActualLength (byteLength input)))
+  | ByteString.length input < dpsMinimumFileSize = Left (InputTooShort LabelDPS (RequiredLength (Length (fromIntegral dpsMinimumFileSize))) (ActualLength (byteLength input)))
   | Left versionError <- toDPSFormatVersion (ByteString.index input dpsVersionOffset)
     = Left versionError
   | otherwise = do
@@ -124,14 +124,14 @@ parseRecords :: ActionIndex -> ByteParser (Either SlapError [DPSRecord])
 parseRecords recordIndex = do
   available <- remaining
   if unLength available == 0 then pure (Right [])
-  else if unLength available < dpsRecordHeaderSize then
+  else if unLength available < fromIntegral dpsRecordHeaderSize then
     -- Bytes remain but too few to begin a record (mode byte + 4-byte
     -- output offset). DPS records run to EOF with nothing after the
     -- last one, so a sub-header tail is a truncated record, not a clean
     -- end. Detection requires exact consumption (isDPS); the parser
     -- agrees rather than silently dropping the tail.
     throwByteParserError (ByteParserTruncatedRecord recordIndex
-      (RequiredLength (Length dpsRecordHeaderSize))
+      (RequiredLength (Length (fromIntegral dpsRecordHeaderSize)))
       (RemainingLength available))
   else do
     mode <- getByte
@@ -146,7 +146,7 @@ parseRecords recordIndex = do
             pure (fmap (record :) rest)
         | m == dpsEnclosedDataMode -> do
             dataLength  <- fromIntegral <$> ByteParser.word32LE :: ByteParser Int
-            payload  <- getBytes (Length dataLength)
+            payload  <- getBytes (Length (fromIntegral dataLength))
             let record = DPSEnclosedData outputOffset payload
             rest <- parseRecords (nextAction recordIndex)
             pure (fmap (record :) rest)

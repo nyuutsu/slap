@@ -32,7 +32,7 @@ import Slap.IPS.Types
   , ipsMaxRecordPayload
   )
 import Slap.Measure
-  ( Offset(..)
+  (offsetToInt, lengthToInt,  Offset(..)
   , Length(..)
   , Hunk(..)
   , subtractLength
@@ -129,7 +129,7 @@ scanDiffRegions (InputFileContents source) (OutputFileContents target) =
   where
     sourceLength = ByteString.length source
     targetLength = ByteString.length target
-    overlapEnd   = Offset (min sourceLength targetLength)
+    overlapEnd   = Offset (fromIntegral (min sourceLength targetLength))
 
     -- Bytes of @target@ past the end of @source@ are by definition
     -- different from anything in source (there's nothing in source
@@ -138,7 +138,7 @@ scanDiffRegions (InputFileContents source) (OutputFileContents target) =
     tailExtension
       | targetLength > sourceLength =
           [ Hunk
-              { hunkOffset  = Offset sourceLength
+              { hunkOffset  = Offset (fromIntegral sourceLength)
               , hunkPayload = ByteString.drop sourceLength target
               }
           ]
@@ -147,15 +147,15 @@ scanDiffRegions (InputFileContents source) (OutputFileContents target) =
     scanFromPosition :: Offset -> [Hunk]
     scanFromPosition !position
       | position >= overlapEnd = []
-      | ByteString.index source (unOffset position)
-          == ByteString.index target (unOffset position) =
+      | ByteString.index source (offsetToInt position)
+          == ByteString.index target (offsetToInt position) =
           scanFromPosition (advance position (Length 1))
       | otherwise =
           let regionEnd     = findRegionEnd (advance position (Length 1))
               regionLength  = distance position regionEnd
               regionPayload =
-                ByteString.take (unLength regionLength)
-                                (ByteString.drop (unOffset position) target)
+                ByteString.take (lengthToInt regionLength)
+                                (ByteString.drop (offsetToInt position) target)
               region = Hunk
                 { hunkOffset  = position
                 , hunkPayload = regionPayload
@@ -168,8 +168,8 @@ scanDiffRegions (InputFileContents source) (OutputFileContents target) =
     findRegionEnd :: Offset -> Offset
     findRegionEnd !position
       | position >= overlapEnd = overlapEnd
-      | ByteString.index source (unOffset position)
-          /= ByteString.index target (unOffset position) =
+      | ByteString.index source (offsetToInt position)
+          /= ByteString.index target (offsetToInt position) =
           findRegionEnd (advance position (Length 1))
       | otherwise = position
 
@@ -218,8 +218,8 @@ mergeNarrowGaps offsetWidth target = mergeStep
                            (byteLength (hunkPayload secondRegion))
                  mergedLength = distance firstStart mergedEnd
                  mergedPayload =
-                   ByteString.take (unLength mergedLength)
-                                   (ByteString.drop (unOffset firstStart) target)
+                   ByteString.take (lengthToInt mergedLength)
+                                   (ByteString.drop (offsetToInt firstStart) target)
                  mergedRegion = Hunk
                    { hunkOffset  = firstStart
                    , hunkPayload = mergedPayload
@@ -271,8 +271,8 @@ partitionDiffRegion offsetWidth _target region
     regionStart   = hunkOffset region
     regionLength  = byteLength regionPayload
 
-    copyRecordOverheadBytes = unLength (ipsCopyRecordOverhead offsetWidth)
-    rleRecordOverheadBytes  = unLength (ipsRleRecordOverhead  offsetWidth)
+    copyRecordOverheadBytes = lengthToInt (ipsCopyRecordOverhead offsetWidth)
+    rleRecordOverheadBytes  = lengthToInt (ipsRleRecordOverhead  offsetWidth)
     rleBreakEvenLength      = rleBreakEvenRunLength offsetWidth
 
     -- Step 3a: every maximal same-byte run inside the region.
@@ -321,7 +321,7 @@ partitionDiffRegion offsetWidth _target region
     -- feasible cost rather than just at it.
     impossiblyExpensiveCost :: Int
     impossiblyExpensiveCost =
-      unLength regionLength * (copyRecordOverheadBytes + 5) + 1
+      lengthToInt regionLength * (copyRecordOverheadBytes + 5) + 1
 
     runPartitionDP :: forall s. ST s [Hunk]
     runPartitionDP = do
@@ -356,7 +356,7 @@ partitionDiffRegion offsetWidth _target region
                           let candidateCost =
                                 predecessorCost
                                 + copyRecordOverheadBytes
-                                + unLength recordPayloadLength
+                                + lengthToInt recordPayloadLength
                           if candidateCost < bestCost
                             then scanCopyCandidates candidateCost
                                                     predecessorIndex
@@ -412,8 +412,8 @@ partitionDiffRegion offsetWidth _target region
                     destinationPosition = seedPositionArray ! destinationIndex
                     sliceLength         = distance predecessorPosition destinationPosition
                     slicePayload =
-                      ByteString.take (unLength sliceLength)
-                                      (ByteString.drop (unOffset predecessorPosition) regionPayload)
+                      ByteString.take (lengthToInt sliceLength)
+                                      (ByteString.drop (offsetToInt predecessorPosition) regionPayload)
                     -- Region-relative Offset to absolute file Offset.
                     absoluteOffset = advance regionStart
                                              (distance (Offset 0) predecessorPosition)
@@ -470,15 +470,15 @@ findByteRuns input
     scanRuns :: Int -> Word8 -> Int -> [ByteRun]
     scanRuns !runStartPosition !runByte !position
       | position >= inputLength =
-          let runLength = distance (Offset runStartPosition) (Offset inputLength)
-          in [ ByteRun (Offset runStartPosition) runLength
+          let runLength = distance (Offset (fromIntegral runStartPosition)) (Offset (fromIntegral inputLength))
+          in [ ByteRun (Offset (fromIntegral runStartPosition)) runLength
              | runLength >= Length 4
              ]
       | ByteString.index input position == runByte =
           scanRuns runStartPosition runByte (position + 1)
       | otherwise =
-          let runLength = distance (Offset runStartPosition) (Offset position)
-          in [ ByteRun (Offset runStartPosition) runLength
+          let runLength = distance (Offset (fromIntegral runStartPosition)) (Offset (fromIntegral position))
+          in [ ByteRun (Offset (fromIntegral runStartPosition)) runLength
              | runLength >= Length 4
              ]
           ++ scanRuns position

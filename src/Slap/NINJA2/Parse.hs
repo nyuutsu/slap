@@ -16,7 +16,7 @@ import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runFormatParser, flattenParse, throwByteParserError,
                         getByte, getBytes, atEnd)
-import Slap.Measure (Length(..), Offset(unOffset), offsetFromParsed, FileSize(..),
+import Slap.Measure (offsetToInt, lengthToInt, Length(..), Offset, offsetFromParsed, FileSize(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      RawFlagByte(..),
                      ActionIndex, firstAction, nextAction,
@@ -95,8 +95,8 @@ parseFixedHeader metadataEncoding textMode input =
     extractField :: FieldName -> Offset -> Length
                  -> (Maybe EncodedText, [SlapAdvisory])
     extractField fieldName fieldOffset fieldWidth =
-      let dropCount = unOffset fieldOffset
-          takeCount = unLength fieldWidth
+      let dropCount = offsetToInt fieldOffset
+          takeCount = lengthToInt fieldWidth
           fieldBytes = ByteString.take takeCount (ByteString.drop dropCount input)
           (content, advisories) =
             decodeFixedWidthTextField effectiveEncoding LabelNINJA2 fieldName fieldBytes

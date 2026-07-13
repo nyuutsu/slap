@@ -49,7 +49,7 @@ analyzePPF4 patch = PatchAnalysis
       [ SectionRegions (map replaceRegion (ppf4Replaces patch)
                         ++ zipWith appendRegion appendDisplayOffsets (ppf4Appends patch)) ]
   , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records
-                                  (Just (TotalPayloadBytes (Length totalBytes))))
+                                  (Just (TotalPayloadBytes (Length (fromIntegral totalBytes)))))
   }
   where
     recordCount = length (ppf4Replaces patch) + length (ppf4Appends patch)

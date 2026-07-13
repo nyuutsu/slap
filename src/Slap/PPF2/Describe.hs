@@ -58,7 +58,7 @@ ppf2EmbeddedContent patch = case ppf2FileId patch of
 analyzePPF2 :: PPF2Patch -> PatchAnalysis
 analyzePPF2 patch = PatchAnalysis
   { analysisSections = [SectionRegions (map makeRegion (ppf2Records patch))]
-  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes (Length totalBytes))))
+  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes (Length (fromIntegral totalBytes)))))
   }
   where
     recordCount = length (ppf2Records patch)

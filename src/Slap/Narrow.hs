@@ -68,12 +68,12 @@ data NarrowingFailure
     -- 'Word' width fits without further wrapping).
   deriving (Show, Eq)
 
--- | Narrow an 'Int' to 'Word32', producing 'FieldValueExceedsBound'
+-- | Narrow an integer to 'Word32', producing 'FieldValueExceedsBound'
 -- if the value is negative or exceeds @0xFFFFFFFF@. Used by per-format
 -- @narrow*@ smart constructors that wire a runtime integer (file size,
 -- list length, bytestring length) into a typed wrapper whose
 -- constructor is private.
-narrowToWord32 :: FormatLabel -> FieldName -> Int -> Either NarrowingFailure Word32
+narrowToWord32 :: Integral value => FormatLabel -> FieldName -> value -> Either NarrowingFailure Word32
 narrowToWord32 label field value
   | value < 0 || toInteger value > toInteger maxValue =
       Left (FieldValueExceedsBound label field

@@ -22,7 +22,7 @@ import Slap.PPF3.Types (PPF3ImageType(..),
                         PPF3ValidationBlock(..),
                         fromImageType,
                         ppf3DescriptionLength)
-import Slap.Measure (Length(..), Offset(..))
+import Slap.Measure (lengthToInt, Offset(..))
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload,
                     EncodedUndoHunk, encodedUndoOffset, encodedUndoPayload,
                     encodedUndoOriginal)
@@ -50,7 +50,7 @@ padDescription description =
   let (truncatedBytes, notices) =
         encodeTextBounded EncodingUtf8 ppf3DescriptionLength (encodedTextContent description)
       padded = truncatedBytes <> ByteString.replicate
-                 (max 0 (unLength ppf3DescriptionLength - ByteString.length truncatedBytes)) 0x20
+                 (max 0 (lengthToInt ppf3DescriptionLength - ByteString.length truncatedBytes)) 0x20
       advisories = encodeLossAdvisories LabelPPF3 FieldDescription notices
   in (padded, advisories)
 

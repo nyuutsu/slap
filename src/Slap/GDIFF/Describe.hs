@@ -13,7 +13,7 @@ import Slap.Display.Analysis
     , SummaryInfo(..), Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), renderAsText)
-import Slap.Measure (Offset(..), Length(..), advance, byteLength)
+import Slap.Measure (lengthToInt, Offset(..), advance, byteLength)
 
 import qualified Data.ByteString as ByteString
 import Data.List (mapAccumL)
@@ -29,7 +29,7 @@ gdiffMeta patch =
     dataCount = length [() | GDiffCommandData{} <- commands]
     copyCount = length [() | GDiffCommandCopy{} <- commands]
     dataBytes = sum [ByteString.length payload | GDiffCommandData { gdiffDataPayload = payload } <- commands]
-    copyBytes = sum [unLength copyLength       | GDiffCommandCopy { gdiffCopyLength = copyLength } <- commands]
+    copyBytes = sum [lengthToInt copyLength    | GDiffCommandCopy { gdiffCopyLength = copyLength } <- commands]
     totalOut  = dataBytes + copyBytes
 
 analyzeGDIFF :: GDiffPatch -> PatchAnalysis

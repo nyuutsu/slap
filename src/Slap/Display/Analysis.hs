@@ -26,6 +26,7 @@ import Slap.Display.EmbeddedContent (EmbeddedDepth(..))
 import Slap.Display.Primitives (padHex, padNum, padRight, showSigned, hexDump)
 import Slap.Display.Glyph (spacePaddedEnDash)
 import Slap.Measure (Offset(..), Length(..), Delta(..), SignedOffset(unSignedOffset),
+                     offsetToInt, lengthToInt,
                      OffsetRange(..), rangeLastByte, advance, distance)
 import Slap.Status (CursorKind, renderCursorKind)
 import Data.Array (Array, Ix, accumArray, assocs, elems)
@@ -167,7 +168,7 @@ renderAnalysisFull info analysis mSource = Text.unlines $ joinSections
         padNum index <> "  " <> regionLabel region <> padRight 10 (renderAsText (unLength (regionSize region)) <> " B")
         <> annotation region
         <> "\n" <> labeledHexDump "delta" deltaBytes
-        <> renderResolvedXOR mSource (unOffset (regionOffset region)) deltaBytes
+        <> renderResolvedXOR mSource (offsetToInt (regionOffset region)) deltaBytes
       PayloadXOR Nothing ->
         padNum index <> "  " <> regionLabel region <> padRight 10 (renderAsText (unLength (regionSize region)) <> " B")
         <> annotation region
@@ -250,7 +251,7 @@ renderCopySource (Just source) region =
   case findSourceOffset (regionAnnotation region) of
     Nothing          -> ""
     Just sourceOffset ->
-      let slice = ByteString.take (unLength (regionSize region)) (ByteString.drop (unOffset sourceOffset) source)
+      let slice = ByteString.take (lengthToInt (regionSize region)) (ByteString.drop (offsetToInt sourceOffset) source)
       in "\n" <> labeledHexDump "source data" slice
 
 ----------------------------------------------------------------------------
@@ -401,13 +402,13 @@ renderAnalysisSummary info analysis mSource = Text.unlines $ joinSections
 
     -- Ceiling division, so bucketWidth * bucketCount >= rangeLength and every offset in the range lands in a column below bucketCount.
     bucketWidth :: OffsetRange -> Int
-    bucketWidth range = max 1 ((unLength (rangeLength range) + bucketCount - 1) `div` bucketCount)
+    bucketWidth range = max 1 ((lengthToInt (rangeLength range) + bucketCount - 1) `div` bucketCount)
 
     spannedColumns :: OffsetRange -> AnalysisRegion -> [BucketIndex]
     spannedColumns range region =
       let width = bucketWidth range
-          startColumn = unLength (distance (rangeStart range) (regionOffset region)) `div` width
-          endColumn   = (unOffset (advance (regionOffset region) (regionSize region)) - 1 - unOffset (rangeStart range)) `div` width
+          startColumn = lengthToInt (distance (rangeStart range) (regionOffset region)) `div` width
+          endColumn   = (offsetToInt (advance (regionOffset region) (regionSize region)) - 1 - offsetToInt (rangeStart range)) `div` width
       in [ BucketIndex column | column <- [max 0 startColumn .. min (bucketCount-1) endColumn] ]
 
     bucketBounds :: (BucketIndex, BucketIndex)
@@ -421,11 +422,11 @@ renderAnalysisSummary info analysis mSource = Text.unlines $ joinSections
       Nothing -> emptyBuckets
       Just range ->
         let width = bucketWidth range
-            regionStartColumn region = unLength (distance (rangeStart range) (regionOffset region)) `div` width
+            regionStartColumn region = lengthToInt (distance (rangeStart range) (regionOffset region)) `div` width
             occupancyEntries =
               [ (column, BucketTally ColumnOccupied 0 0) | region <- allRegions, column <- spannedColumns range region ]
             startEntries =
-              [ (BucketIndex column, BucketTally ColumnVacant 1 (unLength (regionSize region))) | region <- allRegions
+              [ (BucketIndex column, BucketTally ColumnVacant 1 (lengthToInt (regionSize region))) | region <- allRegions
               , let column = regionStartColumn region, column >= 0, column < bucketCount ]
         in accumArray (<>) mempty bucketBounds (occupancyEntries <> startEntries)
 
@@ -446,11 +447,11 @@ renderAnalysisSummary info analysis mSource = Text.unlines $ joinSections
               formatRun run =
                 let runStart = unBucketIndex (runFirstBucket run)
                     runEnd   = unBucketIndex (runLastBucket run)
-                    startOffset = unOffset (rangeStart range) + runStart * width
+                    startOffset = offsetToInt (rangeStart range) + runStart * width
                     -- The ceiling-rounded last bucket can nominally reach past the range's final byte;
                     -- clamp the shown end to the real last byte.
-                    endOffset = min (unOffset (rangeStart range) + (runEnd + 1) * width - 1)
-                                    (unOffset (rangeLastByte range))
+                    endOffset = min (offsetToInt (rangeStart range) + (runEnd + 1) * width - 1)
+                                    (offsetToInt (rangeLastByte range))
                     recordsInRun = runRecords run
                     bytesInRun   = runBytes run
                     percentage = if totalModified > 0
@@ -481,7 +482,7 @@ renderAnalysisSummary info analysis mSource = Text.unlines $ joinSections
           let sortedSizes = smallest :| moreSizes
               largest     = NonEmpty.last sortedSizes
               medianSize  = middleElement sortedSizes
-              meanSize    = totalModified `div` totalRecords
+              meanSize    = totalModified `div` fromIntegral totalRecords
           in ["record sizes: " <> commaNum smallest <> spacePaddedEnDash
               <> commaNum largest <> " B"
               <> " (median " <> commaNum medianSize
@@ -513,7 +514,7 @@ renderAnalysisSummary info analysis mSource = Text.unlines $ joinSections
            _               -> []
 
 -- | Format an integer with comma grouping.
-commaNum :: Int -> Text
+commaNum :: (Num number, Ord number, Show number) => number -> Text
 commaNum number
   | number < 0     = "-" <> commaNum (negate number)
   | otherwise = Text.reverse (insertCommas (Text.reverse (renderAsText number)))

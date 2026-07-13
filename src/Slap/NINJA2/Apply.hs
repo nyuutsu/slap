@@ -6,7 +6,7 @@ import Slap.NINJA2.Types
 import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Binary (copyRegion, fillNewBuffer)
-import Slap.Measure (Offset(..), Length(..), FileSize(..),
+import Slap.Measure (fileSizeToInt, offsetToInt, Offset(..), Length(..), FileSize(..),
                      ActionIndex, RequestedLength(..),
                      byteLength, fitsWithin,
                      firstAction, nextAction, streamEndIndex)
@@ -47,9 +47,9 @@ applyNINJA2 patch (InputFileContents source)
   where
     sourceLength   = ByteString.length source
     outputLength   = case ninja2OpenNewFile patch of
-      Just openNewFile -> unFileSize (openNewFileTargetSize openNewFile)
+      Just openNewFile -> fileSizeToInt (openNewFileTargetSize openNewFile)
       Nothing          -> sourceLength
-    outputFileSize = FileSize outputLength
+    outputFileSize = FileSize (fromIntegral outputLength)
     records        = ninja2Records patch
     overflowActionIndex = streamEndIndex records
 
@@ -58,7 +58,7 @@ applyNINJA2 patch (InputFileContents source)
     -- past the source.
     seedBuffer :: Ptr Word8 -> IO ()
     seedBuffer outputPointer = do
-      copyRegion outputPointer (Offset 0) source (Offset 0) (Length (min sourceLength outputLength))
+      copyRegion outputPointer (Offset 0) source (Offset 0) (Length (fromIntegral (min sourceLength outputLength)))
       when (outputLength > sourceLength) $
         fillBytes (outputPointer `plusPtr` sourceLength)
                   (0 :: Word8)
@@ -88,7 +88,7 @@ applyNINJA2 patch (InputFileContents source)
         writeRemainingBytes 0
       where
         recordLength = ByteString.length xorPayload
-        writeBase    = outputPointer `plusPtr` unOffset writePosition
+        writeBase    = outputPointer `plusPtr` offsetToInt writePosition
         writeRemainingBytes !byteOffset
           | byteOffset >= recordLength = pure ()
           | otherwise = do
@@ -118,7 +118,7 @@ applyNINJA2 patch (InputFileContents source)
         (Just OverflowAppend, Just overflow) ->
           let appendPosition = Offset $ case ninja2OpenNewFile patch of
                 Just openNewFile -> unFileSize (openNewFileSourceSize openNewFile)
-                Nothing          -> sourceLength
+                Nothing          -> fromIntegral sourceLength
               decoded        = ByteString.map (xor 0xFF) overflow
               decodedLength  = byteLength decoded
           in case checkRecordFits overflowActionIndex appendPosition decodedLength of

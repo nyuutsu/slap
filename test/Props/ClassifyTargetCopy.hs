@@ -32,9 +32,9 @@ genValidClassifierInput = do
   writePosInt   <- chooseInt (1, 10000)
   readStartInt  <- chooseInt (0, writePosInt - 1)
   copyLengthInt <- chooseInt (0, 10000)
-  pure ( ReadOffset (Offset readStartInt)
-       , WritePosition (Offset writePosInt)
-       , Length copyLengthInt )
+  pure ( ReadOffset (Offset (fromIntegral readStartInt))
+       , WritePosition (Offset (fromIntegral writePosInt))
+       , Length (fromIntegral copyLengthInt) )
 
 -- | Naive reference classifier, kept separate from the production code
 -- so that a refactor of classifyTargetCopy doesn't silently change both.
@@ -102,8 +102,8 @@ prop_classifyTargetCopy_lengthZero :: Property
 prop_classifyTargetCopy_lengthZero =
   forAll (do writePosInt  <- chooseInt (1, 10000)
              readStartInt <- chooseInt (0, writePosInt - 1)
-             pure ( ReadOffset (Offset readStartInt)
-                  , WritePosition (Offset writePosInt) )) $ \(readStart, writePos) ->
+             pure ( ReadOffset (Offset (fromIntegral readStartInt))
+                  , WritePosition (Offset (fromIntegral writePosInt)) )) $ \(readStart, writePos) ->
     classifyTargetCopy readStart writePos (Length 0)
       === TargetCopyNonOverlapping
 

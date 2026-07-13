@@ -42,13 +42,13 @@ parseAPSN64 :: EncodingName -> PatchFileContents -> Either SlapError (Parsed APS
 parseAPSN64 metadataEncoding (PatchFileContents input)
   | ByteString.length input < magicLength =
       Left (InputTooShort LabelAPSN64
-             (RequiredLength (Length magicLength))
+             (RequiredLength (Length (fromIntegral magicLength)))
              (ActualLength (byteLength input)))
   | ByteString.take magicLength input /= apsN64MagicBytes =
       Left (BadMagic LabelAPSN64 (ActualMagic (ByteString.take magicLength input)))
   | ByteString.length input < magicLength + 2 =
       Left (InputTooShort LabelAPSN64
-             (RequiredLength (Length (magicLength + 2)))
+             (RequiredLength (Length (fromIntegral (magicLength + 2))))
              (ActualLength (byteLength input)))
   | otherwise = do
       patchType <- first MalformedAPSN64Header (toAPSPatchType (ByteString.index input magicLength))

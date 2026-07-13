@@ -38,8 +38,8 @@ createAPSGBA inputContents@(InputFileContents original) outputContents@(OutputFi
     changedBlocks = filter hasChanges [0 .. blockCount - 1]
     hasChanges blockIndex =
       let offset = blockIndex * blockSize
-          sourceBlock = zeroExtendedBlock (Offset offset) (Length blockSize) original
-          targetBlock = zeroExtendedBlock (Offset offset) (Length blockSize) modified
+          sourceBlock = zeroExtendedBlock (Offset (fromIntegral offset)) (Length (fromIntegral blockSize)) original
+          targetBlock = zeroExtendedBlock (Offset (fromIntegral offset)) (Length (fromIntegral blockSize)) modified
       in sourceBlock /= targetBlock
 
 encodeGBABlock :: InputFileContents -> OutputFileContents -> Int -> Builder
@@ -53,6 +53,6 @@ encodeGBABlock (InputFileContents original) (OutputFileContents modified) blockI
     <> byteString xorPayload
   where
     offset = blockIndex * apsGbaBlockSize
-    sourceBlock = zeroExtendedBlock (Offset offset) (Length apsGbaBlockSize) original
-    targetBlock = zeroExtendedBlock (Offset offset) (Length apsGbaBlockSize) modified
+    sourceBlock = zeroExtendedBlock (Offset (fromIntegral offset)) (Length (fromIntegral apsGbaBlockSize)) original
+    targetBlock = zeroExtendedBlock (Offset (fromIntegral offset)) (Length (fromIntegral apsGbaBlockSize)) modified
     xorPayload = ByteString.packZipWith xor sourceBlock targetBlock

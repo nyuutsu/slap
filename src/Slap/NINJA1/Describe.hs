@@ -46,7 +46,7 @@ ninja1Meta patch = concat
 analyzeNINJA1 :: NINJA1Patch -> PatchAnalysis
 analyzeNINJA1 patch = PatchAnalysis
   { analysisSections = [SectionRegions (map makeNINJA1Region (ninja1Records patch))]
-  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes (Length totalBytes))))
+  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes (Length (fromIntegral totalBytes)))))
   }
   where
     recordCount = length (ninja1Records patch)

@@ -18,7 +18,7 @@ import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Measure
-  ( Offset(..), Length(..), FileSize(..)
+  (lengthToInt,  Offset(..), Length(..), FileSize(..)
   , ReadOffset(..), WritePosition(..)
   , ActionIndex, firstAction, nextAction
   , Cursor(..), fitsWithin, offsetToFileSize
@@ -175,7 +175,7 @@ applyVCDIFF patch (InputFileContents source)
                  pure (byteLength literal)
                Run count fillByte -> do
                  fillBytes (plusOffset outputPointer (unWritePosition writeHead))
-                           fillByte (unLength count)
+                           fillByte (lengthToInt count)
                  pure count
                Copy count address -> do
                  executeCopyRead writeHead
@@ -195,7 +195,7 @@ applyVCDIFF patch (InputFileContents source)
           ExpandFromTarget (ReadOffset readStart) count ExpandByteRun -> do
             repeatedByte <- peekByteOff (plusOffset outputPointer readStart) 0 :: IO Word8
             fillBytes (plusOffset outputPointer (unWritePosition writeHead))
-                      repeatedByte (unLength count)
+                      repeatedByte (lengthToInt count)
           ExpandFromTarget (ReadOffset readStart) count ExpandForward ->
             expandForward readStart writeHead count
 
@@ -204,7 +204,7 @@ applyVCDIFF patch (InputFileContents source)
           where
             readBase   = plusOffset outputPointer readStart
             writeBase  = plusOffset outputPointer (unWritePosition writeHead)
-            totalBytes = unLength count
+            totalBytes = lengthToInt count
             copyByteByByte !byteIndex
               | byteIndex >= totalBytes = pure ()
               | otherwise = do

@@ -264,7 +264,7 @@ encodeXDelta1 patch = do
 -- the reference reads its EDSIO @uint@s back into one (@libedsio/default.c@ in @docs/xdelta1/upstream/xdelta-1.1.3.tar.gz@;
 -- EDSIO itself can go wider, but the format never does), so a wider value could not be read back —
 -- the reference would silently truncate it. slap declines to emit it, naming the field that overflowed.
-narrowXDelta1WireNumber :: FieldName -> Int -> Either SlapError Word32
+narrowXDelta1WireNumber :: Integral value => FieldName -> value -> Either SlapError Word32
 narrowXDelta1WireNumber field value =
   first NarrowingError (narrowToWord32 LabelXDelta1 field value)
 

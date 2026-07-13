@@ -377,7 +377,7 @@ renderSlapAdvisory (VerificationOptedOutByCreator label) =
     <> ": creator opted out of verification (--omit-verification); slap cannot attest the output matches the creator's intent"
 
 -- | Choose the singular or plural label for a count. Call sites carry any leading space inside the two label strings.
-plural :: Int -> Text -> Text -> Text
+plural :: (Eq count, Num count) => count -> Text -> Text -> Text
 plural n singular pluralForm = if n == 1 then singular else pluralForm
 
 normalizationStepPhrase :: NormalizationStep -> Text

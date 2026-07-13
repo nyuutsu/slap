@@ -119,7 +119,7 @@ analyzeXDelta1 patch = PatchAnalysis
 makeXDelta1DataRecordText :: Int -> XDelta1Patch -> AnalysisSection
 makeXDelta1DataRecordText listIndex patch =
   renderSourceLine listIndex "data" dataRecordNameText
-    (FileSize dataSegmentLength) SequentialOffsets dataMD5
+    (FileSize (fromIntegral dataSegmentLength)) SequentialOffsets dataMD5
   where
     dataRecordNameText =
       EncodedText EncodingUtf8 (TextEncoding.decodeUtf8 xdelta1DataRecordName)

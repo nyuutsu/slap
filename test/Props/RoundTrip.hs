@@ -108,7 +108,7 @@ import Slap.Status (CreateResult(..), Parsed(..), SlapError(..), Outcome(..),
                    SlapAdvisory(..), renderSlapError)
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), Length(..), FileSize(..),
+import Slap.Measure (lengthToInt, Offset(..), Length(..), FileSize(..),
                      EncodingMethodByte(..), RawFlagByte(..),
                      Hunk(..), SentinelOffset(..),
                      OriginalLength(..), TruncatedLength(..),
@@ -142,6 +142,7 @@ import Data.List (isInfixOf)
 import Data.Foldable (toList)
 import Slap.Binary (getWord32BE)
 import qualified Data.Word as Word
+import Data.Int (Int64)
 import Test.Tasty
 import Test.Tasty.HUnit (testCase, assertBool, assertEqual, assertFailure, Assertion)
 import Test.Tasty.QuickCheck
@@ -527,7 +528,7 @@ prop_xdelta3ManyWindows = forAll genPair $ \(source, target) ->
         PatchXDelta3 _header windows ->
           let slices = windowSlicesOf 64 target
           in map (windowTargetSize . xdelta3WindowBody) (toList windows)
-               === map (FileSize . ByteString.length) slices
+               === map (FileSize . fromIntegral . ByteString.length) slices
              .&&. map xdelta3WindowAdler32 (toList windows) === map (Just . adler32) slices
              .&&. VCDIFF.applyVCDIFF parsed (InputFileContents source) === Right (OutputFileContents target)
         otherFlavor -> counterexample ("parsed flavor: " ++ show otherFlavor) $ property False
@@ -1457,7 +1458,7 @@ prop_vcdiffAddressModeRoundTrips addressRaw recentSteps hereBump =
       Right reading -> copyAddressDecoded reading === address
       Left failure  -> counterexample ("decode failed: " ++ show failure) (property False)
   where
-    addressInt   = fromIntegral addressRaw :: Int
+    addressInt   = fromIntegral addressRaw :: Int64
     address      = Offset addressInt
     -- Recorded addresses at and just below the target, so a same-slot
     -- holds it (SAME) and near slots hold small-forward-delta neighbours
@@ -1548,7 +1549,7 @@ lopsidedCustomTableCase repetitions =
     literalAt i  = ByteString.pack [0xF0, 0xF1, 0xF2, 0xF3, fromIntegral (i `mod` 256)]
     unitAt i     = literalAt i <> copiedHead                      -- five-byte ADD, four-byte COPY
     target       = ByteString.concat (map unitAt [0 .. repetitions - 1])
-    segmentsAt i = [ CoverLiteral (Offset (9 * i)) (Length 5)
+    segmentsAt i = [ CoverLiteral (Offset (fromIntegral (9 * i))) (Length 5)
                    , CoverCopy    (Length 4) (Offset 0) ]
 
 -- | The designed table only ever mints entries the format can carry:
@@ -1560,7 +1561,7 @@ vcdiffDesignedTableIsWireValid :: Assertion
 vcdiffDesignedTableIsWireValid =
   let (source, target, coverPlan) = lopsidedCustomTableCase 16
       resolved = resolveInstructionAddresses defaultAddressCacheConfig
-                   (Offset (ByteString.length source))
+                   (Offset (fromIntegral (ByteString.length source)))
                    (coverToInstructions target coverPlan)
   in case designCandidateTable resolved of
        Nothing       -> assertFailure "expected a candidate table for a lopsided stream"
@@ -1621,7 +1622,7 @@ vcdiffCustomTableGateHolds :: Assertion
 vcdiffCustomTableGateHolds =
   let (source, target, coverPlan) = lopsidedCustomTableCase 2
       resolved = resolveInstructionAddresses defaultAddressCacheConfig
-                   (Offset (ByteString.length source))
+                   (Offset (fromIntegral (ByteString.length source)))
                    (coverToInstructions target coverPlan)
       CreateResult (PatchFileContents consideredBytes) _ =
         createConsideringCustomTable (InputFileContents source) (OutputFileContents target) coverPlan
@@ -1652,7 +1653,7 @@ interleavedCacheCase rounds = (source, target, Cover segments)
     copyLen       = 4 :: Int
     addressAt base r = base + r * step
     sliceAt  base r  = ByteString.take copyLen (ByteString.drop (addressAt base r) source)
-    segments = [ CoverCopy (Length copyLen) (Offset (addressAt base r))
+    segments = [ CoverCopy (Length (fromIntegral copyLen)) (Offset (fromIntegral (addressAt base r)))
                | r <- [0 .. rounds - 1], base <- bases ]
     target   = ByteString.concat
                  [ sliceAt base r | r <- [0 .. rounds - 1], base <- bases ]
@@ -1796,7 +1797,7 @@ oddSizeSingleCase = (ByteString.empty, target, Cover segments)
     literalSize = 20 :: Int
     literalAt i = ByteString.pack [ fromIntegral ((i + j) `mod` 256) | j <- [0 .. literalSize - 1] ]
     target      = ByteString.concat (map literalAt [0 .. count - 1])
-    segments    = [ CoverLiteral (Offset (literalSize * i)) (Length literalSize)
+    segments    = [ CoverLiteral (Offset (fromIntegral (literalSize * i))) (Length (fromIntegral literalSize))
                   | i <- [0 .. count - 1] ]
 
 prop_ips :: Property
@@ -2039,9 +2040,9 @@ encodingOffset = \case
 -- never overflows.
 genCopyOffset :: Gen Offset
 genCopyOffset = oneof
-  [ Offset <$> chooseInt (0,                0xFFFF)
-  , Offset <$> chooseInt (0xFFFF + 1,       0xFFFFFFFF)
-  , Offset <$> chooseInt (0xFFFFFFFF + 1,   1 `shiftL` 48)
+  [ Offset . fromIntegral <$> chooseInt (0,                0xFFFF)
+  , Offset . fromIntegral <$> chooseInt (0xFFFF + 1,       0xFFFFFFFF)
+  , Offset . fromIntegral <$> chooseInt (0xFFFFFFFF + 1,   1 `shiftL` 48)
   ]
 
 -- | Offsets that always select the @long@ offset bucket. The
@@ -2049,30 +2050,30 @@ genCopyOffset = oneof
 -- see legitimate 'Copy251'/'Copy254' chunks for small offsets, since
 -- the encoder picks the narrowest opcode whose fields fit.
 genCopyLongOffset :: Gen Offset
-genCopyLongOffset = Offset <$> chooseInt (0xFFFFFFFF + 1, 1 `shiftL` 48)
+genCopyLongOffset = Offset . fromIntegral <$> chooseInt (0xFFFFFFFF + 1, 1 `shiftL` 48)
 
 -- | Lengths spanning every opcode-length bucket plus the chunked-by-
 -- 'planCopy' regime above 'maxSingleCommandLength'.
 genCopyLength :: Gen Length
 genCopyLength = oneof
-  [ Length <$> chooseInt (0,          0xFF)
-  , Length <$> chooseInt (0xFF + 1,   0xFFFF)
-  , Length <$> chooseInt (0xFFFF + 1, unLength GDIFF.maxSingleCommandLength)
+  [ Length . fromIntegral <$> chooseInt (0,          0xFF)
+  , Length . fromIntegral <$> chooseInt (0xFF + 1,   0xFFFF)
+  , Length . fromIntegral <$> chooseInt (0xFFFF + 1, lengthToInt GDIFF.maxSingleCommandLength)
   , genCopyAboveThresholdLength
   ]
 
 -- | Lengths strictly larger than 'maxSingleCommandLength', forcing
 -- 'planCopy' to chunk.
 genCopyAboveThresholdLength :: Gen Length
-genCopyAboveThresholdLength = Length <$>
-  chooseInt (unLength GDIFF.maxSingleCommandLength + 1, 100 * unLength GDIFF.maxSingleCommandLength)
+genCopyAboveThresholdLength = Length . fromIntegral <$>
+  chooseInt (lengthToInt GDIFF.maxSingleCommandLength + 1, 100 * lengthToInt GDIFF.maxSingleCommandLength)
 
 -- | Chunk lengths must sum to the requested length.
 prop_planCopyLengthSum :: Property
 prop_planCopyLengthSum = forAll genCopyOffset $ \initialOffset ->
   forAll genCopyLength $ \requestedLength ->
     let chunks = GDIFF.planCopy initialOffset requestedLength
-    in sum (fmap encodingLength chunks) === unLength requestedLength
+    in fromIntegral (sum (fmap encodingLength chunks)) === unLength requestedLength
 
 -- | Successive chunk offsets must chain: each chunk's offset equals
 -- the preceding chunk's offset plus the preceding chunk's length, with
@@ -2084,7 +2085,7 @@ prop_planCopyOffsetsChain = forAll genCopyOffset $ \initialOffset ->
     case GDIFF.planCopy initialOffset requestedLength of
       []                  -> unLength requestedLength === 0
       firstChunk : others ->
-        encodingOffset firstChunk === unOffset initialOffset
+        fromIntegral (encodingOffset firstChunk) === unOffset initialOffset
         .&&. conjoin (zipWith chainStep (firstChunk : others) others)
   where
     chainStep precedingChunk followingChunk =
@@ -2700,13 +2701,13 @@ ninja2EncodingRoundTrips textMode =
 -- diverged from the bytes actually stored.
 ninja2FieldTruncationWarningReportsActualStoredLength :: Assertion
 ninja2FieldTruncationWarningReportsActualStoredLength =
-  let asciiPrefixLength       = unLength NINJA2.ninja2DescriptionWidth - 3
+  let asciiPrefixLength       = lengthToInt NINJA2.ninja2DescriptionWidth - 3
       asciiPrefix             = replicate asciiPrefixLength 'a'
       fourByteCodepoint       = '\x1F3AE'   -- 🎮 (U+1F3AE), encodes to 4 UTF-8 bytes
       descriptionText         = Text.pack (asciiPrefix ++ [fourByteCodepoint])
       descriptionEncoded      = SlapText.EncodedText SlapText.EncodingUtf8 descriptionText
-      expectedOriginalLength  = Length (asciiPrefixLength + 4)
-      expectedStoredLength    = Length asciiPrefixLength
+      expectedOriginalLength  = Length (fromIntegral (asciiPrefixLength + 4))
+      expectedStoredLength    = Length (fromIntegral asciiPrefixLength)
       metadata                = emptyNINJA2Metadata
         { NINJA2.ninja2CreateMetadataDescription = Just descriptionEncoded
         , NINJA2.ninja2CreateTextMode           = NINJA2.TextModeUTF8

@@ -22,7 +22,7 @@ import Foreign.Ptr (plusPtr)
 -- | Copy source, then overwrite at offsets.
 applyPMSR :: PMSRPatch -> InputFileContents -> Either SlapError OutputFileContents
 applyPMSR patch (InputFileContents source) = Right $ OutputFileContents $ unsafeCreate outputSize $ \targetPointer -> do
-    copyRegion targetPointer (Offset 0) source (Offset 0) (Length (min sourceLength outputSize))
+    copyRegion targetPointer (Offset 0) source (Offset 0) (Length (fromIntegral (min sourceLength outputSize)))
     when (outputSize > sourceLength) $
       fillBytes (targetPointer `plusPtr` sourceLength) (0 :: Word8) (outputSize - sourceLength)
     let applyRecordStream !recordIndex

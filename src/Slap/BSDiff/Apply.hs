@@ -11,6 +11,7 @@ import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Binary (copyRegion, fillNewBuffer)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
+                     offsetToInt, lengthToInt,
                      SignedOffset(..), Cursor(..), Delta,
                      ActionIndex, RequestedLength(..), RemainingLength(..),
                      ExpectedSize(..), WritePosition(..),
@@ -135,10 +136,10 @@ applyBSDiff patch (InputFileContents source) = unsafePerformIO $ do
         executeAddRegion addLength originalPosition diffReadOffset outputPosition =
             writeRemainingBytes 0
           where
-            totalBytes = unLength addLength
-            sourceBase = unSignedOffset originalPosition
-            diffBase   = unOffset diffReadOffset
-            writeBase  = targetPointer `plusPtr` unOffset outputPosition
+            totalBytes = lengthToInt addLength
+            sourceBase = fromIntegral (unSignedOffset originalPosition)
+            diffBase   = offsetToInt diffReadOffset
+            writeBase  = targetPointer `plusPtr` offsetToInt outputPosition
             writeRemainingBytes !byteOffset
               | byteOffset >= totalBytes = pure ()
               | otherwise = do

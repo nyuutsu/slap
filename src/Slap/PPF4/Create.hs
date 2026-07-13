@@ -24,7 +24,7 @@ module Slap.PPF4.Create
 
 import Slap.PPF4.Types (PPF4Append(..), ppf4DescriptionLength)
 import Slap.Binary (putWord32LE)
-import Slap.Measure (Length(..), Offset(..), FileSize(..), Hunk(..), offsetToInt)
+import Slap.Measure (Offset(..), FileSize(..), Hunk(..), offsetToInt, lengthToInt, fileSizeToInt)
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
 import Slap.Status (CreateResult(..))
 import Slap.FileContents (PatchFileContents(..))
@@ -57,7 +57,7 @@ header :: Builder
 header =
   byteString "PPF40"                                          -- magic + version (5 bytes)
   <> word8 0xFF                                                -- encoding method
-  <> byteString (ByteString.replicate (unLength ppf4DescriptionLength) 0x00)
+  <> byteString (ByteString.replicate (lengthToInt ppf4DescriptionLength) 0x00)
   <> word8 0x00                                                -- image type
   <> word8 0x00                                                -- validation flag
   <> word8 0x00                                                -- undo flag
@@ -90,7 +90,7 @@ encodeAppendRecord (PPF4Append payload) =
 partitionPPF4Phases :: FileSize -> [Hunk] -> ([Hunk], [Hunk])
 partitionPPF4Phases sourceSize = foldr classify ([], [])
   where
-    sourceLength = unFileSize sourceSize
+    sourceLength = fileSizeToInt sourceSize
     classify hunk (replaces, appends)
       | startOffset >= sourceLength = (replaces, hunk : appends)
       | endOffset   <= sourceLength = (hunk : replaces, appends)
@@ -98,7 +98,7 @@ partitionPPF4Phases sourceSize = foldr classify ([], [])
           let withinSourceCount = sourceLength - startOffset
               replacePart = Hunk (hunkOffset hunk)
                                  (ByteString.take withinSourceCount payload)
-              appendPart  = Hunk (Offset sourceLength)
+              appendPart  = Hunk (Offset (fromIntegral sourceLength))
                                  (ByteString.drop withinSourceCount payload)
           in (replacePart : replaces, appendPart : appends)
       where

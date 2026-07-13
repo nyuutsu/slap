@@ -17,7 +17,7 @@ import Slap.GDIFF.Types (GDiffPatch(..), GDiffCommand(..),
                          gdiffMagicBytes, maxSingleCommandLength,
                          maximumTwoByteOffset, maximumFourByteOffset,
                          maximumOneByteLength, maximumTwoByteLength)
-import Slap.Measure (Offset(..), Length(..), advance, minLength, subtractLength)
+import Slap.Measure (Offset(..), Length(..), advance, minLength, subtractLength, lengthToInt)
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
@@ -53,7 +53,7 @@ encodeData payload
   | ByteString.null payload                          = mempty
   | payloadLength <= 246                             = word8 (fromIntegral payloadLength) <> byteString payload
   | payloadLength <= 0xFFFF                          = word8 247 <> putWord16BE (fromIntegral payloadLength) <> byteString payload
-  | payloadLength <= unLength maxSingleCommandLength = word8 248 <> putWord32BE (fromIntegral payloadLength) <> byteString payload
+  | payloadLength <= lengthToInt maxSingleCommandLength = word8 248 <> putWord32BE (fromIntegral payloadLength) <> byteString payload
   | otherwise                                        = splitData payload
   where
     payloadLength = ByteString.length payload
@@ -65,7 +65,7 @@ splitData remaining
   | ByteString.null remaining = mempty
   | otherwise =
       -- 'chunkLength' is bounded above by 'unLength maxSingleCommandLength', so the 'fromIntegral' below fits 'Word32'.
-      let chunkLength    = min (unLength maxSingleCommandLength) (ByteString.length remaining)
+      let chunkLength    = min (lengthToInt maxSingleCommandLength) (ByteString.length remaining)
           (chunk, leftover) = ByteString.splitAt chunkLength remaining
       in word8 248 <> putWord32BE (fromIntegral chunkLength) <> byteString chunk
          <> splitData leftover

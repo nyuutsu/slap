@@ -10,7 +10,7 @@ import Slap.Binary (copyRegion, fillNewBuffer)
 import Slap.Status (SlapError(..), ApplyError(..), SlapAdvisory(..),
                    Outcome(..), ClippedRecordCount(..), MarkerOvershootBytes(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), Length(..), FileSize(..),
+import Slap.Measure (lengthToInt, Offset(..), Length(..), FileSize(..),
                      ActionIndex(unActionIndex),
                      RequestedLength(..), RemainingLength(..),
                      DeclaredTargetSize(..), NaturalTargetSize(..),
@@ -153,7 +153,7 @@ applyIPS (InputFileContents source) patch
           when (unLength zeroFillLength > 0) $
             fillBytes (plusOffset outputPointer zeroFillStart)
                       (0 :: Word8)
-                      (unLength zeroFillLength)
+                      (lengthToInt zeroFillLength)
 
         -- | Execute a single record's write against the output
         -- buffer. Called only after the per-disposition handler has
@@ -169,7 +169,7 @@ applyIPS (InputFileContents source) patch
                                  , ipsRleFill   = fillByte } =
           fillBytes (plusOffset outputPointer writePosition)
                     fillByte
-                    (unLength runLength)
+                    (lengthToInt runLength)
 
         -- | Write only the leading @prefixLength@ bytes of a
         -- record's payload. Used by 'handleHonored' for records
@@ -183,7 +183,7 @@ applyIPS (InputFileContents source) patch
                                        , ipsRleFill   = fillByte } prefixLength =
           fillBytes (plusOffset outputPointer writePosition)
                     fillByte
-                    (unLength prefixLength)
+                    (lengthToInt prefixLength)
 
         -- | The clip accumulator lives in the surrounding 'IPSApply' state, so each step needs only the current index.
         -- End-of-stream returns no error;

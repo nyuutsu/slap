@@ -19,7 +19,7 @@ import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runFormatParser, throwByteParserError,
                         getByte, getBytes, remaining, skip, word32LE)
-import Slap.Measure (offsetFromParsed, Length(..),
+import Slap.Measure (lengthToInt, offsetFromParsed, Length(..),
                      EncodingMethodByte(..),
                      ActionIndex,
                      RequiredLength(..), ActualLength(..), RemainingLength(..),
@@ -44,7 +44,7 @@ data PPF2ParsedHeader = PPF2ParsedHeader
 
 parsePPF2 :: EncodingName -> PatchFileContents -> Either SlapError (Parsed PPF2Patch)
 parsePPF2 metadataEncoding (PatchFileContents input)
-  | ByteString.length input < unLength minimumPPF2ParseLength =
+  | ByteString.length input < lengthToInt minimumPPF2ParseLength =
       Left (InputTooShort LabelPPF2
               (RequiredLength minimumPPF2ParseLength)
               (ActualLength (byteLength input)))
@@ -96,17 +96,17 @@ ppf2RecordHeaderLength = 5
 parsePPF2Records :: ActionIndex -> ByteParser [PPF2Record]
 parsePPF2Records recordIndex = do
   remainingBytes <- remaining
-  if unLength remainingBytes < ppf2RecordHeaderLength then pure []
+  if unLength remainingBytes < fromIntegral ppf2RecordHeaderLength then pure []
   else do
     recordOffset  <- offsetFromParsed <$> word32LE
     payloadLength <- fromIntegral <$> getByte
     let totalNeeded = ppf2RecordHeaderLength + payloadLength
-    if totalNeeded > unLength remainingBytes
+    if fromIntegral totalNeeded > unLength remainingBytes
       then throwByteParserError (ByteParserTruncatedRecord recordIndex
-             (RequiredLength (Length totalNeeded))
+             (RequiredLength (Length (fromIntegral totalNeeded)))
              (RemainingLength remainingBytes))
       else do
-        payload <- getBytes (Length payloadLength)
+        payload <- getBytes (Length (fromIntegral payloadLength))
         rest    <- parsePPF2Records (nextAction recordIndex)
         pure (PPF2Record recordOffset payload : rest)
 
@@ -151,9 +151,9 @@ splitFileIdTrailer metadataEncoding headerLength input
       }
   where
     inputLength      = ByteString.length input
-    markerSize       = unLength ppf2FileIdFooterLength
-    lengthFieldSize  = unLength ppf2FileIdLengthFieldWidth
-    recordBody       = ByteString.drop (unLength headerLength) input
+    markerSize       = lengthToInt ppf2FileIdFooterLength
+    lengthFieldSize  = lengthToInt ppf2FileIdLengthFieldWidth
+    recordBody       = ByteString.drop (lengthToInt headerLength) input
     withoutTrailer   = PPF2FileIdSplit Nothing recordBody []
 
     lengthFieldStart = inputLength - lengthFieldSize
@@ -164,5 +164,5 @@ splitFileIdTrailer metadataEncoding headerLength input
     (dizText, dizNotices) =
       decodeTextLenient metadataEncoding
         (ByteString.take dizContentLength (ByteString.drop dizContentStart input))
-    trailerSize = unLength ppf2FileIdMarkerLength + dizContentLength
-                + unLength ppf2FileIdFooterLength + unLength ppf2FileIdLengthFieldWidth
+    trailerSize = lengthToInt ppf2FileIdMarkerLength + dizContentLength
+                + lengthToInt ppf2FileIdFooterLength + lengthToInt ppf2FileIdLengthFieldWidth

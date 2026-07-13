@@ -112,9 +112,9 @@ genOwnOutputRead = do
   produced   <- chooseInt (1, 5000)
   address    <- chooseInt (0, produced - 1)
   copyLength <- chooseInt (0, 5000)
-  pure ( WindowWriteContext (WritePosition (Offset windowBase)) (Length produced)
-       , Length copyLength
-       , Offset address )
+  pure ( WindowWriteContext (WritePosition (Offset (fromIntegral windowBase))) (Length (fromIntegral produced))
+       , Length (fromIntegral copyLength)
+       , Offset (fromIntegral address) )
 
 -- | With no segment, the three own-output verdicts partition exactly
 -- on the overrun test: settled when the read ends at or before the

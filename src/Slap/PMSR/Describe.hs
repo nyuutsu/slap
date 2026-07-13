@@ -37,7 +37,7 @@ pmsrMeta _ = []
 analyzePMSR :: PMSRPatch -> PatchAnalysis
 analyzePMSR patch = PatchAnalysis
   { analysisSections = [SectionRegions (map pmsrRecordRegion (Vector.toList records))]
-  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes (Length totalBytes))))
+  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes (Length (fromIntegral totalBytes)))))
   }
   where
     records      = pmsrRecords patch

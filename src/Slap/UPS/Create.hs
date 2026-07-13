@@ -12,7 +12,7 @@ import Slap.Checksum (CRC32(..))
 import Slap.Status (SlapError(..), UnencodeabilityReason(..), CreateResult(..))
 import Slap.FFI (crc32)
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Length(..), Offset(..), advance, distance, offsetToInt)
+import Slap.Measure (lengthToInt, Length(..), Offset(..), advance, distance, offsetToInt)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
 import Data.Bits (xor)
@@ -104,12 +104,12 @@ diffToBlocks (InputFileContents source) (OutputFileContents target)
           -- unsafeCreate (not create) is sound here: the fill writes
           -- only the freshly-allocated local buffer and is deterministic,
           -- so GHC duplicating the IO action produces identical output.
-          runByteCount = unLength runLength
+          runByteCount = lengthToInt runLength
           runBytes = unsafeCreate runByteCount $ \outputPointer ->
             let writeLoop !byteOffset
                   | byteOffset >= runByteCount = pure ()
                   | otherwise = do
-                      let absolutePosition = advance start (Length byteOffset)
+                      let absolutePosition = advance start (Length (fromIntegral byteOffset))
                           sourceByte = byteAt source absolutePosition
                           targetByte = byteAt target absolutePosition
                       pokeByteOff outputPointer byteOffset

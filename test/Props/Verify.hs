@@ -16,7 +16,7 @@ import Slap.Checksum (ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Display.Info (InputSideVerdict(..), OutputSideVerdict(..), renderVerificationReport)
 import Slap.FFI (crc32, adler32)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
-import Slap.Measure (Offset(..), Length(..), byteFileSize)
+import Slap.Measure (Offset(..), byteFileSize, byteLength)
 import Slap.Status (SlapAdvisory(..), SlapError(..), Outcome(..))
 import qualified Slap.NINJA1.Create as NINJA1
 
@@ -103,7 +103,7 @@ verifyTests = testGroup "Verify"
 
   , testCase "held window checksums are a match, not uncheckable" $ do
       let producedBytes = "window contents here"
-          windowCheck = WindowCheck (Offset 0) (Length (ByteString.length producedBytes)) (adler32 producedBytes)
+          windowCheck = WindowCheck (Offset 0) (byteLength producedBytes) (adler32 producedBytes)
           verification = noVerification { verifyWindowAdler32 = [windowCheck] }
       verdictOnTarget verification (OutputFileContents producedBytes)
         @?= VerdictMatches (DeclaredWindowAdler32 :| [])

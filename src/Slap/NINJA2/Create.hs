@@ -12,7 +12,7 @@ import Slap.NINJA2.Types
 import Slap.Binary (diffHunks, md5)
 import Slap.Normalize (normalizeCreatePair)
 import Slap.Checksum (MD5Hash(..))
-import Slap.Measure (Offset(..), Length(..), Hunk(..))
+import Slap.Measure (lengthToInt, offsetToInt, Offset(..), Length(..), Hunk(..))
 import Slap.Status (SlapError, SlapAdvisory, CreateResult(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -36,7 +36,7 @@ import Data.Bits (xor)
 encodeBoundedField :: FieldName -> Length -> Maybe EncodedText
                    -> (ByteString, [SlapAdvisory])
 encodeBoundedField fieldName fieldWidth = \case
-  Nothing -> (ByteString.replicate (unLength fieldWidth) 0, [])
+  Nothing -> (ByteString.replicate (lengthToInt fieldWidth) 0, [])
   Just inputText ->
     let (encodedBytes, notices) =
           encodeTextBounded EncodingUtf8
@@ -44,7 +44,7 @@ encodeBoundedField fieldName fieldWidth = \case
                             (encodedTextContent inputText)
         padded     = encodedBytes
                   <> ByteString.replicate
-                       (max 0 (unLength fieldWidth - ByteString.length encodedBytes))
+                       (max 0 (lengthToInt fieldWidth - ByteString.length encodedBytes))
                        0x00
         advisories = encodeLossAdvisories LabelNINJA2 fieldName notices
     in (padded, advisories)
@@ -110,7 +110,7 @@ createNINJA2 handedOriginal handedModified metadata =
                    (diffHunks (InputFileContents sourceTrimmed)
                               (OutputFileContents targetTrimmed))
     computeXorHunk (Hunk hunkOffset newData) =
-      let intOffset = unOffset hunkOffset
+      let intOffset = offsetToInt hunkOffset
           oldData = ByteString.take (ByteString.length newData) (ByteString.drop intOffset sourceTrimmed)
       in XorRecord hunkOffset (ByteString.packZipWith xor oldData newData)
 

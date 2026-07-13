@@ -42,7 +42,7 @@ import Slap.Checksum (CRC32, CRC16, Adler32, MD5Hash, SHA1Hash,
 import Slap.FFI (crc32, adler32)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Measure (Offset, Length(..), FileSize,
-                     ExpectedSize(..), ActualSize(..), byteFileSize)
+                     ExpectedSize(..), ActualSize(..), byteFileSize, byteLength)
 import Slap.Normalize (isV64Image)
 import Slap.Status (SlapError(..), SlapAdvisory(..), Outcome(..),
                     VerificationSide(..), HashAlgorithm(..), DeclaredCheckKind(..),
@@ -50,7 +50,6 @@ import Slap.Status (SlapError(..), SlapAdvisory(..), Outcome(..),
 import qualified Slap.NINJA1.Create as NINJA1
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as ByteString
 import Data.List (nub)
 import Data.List.NonEmpty (NonEmpty(..))
 import Data.Maybe (maybeToList)
@@ -307,12 +306,12 @@ blockCRC16Mismatch side subjectBytes (BlockCheck blockOffset blockLength expecte
 
 ppfBlockMismatch :: ByteString -> ValidationBlock -> Maybe SlapAdvisory
 ppfBlockMismatch sourceBytes (ValidationBlock blockOffset expectedData)
-  | viewBytesInRange blockOffset (Length (ByteString.length expectedData)) sourceBytes == expectedData = Nothing
+  | viewBytesInRange blockOffset (byteLength expectedData) sourceBytes == expectedData = Nothing
   | otherwise = Just (VerificationPPFBlockMismatch blockOffset)
 
 sourceBytesMismatch :: ByteString -> ByteCheck -> Maybe SlapAdvisory
 sourceBytesMismatch sourceBytes (ByteCheck checkOffset (AdvisoryExpectedBytes expectedData) checkLabel)
-  | viewBytesInRange checkOffset (Length (ByteString.length expectedData)) sourceBytes == expectedData = Nothing
+  | viewBytesInRange checkOffset (byteLength expectedData) sourceBytes == expectedData = Nothing
   | otherwise = Just (VerificationSourceBytesMismatch (ByteCheckLabel checkLabel) checkOffset)
 
 weighFileSize :: FileSizeCheck -> FileSize -> WeighedCheck

@@ -61,7 +61,7 @@ ipsMarkerPolicyTests = testGroup "IPSMarkerPolicy"
 -- small range exercises every branch without producing
 -- unrepresentable buffer sizes.
 genFileSize :: Gen FileSize
-genFileSize = FileSize <$> chooseInt (0, 10000)
+genFileSize = FileSize . fromIntegral <$> chooseInt (0, 10000)
 
 -- | Generator for a (declared, natural) pair plus an optional
 -- declared marker. The 'Maybe' wrapping mirrors the apply-side
@@ -183,7 +183,7 @@ makePatch maybeTruncation records = IPSPatch
 -- @fillByte@. Avoids hand-rolling a payload at every call site.
 copyRecordOf :: Int -> Int -> Word8 -> IPSRecord
 copyRecordOf recordOffset recordLength fillByte = IPSRecordCopy
-  { ipsCopyOffset  = Offset recordOffset
+  { ipsCopyOffset  = Offset (fromIntegral recordOffset)
   , ipsCopyPayload = ByteString.replicate recordLength fillByte
   }
 

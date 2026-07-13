@@ -13,7 +13,7 @@ import Slap.Binary (copyRegion, fillNewBuffer)
 import Slap.Status (SlapError(..), SlapAdvisory(..), ApplyError(..),
                     Outcome(..), noAdvisories)
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), Length(..), FileSize(..),
+import Slap.Measure (Offset(..), Length(..), FileSize(..), lengthToInt,
                      ActionIndex,
                      RequestedLength(..), RemainingLength(..),
                      fitsWithin, boundedWriteEnd, remainingFromOffset, minLength,
@@ -38,7 +38,7 @@ applyPPF3 patch (InputFileContents source) =
           Right (noAdvisories (OutputFileContents ByteString.empty))
       | otherwise -> runForward outputEnd
   where
-    sourceEnd = Offset (ByteString.length source)
+    sourceEnd = Offset (fromIntegral (ByteString.length source))
 
     -- | The output's exclusive end: the farthest any record writes,
     -- never shorter than the source. A record whose @offset + payload@
@@ -67,7 +67,7 @@ applyPPF3 patch (InputFileContents source) =
           when (outputEnd > sourceEnd) $
             fillBytes (plusOffset outputPointer sourceEnd)
                       (0 :: Word8)
-                      (unLength (distance sourceEnd outputEnd))
+                      (lengthToInt (distance sourceEnd outputEnd))
           applyRecordStream outputFileSize outputPointer firstAction (ppf3Records patch)
         pure $ case maybeErr of
           Just applyErr -> Left (ApplyFailed LabelPPF3 applyErr)
@@ -118,8 +118,8 @@ undoPPF3 patch (OutputFileContents input)
   | inputLength == 0 =
       Right (InputFileContents ByteString.empty)
   | otherwise = unsafePerformIO $ do
-      (result, maybeErr) <- fillNewBuffer (FileSize inputLength) $ \outputPointer -> do
-        copyRegion outputPointer (Offset 0) input (Offset 0) (Length inputLength)
+      (result, maybeErr) <- fillNewBuffer (FileSize (fromIntegral inputLength)) $ \outputPointer -> do
+        copyRegion outputPointer (Offset 0) input (Offset 0) (Length (fromIntegral inputLength))
         undoRecordStream outputPointer firstAction (ppf3Records patch)
       pure $ case maybeErr of
         Just applyErr -> Left (UndoFailed LabelPPF3 applyErr)
@@ -135,11 +135,11 @@ undoPPF3 patch (OutputFileContents input)
           undoRecordStream outputPointer (nextAction recordIndex) rest
       | unOffset writeOffset < 0 =
           pure (Just (ApplyNegativeRecordOffset recordIndex writeOffset))
-      | not (fitsWithin writeOffset payloadLength (FileSize inputLength)) =
+      | not (fitsWithin writeOffset payloadLength (FileSize (fromIntegral inputLength))) =
           pure (Just (ApplyWritesPastTarget recordIndex
                        (RequestedLength payloadLength)
                        (RemainingLength
-                          (remainingFromOffset writeOffset (FileSize inputLength)))))
+                          (remainingFromOffset writeOffset (FileSize (fromIntegral inputLength))))))
       | otherwise = do
           copyRegion outputPointer writeOffset undoPayload (Offset 0) payloadLength
           undoRecordStream outputPointer (nextAction recordIndex) rest

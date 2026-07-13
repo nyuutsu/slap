@@ -9,7 +9,7 @@ import Slap.Binary (copyRegion, fillNewBuffer)
 import Slap.Status (SlapError(..), SlapAdvisory(..), ApplyError(..),
                     Outcome(..), noAdvisories)
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), Length(..), FileSize(..),
+import Slap.Measure (lengthToInt, Offset(..), FileSize(..),
                      ActionIndex,
                      RequestedLength(..), RemainingLength(..),
                      fitsWithin, remainingFromOffset, minLength,
@@ -36,13 +36,13 @@ applyPPF1 patch (InputFileContents source)
         when (outputEnd > sourceEnd) $
           fillBytes (plusOffset outputPointer sourceEnd)
                     (0 :: Word8)
-                    (unLength (distance sourceEnd outputEnd))
+                    (lengthToInt (distance sourceEnd outputEnd))
         applyRecordStream outputPointer firstAction (ppf1Records patch)
       pure $ case maybeErr of
         Just applyErr -> Left (ApplyFailed LabelPPF1 applyErr)
         Nothing       -> Right (Outcome (OutputFileContents result) growthAdvisories)
   where
-    sourceEnd      = Offset (ByteString.length source)
+    sourceEnd      = Offset (fromIntegral (ByteString.length source))
     outputEnd      = computeOutputEnd sourceEnd (ppf1Records patch)
     outputFileSize = offsetToFileSize outputEnd
     initialCopyLength = minLength

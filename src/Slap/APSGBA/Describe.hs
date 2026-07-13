@@ -28,7 +28,7 @@ analyzeAPSGBA (APSGBAPatch _header records) = PatchAnalysis
 makeGBARegion :: APSGBARecord -> AnalysisRegion
 makeGBARegion record = AnalysisRegion
   { regionOffset     = apsGbaOffset record
-  , regionSize       = Length apsGbaBlockSize
+  , regionSize       = Length (fromIntegral apsGbaBlockSize)
   , regionLabel      = "XOR block  "
   , regionPayload    = PayloadXOR (Just (apsGbaXorData record))
   , regionAnnotation = AnnotationAt AtOffset (apsGbaOffset record)

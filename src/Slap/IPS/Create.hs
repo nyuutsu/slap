@@ -46,7 +46,7 @@ import Slap.IPS.Types
   )
 import Slap.Text (encodedTextContent)
 import Slap.Measure
-  ( FileSize(..)
+  (fileSizeToInt,  FileSize(..)
   , Delta(..)
   , Cursor(..)
   , Hunk(..)
@@ -212,8 +212,8 @@ encodeOffset Offset32 offsetValue =
 -- marker fits, having been read from this same
 -- field.
 encodeTruncationMarker :: OffsetWidth -> FileSize -> Builder
-encodeTruncationMarker offsetWidth (FileSize truncatedSizeBytes) =
-  encodeOffset offsetWidth truncatedSizeBytes
+encodeTruncationMarker offsetWidth truncatedSize =
+  encodeOffset offsetWidth (fileSizeToInt truncatedSize)
 
 -- | Resolve every record that sits on the variant's trailer
 -- sentinel. Two outcomes per record:

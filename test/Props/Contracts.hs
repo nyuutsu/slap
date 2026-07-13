@@ -183,7 +183,7 @@ prop_ipsSentinelSplitDirect =
   let sentinel     = 0x454F46
       startOffset  = sentinel - 0xFFFF   -- 0x444F47: a 0xFFFF split boundary lands on the sentinel
       payload      = ByteString.replicate 0x10000 0xFF  -- > 0xFFFF, forces the split
-      patchContent = emptyContents [Hunk (Offset startOffset) payload]
+      patchContent = emptyContents [Hunk (Offset (fromIntegral startOffset)) payload]
       source       = ByteString.replicate (startOffset + 0x10000) 0x00
       expected     = ByteString.replicate startOffset 0x00 <> payload
   in case convertDirect patchContent (CreateDirect CreateIPS)

@@ -18,7 +18,7 @@ import Slap.FFI (crc32)
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runFormatParser, getUntilByte, byuuVarint, atEnd)
-import Slap.Measure (Length(..), FileSize(..),
+import Slap.Measure (lengthToInt, Length(..), FileSize(..),
                      RequiredLength(..), ActualLength(..),
                      ActualMagic(..), ParsedSizeValue(..), byteLength)
 import Control.Monad (when)
@@ -27,19 +27,19 @@ import qualified Data.Vector as Vector
 
 parseUPS :: PatchFileContents -> Either SlapError (Parsed UPSPatch)
 parseUPS (PatchFileContents input)
-  | ByteString.length input < unLength upsMagicLength =
+  | ByteString.length input < lengthToInt upsMagicLength =
       Left (InputTooShort LabelUPS (RequiredLength upsMagicLength) (ActualLength (byteLength input)))
-  | ByteString.take (unLength upsMagicLength) input /= upsMagicBytes =
-      Left (BadMagic LabelUPS (ActualMagic (ByteString.take (unLength upsMagicLength) input)))
-  | ByteString.length input < unLength upsOverheadLength =
+  | ByteString.take (lengthToInt upsMagicLength) input /= upsMagicBytes =
+      Left (BadMagic LabelUPS (ActualMagic (ByteString.take (lengthToInt upsMagicLength) input)))
+  | ByteString.length input < lengthToInt upsOverheadLength =
       Left (InputTooShort LabelUPS (RequiredLength upsOverheadLength) (ActualLength (byteLength input)))
   | otherwise = do
       -- Validate patch CRC
       let inputLength    = ByteString.length input
-          crcLength      = unLength upsCRC32Length
-          footerLength   = unLength upsFooterLength
-          overheadLength = unLength upsOverheadLength
-          magicLength    = unLength upsMagicLength
+          crcLength      = lengthToInt upsCRC32Length
+          footerLength   = lengthToInt upsFooterLength
+          overheadLength = lengthToInt upsOverheadLength
+          magicLength    = lengthToInt upsMagicLength
           storedPatchCRC = CRC32 (getWord32LE (inputLength - crcLength) input)
           actualPatchCRC = crc32 (ByteString.take (inputLength - crcLength) input)
       when (storedPatchCRC /= actualPatchCRC) $

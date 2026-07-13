@@ -19,7 +19,7 @@ import Slap.Convert (PatchContents(..), emptyContents, RequestedPatchMetadata(..
 import Slap.Text (EncodedText, EncodingName, encodedTextContent)
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Slap.Measure (Offset(..), Length(..), FileSize(..), Hunk(..),
+import Slap.Measure (lengthToInt, Offset(..), Length(..), FileSize(..), Hunk(..),
                      Cursor(..), splitUndoHunkFromParsed)
 import qualified Slap.PPF1.Apply as PPF1
 import qualified Slap.PPF1.Describe as PPF1
@@ -262,7 +262,7 @@ parseSomePatchFromPPF1 (Parsed patch parseAdvisories) =
           , infoTally    = Tally (length records)
           , infoUnit     = Records
           , infoBytes    = Just (TotalPayloadBytes (Length
-              (sum (map (ByteString.length . PPF1.ppf1RecordPayload) records))))
+              (fromIntegral (sum (map (ByteString.length . PPF1.ppf1RecordPayload) records)))))
           , infoRange    = PPF1.ppf1RecordsRange records
           }
   in Right (bareSomePatch LabelPPF1 (PPF1.analyzePPF1 patch) kind applyStrategy advisories info)
@@ -300,7 +300,7 @@ parseSomePatchFromPPF2 (Parsed patch parseAdvisories) =
           , infoTally    = Tally (length records)
           , infoUnit     = Records
           , infoBytes    = Just (TotalPayloadBytes (Length
-              (sum (map (ByteString.length . PPF2.ppf2RecordPayload) records))))
+              (fromIntegral (sum (map (ByteString.length . PPF2.ppf2RecordPayload) records)))))
           , infoRange    = PPF2.ppf2RecordsRange records
           }
   in Right (bareSomePatch LabelPPF2 (PPF2.analyzePPF2 patch) kind applyStrategy advisories info)
@@ -349,7 +349,7 @@ parseSomePatchFromPPF3 (Parsed patch parseAdvisories) =
           , infoTally    = Tally (length records)
           , infoUnit     = Records
           , infoBytes    = Just (TotalPayloadBytes (Length
-              (sum (map (ByteString.length . PPF3.ppf3RecordPayload) records))))
+              (fromIntegral (sum (map (ByteString.length . PPF3.ppf3RecordPayload) records)))))
           , infoRange    = PPF3.ppf3RecordsRange records
           }
   in Right (bareSomePatch LabelPPF3 (PPF3.analyzePPF3 patch) kind applyStrategy advisories info)
@@ -393,8 +393,8 @@ parseSomePatchFromPPF4 metadataEncoding patchContents = do
           , infoTally    = Tally totalRecords
           , infoUnit     = Records
           , infoBytes    = Just (TotalPayloadBytes (Length
-              ( sum (map (ByteString.length . PPF4.replaceData) replaces)
-              + sum (map (ByteString.length . PPF4.appendData) appends) )))
+              (fromIntegral ( sum (map (ByteString.length . PPF4.replaceData) replaces)
+                            + sum (map (ByteString.length . PPF4.appendData) appends) ))))
           , infoRange    = PPF4.ppf4ReplacesRange replaces
           }
   Right (bareSomePatch LabelPPF4 (PPF4.analyzePPF4 patch) (Direct directContents) applyStrategy advisories info)
@@ -421,7 +421,7 @@ parseSomePatchFromIPS variant patchContents = do
                                         , ipsRleFill = fillByte })
         | unLength fillCount == 0 = Nothing
         | otherwise =
-            Just (Hunk recordOffset (ByteString.replicate (unLength fillCount) fillByte))
+            Just (Hunk recordOffset (ByteString.replicate (lengthToInt fillCount) fillByte))
       -- One builder for the three parse outcomes; each supplies its own label, analytical carrier,
       -- meta lines, extracted metadata, EBP trailer, and the wire patch to apply.
       ipsSomePatch armLabel analysis metaLines extractedMeta ebpMetadata ipsPatch =
@@ -770,7 +770,7 @@ parseSomePatchFromNINJA1 patchContents = do
         , infoTally    = Tally (length records)
         , infoUnit     = Records
         , infoBytes    = Just (TotalPayloadBytes (Length
-            (sum (map (ByteString.length . NINJA1.ninja1RecordData) records))))
+            (fromIntegral (sum (map (ByteString.length . NINJA1.ninja1RecordData) records)))))
         , infoRange    = NINJA1.ninja1RecordsRange records
         }
   Right (bareSomePatch LabelNINJA1 (NINJA1.analyzeNINJA1 patch) kind applyStrategy warnings info)
@@ -895,8 +895,8 @@ parseSomePatchFromPMSR patchContents = do
         , infoTally    = Tally (Vector.length records)
         , infoUnit     = Records
         , infoBytes    = Just (TotalPayloadBytes (Length
-            (Vector.foldl' (\runningTotal record ->
-                              runningTotal + ByteString.length (PMSR.pmsrData record)) 0 records)))
+            (fromIntegral (Vector.foldl' (\runningTotal record ->
+                              runningTotal + ByteString.length (PMSR.pmsrData record)) 0 records))))
         , infoRange    = PMSR.pmsrRecordsRange records
         }
   Right (bareSomePatch LabelPMSR (PMSR.analyzePMSR patch) kind applyStrategy advisories info)
@@ -922,8 +922,8 @@ parseSomePatchFromAPSGBA patchContents = do
         }
   Right (bareSomePatch LabelAPSGBA (APSGBA.analyzeAPSGBA patch) Differential applyStrategy advisories info)
     { patchVerification = noVerification
-          { verifySourceBlocks = map (\record -> BlockCheck (APSGBA.apsGbaOffset record) (Length APSGBA.apsGbaBlockSize) (APSGBA.apsGbaSourceCRC record)) records
-          , verifyTargetBlocks = map (\record -> BlockCheck (APSGBA.apsGbaOffset record) (Length APSGBA.apsGbaBlockSize) (APSGBA.apsGbaTargetCRC record)) records
+          { verifySourceBlocks = map (\record -> BlockCheck (APSGBA.apsGbaOffset record) (Length (fromIntegral APSGBA.apsGbaBlockSize)) (APSGBA.apsGbaSourceCRC record)) records
+          , verifyTargetBlocks = map (\record -> BlockCheck (APSGBA.apsGbaOffset record) (Length (fromIntegral APSGBA.apsGbaBlockSize)) (APSGBA.apsGbaTargetCRC record)) records
           , verifyFileSize = Just (AdvisorySize (APSGBA.apsGbaSourceSize header))
           }
     }

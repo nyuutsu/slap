@@ -6,7 +6,7 @@ module Slap.APSN64.Create
 
 import Slap.APSN64.Types (fromAPSPatchType, APSPatchType(..), apsN64MagicBytes, apsN64DescriptionWidth, APSN64DestinationSize, unAPSN64DestinationSize)
 import Slap.Binary (putWord32LE)
-import Slap.Measure (Offset(..), unLength)
+import Slap.Measure (lengthToInt, Offset(..))
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
 import Slap.Text (EncodedText, EncodingName(..),
                   encodedTextContent, encodeTextBounded, encodeLossAdvisories)
@@ -47,7 +47,7 @@ padDescription description =
                           (encodedTextContent description)
       padded = truncatedBytes
             <> ByteString.replicate
-                 (max 0 (unLength apsN64DescriptionWidth - ByteString.length truncatedBytes))
+                 (max 0 (lengthToInt apsN64DescriptionWidth - ByteString.length truncatedBytes))
                  0x20
       advisories = encodeLossAdvisories LabelAPSN64 FieldDescription notices
   in (padded, advisories)

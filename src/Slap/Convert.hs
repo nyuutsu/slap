@@ -110,7 +110,7 @@ import Slap.Normalize (normalizeCreatePair, sharesNormalizationLayout)
 import Slap.Binary (diffHunks, md5, sha1)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.FFI (crc32)
-import Slap.Measure (FileSize(..), Length(..), Offset(..), Hunk(..),
+import Slap.Measure (offsetToInt, FileSize(..), Length(..), Offset(..), Hunk(..),
                       SplitHunk, SplitUndoHunk,
                       ActualSize(..), ExpectedSize(..),
                       SentinelOffset(..), MaxLength(..),
@@ -875,8 +875,8 @@ createDefaultAdvisories format meta sourceFile =
 windowSizeAdvisories :: CreateFormat -> RequestedPatchMetadata -> [SlapAdvisory]
 windowSizeAdvisories (CreateDifferential CreateXDelta3) meta =
   [ XDelta3WindowSizePastReferenceDecoder
-      (Length (unEmissionWindowSize requested))
-      (MaxLength (Length (unEmissionWindowSize xdelta3ReferenceDecoderWindowCap)))
+      (Length (fromIntegral (unEmissionWindowSize requested)))
+      (MaxLength (Length (fromIntegral (unEmissionWindowSize xdelta3ReferenceDecoderWindowCap))))
   | Just requested <- [requestedWindowSize meta]
   , requested > xdelta3ReferenceDecoderWindowCap ]
 windowSizeAdvisories _ _ = []
@@ -1289,7 +1289,7 @@ ppf3ValidationBlockFrom meta source
   | ByteString.length source >= validationOffset + 1024 = Just (ByteString.take 1024 (ByteString.drop validationOffset source))
   | otherwise                                            = Nothing
   where
-    validationOffset = unOffset (ppf3ValidationOffset (fromMaybe BIN (requestedImageType meta)))
+    validationOffset = offsetToInt (ppf3ValidationOffset (fromMaybe BIN (requestedImageType meta)))
 
 buildContents :: DirectCreate -> InputFileContents -> OutputFileContents
               -> RequestedPatchMetadata -> Maybe PatchContents -> PatchContents

@@ -50,7 +50,7 @@ import Slap.Binary (getWord16LE, getWord32LE,
                     swapAdjacentBytePairs, deinterleaveSMDBlock)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.FormatLabel (FormatLabel)
-import Slap.Measure (Length(..), FileSize(..), byteLength, byteFileSize,
+import Slap.Measure (Length(..), FileSize(..), byteLength, byteFileSize, lengthToInt,
                      ActualSize(..), ExpectedSize(..))
 import Slap.PlatformType (PlatformType(..))
 import Slap.Status (SlapAdvisory(..), NormalizationStep(..),
@@ -226,20 +226,24 @@ procedureForPlatform PlatformLynx     = normalizeLynxImage
 procedureForPlatform _                = imageTakenAsIs
 
 stripHeaderKeeping :: NormalizationStep -> Length -> ByteString -> ProcedureOutcome
-stripHeaderKeeping step (Length headerWidth) image
+stripHeaderKeeping step width image
   | ByteString.length image < headerWidth =
       ProcedureOutcome image NothingToRestore [SkippedBecause ImageShorterThanItsHeader]
   | otherwise =
       let (header, body) = ByteString.splitAt headerWidth image
       in ProcedureOutcome body (RestoreHeaderPrefix (StrippedHeader header)) [PerformedStep step]
+  where
+    headerWidth = lengthToInt width
 
 -- | Remove a header of the given width and let it go — the reference never restores these (copier and SmartCard-style headers).
 stripHeaderDropping :: NormalizationStep -> Length -> ByteString -> ProcedureOutcome
-stripHeaderDropping step (Length headerWidth) image
+stripHeaderDropping step width image
   | ByteString.length image < headerWidth =
       ProcedureOutcome image NothingToRestore [SkippedBecause ImageShorterThanItsHeader]
   | otherwise =
       ProcedureOutcome (ByteString.drop headerWidth image) NothingToRestore [PerformedStep step]
+  where
+    headerWidth = lengthToInt width
 
 -- | The @0xAA 0xBB@ marker at offset 8 that FFE-style copier headers carry; NES (FFE) and the Sega SMD header share it.
 copierMarkerPresentAtOffset8 :: ByteString -> Bool
@@ -334,7 +338,7 @@ rebuildUNIFContainer container patchedData = case walkUNIFChunks container of
   -- the zero-total mismatch is its typed answer anyway.
   UNIFWalkTruncated -> Left (mismatchAgainst 0)
   UNIFWalkComplete chunks
-    | containerTotal /= ByteString.length patchedData -> Left (mismatchAgainst containerTotal)
+    | containerTotal /= ByteString.length patchedData -> Left (mismatchAgainst (fromIntegral containerTotal))
     | otherwise ->
         let fillChunk remainingData chunk = case unifChunkClass chunk of
               OtherChunk    -> (remainingData, unifChunkFraming chunk <> unifChunkPayload chunk)

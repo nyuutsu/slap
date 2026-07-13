@@ -450,13 +450,13 @@ renderSlapError (MalformedBSDiffHeader (BSDiffNegativeHeaderSizes control diff t
 renderSlapError (MalformedBSDiffHeader (BSDiffControlOverrunsPatch overrunBytes)) =
   formatLabelName LabelBSDiff
   <> ": the header describes more data than the patch holds (the control block's declared size reaches "
-  <> renderAsText overrunBytes <> plural (fromIntegral overrunBytes) " byte" " bytes"
+  <> renderAsText overrunBytes <> plural overrunBytes " byte" " bytes"
   <> " past the end of the patch)"
 
 renderSlapError (MalformedBSDiffHeader (BSDiffDiffOverrunsPatch overrunBytes)) =
   formatLabelName LabelBSDiff
   <> ": the header describes more data than the patch holds (the diff block's declared size reaches "
-  <> renderAsText overrunBytes <> plural (fromIntegral overrunBytes) " byte" " bytes"
+  <> renderAsText overrunBytes <> plural overrunBytes " byte" " bytes"
   <> " past the end of the patch)"
 
 renderSlapError (MalformedAPSN64Header malformation) =

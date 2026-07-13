@@ -77,7 +77,7 @@ import Slap.Checksum (Adler32(..))
 import Slap.FFI (adler32)
 import Slap.MetadataInclusion (VerificationInclusion(..))
 import Slap.Status (SlapError(..), CreateResult(..))
-import Slap.Measure (Offset(..), Length(..), FileSize(..), byteLength, byteFileSize,
+import Slap.Measure (lengthToInt, Offset(..), Length(..), FileSize(..), byteLength, byteFileSize,
                      Cursor(..), lengthToOffset,
                      SourceFileSize(..), TargetFileSize(..), MaxAddressableSize(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
@@ -94,6 +94,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Ord (Down(..))
+import Data.Int (Int64)
 import Data.Word (Word8)
 
 -- | Create a VCDIFF patch reconstructing @target@, windowed as asked.
@@ -153,7 +154,7 @@ createXDelta3 verificationChoice compressionEmission windowSize maybeAppHeader (
 -- BPS's wire offsets are relative to one file, so its per-file guard covers its carrier; VCDIFF's span both.
 rejectUnaddressablePair :: SourceFileSize -> TargetFileSize -> Either SlapError ()
 rejectUnaddressablePair sourceSize@(SourceFileSize source) targetSize@(TargetFileSize target)
-  | augmentedLength > toInteger (maxBound :: Int) =
+  | augmentedLength > toInteger (maxBound :: Int64) =
       Left (VCDIFFPairExceedsAddressableRange sourceSize targetSize
               (MaxAddressableSize (FileSize maxBound)))
   | otherwise = Right ()
@@ -733,7 +734,7 @@ windowSlicesForCovers target covers = pairFrom target (NonEmpty.toList covers)
   where
     pairFrom _ [] = []
     pairFrom remaining (cover : laterCovers) =
-      let (windowSlice, restOfTarget) = ByteString.splitAt (unLength (coverOutputLength cover)) remaining
+      let (windowSlice, restOfTarget) = ByteString.splitAt (lengthToInt (coverOutputLength cover)) remaining
       in (windowSlice, cover) : pairFrom restOfTarget laterCovers
 
 -- | The byte length a cover reconstructs. A cover spans its whole window with no gaps or overlaps,

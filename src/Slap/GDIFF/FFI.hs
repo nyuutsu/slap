@@ -108,11 +108,11 @@ parseParallelCommands kindTags commandOffsetBytes commandLengthBytes dataSegment
           <> " (8 LE bytes per command × " <> renderAsText commandCount <> " commands)"
 
     decodeOneCommand index = do
-      let commandOffset = fromIntegral (readWord64LE commandOffsetBytes (8 * index))
-          commandLength = fromIntegral (readWord64LE commandLengthBytes (8 * index))
+      let commandOffset = readWord64LE commandOffsetBytes (8 * index)
+          commandLength = readWord64LE commandLengthBytes (8 * index)
       case ByteString.index kindTags index of
-        0 -> GDiffCommandData <$> sliceDataPayload commandOffset commandLength
-        1 -> Right (GDiffCommandCopy (Offset commandOffset) (Length commandLength))
+        0 -> GDiffCommandData <$> sliceDataPayload (fromIntegral commandOffset) (fromIntegral commandLength)
+        1 -> Right (GDiffCommandCopy (Offset (fromIntegral commandOffset)) (Length (fromIntegral commandLength)))
         tagByte -> Left $ ffiInvariantFailure $
           "invalid command kind tag byte 0x" <> padHex 2 tagByte
           <> " (expected 0 = DATA or 1 = COPY)"

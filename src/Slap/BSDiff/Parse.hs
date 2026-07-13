@@ -58,7 +58,7 @@ safeDecompressBZip section compressed =
 -- slipping the guard and misreporting the malformed header as a decompression failure downstream.
 parseBSDiff :: PatchFileContents -> Either SlapError (Parsed BSDiffPatch)
 parseBSDiff (PatchFileContents input)
-  | ByteString.length input < bsdiffHeaderSize = Left (InputTooShort LabelBSDiff (RequiredLength (Length bsdiffHeaderSize)) (ActualLength (byteLength input)))
+  | ByteString.length input < bsdiffHeaderSize = Left (InputTooShort LabelBSDiff (RequiredLength (Length (fromIntegral bsdiffHeaderSize))) (ActualLength (byteLength input)))
   | ByteString.take 8 input /= bsdiffMagicBytes = Left (BadMagic LabelBSDiff (ActualMagic (ByteString.take 8 input)))
   | rawControlSize < 0 || rawDiffSize < 0 || rawTargetSize < 0 =
       Left (MalformedBSDiffHeader (BSDiffNegativeHeaderSizes (ControlSectionSize rawControlSize) (DiffSectionSize rawDiffSize) (TargetSectionSize rawTargetSize)))
@@ -78,7 +78,7 @@ parseBSDiff (PatchFileContents input)
                            (Length (fromIntegral rawExtraSize))
                            (FileSize (fromIntegral rawTargetSize))
                            instructions diffData extraData)
-              [BSDiffTrailingControlFragment (Length fragmentLength) | fragmentLength /= 0])
+              [BSDiffTrailingControlFragment (Length (fromIntegral fragmentLength)) | fragmentLength /= 0])
   where
     bsdiffHeaderSize, controlSizeFieldOffset, diffSizeFieldOffset, targetSizeFieldOffset :: Int
     bsdiffHeaderSize       = 32

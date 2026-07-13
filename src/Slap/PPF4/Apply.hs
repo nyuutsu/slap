@@ -3,7 +3,7 @@ module Slap.PPF4.Apply (applyPPF4) where
 import Slap.PPF4.Types (PPF4Patch(..), PPF4Replace(..), PPF4Append(..))
 import Slap.Binary (copyRegion, fillNewBuffer)
 import Slap.Status (SlapError(..), ApplyError(..))
-import Slap.Measure (Offset(..), Length(..), FileSize(..),
+import Slap.Measure (Offset(..), FileSize(..), lengthToInt,
                      ActionIndex,
                      RequestedLength(..), RemainingLength(..),
                      fitsWithin, remainingFromOffset, minLength,
@@ -35,7 +35,7 @@ applyPPF4 patch (InputFileContents source)
         when (outputEnd > sourceEnd) $
           fillBytes (plusOffset outputPointer sourceEnd)
                     (0 :: Word8)
-                    (unLength (distance sourceEnd outputEnd))
+                    (lengthToInt (distance sourceEnd outputEnd))
         replaceOutcome <- applyReplaces outputPointer firstAction (ppf4Replaces patch)
         -- First failure wins: a Replace-phase error short-circuits the
         -- Append phase, so an Append-phase failure on a buffer corrupted
@@ -50,7 +50,7 @@ applyPPF4 patch (InputFileContents source)
         Just applyErr -> Left (ApplyFailed LabelPPF4 applyErr)
         Nothing       -> Right (OutputFileContents result)
   where
-    sourceEnd         = Offset (ByteString.length source)
+    sourceEnd         = Offset (fromIntegral (ByteString.length source))
     sourceFileSize    = offsetToFileSize sourceEnd
     outputEnd         = computeOutputEnd sourceEnd patch
     outputFileSize    = offsetToFileSize outputEnd

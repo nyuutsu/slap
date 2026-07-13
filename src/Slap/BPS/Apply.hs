@@ -8,7 +8,7 @@ import Slap.BPS.Types (BPSPatch(..), BPSAction(..))
 import Slap.Binary (copyRegion, copyInPlace, fillNewBuffer)
 import Slap.Status (SlapError(..), ApplyError(..), CursorKind(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), Length(..), FileSize(..),
+import Slap.Measure (lengthToInt, offsetToInt, Offset(..), Length(..), FileSize(..),
                      SignedOffset(..), Delta, ActionIndex(unActionIndex),
                      SignedOffsetSign(..),
                      ReadOffset(..), WritePosition(..),
@@ -188,7 +188,7 @@ applyBPS patch (InputFileContents source)
           where
             readBase   = plusOffset outputPointer (unReadOffset readStart)
             writeBase  = plusOffset outputPointer (unWritePosition writePosition)
-            totalBytes = unLength copyLength
+            totalBytes = lengthToInt copyLength
             copyFromByteOffset !byteOffset
               | byteOffset >= totalBytes = pure ()
               | otherwise = do
@@ -208,9 +208,9 @@ applyBPS patch (InputFileContents source)
                  copyInPlace outputPointer (unReadOffset readStart) outputOffset copyLength
                TargetCopySingleByteRun -> do
                  repeatedByte <- peekByteOff outputPointer
-                                             (unOffset outputOffset - 1) :: IO Word8
+                                             (offsetToInt outputOffset - 1) :: IO Word8
                  fillBytes (plusOffset outputPointer outputOffset)
-                           repeatedByte (unLength copyLength)
+                           repeatedByte (lengthToInt copyLength)
                TargetCopyGeneralOverlap ->
                  generalOverlapLoop readStart writePosition copyLength
 

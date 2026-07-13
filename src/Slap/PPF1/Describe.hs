@@ -40,7 +40,7 @@ ppf1Meta patch =
 analyzePPF1 :: PPF1Patch -> PatchAnalysis
 analyzePPF1 patch = PatchAnalysis
   { analysisSections = [SectionRegions (map makeRegion (ppf1Records patch))]
-  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes (Length totalBytes))))
+  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes (Length (fromIntegral totalBytes)))))
   }
   where
     recordCount = length (ppf1Records patch)

@@ -6,7 +6,7 @@
 -- write end, and can that end even be represented?).
 --
 -- The contract under test for both is totality. slap carries every size
--- and offset as a signed 'Int' (= Int64 on a 64-bit host), and several
+-- and offset as a signed 'Int64', and several
 -- formats decode wire fields wide enough to seat a near-'maxBound'
 -- value (a 63-bit PPF3 offset, a byuu or VCDIFF varint, a bsdiff
 -- sign-magnitude length). A plain @start + length@ then overflows the
@@ -31,6 +31,7 @@ import Slap.FormatLabel (FormatLabel(..))
 import Props.Helpers (assertFailureT)
 
 import qualified Data.ByteString as ByteString
+import Data.Int (Int64)
 
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -79,14 +80,14 @@ fitsWithinTests = testGroup "fitsWithin"
 -- | The honest answer, computed in 'Integer' where no overflow is
 -- possible: a region fits when its start and length are both
 -- non-negative and @start + length@ stays within the total.
--- 'fitsWithin' must agree with this for every 'Int'-range input,
+-- 'fitsWithin' must agree with this for every 'Int64'-range input,
 -- including the near-'maxBound' and negative ones the carrier cannot
 -- sum without wrapping.
 prop_fitsWithin_matchesIntegerArithmetic :: Property
 prop_fitsWithin_matchesIntegerArithmetic =
-  forAll genEdgeInt $ \regionStart ->
-  forAll genEdgeInt $ \regionLength ->
-  forAll genEdgeInt $ \totalSize ->
+  forAll genCarrierEdge $ \regionStart ->
+  forAll genCarrierEdge $ \regionLength ->
+  forAll genCarrierEdge $ \totalSize ->
     let actual   = fitsWithin (Offset regionStart) (Length regionLength)
                               (FileSize totalSize)
         expected = regionStart  >= 0
@@ -126,19 +127,19 @@ boundedWriteEndTests = testGroup "boundedWriteEnd"
       ]
   ]
 
--- | The honest end, computed in 'Integer': @start + length@ is
--- representable exactly when it does not pass 'maxBound' :: 'Int'.
+-- | The plain-arithmetic end, computed in 'Integer': @start + length@ is
+-- representable exactly when it does not pass 'maxBound' :: 'Int64'.
 -- 'boundedWriteEnd' is only ever handed a non-negative length (a
 -- 'Slap.Measure.byteLength'), so the overflow can only be upward; a
 -- negative start is left to land wherever it lands, since it cannot
 -- carry a non-negative length out of range.
 prop_boundedWriteEnd_matchesIntegerArithmetic :: Property
 prop_boundedWriteEnd_matchesIntegerArithmetic =
-  forAll genEdgeInt $ \regionStart ->
-  forAll genNonNegativeEdgeInt $ \regionLength ->
+  forAll genCarrierEdge $ \regionStart ->
+  forAll genNonNegativeCarrierEdge $ \regionLength ->
     let actual = boundedWriteEnd (Offset regionStart) (Length regionLength)
         expected
-          | toInteger regionStart + toInteger regionLength > toInteger (maxBound :: Int) = Nothing
+          | toInteger regionStart + toInteger regionLength > toInteger (maxBound :: Int64) = Nothing
           | otherwise = Just (Offset (regionStart + regionLength))
     in counterexample ("regionStart=" ++ show regionStart
                         ++ " regionLength=" ++ show regionLength) $
@@ -146,7 +147,7 @@ prop_boundedWriteEnd_matchesIntegerArithmetic =
 
 -- | A PPF3 patch with a single record at the largest representable
 -- offset and a one-byte payload: its write ends one past 'maxBound',
--- an output no 'Int' can address. Apply must refuse with
+-- an output no 'Int64' can address. Apply must refuse with
 -- 'ApplyOutputExceedsAddressableRange', naming the record, rather than
 -- let the extent fold wrap into a too-small buffer. (Only the
 -- 'ppf3Records' field reaches the apply path; the rest carry trivial
@@ -174,15 +175,15 @@ ppf3UnaddressableOutputIsRefused =
 ----------------------------------------------------------------------------
 
 -- | Two of these sum to maxBound + 1, i.e. they overflow the carrier.
-halfRange :: Int
+halfRange :: Int64
 halfRange = maxBound `div` 2 + 1
 
--- | 'Int's drawn to land on the carrier's edges as often as in its
+-- | Carrier values drawn to land on the edges as often as in the
 -- comfortable middle, so a property actually exercises the wrap and
 -- negative cases instead of the small-number band QuickCheck samples
 -- by default.
-genEdgeInt :: Gen Int
-genEdgeInt = frequency
+genCarrierEdge :: Gen Int64
+genCarrierEdge = frequency
   [ (3, arbitrary)
   , (2, choose (0, 1000))
   , (1, elements [ 0, 1, -1, maxBound, minBound, maxBound - 1
@@ -190,9 +191,9 @@ genEdgeInt = frequency
                  , negate (maxBound `div` 2) ])
   ]
 
--- | As 'genEdgeInt' but non-negative — the shape a real length takes.
-genNonNegativeEdgeInt :: Gen Int
-genNonNegativeEdgeInt = frequency
+-- | As 'genCarrierEdge' but non-negative — the shape a real length takes.
+genNonNegativeCarrierEdge :: Gen Int64
+genNonNegativeCarrierEdge = frequency
   [ (3, choose (0, 1000))
   , (2, choose (0, maxBound))
   , (1, elements [ 0, 1, maxBound, maxBound - 1

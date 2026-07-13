@@ -213,7 +213,7 @@ prop_utf8LenientDecodesArbitraryBytesWithoutBottom ints =
 prop_boundedAtMostCap :: NonNegative Int -> String -> Property
 prop_boundedAtMostCap (NonNegative cap) sourceString =
   let text = Text.pack sourceString
-      (bytes, _notices) = encodeTextBounded EncodingUtf8 (Length cap) text
+      (bytes, _notices) = encodeTextBounded EncodingUtf8 (Length (fromIntegral cap)) text
   in property (ByteString.length bytes <= cap)
 
 -- | 100 ASCII chars under a 50-byte cap: exactly 50 bytes out,
@@ -280,14 +280,14 @@ test_boundedTruncationCounts =
     ]
   where
     checkOne (caseLabel, text, cap) = do
-      let (bytes, notices) = encodeTextBounded EncodingUtf8 (Length cap) text
+      let (bytes, notices) = encodeTextBounded EncodingUtf8 (Length (fromIntegral cap)) text
       assertBool (caseLabel ++ ": output ≤ cap")
         (ByteString.length bytes <= cap)
       case [n | n@TruncatedToFitBound{} <- notices] of
         [] -> pure ()
         [TruncatedToFitBound (OriginalLength original) (TruncatedLength written)] -> do
           assertEqual (caseLabel ++ ": written matches output")
-            (Length (ByteString.length bytes)) written
+            (Length (fromIntegral (ByteString.length bytes))) written
           assertBool (caseLabel ++ ": original ≥ written")
             (original >= written)
         many ->

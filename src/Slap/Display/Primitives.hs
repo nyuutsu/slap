@@ -39,7 +39,7 @@ padRight :: Int -> Text -> Text
 padRight minWidth text = text <> Text.replicate (minWidth - Text.length text) " "
 
 -- | Show a signed offset as +0xNNNNNN or -0xNNNNNN.
-showSigned :: Int -> Text
+showSigned :: Integral value => value -> Text
 showSigned value
   | value >= 0 = "+0x" <> padHex 6 value
   | otherwise  = "-0x" <> padHex 6 (abs value)

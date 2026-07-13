@@ -33,7 +33,7 @@ import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runFormatParser, throwByteParserError,
                         getByte, getBytes, remaining)
-import Slap.Measure (Length(..), Offset(Offset), offsetFromParsed,
+import Slap.Measure (Length(..), Offset(..), offsetFromParsed,
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      ActionIndex, firstAction, nextAction,
                      boundedWriteEnd, byteLength)
@@ -66,19 +66,20 @@ parseNINJA1 (PatchFileContents input)
       rejectUnaddressableRecordEnds (ninja1Records patch)
       pure (Parsed patch [])
 
--- | Refuse a record whose write end — offset plus payload length — overflows the 'Int' slap carries positions in.
--- The per-field ceilings bound each offset and length alone;
--- this catches the sum that overflows though both addends fit, once at parse so no downstream fold has to.
+-- | Refuse a record whose write end — offset plus payload length — lands past 'maxBound' :: 'Int',
+-- the ceiling of what an in-memory buffer can realize. The per-field ceilings bound each offset and length alone;
+-- this catches the sum that crosses the ceiling though both addends fit, once at parse so no downstream fold has to.
 rejectUnaddressableRecordEnds :: [NINJA1Record] -> Either SlapError ()
 rejectUnaddressableRecordEnds = walkRecords firstAction
   where
     walkRecords _ [] = Right ()
     walkRecords recordIndex (record : rest) =
       case boundedWriteEnd (ninja1RecordOffset record) (byteLength (ninja1RecordData record)) of
-        Just _writeEnd -> walkRecords (nextAction recordIndex) rest
-        Nothing        -> Left (RecordEndExceedsAddressableRange LabelNINJA1 recordIndex
-                                  (ninja1RecordOffset record)
-                                  (byteLength (ninja1RecordData record)))
+        Just writeEnd | unOffset writeEnd <= fromIntegral (maxBound :: Int) ->
+          walkRecords (nextAction recordIndex) rest
+        _ -> Left (RecordEndExceedsAddressableRange LabelNINJA1 recordIndex
+                     (ninja1RecordOffset record)
+                     (byteLength (ninja1RecordData record)))
 
 -- | PHP gzcompress = RFC 1950 zlib format.
 zlibDecompress :: ByteString -> Either SlapError ByteString
@@ -171,9 +172,9 @@ parseBinaryRecords = parseLoop firstAction []
         EOFMarkerFound    -> pure (ReachedEOFFooter, reverse accumulated)
         RecordAt recordOffset -> do
           dataWidth    <- fromIntegral <$> getByte :: ByteParser Int
-          dataLenBytes <- getBytes (Length dataWidth)
+          dataLenBytes <- getBytes (Length (fromIntegral dataWidth))
           dataLength   <- decodeAddressableBigEndian recordIndex FieldRecordLength dataLenBytes
-          payload <- getBytes (Length dataLength)
+          payload <- getBytes (Length (fromIntegral dataLength))
           parseLoop (nextAction recordIndex) (NINJA1Record recordOffset payload : accumulated)
 
     -- | Read as far into the next offset field as the verdict
@@ -190,11 +191,11 @@ parseBinaryRecords = parseLoop firstAction []
           if offsetWidth == 0
             then pure EndsWithoutMarker
             else do
-              offsetBytes <- getBytes (Length offsetWidth)
+              offsetBytes <- getBytes (Length (fromIntegral offsetWidth))
               if offsetWidth == ninja1BinaryEOFMarkerWidth
                    && offsetBytes == ninja1BinaryEOFMarkerBytes
                 then pure EOFMarkerFound
-                else RecordAt . Offset
+                else RecordAt . Offset . fromIntegral
                        <$> decodeAddressableBigEndian recordIndex FieldRecordOutputOffset offsetBytes
 
 ----------------------------------------------------------------------------

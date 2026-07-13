@@ -6,7 +6,7 @@ import Slap.GDIFF.Types (GDiffPatch(..), GDiffCommand(..))
 import Slap.Binary (copyRegion)
 import Slap.Measure
   ( Offset(..), Length(..), FileSize(..), ActionIndex
-  , advance, byteLength, firstAction, nextAction, fitsWithin, lengthToFileSize, byteFileSize
+  , advance, byteLength, firstAction, nextAction, fitsWithin, lengthToFileSize, byteFileSize, fileSizeToInt
   )
 import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -34,7 +34,7 @@ applyGDIFF patch (InputFileContents source) =
     commands   = gdiffCommands patch
     sourceSize = byteFileSize source
 
-    writeOutput totalOutputSize = unsafeCreate (unFileSize totalOutputSize) $ \outputPointer ->
+    writeOutput totalOutputSize = unsafeCreate (fileSizeToInt totalOutputSize) $ \outputPointer ->
       let
         applyLoop :: Offset -> [GDiffCommand] -> IO ()
         applyLoop _outputPosition [] = pure ()

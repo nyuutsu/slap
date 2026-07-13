@@ -6,7 +6,7 @@ import Slap.APSN64.Types
 import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Binary (copyRegion, fillNewBuffer)
-import Slap.Measure (Offset(..), Length(..), FileSize(..),
+import Slap.Measure (fileSizeToInt, Offset(..), Length(..),
                      ActionIndex, RequestedLength(..), RemainingLength(..),
                      byteLength, offsetToInt, fitsWithin, remainingFromOffset,
                      firstAction, nextAction)
@@ -35,13 +35,13 @@ applyAPSN64 (APSN64Patch header records) (InputFileContents source) =
   where
     sourceLength   = ByteString.length source
     outputFileSize = apsN64DestinationSizeAsFileSize (apsN64DestinationSize header)
-    outputSize     = unFileSize outputFileSize
+    outputSize     = fileSizeToInt outputFileSize
 
     -- | The initial buffer: the source bytes, clipped to the destination size when shrinking and zero-padded when growing.
     seedBuffer :: Ptr Word8 -> IO ()
     seedBuffer targetPointer = do
       copyRegion targetPointer (Offset 0) source (Offset 0)
-                 (Length (min sourceLength outputSize))
+                 (Length (fromIntegral (min sourceLength outputSize)))
       when (outputSize > sourceLength) $
         fillBytes (targetPointer `plusPtr` sourceLength)
                   (0 :: Word8)

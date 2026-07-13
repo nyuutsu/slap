@@ -303,7 +303,7 @@ decodeCopyAddress cache here mode addrSection cursor =
         Left _ -> Left AddressSectionExhausted
         Right (VarintResult value consumed) ->
           Right (readingOf (computeAddress (fromIntegral value))
-                           (advance cursor (Length consumed)))
+                           (advance cursor (Length (fromIntegral consumed))))
 
     fromSameByte sameBlock
       | fitsWithin cursor (Length 1) (byteFileSize addrSection) =

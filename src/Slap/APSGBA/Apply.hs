@@ -8,7 +8,7 @@ import Slap.APSGBA.Types
 import Slap.Binary (copyRegion, fillNewBuffer)
 import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), Length(..), FileSize(..),
+import Slap.Measure (Offset(..), Length(..), FileSize(..), fileSizeToInt, offsetToInt,
                      ActionIndex, RequestedLength(..),
                      offsetToFileSize, firstAction, nextAction)
 
@@ -44,18 +44,18 @@ applyAPSGBA (APSGBAPatch header records) (InputFileContents source)
   where
     sourceLength   = ByteString.length source
     targetFileSize = apsGbaTargetSize header
-    targetSize     = unFileSize targetFileSize
+    targetSize     = fileSizeToInt targetFileSize
     -- | Exclusive upper bound on a legitimate block start. See
     -- 'applyAPSGBA' for why this is @max@ and not @targetSize@ alone.
     naturalBlockReach :: FileSize
     naturalBlockReach =
-      FileSize (max sourceLength targetSize)
+      FileSize (fromIntegral (max sourceLength targetSize))
 
     -- | Initial buffer state: copy source bytes (clipped at target
     -- length if shrinking) and zero-fill any tail past the source.
     seedBuffer :: Ptr Word8 -> IO ()
     seedBuffer targetPointer = do
-      copyRegion targetPointer (Offset 0) source (Offset 0) (Length (min sourceLength targetSize))
+      copyRegion targetPointer (Offset 0) source (Offset 0) (Length (fromIntegral (min sourceLength targetSize)))
       when (targetSize > sourceLength) $
         fillBytes (targetPointer `plusPtr` sourceLength)
                   (0 :: Word8)
@@ -69,7 +69,7 @@ applyAPSGBA (APSGBAPatch header records) (InputFileContents source)
       | offsetToFileSize blockOffset >= naturalBlockReach =
           Left (ApplyAbsoluteWritePastTarget actionIndex
                  blockOffset
-                 (RequestedLength (Length apsGbaBlockSize))
+                 (RequestedLength (Length (fromIntegral apsGbaBlockSize)))
                  targetFileSize)
       | otherwise = Right ()
 
@@ -78,7 +78,7 @@ applyAPSGBA (APSGBAPatch header records) (InputFileContents source)
     executeXorBlock targetPointer blockOffset xorPayload =
         writeRemainingBytes 0
       where
-        blockBase     = unOffset blockOffset
+        blockBase     = offsetToInt blockOffset
         writeBase     = targetPointer `plusPtr` blockBase
         writeRemainingBytes !byteOffset
           | byteOffset >= apsGbaBlockSize = pure ()

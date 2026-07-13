@@ -206,7 +206,7 @@ codeTableEntryCount = 256
 
 -- | The byte length of a serialized code table: six 'codeTableEntryCount'-byte arrays. 1536 with the default count.
 serializedCodeTableLength :: Length
-serializedCodeTableLength = Length (6 * codeTableEntryCount)
+serializedCodeTableLength = Length (fromIntegral (6 * codeTableEntryCount))
 
 -- | Serialize a code table to its 1536-byte image: six byte arrays, one byte per entry, the two instructions' types, then sizes, then modes.
 -- The image a custom-table inner delta applies against; 'deserializeCodeTable' is its inverse.

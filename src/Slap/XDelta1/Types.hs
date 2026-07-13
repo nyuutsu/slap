@@ -240,7 +240,7 @@ checkNameLength field text
   | ByteString.length bytes <= xdelta1NameByteCap = Right ()
   | otherwise = Left $ FieldTooLong LabelXDelta1 field
       (EncodedLength (byteLength bytes))
-      (MaxLength     (Length xdelta1NameByteCap))
+      (MaxLength     (Length (fromIntegral xdelta1NameByteCap)))
   where
     (bytes, _notices) =
       encodeTextLenient (encodedTextEncoding text) (encodedTextContent text)

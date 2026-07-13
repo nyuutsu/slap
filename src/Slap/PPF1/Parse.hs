@@ -14,7 +14,7 @@ import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runFormatParser, throwByteParserError,
                         getByte, getBytes, remaining, skip, word32LE, word32BE)
-import Slap.Measure (Offset, offsetFromParsed, Length(..), EncodingMethodByte(..),
+import Slap.Measure (lengthToInt, Offset, offsetFromParsed, Length(..), EncodingMethodByte(..),
                      ActionIndex,
                      RequiredLength(..), ActualLength(..), RemainingLength(..),
                      firstAction, nextAction, byteLength)
@@ -33,7 +33,7 @@ data PPF1ParsedBody = PPF1ParsedBody
 
 parsePPF1 :: PPF1Origin -> EncodingName -> PatchFileContents -> Either SlapError (Parsed PPF1Patch)
 parsePPF1 origin metadataEncoding (PatchFileContents input)
-  | ByteString.length input < unLength minimumPPF1ParseLength =
+  | ByteString.length input < lengthToInt minimumPPF1ParseLength =
       Left (InputTooShort LabelPPF1
               (RequiredLength minimumPPF1ParseLength)
               (ActualLength (byteLength input)))
@@ -104,12 +104,12 @@ parsePPF1Records origin = parseRemainingRecords
         pure (record : rest)
     parseLiteralBody :: ActionIndex -> Length -> Offset -> Int -> ByteParser PPF1Record
     parseLiteralBody recordIndex remainingAfterHeader writeOffset payloadLength
-      | unLength remainingAfterHeader < payloadLength =
+      | unLength remainingAfterHeader < fromIntegral payloadLength =
           throwByteParserError (ByteParserTruncatedRecord recordIndex
-            (RequiredLength (Length (5 + payloadLength)))
+            (RequiredLength (Length (5 + fromIntegral payloadLength)))
             (RemainingLength (lengthWithRecordHeader remainingAfterHeader)))
       | otherwise = do
-          payload <- getBytes (Length payloadLength)
+          payload <- getBytes (Length (fromIntegral payloadLength))
           pure (PPF1Record writeOffset payload)
 
     parseRleBody :: ActionIndex -> Length -> Offset -> ByteParser PPF1Record

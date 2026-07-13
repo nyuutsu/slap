@@ -67,7 +67,7 @@ apsN64RejectsDestinationSizeOverflow =
 
 xdelta1RejectsControlOffsetOverflow :: Assertion
 xdelta1RejectsControlOffsetOverflow =
-  case narrowXDelta1WireNumber FieldXDelta1ControlOffset 0x100000000 of
+  case narrowXDelta1WireNumber FieldXDelta1ControlOffset (0x100000000 :: Int) of
     Left (NarrowingError (FieldValueExceedsBound LabelXDelta1 FieldXDelta1ControlOffset
                             0x100000000 0xFFFFFFFF)) -> pure ()
     other -> assertFailure

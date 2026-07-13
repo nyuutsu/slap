@@ -405,8 +405,8 @@ encodeTextBounded encodingName cap text =
                   originalBytes = writtenBytes
                                 + sum (map (ByteString.length . fst) remaining)
               in [TruncatedToFitBound
-                    (OriginalLength  (Length originalBytes))
-                    (TruncatedLength (Length writtenBytes))]
+                    (OriginalLength  (Length (fromIntegral originalBytes)))
+                    (TruncatedLength (Length (fromIntegral writtenBytes)))]
   in (takenBytes, substitutionNotes ++ truncationNotes)
 
 -- | Encode a single codepoint, with the bytes and a substitution notice if the target encoding can't represent it.
@@ -483,7 +483,7 @@ readFixedWidthTextField (EncodedText encoding content) =
                       Text.dropWhileEnd (== ' ')
                         (Text.take terminatorIndex withoutTrailingPadding)
                     tailPastTerminator =
-                      Length (Text.length withoutTrailingPadding - terminatorIndex)
+                      Length (fromIntegral (Text.length withoutTrailingPadding - terminatorIndex))
                 in ContentPastEnd
                      (EncodedText encoding beforeTerminator) tailPastTerminator
   where

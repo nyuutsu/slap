@@ -62,7 +62,7 @@ import Slap.Binary
   , minimalVcdiffVarintLength
   )
 import Slap.Measure
-  ( Position(..), Length(..), remainingFromPosition
+  ( Position(..), Length(..), lengthToInt, remainingFromPosition
   , RequestedLength(..), RemainingLength(..), ActualLength(..)
   )
 import Slap.Status
@@ -155,16 +155,18 @@ getBytes requestedLength@(Length count)
       currentPosition    <- ByteParser get
       let inputLength       = ByteString.length input
           Position startAt  = currentPosition
-      if startAt + count <= inputLength
+      -- Room is measured by subtraction, never by adding to the request — a wire-wide count cannot wrap
+      -- the comparison — and only a count proven to fit is narrowed for the take.
+      if count <= fromIntegral (inputLength - startAt)
         then do
-          ByteParser (put (Position (startAt + count)))
-          pure (ByteString.take count (ByteString.drop startAt input))
+          ByteParser (put (Position (startAt + lengthToInt requestedLength)))
+          pure (ByteString.take (lengthToInt requestedLength) (ByteString.drop startAt input))
         else
           throwByteParserError
             (ByteParserUnderflow
                 GetBytesOperation
                 (RequestedLength requestedLength)
-                (RemainingLength (Length (inputLength - startAt)))
+                (RemainingLength (Length (fromIntegral (inputLength - startAt))))
                 currentPosition)
 
 -- | Scan the remaining input for the first occurrence of the given
@@ -196,14 +198,14 @@ skip requestedLength@(Length count)
       currentPosition  <- ByteParser get
       let inputLength      = ByteString.length input
           Position startAt = currentPosition
-      if startAt + count <= inputLength
-        then ByteParser (put (Position (startAt + count)))
+      if count <= fromIntegral (inputLength - startAt)
+        then ByteParser (put (Position (startAt + lengthToInt requestedLength)))
         else
           throwByteParserError
             (ByteParserUnderflow
                 SkipOperation
                 (RequestedLength requestedLength)
-                (RemainingLength (Length (inputLength - startAt)))
+                (RemainingLength (Length (fromIntegral (inputLength - startAt))))
                 currentPosition)
 
 getPosition :: ByteParser Position
@@ -219,7 +221,7 @@ setPosition targetPosition@(Position targetValue) = do
       throwByteParserError
         (ByteParserPositionOutOfBounds
             targetPosition
-            (ActualLength (Length inputLength)))
+            (ActualLength (Length (fromIntegral inputLength))))
 
 -- | Run the given sub-parser for its result, then restore the cursor
 -- to where it was before the sub-parser ran. The parser's state is
@@ -265,16 +267,16 @@ liftRead readWidth@(Length width) reader = do
   currentPosition  <- ByteParser get
   let inputLength      = ByteString.length input
       Position startAt = currentPosition
-  if startAt + width <= inputLength
+  if width <= fromIntegral (inputLength - startAt)
     then do
-      ByteParser (put (Position (startAt + width)))
+      ByteParser (put (Position (startAt + lengthToInt readWidth)))
       pure (reader startAt input)
     else
       throwByteParserError
         (ByteParserUnderflow
             FixedWidthReadOperation
             (RequestedLength readWidth)
-            (RemainingLength (Length (inputLength - startAt)))
+            (RemainingLength (Length (fromIntegral (inputLength - startAt))))
             currentPosition)
 
 -- | Adapt a pure varint reader, keeping only the decoded value. The over-width verdict is

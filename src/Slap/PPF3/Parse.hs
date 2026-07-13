@@ -20,7 +20,7 @@ import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runFormatParser, parseWhen, throwByteParserError,
                         getByte, getBytes, remaining, skip, int64LE)
-import Slap.Measure (offsetFromParsed, Length(..), EncodingMethodByte(..),
+import Slap.Measure (lengthToInt, offsetFromParsed, Length(..), EncodingMethodByte(..),
                      RawFlagByte(..),
                      ActionIndex,
                      RequiredLength(..), ActualLength(..), RemainingLength(..),
@@ -45,7 +45,7 @@ data PPF3ParsedHeader = PPF3ParsedHeader
 
 parsePPF3 :: EncodingName -> PatchFileContents -> Either SlapError (Parsed PPF3Patch)
 parsePPF3 metadataEncoding (PatchFileContents input)
-  | ByteString.length input < unLength minimumPPF3ParseLength =
+  | ByteString.length input < lengthToInt minimumPPF3ParseLength =
       Left (InputTooShort LabelPPF3
               (RequiredLength minimumPPF3ParseLength)
               (ActualLength (byteLength input)))
@@ -164,9 +164,9 @@ splitFileIdTrailer metadataEncoding headerLength input
       }
   where
     inputLength      = ByteString.length input
-    markerSize       = unLength ppf3FileIdFooterLength
-    lengthFieldSize  = unLength ppf3FileIdLengthFieldWidth
-    recordBody       = ByteString.drop (unLength headerLength) input
+    markerSize       = lengthToInt ppf3FileIdFooterLength
+    lengthFieldSize  = lengthToInt ppf3FileIdLengthFieldWidth
+    recordBody       = ByteString.drop (lengthToInt headerLength) input
     withoutTrailer   = PPF3FileIdSplit Nothing recordBody []
 
     trailerCandidate = ByteString.take markerSize
@@ -176,5 +176,5 @@ splitFileIdTrailer metadataEncoding headerLength input
     (dizText, dizNotices) =
       decodeTextLenient metadataEncoding
         (ByteString.take dizContentLength (ByteString.drop dizContentStart input))
-    trailerSize = unLength ppf3FileIdMarkerLength + dizContentLength
-                + unLength ppf3FileIdFooterLength + unLength ppf3FileIdLengthFieldWidth
+    trailerSize = lengthToInt ppf3FileIdMarkerLength + dizContentLength
+                + lengthToInt ppf3FileIdFooterLength + lengthToInt ppf3FileIdLengthFieldWidth
