@@ -80,6 +80,7 @@ library slap-internal
     , Slap.GDIFF.Apply
     , Slap.GDIFF.Create
     , Slap.GDIFF.Describe
+    , Slap.GDIFF.FFI
     , Slap.GDIFF.Parse
     , Slap.GDIFF.Types
     , Slap.JSON

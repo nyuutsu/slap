@@ -9,6 +9,7 @@ module Slap.Status.Decompression
   , DecompressionCause(..)
   , XDelta1DiffCause(..)
   , BSDiffDifferCause(..)
+  , GDIFFDiffCause(..)
   , decompressionAlgorithm
   , SecondaryStreamGranularity(..)
   , secondaryStreamGranularity
@@ -49,6 +50,11 @@ newtype XDelta1DiffCause = XDelta1DiffCause { unXDelta1DiffCause :: Text }
 -- | The bsdiff differ's counterpart of 'XDelta1DiffCause' — always an invariant violation:
 -- bsdiff's 64-bit wire fields outreach any input buffer, so there is no size refusal to relay.
 newtype BSDiffDifferCause = BSDiffDifferCause { unBSDiffDifferCause :: Text }
+  deriving (Show, Eq)
+
+-- | The GDIFF differ's failure cause — always an invariant violation:
+-- GDIFF's 64-bit copy offsets outreach any input buffer, and the differ's index widens with the source rather than refusing one.
+newtype GDIFFDiffCause = GDIFFDiffCause { unGDIFFDiffCause :: Text }
   deriving (Show, Eq)
 
 -- | The compression algorithm in flight at a given failure site.

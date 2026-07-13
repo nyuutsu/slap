@@ -26,6 +26,7 @@ module Slap.Status
   , DecompressionCause(..)
   , XDelta1DiffCause(..)
   , BSDiffDifferCause(..)
+  , GDIFFDiffCause(..)
   , XDelta1GzipStreamInputs(..)
   , CompressionAlgorithm(..)
   , decompressionAlgorithm

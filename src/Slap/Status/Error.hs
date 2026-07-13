@@ -30,7 +30,7 @@ import Slap.PlatformType (CarriedRomType, RequestedRomType)
 import Slap.Status.Advisory (SlapAdvisory)
 import Slap.Status.ApplyError (ApplyError)
 import Slap.Status.ByteParserError (ByteParserError)
-import Slap.Status.Decompression (DecompressionFailure, XDelta1DiffCause, BSDiffDifferCause)
+import Slap.Status.Decompression (DecompressionFailure, XDelta1DiffCause, BSDiffDifferCause, GDIFFDiffCause)
 import Slap.Status.VCDIFF (VCDIFFShapeViolation, VCDIFFCodeTableMalformation,
                            VCDIFFIndicatorKind, ReservedBitsSet, VCDIFFMalformation,
                            VCDIFFRFCFeature, VCDIFFXDelta3Feature)
@@ -108,6 +108,7 @@ data SlapError
 
   | XDelta1DiffFailed XDelta1DiffCause
   | BSDiffDifferFailed BSDiffDifferCause
+  | GDIFFDiffFailed GDIFFDiffCause
 
   -- | A parsed record's end position — offset plus payload length — lies past the variant's own wire-format ceiling.
   -- The 'ActualOffset' is that computed end; the 'MaxOffset' is the variant's maximum addressable end.

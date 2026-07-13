@@ -1,3 +1,5 @@
+-- | GDIFF patch creation. The commands are planned by the Rust differ behind "Slap.GDIFF.FFI";
+-- this module spells them onto the wire.
 {-# LANGUAGE OverloadedStrings #-}
 
 module Slap.GDIFF.Create
@@ -8,14 +10,14 @@ module Slap.GDIFF.Create
   , planCopy
   ) where
 
-import Slap.Binary (diffHunks, putWord16BE, putWord32BE, putInt64BE)
+import Slap.Binary (putWord16BE, putWord32BE, putInt64BE)
 import Slap.Status (SlapError, CreateResult(..))
-import Slap.GDIFF.Types (gdiffMagicBytes, maxSingleCommandLength,
+import Slap.GDIFF.FFI (gdiffDiff)
+import Slap.GDIFF.Types (GDiffPatch(..), GDiffCommand(..),
+                         gdiffMagicBytes, maxSingleCommandLength,
                          maximumTwoByteOffset, maximumFourByteOffset,
                          maximumOneByteLength, maximumTwoByteLength)
-import Slap.Measure (Offset(..), Length(..), Hunk(..),
-                     advance, byteLength, distance, hunkEnd,
-                     lengthToOffset, minLength, subtractLength)
+import Slap.Measure (Offset(..), Length(..), advance, minLength, subtractLength)
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
@@ -27,30 +29,20 @@ import Data.Int (Int64)
 import Data.List (unfoldr)
 import Data.Word (Word8, Word16, Word32)
 
--- | Unchanged regions become COPY commands; changed regions become DATA commands.
 createGDIFF :: InputFileContents -> OutputFileContents
             -> Either SlapError CreateResult
-createGDIFF inputContents@(InputFileContents original) outputContents@(OutputFileContents modified) =
-    Right (CreateResult (PatchFileContents patchBytes) [])
-  where
-    patchBytes = LazyByteString.toStrict $ toLazyByteString $
-      byteString gdiffMagicBytes
-      <> word8 4                       -- version
-      <> buildCommands (Offset 0) (diffHunks inputContents outputContents)
-      <> word8 0                       -- EOF command
-    sharedRegionEnd = lengthToOffset (minLength (byteLength original) (byteLength modified))
-    buildCommands position [] =
-      if position < sharedRegionEnd
-        then encodeCopy position (distance position sharedRegionEnd)
-        else mempty
-    buildCommands position (currentHunk : remaining) =
-      let gap         = distance position (hunkOffset currentHunk)
-          copyPart    = if gap > Length 0
-                          then encodeCopy position gap
-                          else mempty
-          dataBuilder = encodeData (hunkPayload currentHunk)
-      in copyPart <> dataBuilder
-         <> buildCommands (hunkEnd currentHunk) remaining
+createGDIFF inputContents outputContents = do
+  GDiffPatch commands <- gdiffDiff inputContents outputContents
+  let patchBytes = LazyByteString.toStrict $ toLazyByteString $
+        byteString gdiffMagicBytes
+        <> word8 4                       -- version
+        <> foldMap encodeCommand commands
+        <> word8 0                       -- EOF command
+  pure (CreateResult (PatchFileContents patchBytes) [])
+
+encodeCommand :: GDiffCommand -> Builder
+encodeCommand (GDiffCommandData payload)               = encodeData payload
+encodeCommand (GDiffCommandCopy copyOffset copyLength) = encodeCopy copyOffset copyLength
 
 -- | Encode a DATA command.
 -- Payloads larger than 'maxSingleCommandLength' bytes are split into multiple DATA 248 commands.

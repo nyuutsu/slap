@@ -11,6 +11,8 @@ mod bsdiff_diff;
 mod bsdiff_hash_chain;
 mod compress;
 mod crc32;
+mod gdiff_diff;
+mod gdiff_hash_chain;
 mod vcdiff_diff;
 mod vcdiff_hash_chain;
 mod xdelta1_diff;
@@ -242,6 +244,89 @@ fn split_triples_to_parallel_arrays(
         source_seeks.extend_from_slice(&instruction.source_seek.to_le_bytes());
     }
     (add_lengths, copy_lengths, source_seeks)
+}
+
+// ── GDIFF diff FFI ────────────────────────────────────────────────────
+
+/// Compute a GDIFF diff. Returns 0 on success (all four output buffers
+/// populated; `error_cause` null). Returns -1 on failure (all output
+/// buffers null; `error_cause` carries the cause string). All
+/// caller-owned buffers must be freed via [`rusty_free`].
+///
+/// The command stream is returned as three parallel homogeneous
+/// arrays — one byte per `command_kind` (0 = DATA, 1 = COPY); one
+/// `u64` LE per `command_source_offset`; one `u64` LE per
+/// `command_length`. The three arrays share length N (= the command
+/// count); the byte counts on the offset and length buffers are 8N.
+/// A DATA command's offset points into the data segment, a COPY
+/// command's into the caller's source.
+///
+/// # Safety
+/// All buffer pointers follow rusty-slap's existing convention (see
+/// [`view_caller_buffer`] / [`surface_buffer_to_caller`]).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rusty_gdiff_diff(
+    source_address:                          *const u8,
+    source_length:                           usize,
+    target_address:                          *const u8,
+    target_length:                           usize,
+    command_kinds_address_pointer:           *mut *mut u8,
+    command_kinds_length_pointer:            *mut usize,
+    command_source_offsets_address_pointer:  *mut *mut u8,
+    command_source_offsets_length_pointer:   *mut usize,
+    command_lengths_address_pointer:         *mut *mut u8,
+    command_lengths_length_pointer:          *mut usize,
+    data_segment_address_pointer:            *mut *mut u8,
+    data_segment_length_pointer:             *mut usize,
+    error_cause_address_pointer:             *mut *mut u8,
+    error_cause_length_pointer:              *mut usize,
+) -> i32 {
+    let source = unsafe { view_caller_buffer(source_address, source_length) };
+    let target = unsafe { view_caller_buffer(target_address, target_length) };
+    match gdiff_diff::gdiff_diff(source, target) {
+        Ok(diff) => {
+            let (kinds, source_offsets, lengths) = split_commands_to_parallel_arrays(&diff.commands);
+            unsafe {
+                surface_buffer_to_caller(kinds,             command_kinds_address_pointer,          command_kinds_length_pointer);
+                surface_buffer_to_caller(source_offsets,    command_source_offsets_address_pointer, command_source_offsets_length_pointer);
+                surface_buffer_to_caller(lengths,           command_lengths_address_pointer,        command_lengths_length_pointer);
+                surface_buffer_to_caller(diff.data_segment, data_segment_address_pointer,           data_segment_length_pointer);
+                surface_buffer_to_caller(Vec::new(), error_cause_address_pointer, error_cause_length_pointer);
+            }
+            0
+        }
+        Err(cause_message) => {
+            unsafe {
+                surface_buffer_to_caller(Vec::new(), command_kinds_address_pointer,          command_kinds_length_pointer);
+                surface_buffer_to_caller(Vec::new(), command_source_offsets_address_pointer, command_source_offsets_length_pointer);
+                surface_buffer_to_caller(Vec::new(), command_lengths_address_pointer,        command_lengths_length_pointer);
+                surface_buffer_to_caller(Vec::new(), data_segment_address_pointer,           data_segment_length_pointer);
+                surface_buffer_to_caller(cause_message.into_bytes(), error_cause_address_pointer, error_cause_length_pointer);
+            }
+            -1
+        }
+    }
+}
+
+/// Project a [`gdiff_diff::GDiffDiffOutput`]'s command vec into three
+/// parallel homogeneous byte buffers — one per field. The inverse
+/// split happens on the Haskell side in `Slap.GDIFF.FFI`.
+fn split_commands_to_parallel_arrays(
+    commands: &[gdiff_diff::Command],
+) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let command_count      = commands.len();
+    let mut kinds          = Vec::with_capacity(command_count);
+    let mut source_offsets = Vec::with_capacity(command_count * 8);
+    let mut lengths        = Vec::with_capacity(command_count * 8);
+    for command in commands {
+        kinds.push(match command.kind {
+            gdiff_diff::CommandKind::Data => 0,
+            gdiff_diff::CommandKind::Copy => 1,
+        });
+        source_offsets.extend_from_slice(&command.source_offset.to_le_bytes());
+        lengths.extend_from_slice(&command.length.to_le_bytes());
+    }
+    (kinds, source_offsets, lengths)
 }
 
 // ── xdelta1 diff FFI ──────────────────────────────────────────────────

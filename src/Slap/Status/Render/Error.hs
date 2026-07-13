@@ -35,7 +35,7 @@ import Slap.PlatformType (platformName, CarriedRomType(..), RequestedRomType(..)
 import Slap.Status.ApplyError (renderApplyError)
 import Slap.Status.ByteParserError (renderByteParserError)
 import Slap.Status.Decompression (renderDecompressionFailure,
-                                  XDelta1DiffCause(..), BSDiffDifferCause(..),
+                                  XDelta1DiffCause(..), BSDiffDifferCause(..), GDIFFDiffCause(..),
                                   SecondaryStreamGranularity(..),
                                   secondaryStreamGranularity, secondaryStreamPossessive)
 import Slap.Status.Error (SlapError(..), UnencodeabilityReason(..))
@@ -179,6 +179,9 @@ renderSlapError (XDelta1DiffFailed (XDelta1DiffCause causeMessage)) =
 
 renderSlapError (BSDiffDifferFailed (BSDiffDifferCause causeMessage)) =
   "the bsdiff differ failed: " <> causeMessage
+
+renderSlapError (GDIFFDiffFailed (GDIFFDiffCause causeMessage)) =
+  "the GDIFF differ failed: " <> causeMessage
 
 renderSlapError (RecordExceedsAddressableRange label recordIndex (ActualOffset endOffset) (MaxOffset maxEndOffset)) =
   formatLabelName label <> ": record " <> renderAsText (unActionIndex recordIndex)
