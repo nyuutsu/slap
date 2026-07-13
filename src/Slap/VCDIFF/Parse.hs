@@ -42,7 +42,7 @@ import Slap.VCDIFF.AddressCache
   , defaultAddressCacheConfig
   , freshAddressCache, classifyAddressMode, firstSameMode, modeCeiling
   , decodeCopyAddress, CopyAddressReading(..), AddressDecodeFailure(..) )
-import Slap.Binary (getVcdiffVarint, VarintResult(..), viewBytesInRange)
+import Slap.Binary (getVcdiffVarintAtOffset, byteAtOffset, VarintResult(..), viewBytesInRange)
 import Slap.ByteParser
   ( ByteParser, runFormatParser, parseWhen, getByte, getBytes, skip, lookAhead
   , vcdiffVarintReportingCanonicality
@@ -59,7 +59,7 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.VCDIFF.Apply (applyVCDIFF)
 import Slap.FileContents (PatchFileContents(..), InputFileContents(..), OutputFileContents(..))
 import Slap.Measure
-  (offsetToInt,  Offset(..), Length(..), FileSize(..)
+  ( Offset(..), Length(..), FileSize(..)
   , ActualOffset(..), ExpectedSize(..), ActualSize(..)
   , ActionIndex, firstAction, nextAction, actionAtPosition
   , Cursor(..), fitsWithin, remainingFromOffset, lengthToFileSize
@@ -761,9 +761,8 @@ decompressSectionsThrough decodeCompressedKind rawWindows = do
 
 -- | Cursors into one window's three sections. Role-wrapped
 -- so a transition meant for one section cannot compile against another (the same reason 'Slap.BPS.Apply' role-wraps its two relative cursors),
--- and 'Offset'-backed: each names a byte position in its section slice,
--- squarely inside 'Offset''s charter of byte positions in zero-indexed buffers. The walk's byte-level primitives ('ByteString.index',
--- 'getVcdiffVarint') peel both layers at their call sites; everywhere else the cursors move only through the named transitions below.
+-- and 'Offset'-backed: each names a byte position in its section slice.
+-- Outside the byte-level reads, the cursors move only through the named transitions below.
 newtype InstructionSectionCursor = InstructionSectionCursor Offset
   deriving (Eq, Ord, Show)
 
@@ -941,7 +940,7 @@ decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection 
     nextInstructionByte = do
       InstructionSectionCursor codeBytePosition <- gets instCursor
       modify (advanceInstCursor (Length 1))
-      pure (Table.Opcode (ByteString.index instSection (offsetToInt codeBytePosition)))
+      pure (Table.Opcode (byteAtOffset codeBytePosition instSection))
 
     applyTemplate :: Table.InstructionTemplate -> WindowDecode ()
     applyTemplate Table.Noop = pure ()
@@ -961,7 +960,7 @@ decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection 
         sectionExhausted VCDIFFDataSection
       modify (advanceDataCursor (Length 1))
       modify (emitInstruction
-                (Run size (ByteString.index dataSection (offsetToInt fillStart)))
+                (Run size (byteAtOffset fillStart dataSection))
                 size)
     applyTemplate (Table.Copy sizeTemplate (Table.CopyAddressMode mode)) = do
       size            <- resolveSize sizeTemplate
@@ -985,7 +984,7 @@ decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection 
       pure (Length (fromIntegral fixed))
     resolveSize Table.SizeCodedSeparately = do
       InstructionSectionCursor sizePosition <- gets instCursor
-      case getVcdiffVarint (offsetToInt sizePosition) instSection of
+      case getVcdiffVarintAtOffset sizePosition instSection of
         Left _ -> sectionExhausted VCDIFFInstructionSection
         Right (VarintResult value consumed) -> do
           modify (advanceInstCursor (Length (fromIntegral consumed)))

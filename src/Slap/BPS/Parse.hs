@@ -8,8 +8,8 @@ module Slap.BPS.Parse
 
 import Slap.BPS.Types (BPSPatch(..), BPSBody(..), BPSAction(..), BPSMetadata(..),
                        decodeSignedVarint, isNegativeZeroSignedVarint,
-                       bpsMagicBytes, bpsMagicLength, bpsCRC32Length, bpsFooterLength, bpsOverheadLength)
-import Slap.Binary (getWord32LE)
+                       bpsMagicBytes, bpsMagicLength, bpsCRC32Length, bpsFooterLength)
+import Slap.Binary (getWord32LE, takeLength, dropLength, splitSuffixOfLength)
 import Slap.Checksum (CRC32(..), ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Status (SlapError(..), SlapAdvisory(..), Parsed(..))
 import Slap.FieldName (FieldName(..))
@@ -17,38 +17,35 @@ import Slap.FFI (crc32)
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runFormatParser, getBytes, byuuVarint, atEnd)
-import Slap.Measure (lengthToInt, Length(..), FileSize(..), Delta(..),
+import Slap.Measure (Length(..), FileSize(..), Delta(..),
                      RequiredLength(..), ActualLength(..),
                      ActualMagic(..), ParsedSizeValue(..), byteLength)
 
 import Control.Monad (when)
 import Data.Bits ((.&.), shiftR)
-import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 
 parseBPS :: PatchFileContents -> Either SlapError (Parsed BPSPatch)
 parseBPS (PatchFileContents input)
-  | ByteString.length input < lengthToInt bpsMagicLength =
+  | byteLength input < bpsMagicLength =
       Left (InputTooShort LabelBPS (RequiredLength bpsMagicLength) (ActualLength (byteLength input)))
-  | ByteString.take (lengthToInt bpsMagicLength) input /= bpsMagicBytes =
-      Left (BadMagic LabelBPS (ActualMagic (ByteString.take (lengthToInt bpsMagicLength) input)))
-  | ByteString.length input < lengthToInt bpsFooterLength =
+  | actualMagicBytes /= bpsMagicBytes =
+      Left (BadMagic LabelBPS (ActualMagic actualMagicBytes))
+  | byteLength input < bpsFooterLength =
       Left (InputTooShort LabelBPS (RequiredLength bpsFooterLength) (ActualLength (byteLength input)))
   | otherwise = do
       -- The patch CRC covers everything except itself
-      let inputLength    = ByteString.length input
-          crcLength      = lengthToInt bpsCRC32Length
-          footerLength   = lengthToInt bpsFooterLength
-          overheadLength = lengthToInt bpsOverheadLength
-          magicLength    = lengthToInt bpsMagicLength
-          storedPatchCRC = CRC32 (getWord32LE (inputLength - crcLength) input)
-          actualPatchCRC = crc32 (ByteString.take (inputLength - crcLength) input)
+      let (patchCRCCoverage, storedPatchCRCBytes) = splitSuffixOfLength bpsCRC32Length input
+          storedPatchCRC = CRC32 (getWord32LE 0 storedPatchCRCBytes)
+          actualPatchCRC = crc32 patchCRCCoverage
       when (storedPatchCRC /= actualPatchCRC) $
         Left (PatchCRCMismatch LabelBPS (ExpectedCRC32 storedPatchCRC) (ActualCRC32 actualPatchCRC))
-      let sourceCRC = CRC32 (getWord32LE (inputLength - footerLength) input)
-          targetCRC = CRC32 (getWord32LE (inputLength - 2 * crcLength) input)
+      -- The footer is three CRC32s: source, target, patch
+      let (bodyWithMagic, footerBytes) = splitSuffixOfLength bpsFooterLength input
+          sourceCRC = CRC32 (getWord32LE 0 footerBytes)
+          targetCRC = CRC32 (getWord32LE 4 footerBytes)
           -- Parse body between magic and footer
-          bodyBytes = ByteString.take (inputLength - overheadLength) (ByteString.drop magicLength input)
+          bodyBytes = dropLength bpsMagicLength bodyWithMagic
       body <- runFormatParser LabelBPS parseBPSBody bodyBytes
       when (unFileSize (bpsBodySourceSize body) < 0) $
         Left (NegativeSize LabelBPS FieldSourceSize
@@ -67,6 +64,8 @@ parseBPS (PatchFileContents input)
           , bpsPatchCRC   = storedPatchCRC
           }
         (bpsBodyWarnings body))
+  where
+    actualMagicBytes = takeLength bpsMagicLength input
 
 parseBPSBody :: ByteParser BPSBody
 parseBPSBody = do

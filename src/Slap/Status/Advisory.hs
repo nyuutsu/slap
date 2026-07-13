@@ -3,6 +3,7 @@
 -- | 'SlapAdvisory': everything slap remarks on without halting, and the envelopes that carry advisories beside a value.
 module Slap.Status.Advisory
   ( SlapAdvisory(..)
+  , VerificationMismatch(..)
   , BPSMetadataDivergence(..)
   , slapAdvisorySeverity
   , CreateResult(..)
@@ -259,9 +260,6 @@ data SlapAdvisory
   -- so the data cannot be reinserted and the output is left in the merged (headerless) form.
   -- The 'ExpectedSize' is the container's chunk total; the 'ActualSize' is the patched data's length.
   | UNIFContainerNotRebuilt FormatLabel ExpectedSize ActualSize
-  -- | The source ROM's byte-order does not match the image format an APS-N64 Type-1 patch declares.
-  -- Gated by the verification policy, so @--no-verify@ overrides.
-  | APSN64ImageFormatMismatch
   -- | Converting a source APS-N64 Type-1 patch:
   -- slap writes only Type-0, so its Type-1 N64 header (image format, cart ID, country, CRC) is not carried into the converted patch.
   | APSN64Type1HeaderDropped
@@ -277,25 +275,31 @@ data SlapAdvisory
 
   -- Verification: source/target integrity check mismatches
   --
-  -- The first four kinds are fatal-class: under 'Slap.Verify.EnforceVerification' they promote to 'Slap.Status.VerificationFatal',
-  -- and @--no-verify@ demotes them to warnings.
-  -- The other four are advisory by design (block CRC16, PPF validation block, file-size advisory, source-bytes comparison)
-  -- and always emit as warnings — @--no-verify@ does not silence them;
-  -- the flag's contract is the fatal-vs-warning axis for the fatal-class checks only.
-  | VerificationCRCMismatch       VerificationSide ExpectedCRC32 ActualCRC32
-  | VerificationHashMismatch      VerificationSide HashAlgorithm
-  | VerificationAdler32Mismatch   Offset ExpectedAdler32 ActualAdler32
-  | VerificationFileSizeMismatch  VerificationSide ExpectedSize ActualSize
-  | VerificationBlockCRC16Mismatch VerificationSide Offset
-  | VerificationPPFBlockMismatch  Offset
-  | VerificationFileSizeAdvisory  ExpectedSize ActualSize
-  | VerificationSourceBytesMismatch ByteCheckLabel Offset
+  -- | A declared verification check did not hold. Fatal-class mismatches ride here only after @--no-verify@ demoted them;
+  -- advisory-class ones always do ('Slap.Verify.mismatchClass' assigns the lane).
+  | DeclaredCheckMismatched VerificationMismatch
 
   -- | The patch declares no verification data at the format level — xdelta1's @FLAG_NO_VERIFY@ bit, PPF3's absent validation block.
   -- slap honors the declaration and skips verification;
   -- the warning reports that nothing attests the output matches the creator's intent.
   | VerificationOptedOutByCreator !FormatLabel
 
+  deriving (Show, Eq)
+
+-- | One declared check that did not hold against the file it describes: the payload of a differing 'Slap.Verify.VerificationVerdict',
+-- of the 'Slap.Status.VerificationFatal' refusal, and of the 'DeclaredCheckMismatched' warnings.
+-- Which constructors refuse an apply and which only warn is 'Slap.Verify.mismatchClass''s to say.
+data VerificationMismatch
+  = VerificationCRCMismatch         VerificationSide ExpectedCRC32 ActualCRC32
+  | VerificationHashMismatch        VerificationSide HashAlgorithm
+  | VerificationAdler32Mismatch     Offset ExpectedAdler32 ActualAdler32
+  | VerificationFileSizeMismatch    VerificationSide ExpectedSize ActualSize
+  | VerificationBlockCRC16Mismatch  VerificationSide Offset
+  | VerificationPPFBlockMismatch    Offset
+  | VerificationFileSizeAdvisory    ExpectedSize ActualSize
+  | VerificationSourceBytesMismatch ByteCheckLabel Offset
+    -- | The source ROM's byte order does not match the image format an APS-N64 Type-1 patch declares.
+  | APSN64ImageFormatMismatch
   deriving (Show, Eq)
 
 data CreateResult = CreateResult
@@ -336,14 +340,7 @@ slapAdvisorySeverity advisory = case advisory of
   IPSTruncationMarkerIgnored{}         -> SeverityWarning
   XDelta1NoVerifyWithDivergentSentinel -> SeverityWarning
   ApplyOOBBlocksSkipped{}              -> SeverityWarning
-  VerificationCRCMismatch{}            -> SeverityWarning
-  VerificationHashMismatch{}           -> SeverityWarning
-  VerificationAdler32Mismatch{}        -> SeverityWarning
-  VerificationFileSizeMismatch{}       -> SeverityWarning
-  VerificationBlockCRC16Mismatch{}     -> SeverityWarning
-  VerificationPPFBlockMismatch{}       -> SeverityWarning
-  VerificationFileSizeAdvisory{}       -> SeverityWarning
-  VerificationSourceBytesMismatch{}    -> SeverityWarning
+  DeclaredCheckMismatched{}            -> SeverityWarning
   VerificationOptedOutByCreator{}      -> SeverityWarning
 
   -- Notes: informational — reported so the reader knows, not because anything needs fixing.
@@ -394,6 +391,5 @@ slapAdvisorySeverity advisory = case advisory of
   RomImageNormalizationSkipped{}       -> SeverityWarning
   RomTypeNormalizationUnconfirmable{}  -> SeverityWarning
   UNIFContainerNotRebuilt{}            -> SeverityWarning
-  APSN64ImageFormatMismatch            -> SeverityWarning
   APSN64Type1HeaderDropped             -> SeverityWarning
   SubformatConverted{}                 -> SeverityNote

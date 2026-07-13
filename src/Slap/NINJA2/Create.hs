@@ -9,10 +9,10 @@ module Slap.NINJA2.Create
   ) where
 
 import Slap.NINJA2.Types
-import Slap.Binary (diffHunks, md5)
+import Slap.Binary (diffHunks, md5, replicateLength, viewBytesInRange)
 import Slap.Normalize (normalizeCreatePair)
 import Slap.Checksum (MD5Hash(..))
-import Slap.Measure (lengthToInt, offsetToInt, Offset(..), Length(..), Hunk(..))
+import Slap.Measure (Offset(..), Length, Hunk(..), byteLength, minLength, subtractLength)
 import Slap.Status (SlapError, SlapAdvisory, CreateResult(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -36,15 +36,15 @@ import Data.Bits (xor)
 encodeBoundedField :: FieldName -> Length -> Maybe EncodedText
                    -> (ByteString, [SlapAdvisory])
 encodeBoundedField fieldName fieldWidth = \case
-  Nothing -> (ByteString.replicate (lengthToInt fieldWidth) 0, [])
+  Nothing -> (replicateLength fieldWidth 0, [])
   Just inputText ->
     let (encodedBytes, notices) =
           encodeTextBounded EncodingUtf8
                             fieldWidth
                             (encodedTextContent inputText)
         padded     = encodedBytes
-                  <> ByteString.replicate
-                       (max 0 (lengthToInt fieldWidth - ByteString.length encodedBytes))
+                  <> replicateLength
+                       (subtractLength fieldWidth (minLength fieldWidth (byteLength encodedBytes)))
                        0x00
         advisories = encodeLossAdvisories LabelNINJA2 fieldName notices
     in (padded, advisories)
@@ -110,8 +110,7 @@ createNINJA2 handedOriginal handedModified metadata =
                    (diffHunks (InputFileContents sourceTrimmed)
                               (OutputFileContents targetTrimmed))
     computeXorHunk (Hunk hunkOffset newData) =
-      let intOffset = offsetToInt hunkOffset
-          oldData = ByteString.take (ByteString.length newData) (ByteString.drop intOffset sourceTrimmed)
+      let oldData = viewBytesInRange hunkOffset (byteLength newData) sourceTrimmed
       in XorRecord hunkOffset (ByteString.packZipWith xor oldData newData)
 
     -- Overflow section: emitted whenever sizes differ (parser expects it).
@@ -131,6 +130,6 @@ createNINJA2 handedOriginal handedModified metadata =
 encodeXorRecord :: XorRecord -> Builder
 encodeXorRecord record =
     word8 0x02                                    -- XOR command
-    <> encodeVariableLengthValue (fromIntegral (unOffset (xorRecordOffset record)))
+    <> encodeVariableLengthValue (unOffset (xorRecordOffset record))
     <> encodeVariableLengthValue (fromIntegral (ByteString.length (xorRecordPayload record)))
     <> byteString (xorRecordPayload record)

@@ -13,24 +13,23 @@ import Slap.Display.Analysis
     , SummaryInfo(..), Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), renderAsText)
-import Slap.Measure (lengthToInt, Offset(..), advance, byteLength)
+import Slap.Measure (Length(..), Offset(..), advance, byteLength)
 
-import qualified Data.ByteString as ByteString
 import Data.List (mapAccumL)
 
 gdiffMeta :: GDiffPatch -> [InfoLine]
 gdiffMeta patch =
-  [ InfoLine "data cmds"   (renderAsText dataCount <> " (" <> renderAsText dataBytes <> " bytes)")
-  , InfoLine "copy cmds"   (renderAsText copyCount <> " (" <> renderAsText copyBytes <> " bytes)")
-  , InfoLine "output size" (renderAsText totalOut)
+  [ InfoLine "data cmds"   (renderAsText dataCount <> " (" <> renderAsText (unLength dataBytes) <> " bytes)")
+  , InfoLine "copy cmds"   (renderAsText copyCount <> " (" <> renderAsText (unLength copyBytes) <> " bytes)")
+  , InfoLine "output size" (renderAsText (unLength totalOut))
   ]
   where
     commands  = gdiffCommands patch
     dataCount = length [() | GDiffCommandData{} <- commands]
     copyCount = length [() | GDiffCommandCopy{} <- commands]
-    dataBytes = sum [ByteString.length payload | GDiffCommandData { gdiffDataPayload = payload } <- commands]
-    copyBytes = sum [lengthToInt copyLength    | GDiffCommandCopy { gdiffCopyLength = copyLength } <- commands]
-    totalOut  = dataBytes + copyBytes
+    dataBytes = mconcat [byteLength payload | GDiffCommandData { gdiffDataPayload = payload } <- commands]
+    copyBytes = mconcat [copyLength         | GDiffCommandCopy { gdiffCopyLength = copyLength } <- commands]
+    totalOut  = dataBytes <> copyBytes
 
 analyzeGDIFF :: GDiffPatch -> PatchAnalysis
 analyzeGDIFF patch = PatchAnalysis

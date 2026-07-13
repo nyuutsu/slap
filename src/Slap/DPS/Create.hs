@@ -11,9 +11,9 @@ import Slap.DPS.Types (DPSCreateMetadata(..), DPSStability, fromDPSStability,
                        DPSRecord(..), EncodedDPSRecord(..),
                        narrowDPSRecords, narrowDPSSourceSize,
                        unDPSSourceSize, dpsFieldWidth)
-import Slap.Binary (putWord32LE, diffHunks)
-import Slap.Measure (lengthToInt, Offset(..), Hunk(..), byteFileSize, byteLength,
-                     distance, hunkEnd, lengthToOffset)
+import Slap.Binary (putWord32LE, diffHunks, replicateLength)
+import Slap.Measure (Offset(..), Hunk(..), byteFileSize, byteLength,
+                     distance, hunkEnd, lengthToOffset, minLength, subtractLength)
 import Slap.Text (EncodedText, EncodingName(..),
                   encodedTextContent, encodeTextBounded, encodeLossAdvisories)
 import Slap.Status (SlapError, SlapAdvisory, CreateResult(..))
@@ -55,8 +55,8 @@ createDPS inputContents@(InputFileContents original) outputContents metadata sta
       let (truncatedBytes, notices) =
             encodeTextBounded EncodingUtf8 dpsFieldWidth (encodedTextContent fieldText)
           padded = truncatedBytes
-                <> ByteString.replicate
-                     (max 0 (lengthToInt dpsFieldWidth - ByteString.length truncatedBytes))
+                <> replicateLength
+                     (subtractLength dpsFieldWidth (minLength dpsFieldWidth (byteLength truncatedBytes)))
                      0x00
           advisories = encodeLossAdvisories LabelDPS fieldName notices
       in (padded, advisories)

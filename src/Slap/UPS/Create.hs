@@ -7,12 +7,13 @@ module Slap.UPS.Create
   ) where
 
 import Slap.UPS.Types (UPSBlock(..), upsMagicBytes, upsTerminatorByte)
-import Slap.Binary (putWord32LE, word32LEBytes, putByuuVarint)
+import Slap.Binary (putWord32LE, word32LEBytes, putByuuVarint, byteAtOffset, dropLength, zeroExtendedBlock)
 import Slap.Checksum (CRC32(..))
 import Slap.Status (SlapError(..), UnencodeabilityReason(..), CreateResult(..))
 import Slap.FFI (crc32)
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (lengthToInt, Length(..), Offset(..), advance, distance, offsetToInt)
+import Slap.Measure (Length(..), Offset(..), advance, distance,
+                     byteLength, byteFileSize, fitsWithin, lengthToOffset)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
 import Data.Bits (xor)
@@ -20,10 +21,8 @@ import Data.Bits (xor)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Builder
-import Data.ByteString.Internal (unsafeCreate)
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Word (Word8)
-import Foreign.Storable (pokeByteOff)
 
 -- | Create a UPS patch from source and target bytestrings.
 -- Returns 'Left (UnencodeablePair LabelUPS UPSSourceTailNonZero)' when @source@ extends past @target@ with non-zero bytes:
@@ -50,7 +49,7 @@ createUPS inputContents@(InputFileContents original) outputContents@(OutputFileC
 
 encodeUPSBlock :: UPSBlock -> Builder
 encodeUPSBlock (UPSBlock skipLength xorData) =
-  putByuuVarint (fromIntegral (unLength skipLength))
+  putByuuVarint (unLength skipLength)
   <> byteString xorData
   <> word8 upsTerminatorByte
 
@@ -70,20 +69,20 @@ diffToBlocks (InputFileContents source) (OutputFileContents target)
       Left (UnencodeablePair LabelUPS UPSSourceTailNonZero)
   | otherwise = Right (scan (Offset 0) (Length 0) [])
   where
-    targetLength = ByteString.length target
-    sourceTailAllZero = ByteString.all (== 0) (ByteString.drop targetLength source)
+    targetLength      = byteLength target
+    targetEndPosition = lengthToOffset targetLength
+    sourceTailAllZero = ByteString.all (== 0) (dropLength targetLength source)
 
     byteAt :: ByteString -> Offset -> Word8
     byteAt bytes position
-      | byteIndex < ByteString.length bytes = ByteString.index bytes byteIndex
+      | fitsWithin position (Length 1) (byteFileSize bytes) = byteAtOffset position bytes
       | otherwise = 0
-      where byteIndex = offsetToInt position
 
     -- Accumulates skip count while bytes match;
     -- on diff, collects the run and emits a block.
     scan :: Offset -> Length -> [UPSBlock] -> [UPSBlock]
     scan !position !skipCount !accumulatedBlocks
-      | offsetToInt position >= targetLength =
+      | position >= targetEndPosition =
           reverse accumulatedBlocks
       | byteAt source position == byteAt target position =
           scan (advance position (Length 1))
@@ -99,31 +98,17 @@ diffToBlocks (InputFileContents source) (OutputFileContents target)
     -- the phantom-terminator shape covered in the header above.
     collectRun :: Offset -> (ByteString, Offset)
     collectRun start =
-      let runEnd = findFirstMatchPosition start
+      let runEnd    = findFirstMatchPosition start
           runLength = distance start runEnd
-          -- unsafeCreate (not create) is sound here: the fill writes
-          -- only the freshly-allocated local buffer and is deterministic,
-          -- so GHC duplicating the IO action produces identical output.
-          runByteCount = lengthToInt runLength
-          runBytes = unsafeCreate runByteCount $ \outputPointer ->
-            let writeLoop !byteOffset
-                  | byteOffset >= runByteCount = pure ()
-                  | otherwise = do
-                      let absolutePosition = advance start (Length (fromIntegral byteOffset))
-                          sourceByte = byteAt source absolutePosition
-                          targetByte = byteAt target absolutePosition
-                      pokeByteOff outputPointer byteOffset
-                        (sourceByte `xor` targetByte :: Word8)
-                      writeLoop (byteOffset + 1)
-            in writeLoop 0
+          runBytes  = ByteString.packZipWith xor
+                        (zeroExtendedBlock start runLength source)
+                        (zeroExtendedBlock start runLength target)
       in (runBytes, advance runEnd (Length 1))
 
-    -- | Return the first position p in [start, targetLength) where
-    -- source[p] == target[p] (with virtual zero-padding past either
-    -- end). If no such position exists, returns targetLength as a
-    -- sentinel.
+    -- | Return the first position p in [start, target end) where source[p] == target[p] (with virtual zero-padding past either end).
+    -- If no such position exists, returns the target-end position as a sentinel.
     findFirstMatchPosition :: Offset -> Offset
     findFirstMatchPosition !position
-      | offsetToInt position >= targetLength = position
+      | position >= targetEndPosition = position
       | byteAt source position == byteAt target position = position
       | otherwise = findFirstMatchPosition (advance position (Length 1))

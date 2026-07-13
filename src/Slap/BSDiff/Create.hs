@@ -56,9 +56,9 @@ encodeControlStream instructions =
   LazyByteString.toStrict (toLazyByteString (foldMap encodeInstruction instructions))
   where
     encodeInstruction instruction =
-      putSignMagnitude64 (fromIntegral (unLength (controlAdd  instruction)))
-      <> putSignMagnitude64 (fromIntegral (unLength (controlCopy instruction)))
-      <> putSignMagnitude64 (fromIntegral (unDelta  (controlSeek instruction)))
+      putSignMagnitude64 (unLength (controlAdd  instruction))
+      <> putSignMagnitude64 (unLength (controlCopy instruction))
+      <> putSignMagnitude64 (unDelta  (controlSeek instruction))
 
 -- | Write a signed 64-bit LE value in bsdiff sign-magnitude form:
 -- magnitude in the low 63 bits, the sign in bit 63. Round-trip

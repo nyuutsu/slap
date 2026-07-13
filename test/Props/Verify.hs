@@ -8,7 +8,7 @@
 module Props.Verify (verifyTests) where
 
 import Slap.Verify (Verification(..), VerificationPolicy(..), VerificationVerdict(..),
-                    DeclaredCheckKind(..), noVerification, SourcePreHash(..),
+                    VerificationMismatch(..), DeclaredCheckKind(..), noVerification, SourcePreHash(..),
                     ValidationBlock(..), FileSizeCheck(..), WindowCheck(..),
                     verifySource, verifyTarget, verdictOnSource, verdictOnTarget)
 import Slap.Binary (md5, sha1)
@@ -94,7 +94,7 @@ verifyTests = testGroup "Verify"
         VerdictDiffers (VerificationPPFBlockMismatch _ :| []) -> pure ()
         other -> assertFailure ("expected exactly one validation-block mismatch, got " ++ show other)
       outcomeValue enforced @?= Right ()
-      outcomeAdvisories enforced @?= [VerificationPPFBlockMismatch (Offset 0)]
+      outcomeAdvisories enforced @?= [DeclaredCheckMismatched (VerificationPPFBlockMismatch (Offset 0))]
 
   , testCase "a held advisory-only check is a match, not uncheckable" $ do
       let verification = noVerification { verifyPPFBlock = Just (ValidationBlock (Offset 0) "well") }
@@ -124,7 +124,7 @@ verifyTests = testGroup "Verify"
       let enforcedAdvisory = verifySource EnforceVerification declaredAdvisory wrongLengthBytes
       outcomeValue enforcedAdvisory @?= Right ()
       case outcomeAdvisories enforcedAdvisory of
-        [VerificationFileSizeAdvisory {}] -> pure ()
+        [DeclaredCheckMismatched (VerificationFileSizeAdvisory {})] -> pure ()
         other -> assertFailure ("expected the advisory size to ride as a warning, got " ++ show other)
 
   , testCase "the verdict hashes through the declared pre-hash" $ do
@@ -142,7 +142,7 @@ verifyTests = testGroup "Verify"
           skipped = verifySource SkipVerification verification (InputFileContents "two rom")
       outcomeValue skipped @?= Right ()
       case outcomeAdvisories skipped of
-        [VerificationCRCMismatch {}] -> pure ()
+        [DeclaredCheckMismatched (VerificationCRCMismatch {})] -> pure ()
         other -> assertFailure ("expected the CRC mismatch to ride as a warning, got " ++ show other)
 
   , testCase "the target side mirrors the source split" $ do

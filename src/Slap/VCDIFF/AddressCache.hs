@@ -57,11 +57,10 @@ module Slap.VCDIFF.AddressCache
 
 import Slap.Measure
   ( Offset(..), Length(..), Delta(..)
-  , Cursor(..), fitsWithin, offsetToInt, byteFileSize )
-import Slap.Binary (getVcdiffVarint, VarintResult(..), minimalVcdiffVarintLength)
+  , Cursor(..), fitsWithin, distance, byteFileSize )
+import Slap.Binary (getVcdiffVarintAtOffset, byteAtOffset, VarintResult(..), minimalVcdiffVarintLength)
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as ByteString
 import Data.Int (Int64)
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IntMap
@@ -142,6 +141,13 @@ slotsPerSameBlock = 256
 sameSlotCount :: AddressCacheConfig -> Int
 sameSlotCount config = unSameBlockCount (sameBlockCount config) * slotsPerSameBlock
 
+-- | The same-cache slot an address lands in: @address mod (256 * s_same)@.
+-- 'recordAddress' writes through this and the encoder's SAME probe reads through it, so slot placement has one definition.
+-- The modulus runs in the measure's 'Int64'; the result, bounded by 'sameSlotCount', narrows to the 'IntMap' key.
+sameSlotForAddress :: AddressCacheConfig -> Offset -> Int
+sameSlotForAddress config (Offset address) =
+  fromIntegral (address `mod` fromIntegral (sameSlotCount config))
+
 -- | The address held in one near slot.
 readNearSlot :: NearSlotIndex -> IntMap Offset -> Offset
 readNearSlot (NearSlotIndex slot) = IntMap.findWithDefault (Offset 0) slot
@@ -177,7 +183,7 @@ recordAddress :: AddressCache -> Offset -> AddressCache
 recordAddress cache address = cache
   { nearAddresses     = IntMap.insert writeSlot address (nearAddresses cache)
   , nextNearWriteSlot = advanceNearWriteSlot config (nextNearWriteSlot cache)
-  , sameAddresses     = IntMap.insert (offsetToInt address `mod` sameSlotCount config) address (sameAddresses cache)
+  , sameAddresses     = IntMap.insert (sameSlotForAddress config address) address (sameAddresses cache)
   }
   where
     config                  = cacheConfig cache
@@ -299,7 +305,7 @@ decodeCopyAddress cache here mode addrSection cursor =
     Just (SameAddress sameBlock) -> fromSameByte sameBlock
   where
     fromVarint computeAddress =
-      case getVcdiffVarint (offsetToInt cursor) addrSection of
+      case getVcdiffVarintAtOffset cursor addrSection of
         Left _ -> Left AddressSectionExhausted
         Right (VarintResult value consumed) ->
           Right (readingOf (computeAddress (fromIntegral value))
@@ -307,7 +313,7 @@ decodeCopyAddress cache here mode addrSection cursor =
 
     fromSameByte sameBlock
       | fitsWithin cursor (Length 1) (byteFileSize addrSection) =
-          let slotByte = SameSlotByte (ByteString.index addrSection (offsetToInt cursor))
+          let slotByte = SameSlotByte (byteAtOffset cursor addrSection)
           in Right (readingOf (readSameSlot sameBlock slotByte (sameAddresses cache))
                               (advance cursor (Length 1)))
       | otherwise = Left AddressSectionExhausted
@@ -359,9 +365,7 @@ data AddressCandidate = AddressCandidate
 selectCopyAddressMode :: AddressCache -> Offset -> Offset -> SelectedCopyAddress
 selectCopyAddressMode cache here address = recordInto chosen
   where
-    config     = cacheConfig cache
-    addressInt = offsetToInt address
-    hereInt    = offsetToInt here
+    config = cacheConfig cache
 
     -- The cheapest candidate, SELF first so it takes every tie: 'minimumBy' keeps the first least,
     -- so among equal-cost modes the earlier-listed wins.
@@ -380,7 +384,7 @@ selectCopyAddressMode cache here address = recordInto chosen
           Just (AddressCandidate (modeFamilyToByte config (SameAddress (SameBlockIndex block))) (AddressSameByte slotByte) 1)
       | otherwise = Nothing
       where
-        globalSlot = addressInt `mod` sameSlotCount config
+        globalSlot = sameSlotForAddress config address
         block      = globalSlot `div` slotsPerSameBlock
         -- The remainder is in @[0, 256)@, the exact 'Word8' range.
         slotByte   = SameSlotByte (fromIntegral (globalSlot `mod` slotsPerSameBlock))
@@ -392,21 +396,23 @@ selectCopyAddressMode cache here address = recordInto chosen
       slots -> let (slot, delta) = minimumBy (comparing snd) slots
                in [varintCandidate (modeFamilyToByte config (NearAddress slot)) delta]
 
-    forwardNearSlots :: [(NearSlotIndex, Int)]   -- (slot, forward delta)
+    forwardNearSlots :: [(NearSlotIndex, Int64)]   -- (slot, forward delta)
     forwardNearSlots =
-      [ (slot, addressInt - slotAddrInt)
+      [ (slot, unLength (distance slotAddress address))
       | slot <- nearSlotIndices config
-      , let slotAddrInt = offsetToInt (readNearSlot slot (nearAddresses cache))
-      , slotAddrInt <= addressInt
+      , let slotAddress = readNearSlot slot (nearAddresses cache)
+      , slotAddress <= address
       ]
 
-    hereCandidate = varintCandidate (modeFamilyToByte config HereAddress) (hereInt - addressInt)
-    selfCandidate = varintCandidate (modeFamilyToByte config SelfAddress) addressInt
+    -- HERE speaks the distance back from the write head. @address < here@ is core invariant 1 (docs/vcdiff/core/spec.md) —
+    -- the matcher never offers a copy source at or past the write head, and 'tightenToUsedSpan''s rebase preserves the ordering —
+    -- so 'distance' is total here and loud on a matcher bug.
+    hereCandidate = varintCandidate (modeFamilyToByte config HereAddress) (unLength (distance address here))
+    selfCandidate = varintCandidate (modeFamilyToByte config SelfAddress) (unOffset address)
 
-    varintCandidate :: Word8 -> Int -> AddressCandidate
+    varintCandidate :: Word8 -> Int64 -> AddressCandidate
     varintCandidate mode value =
-      AddressCandidate mode (AddressVarint (fromIntegral value))
-        (minimalVcdiffVarintLength (fromIntegral value))
+      AddressCandidate mode (AddressVarint value) (minimalVcdiffVarintLength value)
 
     recordInto candidate = SelectedCopyAddress
       { selectedAddressMode       = candidateMode candidate

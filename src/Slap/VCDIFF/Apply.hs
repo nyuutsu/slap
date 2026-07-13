@@ -13,12 +13,12 @@ import Slap.VCDIFF.Types
   ( VCDIFFPatch(..), Window(..), VCDIFFInstruction(..)
   , SourceSegment(..), SegmentOrigin(..), windowOutputLength
   , xdelta3WindowBody )
-import Slap.Binary (copyRegion, copyInPlace, fillNewBuffer)
+import Slap.Binary (copyRegion, copyInPlace, fillRegion, fillNewBuffer)
 import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Measure
-  (lengthToInt,  Offset(..), Length(..), FileSize(..)
+  ( Offset(..), Length(..), FileSize(..)
   , ReadOffset(..), WritePosition(..)
   , ActionIndex, firstAction, nextAction
   , Cursor(..), fitsWithin, offsetToFileSize
@@ -27,7 +27,6 @@ import Slap.Measure
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 import Data.Word (Word8)
-import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (Ptr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
 import System.IO.Unsafe (unsafePerformIO)
@@ -174,8 +173,7 @@ applyVCDIFF patch (InputFileContents source)
                             literal (Offset 0) (byteLength literal)
                  pure (byteLength literal)
                Run count fillByte -> do
-                 fillBytes (plusOffset outputPointer (unWritePosition writeHead))
-                           fillByte (lengthToInt count)
+                 fillRegion outputPointer (unWritePosition writeHead) fillByte count
                  pure count
                Copy count address -> do
                  executeCopyRead writeHead
@@ -194,8 +192,7 @@ applyVCDIFF patch (InputFileContents source)
             copyInPlace outputPointer readStart (unWritePosition writeHead) count
           ExpandFromTarget (ReadOffset readStart) count ExpandByteRun -> do
             repeatedByte <- peekByteOff (plusOffset outputPointer readStart) 0 :: IO Word8
-            fillBytes (plusOffset outputPointer (unWritePosition writeHead))
-                      repeatedByte (lengthToInt count)
+            fillRegion outputPointer (unWritePosition writeHead) repeatedByte count
           ExpandFromTarget (ReadOffset readStart) count ExpandForward ->
             expandForward readStart writeHead count
 
@@ -204,7 +201,8 @@ applyVCDIFF patch (InputFileContents source)
           where
             readBase   = plusOffset outputPointer readStart
             writeBase  = plusOffset outputPointer (unWritePosition writeHead)
-            totalBytes = lengthToInt count
+            -- Narrowed once at loop entry: 'peekByteOff' and 'pokeByteOff' index by 'Int'.
+            totalBytes = fromIntegral (unLength count) :: Int
             copyByteByByte !byteIndex
               | byteIndex >= totalBytes = pure ()
               | otherwise = do

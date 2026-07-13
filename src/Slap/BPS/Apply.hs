@@ -5,10 +5,10 @@ module Slap.BPS.Apply
   ) where
 
 import Slap.BPS.Types (BPSPatch(..), BPSAction(..))
-import Slap.Binary (copyRegion, copyInPlace, fillNewBuffer)
+import Slap.Binary (copyRegion, copyInPlace, fillRegion, fillNewBuffer)
 import Slap.Status (SlapError(..), ApplyError(..), CursorKind(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (lengthToInt, offsetToInt, Offset(..), Length(..), FileSize(..),
+import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      SignedOffset(..), Delta, ActionIndex(unActionIndex),
                      SignedOffsetSign(..),
                      ReadOffset(..), WritePosition(..),
@@ -25,7 +25,6 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 import Data.Word (Word8)
-import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Storable (peekByteOff, pokeByteOff)
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -70,7 +69,7 @@ data TargetCopyStrategy
     -- ^ The source is a single byte immediately before the
     -- destination (@readStart == writePosition - 1@). Every iteration
     -- reads the same byte, so this is byte run-length encoding —
-    -- execute as a single 'peekByteOff' + 'fillBytes' ('memset').
+    -- execute as a single 'peekByteOff' + 'fillRegion' ('memset').
   | TargetCopyGeneralOverlap
     -- ^ LZ77-style self-referential overlap. Must be executed as a
     -- byte-by-byte loop because each written byte becomes part of
@@ -186,11 +185,12 @@ applyBPS patch (InputFileContents source)
         generalOverlapLoop readStart writePosition copyLength =
             copyFromByteOffset 0
           where
-            readBase   = plusOffset outputPointer (unReadOffset readStart)
-            writeBase  = plusOffset outputPointer (unWritePosition writePosition)
-            totalBytes = lengthToInt copyLength
+            readBase  = plusOffset outputPointer (unReadOffset readStart)
+            writeBase = plusOffset outputPointer (unWritePosition writePosition)
+            -- The loop cursor stays Int: it is the Storable byte offset for both the peek and the poke.
+            copyByteCount = fromIntegral (unLength copyLength)
             copyFromByteOffset !byteOffset
-              | byteOffset >= totalBytes = pure ()
+              | byteOffset >= copyByteCount = pure ()
               | otherwise = do
                   copiedByte <- peekByteOff readBase byteOffset :: IO Word8
                   pokeByteOff writeBase byteOffset copiedByte
@@ -207,10 +207,9 @@ applyBPS patch (InputFileContents source)
                TargetCopyNonOverlapping ->
                  copyInPlace outputPointer (unReadOffset readStart) outputOffset copyLength
                TargetCopySingleByteRun -> do
-                 repeatedByte <- peekByteOff outputPointer
-                                             (offsetToInt outputOffset - 1) :: IO Word8
-                 fillBytes (plusOffset outputPointer outputOffset)
-                           repeatedByte (lengthToInt copyLength)
+                 repeatedByte <- peekByteOff (plusOffset outputPointer outputOffset)
+                                             (-1) :: IO Word8
+                 fillRegion outputPointer outputOffset repeatedByte copyLength
                TargetCopyGeneralOverlap ->
                  generalOverlapLoop readStart writePosition copyLength
 

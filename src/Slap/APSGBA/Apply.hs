@@ -5,12 +5,12 @@ module Slap.APSGBA.Apply
   ) where
 
 import Slap.APSGBA.Types
-import Slap.Binary (copyRegion, fillNewBuffer)
+import Slap.Binary (fillNewBuffer, seedBufferFromSource)
 import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), Length(..), FileSize(..), fileSizeToInt, offsetToInt,
+import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex, RequestedLength(..),
-                     offsetToFileSize, firstAction, nextAction)
+                     byteFileSize, offsetToFileSize, plusOffset, firstAction, nextAction)
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
@@ -18,9 +18,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Bits (xor)
 import Data.Word (Word8)
-import Control.Monad (when)
-import Foreign.Marshal.Utils (fillBytes)
-import Foreign.Ptr (Ptr, plusPtr)
+import Foreign.Ptr (Ptr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -34,7 +32,7 @@ import System.IO.Unsafe (unsafePerformIO)
 -- while one starting in range with an overrunning tail writes its in-range bytes and drops only the overhang.
 applyAPSGBA :: APSGBAPatch -> InputFileContents -> Either SlapError OutputFileContents
 applyAPSGBA (APSGBAPatch header records) (InputFileContents source)
-  | targetSize < 0 =
+  | targetFileSize < FileSize 0 =
       Left (NegativeTargetSize LabelAPSGBA targetFileSize)
   | otherwise = unsafePerformIO $ do
       (result, maybeErr) <- fillNewBuffer targetFileSize runApply
@@ -42,24 +40,10 @@ applyAPSGBA (APSGBAPatch header records) (InputFileContents source)
         Just applyErr -> Left (ApplyFailed LabelAPSGBA applyErr)
         Nothing       -> Right (OutputFileContents result)
   where
-    sourceLength   = ByteString.length source
     targetFileSize = apsGbaTargetSize header
-    targetSize     = fileSizeToInt targetFileSize
-    -- | Exclusive upper bound on a legitimate block start. See
-    -- 'applyAPSGBA' for why this is @max@ and not @targetSize@ alone.
+    -- | Exclusive upper bound on a legitimate block start. See 'applyAPSGBA' for why this is @max@ and not 'targetFileSize' alone.
     naturalBlockReach :: FileSize
-    naturalBlockReach =
-      FileSize (fromIntegral (max sourceLength targetSize))
-
-    -- | Initial buffer state: copy source bytes (clipped at target
-    -- length if shrinking) and zero-fill any tail past the source.
-    seedBuffer :: Ptr Word8 -> IO ()
-    seedBuffer targetPointer = do
-      copyRegion targetPointer (Offset 0) source (Offset 0) (Length (fromIntegral (min sourceLength targetSize)))
-      when (targetSize > sourceLength) $
-        fillBytes (targetPointer `plusPtr` sourceLength)
-                  (0 :: Word8)
-                  (targetSize - sourceLength)
+    naturalBlockReach = max (byteFileSize source) targetFileSize
 
     -- | Flag a record whose write start sits at or past 'naturalBlockReach'.
     -- Only the start is checked here; a tail that overruns the target is handled in 'executeXorBlock'.
@@ -73,21 +57,23 @@ applyAPSGBA (APSGBAPatch header records) (InputFileContents source)
                  targetFileSize)
       | otherwise = Right ()
 
-    -- | Materialise one block into the output buffer, skipping any byte position at or past 'targetSize'.
+    -- | Materialise one block into the output buffer, writing only the byte positions that land before the target end.
     executeXorBlock :: Ptr Word8 -> Offset -> ByteString -> IO ()
     executeXorBlock targetPointer blockOffset xorPayload =
         writeRemainingBytes 0
       where
-        blockBase     = offsetToInt blockOffset
-        writeBase     = targetPointer `plusPtr` blockBase
+        writeBase = targetPointer `plusOffset` blockOffset
+        -- | How many of the block's bytes precede the target end; a block starting at or past the end writes none.
+        writableByteCount :: Int
+        writableByteCount =
+          fromIntegral (min (fromIntegral apsGbaBlockSize)
+                            (max 0 (unFileSize targetFileSize - unOffset blockOffset)))
         writeRemainingBytes !byteOffset
-          | byteOffset >= apsGbaBlockSize = pure ()
+          | byteOffset >= writableByteCount = pure ()
           | otherwise = do
-              let positionWithinTarget = blockBase + byteOffset
-              when (positionWithinTarget < targetSize) $ do
-                original <- peekByteOff writeBase byteOffset :: IO Word8
-                pokeByteOff writeBase byteOffset
-                  (original `xor` ByteString.index xorPayload byteOffset)
+              original <- peekByteOff writeBase byteOffset :: IO Word8
+              pokeByteOff writeBase byteOffset
+                (original `xor` ByteString.index xorPayload byteOffset)
               writeRemainingBytes (byteOffset + 1)
 
     applyRecords :: Ptr Word8 -> ActionIndex -> [APSGBARecord]
@@ -102,5 +88,5 @@ applyAPSGBA (APSGBAPatch header records) (InputFileContents source)
           applyRecords targetPointer (nextAction actionIndex) remainingRecords
 
     runApply targetPointer = do
-      seedBuffer targetPointer
+      seedBufferFromSource targetPointer targetFileSize source
       applyRecords targetPointer firstAction records

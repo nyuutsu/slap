@@ -19,7 +19,8 @@ import Slap.Convert (PatchContents(..), emptyContents, RequestedPatchMetadata(..
 import Slap.Text (EncodedText, EncodingName, encodedTextContent)
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Slap.Measure (lengthToInt, Offset(..), Length(..), FileSize(..), Hunk(..),
+import Slap.Binary (replicateLength)
+import Slap.Measure (Offset(..), Length(..), FileSize(..), Hunk(..),
                      Cursor(..), splitUndoHunkFromParsed)
 import qualified Slap.PPF1.Apply as PPF1
 import qualified Slap.PPF1.Describe as PPF1
@@ -421,7 +422,7 @@ parseSomePatchFromIPS variant patchContents = do
                                         , ipsRleFill = fillByte })
         | unLength fillCount == 0 = Nothing
         | otherwise =
-            Just (Hunk recordOffset (ByteString.replicate (lengthToInt fillCount) fillByte))
+            Just (Hunk recordOffset (replicateLength fillCount fillByte))
       -- One builder for the three parse outcomes; each supplies its own label, analytical carrier,
       -- meta lines, extracted metadata, EBP trailer, and the wire patch to apply.
       ipsSomePatch armLabel analysis metaLines extractedMeta ebpMetadata ipsPatch =

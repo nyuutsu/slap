@@ -5,11 +5,12 @@ module Slap.UPS.Apply
   ) where
 
 import Slap.UPS.Types (UPSPatch(..), UPSBlock(..), upsTerminatorByteLength)
+import Slap.Binary (takeLength, copyBetweenBuffers, fillRegion, filledBufferOfSize)
 import Slap.Status (SlapError(..), SlapAdvisory(..), Outcome(..),
                    OOBBlockCount(..), OOBOvershootBytes(..),
                    ApplyDirection(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (lengthToInt, offsetToInt, fileSizeToInt, Offset(..), Length(..), FileSize(..),
+import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex(unActionIndex),
                      Cursor(..), fitsWithin, offsetToFileSize,
                      remainingFromOffset,
@@ -25,14 +26,11 @@ import Control.Monad.Trans.State.Strict (StateT, evalStateT, get, modify)
 import Data.Bits (xor)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import Data.ByteString.Internal (create)
 import Data.ByteString.Unsafe (unsafeIndex, unsafeUseAsCStringLen)
 import qualified Data.Vector as Vector
 import Data.Word (Word8)
-import Foreign.Marshal.Utils (copyBytes, fillBytes)
-import Foreign.Ptr (Ptr, castPtr, plusPtr)
+import Foreign.Ptr (Ptr, castPtr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
-import System.IO.Unsafe (unsafePerformIO)
 
 ----------------------------------------------------------------------------
 -- Placement classifiers
@@ -186,8 +184,8 @@ runUPSXorWalk patch source outputSize
       Left (NegativeTargetSize LabelUPS outputSize)
   | unFileSize outputSize == 0 =
       Right ByteString.empty
-  | otherwise = Right $ unsafePerformIO $
-      create (fileSizeToInt outputSize) $ \outputPointer ->
+  | otherwise = Right $
+      filledBufferOfSize outputSize $ \outputPointer ->
         unsafeUseAsCStringLen source $ \(sourcePointerCString, _) ->
           let sourcePointer = castPtr sourcePointerCString :: Ptr Word8
           in runApply outputPointer sourcePointer
@@ -206,25 +204,21 @@ runUPSXorWalk patch source outputSize
         copySourceSlice outputPosition copyLength =
           case classifySourceCopy outputPosition copyLength sourceSize of
             SourceCopyEntirelyInSource ->
-              copyBytes
+              copyBetweenBuffers
                 (plusOffset outputPointer outputPosition)
-                (sourcePointer `plusPtr` offsetToInt outputPosition)
-                (lengthToInt copyLength)
+                (plusOffset sourcePointer outputPosition)
+                copyLength
             SourceCopyStraddlesSourceEnd inBoundsPrefix zeroFillTail -> do
-              copyBytes
+              copyBetweenBuffers
                 (plusOffset outputPointer outputPosition)
-                (sourcePointer `plusPtr` offsetToInt outputPosition)
-                (lengthToInt inBoundsPrefix)
-              fillBytes
-                (plusOffset outputPointer
-                            (advance outputPosition inBoundsPrefix))
-                0
-                (lengthToInt zeroFillTail)
+                (plusOffset sourcePointer outputPosition)
+                inBoundsPrefix
+              fillRegion outputPointer
+                         (advance outputPosition inBoundsPrefix)
+                         0
+                         zeroFillTail
             SourceCopyEntirelyPastSource ->
-              fillBytes
-                (plusOffset outputPointer outputPosition)
-                0
-                (lengthToInt copyLength)
+              fillRegion outputPointer outputPosition 0 copyLength
 
         -- | XOR source bytes with xorData, writing result to output.
         -- Past source end, source bytes are treated as 0x00 (so xorData bytes are written verbatim: x XOR 0 == x).
@@ -233,8 +227,11 @@ runUPSXorWalk patch source outputSize
         -- this helper does not clip to target.
         xorSourceSlice :: Offset -> Length -> ByteString -> IO ()
         xorSourceSlice outputPosition xorDataLength xorData =
-          let readBase  = sourcePointer `plusPtr` offsetToInt outputPosition
+          let readBase  = plusOffset sourcePointer outputPosition
               writeBase = plusOffset outputPointer outputPosition
+
+              -- The loop cursor stays Int: it is simultaneously a Storable byte offset and an index into xorData.
+              xorDataByteCount = fromIntegral (unLength xorDataLength)
 
               -- Phase 1: source in bounds.
               xorWithSourceLoop !byteOffset !endByteOffset
@@ -256,14 +253,14 @@ runUPSXorWalk patch source outputSize
 
           in case classifySourceCopy outputPosition xorDataLength sourceSize of
                SourceCopyEntirelyInSource ->
-                 xorWithSourceLoop 0 (lengthToInt xorDataLength)
+                 xorWithSourceLoop 0 xorDataByteCount
                SourceCopyStraddlesSourceEnd inBoundsPrefix zeroFillTail -> do
-                 let inBoundsByteCount = lengthToInt inBoundsPrefix
-                     zeroFillEnd       = inBoundsByteCount + lengthToInt zeroFillTail
+                 let inBoundsByteCount = fromIntegral (unLength inBoundsPrefix)
+                     zeroFillEnd       = fromIntegral (unLength (inBoundsPrefix <> zeroFillTail))
                  xorWithSourceLoop 0 inBoundsByteCount
                  xorWithZeroLoop inBoundsByteCount zeroFillEnd
                SourceCopyEntirelyPastSource ->
-                 xorWithZeroLoop 0 (lengthToInt xorDataLength)
+                 xorWithZeroLoop 0 xorDataByteCount
 
         -- | Write a block whose declared span crosses the output
         -- boundary. Divides the in-bounds prefix sequentially across
@@ -287,7 +284,7 @@ runUPSXorWalk patch source outputSize
               clippedTerminatorLength = minLength upsTerminatorByteLength afterXor
           copySourceSlice (blockSkipStart blockWrite) clippedSkipLength
           xorSourceSlice  (blockXorStart blockWrite) clippedXorLength
-            (ByteString.take (lengthToInt clippedXorLength) (blockXorData blockWrite))
+            (takeLength clippedXorLength (blockXorData blockWrite))
           copySourceSlice (blockTerminatorStart blockWrite) clippedTerminatorLength
 
         -- | The single cursor transition done after every block.

@@ -3,20 +3,19 @@ module Slap.DPS.Apply
   ) where
 
 import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), dpsOutputExtent)
-import Slap.Binary (copyRegion, fillNewBuffer)
+import Slap.Binary (copyRegion, fillNewBuffer, fillRegion)
 import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (fileSizeToInt, Offset(..), Length, FileSize(..),
+import Slap.Measure (Offset(..), Length, FileSize(..),
                      ActionIndex,
                      RequestedLength(..), RemainingLength(..),
-                     advance, fitsWithin, remainingFromOffset,
+                     advance, fileSizeToLength, fitsWithin, remainingFromOffset,
                      byteLength, byteFileSize,
                      firstAction, nextAction)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import qualified Data.ByteString as ByteString
 import Data.Word (Word8)
-import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (Ptr)
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -56,7 +55,7 @@ applyDPS patch (InputFileContents source)
     runApply :: Ptr Word8 -> IO (Maybe ApplyError)
     runApply outputPointer = do
       -- DPS names only the bytes its records write, and 'fillNewBuffer' does not zero the rest.
-      fillBytes outputPointer (0 :: Word8) (fileSizeToInt outputSize)
+      fillRegion outputPointer (Offset 0) 0x00 (fileSizeToLength outputSize)
       applyRecordStream firstAction records
       where
         applyRecordStream :: ActionIndex -> [DPSRecord] -> IO (Maybe ApplyError)

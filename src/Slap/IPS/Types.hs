@@ -65,8 +65,7 @@ import Slap.Measure
   , ExpectedSize(..)
   , MaxOffset(..)
   , byteLength
-  , fileSizeToInt
-  , offsetToInt
+  , offsetToFileSize
   , ipsSentinel
   , ips32Sentinel
   )
@@ -455,7 +454,7 @@ ipsRejectIncompatibleSizeChange
   :: FileSize -> FileSize -> Either SlapError ()
 ipsRejectIncompatibleSizeChange sourceSize targetSize
   | targetSize >= sourceSize = Right ()
-  | fileSizeToInt targetSize <= offsetToInt markerMaximum = Right ()
+  | targetSize <= offsetToFileSize markerMaximum = Right ()
   | otherwise = Left (UnencodeablePair LabelIPS
       (TruncationTargetUnrepresentable
         (DeclaredTargetSize targetSize)

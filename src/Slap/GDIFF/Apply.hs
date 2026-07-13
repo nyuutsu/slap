@@ -3,10 +3,10 @@ module Slap.GDIFF.Apply
   ) where
 
 import Slap.GDIFF.Types (GDiffPatch(..), GDiffCommand(..))
-import Slap.Binary (copyRegion)
+import Slap.Binary (copyRegion, filledBufferOfSize)
 import Slap.Measure
   ( Offset(..), Length(..), FileSize(..), ActionIndex
-  , advance, byteLength, firstAction, nextAction, fitsWithin, lengthToFileSize, byteFileSize, fileSizeToInt
+  , advance, byteLength, firstAction, nextAction, fitsWithin, lengthToFileSize, byteFileSize
   )
 import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -14,12 +14,11 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import qualified Data.ByteString as ByteString
-import Data.ByteString.Internal (unsafeCreate)
 
 -- | The command stream is walked twice:
 -- once by 'validateCommands' to bounds-check every COPY's source range and compute the total output size, and once by the write loop below.
--- The split makes the write loop infallible: by the time we reach 'unsafeCreate', every COPY has been proven to read inside @source@
--- and the buffer sized to fit every DATA payload plus every COPY length.
+-- The split makes the write loop infallible: by the time we reach 'filledBufferOfSize',
+-- every COPY has been proven to read inside @source@ and the buffer sized to fit every DATA payload plus every COPY length.
 --
 -- A pre-flight pass is sound because GDIFF's command stream has no relative cursor and no target self-reference:
 -- each command's output size and source-read range are independent of prior commands' effects.
@@ -34,7 +33,7 @@ applyGDIFF patch (InputFileContents source) =
     commands   = gdiffCommands patch
     sourceSize = byteFileSize source
 
-    writeOutput totalOutputSize = unsafeCreate (fileSizeToInt totalOutputSize) $ \outputPointer ->
+    writeOutput totalOutputSize = filledBufferOfSize totalOutputSize $ \outputPointer ->
       let
         applyLoop :: Offset -> [GDiffCommand] -> IO ()
         applyLoop _outputPosition [] = pure ()

@@ -10,7 +10,7 @@ module Slap.UPS.Parse
 
 import Slap.UPS.Types (UPSPatch(..), UPSBody(..), UPSBlock(..),
                        upsMagicBytes, upsMagicLength, upsCRC32Length, upsFooterLength, upsOverheadLength)
-import Slap.Binary (getWord32LE)
+import Slap.Binary (getWord32LE, takeLength, dropLength, splitSuffixOfLength)
 import Slap.Checksum (CRC32(..), ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Status (SlapError(..), Parsed(..))
 import Slap.FieldName (FieldName(..))
@@ -18,36 +18,33 @@ import Slap.FFI (crc32)
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runFormatParser, getUntilByte, byuuVarint, atEnd)
-import Slap.Measure (lengthToInt, Length(..), FileSize(..),
+import Slap.Measure (Length(..), FileSize(..),
                      RequiredLength(..), ActualLength(..),
                      ActualMagic(..), ParsedSizeValue(..), byteLength)
 import Control.Monad (when)
-import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 
 parseUPS :: PatchFileContents -> Either SlapError (Parsed UPSPatch)
 parseUPS (PatchFileContents input)
-  | ByteString.length input < lengthToInt upsMagicLength =
+  | byteLength input < upsMagicLength =
       Left (InputTooShort LabelUPS (RequiredLength upsMagicLength) (ActualLength (byteLength input)))
-  | ByteString.take (lengthToInt upsMagicLength) input /= upsMagicBytes =
-      Left (BadMagic LabelUPS (ActualMagic (ByteString.take (lengthToInt upsMagicLength) input)))
-  | ByteString.length input < lengthToInt upsOverheadLength =
+  | actualMagicBytes /= upsMagicBytes =
+      Left (BadMagic LabelUPS (ActualMagic actualMagicBytes))
+  | byteLength input < upsOverheadLength =
       Left (InputTooShort LabelUPS (RequiredLength upsOverheadLength) (ActualLength (byteLength input)))
   | otherwise = do
-      -- Validate patch CRC
-      let inputLength    = ByteString.length input
-          crcLength      = lengthToInt upsCRC32Length
-          footerLength   = lengthToInt upsFooterLength
-          overheadLength = lengthToInt upsOverheadLength
-          magicLength    = lengthToInt upsMagicLength
-          storedPatchCRC = CRC32 (getWord32LE (inputLength - crcLength) input)
-          actualPatchCRC = crc32 (ByteString.take (inputLength - crcLength) input)
+      -- The patch CRC covers everything except itself
+      let (patchCRCCoverage, storedPatchCRCBytes) = splitSuffixOfLength upsCRC32Length input
+          storedPatchCRC = CRC32 (getWord32LE 0 storedPatchCRCBytes)
+          actualPatchCRC = crc32 patchCRCCoverage
       when (storedPatchCRC /= actualPatchCRC) $
         Left (PatchCRCMismatch LabelUPS (ExpectedCRC32 storedPatchCRC) (ActualCRC32 actualPatchCRC))
-      let sourceCRC = CRC32 (getWord32LE (inputLength - footerLength) input)
-          targetCRC = CRC32 (getWord32LE (inputLength - 2 * crcLength) input)
+      -- The footer is three CRC32s: source, target, patch
+      let (bodyWithMagic, footerBytes) = splitSuffixOfLength upsFooterLength input
+          sourceCRC = CRC32 (getWord32LE 0 footerBytes)
+          targetCRC = CRC32 (getWord32LE 4 footerBytes)
           -- Parse body between magic and footer
-          bodyBytes = ByteString.take (inputLength - overheadLength) (ByteString.drop magicLength input)
+          bodyBytes = dropLength upsMagicLength bodyWithMagic
       body <- runFormatParser LabelUPS parseUPSBody bodyBytes
       when (unFileSize (upsBodySourceSize body) < 0) $
         Left (NegativeSize LabelUPS FieldSourceSize
@@ -65,6 +62,8 @@ parseUPS (PatchFileContents input)
           , upsPatchCRC   = storedPatchCRC
           }
         [])
+  where
+    actualMagicBytes = takeLength upsMagicLength input
 
 parseUPSBody :: ByteParser UPSBody
 parseUPSBody = do

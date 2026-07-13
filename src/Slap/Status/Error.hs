@@ -28,7 +28,7 @@ import Slap.MetadataField (MetadataField)
 import Slap.Narrow (NarrowingFailure)
 import Slap.PatchField (PatchField)
 import Slap.PlatformType (CarriedRomType, RequestedRomType)
-import Slap.Status.Advisory (SlapAdvisory)
+import Slap.Status.Advisory (VerificationMismatch)
 import Slap.Status.ApplyError (ApplyError)
 import Slap.Status.ByteParserError (ByteParserError)
 import Slap.Status.Decompression (DecompressionFailure, XDelta1DiffCause, BSDiffDifferCause, GDIFFDiffCause)
@@ -349,11 +349,9 @@ data SlapError
   -- Only fires when the user opted into 'Slap.IPS.Types.RequireSMCShapedTruncation'.
   | TruncationViolatesSMCShape !FileSize
 
-  -- | A verification mismatch the user did not @--no-verify@ away, so it is fatal rather than advisory.
-  -- That the payload is one of 'Slap.Status.VerificationCRCMismatch', 'Slap.Status.VerificationHashMismatch',
-  -- 'Slap.Status.VerificationAdler32Mismatch', or 'Slap.Status.VerificationFileSizeMismatch'
-  -- is a documented invariant, not a type-level one.
-  | VerificationFatal SlapAdvisory
+  -- | A verification mismatch the user did not @--no-verify@ away, so it refuses the run rather than riding as a warning.
+  -- Only fatal-class mismatches are promoted here, per 'Slap.Verify.mismatchClass'.
+  | VerificationFatal VerificationMismatch
 
   deriving (Show, Eq)
 

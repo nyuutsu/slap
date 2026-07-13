@@ -5,21 +5,20 @@
 module Slap.PPF1.Apply (applyPPF1) where
 
 import Slap.PPF1.Types (PPF1Patch(..), PPF1Record(..))
-import Slap.Binary (copyRegion, fillNewBuffer)
+import Slap.Binary (copyRegion, fillNewBuffer, fillRegion)
 import Slap.Status (SlapError(..), SlapAdvisory(..), ApplyError(..),
                     Outcome(..), noAdvisories)
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (lengthToInt, Offset(..), FileSize(..),
+import Slap.Measure (Offset(..), FileSize(..),
                      ActionIndex,
                      RequestedLength(..), RemainingLength(..),
                      fitsWithin, remainingFromOffset, minLength,
                      advance, byteLength, distance, offsetToFileSize,
-                     firstAction, nextAction, plusOffset)
+                     firstAction, nextAction)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import qualified Data.ByteString as ByteString
 import Control.Monad (when)
-import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (Ptr)
 import Data.Word (Word8)
 import System.IO.Unsafe (unsafePerformIO)
@@ -34,9 +33,7 @@ applyPPF1 patch (InputFileContents source)
       (result, maybeErr) <- fillNewBuffer outputFileSize $ \outputPointer -> do
         copyRegion outputPointer (Offset 0) source (Offset 0) initialCopyLength
         when (outputEnd > sourceEnd) $
-          fillBytes (plusOffset outputPointer sourceEnd)
-                    (0 :: Word8)
-                    (lengthToInt (distance sourceEnd outputEnd))
+          fillRegion outputPointer sourceEnd 0x00 (distance sourceEnd outputEnd)
         applyRecordStream outputPointer firstAction (ppf1Records patch)
       pure $ case maybeErr of
         Just applyErr -> Left (ApplyFailed LabelPPF1 applyErr)

@@ -5,10 +5,10 @@ module Slap.NINJA2.Apply
 import Slap.NINJA2.Types
 import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Binary (copyRegion, fillNewBuffer)
-import Slap.Measure (fileSizeToInt, offsetToInt, Offset(..), Length(..), FileSize(..),
+import Slap.Binary (copyRegion, fillNewBuffer, seedBufferFromSource)
+import Slap.Measure (Offset(..), Length, FileSize(..),
                      ActionIndex, RequestedLength(..),
-                     byteLength, fitsWithin,
+                     byteFileSize, byteLength, fileSizeToOffset, fitsWithin, plusOffset,
                      firstAction, nextAction, streamEndIndex)
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
@@ -17,9 +17,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Bits (xor)
 import Data.Word (Word8)
-import Control.Monad (when)
-import Foreign.Marshal.Utils (fillBytes)
-import Foreign.Ptr (Ptr, plusPtr)
+import Foreign.Ptr (Ptr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -37,7 +35,7 @@ import System.IO.Unsafe (unsafePerformIO)
 -- So an OOB on the append shows up one index past the last record, unambiguous against an OOB on a specific record.
 applyNINJA2 :: NINJA2Patch -> InputFileContents -> Either SlapError OutputFileContents
 applyNINJA2 patch (InputFileContents source)
-  | outputLength < 0 =
+  | outputFileSize < FileSize 0 =
       Left (NegativeTargetSize LabelNINJA2 outputFileSize)
   | otherwise = unsafePerformIO $ do
       (result, maybeErr) <- fillNewBuffer outputFileSize runApply
@@ -45,24 +43,9 @@ applyNINJA2 patch (InputFileContents source)
         Just applyErr -> Left (ApplyFailed LabelNINJA2 applyErr)
         Nothing       -> Right (OutputFileContents result)
   where
-    sourceLength   = ByteString.length source
-    outputLength   = case ninja2OpenNewFile patch of
-      Just openNewFile -> fileSizeToInt (openNewFileTargetSize openNewFile)
-      Nothing          -> sourceLength
-    outputFileSize = FileSize (fromIntegral outputLength)
+    outputFileSize = maybe (byteFileSize source) openNewFileTargetSize (ninja2OpenNewFile patch)
     records        = ninja2Records patch
     overflowActionIndex = streamEndIndex records
-
-    -- | Seed the buffer with the source bytes (clipped at the output
-    -- length, in case the patch is shrinking) and zero-fill any tail
-    -- past the source.
-    seedBuffer :: Ptr Word8 -> IO ()
-    seedBuffer outputPointer = do
-      copyRegion outputPointer (Offset 0) source (Offset 0) (Length (fromIntegral (min sourceLength outputLength)))
-      when (outputLength > sourceLength) $
-        fillBytes (outputPointer `plusPtr` sourceLength)
-                  (0 :: Word8)
-                  (outputLength - sourceLength)
 
     -- | Per-record guard: the XOR record's write region must fit
     -- within the output buffer. Reports the record's start offset
@@ -88,7 +71,7 @@ applyNINJA2 patch (InputFileContents source)
         writeRemainingBytes 0
       where
         recordLength = ByteString.length xorPayload
-        writeBase    = outputPointer `plusPtr` offsetToInt writePosition
+        writeBase    = outputPointer `plusOffset` writePosition
         writeRemainingBytes !byteOffset
           | byteOffset >= recordLength = pure ()
           | otherwise = do
@@ -110,15 +93,15 @@ applyNINJA2 patch (InputFileContents source)
           applyRecords outputPointer (nextAction actionIndex) remainingRecords
 
     -- | Append-mode overflow: the payload is XOR'd with @0xFF@ on disk and written at the source-size boundary
-    -- (or at 'sourceLength' if 'OPEN_NEW_FILE' is absent).
+    -- (or at the source's own size if 'OPEN_NEW_FILE' is absent).
     -- Truncate-mode overflow is a no-op here; see the function-level comment for why.
     applyOverflowAppend :: Ptr Word8 -> IO (Maybe ApplyError)
     applyOverflowAppend outputPointer =
       case (ninja2OverflowType patch, ninja2Overflow patch) of
         (Just OverflowAppend, Just overflow) ->
-          let appendPosition = Offset $ case ninja2OpenNewFile patch of
-                Just openNewFile -> unFileSize (openNewFileSourceSize openNewFile)
-                Nothing          -> fromIntegral sourceLength
+          let appendPosition = fileSizeToOffset $ case ninja2OpenNewFile patch of
+                Just openNewFile -> openNewFileSourceSize openNewFile
+                Nothing          -> byteFileSize source
               decoded        = ByteString.map (xor 0xFF) overflow
               decodedLength  = byteLength decoded
           in case checkRecordFits overflowActionIndex appendPosition decodedLength of
@@ -130,5 +113,5 @@ applyNINJA2 patch (InputFileContents source)
         _ -> pure Nothing
 
     runApply outputPointer = do
-      seedBuffer outputPointer
+      seedBufferFromSource outputPointer outputFileSize source
       applyRecords outputPointer firstAction records

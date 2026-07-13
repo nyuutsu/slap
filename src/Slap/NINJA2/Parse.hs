@@ -16,7 +16,8 @@ import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runFormatParser, flattenParse, throwByteParserError,
                         getByte, getBytes, atEnd)
-import Slap.Measure (offsetToInt, lengthToInt, Length(..), Offset, offsetFromParsed, FileSize(..),
+import Slap.Binary (viewBytesInRange)
+import Slap.Measure (Length(..), Offset, offsetFromParsed, FileSize(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      RawFlagByte(..),
                      ActionIndex, firstAction, nextAction,
@@ -95,9 +96,7 @@ parseFixedHeader metadataEncoding textMode input =
     extractField :: FieldName -> Offset -> Length
                  -> (Maybe EncodedText, [SlapAdvisory])
     extractField fieldName fieldOffset fieldWidth =
-      let dropCount = offsetToInt fieldOffset
-          takeCount = lengthToInt fieldWidth
-          fieldBytes = ByteString.take takeCount (ByteString.drop dropCount input)
+      let fieldBytes = viewBytesInRange fieldOffset fieldWidth input
           (content, advisories) =
             decodeFixedWidthTextField effectiveEncoding LabelNINJA2 fieldName fieldBytes
       -- An empty field stores no value, but what the decode noticed still stands — content behind a leading NUL, say.

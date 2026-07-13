@@ -9,14 +9,14 @@ module Slap.NINJA1.Create
   ) where
 
 import Slap.NINJA1.Types (NINJA1RomType(..), NINJA1Compression(..), fromNINJA1RomType)
-import Slap.Binary (putWord32BE)
+import Slap.Binary (byteAtOffset, putWord32BE)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.Status (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Delta(..), Cursor(..), Offset(..),
+import Slap.Measure (Delta(..), Cursor(..), Offset(..), Length(..),
                      Hunk(..),
                      SplitHunk, splitOffset, splitPayload,
-                     SentinelOffset(..), offsetToInt)
+                     SentinelOffset(..), byteFileSize, fitsWithin)
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
 import Slap.Compression.Stream (zlibDeflate)
 
@@ -54,7 +54,7 @@ encodeRecordBuilder :: EncodedHunk -> Builder
 encodeRecordBuilder ehunk =
     let recordOffset  = encodedOffset ehunk
         recordPayload = encodedPayload ehunk
-        offsetEncoded = encodeBigEndian (fromIntegral (unOffset recordOffset) :: Int64)
+        offsetEncoded = encodeBigEndian (unOffset recordOffset)
         lengthEncoded = encodeBigEndian (fromIntegral (ByteString.length recordPayload) :: Int64)
     in word8 (fromIntegral (ByteString.length offsetEncoded))
        <> byteString offsetEncoded
@@ -137,20 +137,17 @@ resolveSentinelCollisions label sentinel (InputFileContents source) =
   traverse resolveOne
   where
     SentinelOffset sentinelPosition = sentinel
-    sourceLength                    = ByteString.length source
 
     resolveOne record
       | recordOffset /= sentinelPosition = Right (Hunk recordOffset recordPayload)
-      | offsetToInt recordOffset > 0
-      , offsetToInt recordOffset - 1 < sourceLength =
-          let precedingByteIndex = offsetToInt recordOffset - 1
-              precedingByte      =
-                ByteString.index source precedingByteIndex
-              extendedPayload    =
-                ByteString.cons precedingByte recordPayload
-          in Right (Hunk (displace recordOffset (Delta (-1))) extendedPayload)
+      | recordOffset > Offset 0
+      , fitsWithin precedingByteOffset (Length 1) (byteFileSize source) =
+          let precedingByte   = byteAtOffset precedingByteOffset source
+              extendedPayload = ByteString.cons precedingByte recordPayload
+          in Right (Hunk precedingByteOffset extendedPayload)
       | otherwise =
           Left (SentinelCollisionUnfixable label sentinel)
       where
-        recordOffset  = splitOffset record
-        recordPayload = splitPayload record
+        recordOffset        = splitOffset record
+        recordPayload       = splitPayload record
+        precedingByteOffset = displace recordOffset (Delta (-1))

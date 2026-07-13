@@ -3,6 +3,7 @@
 -- | Where a 'SlapAdvisory' becomes the words the user reads.
 module Slap.Status.Render.Advisory
   ( renderSlapAdvisory
+  , renderVerificationMismatch
   , plural
   ) where
 
@@ -19,7 +20,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..), ActionIndex(unActionI
                      SubstitutionCount(..))
 import Slap.PatchField (fieldName)
 import Slap.PlatformType (PlatformType(..), platformName)
-import Slap.Status.Advisory (SlapAdvisory(..), BPSMetadataDivergence(..))
+import Slap.Status.Advisory (SlapAdvisory(..), VerificationMismatch(..), BPSMetadataDivergence(..))
 import Slap.Status.Vocabulary (emptyUnitLabel, renderDroppedValue, directionVerb,
                                verificationSideLabel, hashAlgorithmLabel, declaredCheckKindNoun,
                                OverlapCount(..), ClippedRecordCount(..), OOBBlockCount(..),
@@ -319,10 +320,6 @@ renderSlapAdvisory (UNIFContainerNotRebuilt label (ExpectedSize containerTotal) 
   <> renderAsText (unFileSize patchedLength)
   <> "; the output is the merged data, not a UNIF file"
 
-renderSlapAdvisory APSN64ImageFormatMismatch =
-  formatLabelName LabelAPSN64 <> ": the source ROM's byte order does not match"
-  <> " the image format this patch was built for (V64 vs Z64)"
-
 renderSlapAdvisory APSN64Type1HeaderDropped =
   formatLabelName LabelAPSN64 <> ": Type-1 N64 header (image format, cart ID,"
   <> " country, CRC) is not carried into the converted patch"
@@ -342,39 +339,48 @@ renderSlapAdvisory (SubformatConverted conversion) = case conversion of
   NINJA1CompressedTextToCompressedBinary   ->
     formatLabelName LabelNINJA1 <> " text (TZ) converted to compressed binary (BZ)"
 
-renderSlapAdvisory (VerificationCRCMismatch side (ExpectedCRC32 expected) (ActualCRC32 actual)) =
-  verificationSideLabel side <> " CRC mismatch (expected 0x"
-  <> showCRC32 expected <> ", got 0x" <> showCRC32 actual <> ")"
-
-renderSlapAdvisory (VerificationHashMismatch side algorithm) =
-  verificationSideLabel side <> " " <> hashAlgorithmLabel algorithm <> " mismatch"
-
-renderSlapAdvisory (VerificationAdler32Mismatch windowOffset (ExpectedAdler32 expected) (ActualAdler32 actual)) =
-  "Adler32 mismatch at window 0x" <> padHex 8 (unOffset windowOffset)
-  <> " (expected 0x" <> showAdler32 expected
-  <> ", got 0x" <> showAdler32 actual <> ")"
-
-renderSlapAdvisory (VerificationFileSizeMismatch side (ExpectedSize expectedSize) (ActualSize actualSize)) =
-  verificationSideLabel side <> " file size mismatch (expected "
-  <> renderAsText (unFileSize expectedSize) <> " bytes, got "
-  <> renderAsText (unFileSize actualSize) <> " bytes)"
-
-renderSlapAdvisory (VerificationBlockCRC16Mismatch side blockOffset) =
-  verificationSideLabel side <> " CRC16 mismatch at 0x" <> padHex 8 (unOffset blockOffset)
-
-renderSlapAdvisory (VerificationPPFBlockMismatch blockOffset) =
-  "validation block mismatch at 0x" <> padHex 8 (unOffset blockOffset)
-
-renderSlapAdvisory (VerificationFileSizeAdvisory (ExpectedSize expectedSize) (ActualSize actualSize)) =
-  "file size mismatch (expected " <> renderAsText (unFileSize expectedSize)
-  <> ", got " <> renderAsText (unFileSize actualSize) <> ")"
-
-renderSlapAdvisory (VerificationSourceBytesMismatch (ByteCheckLabel label) checkOffset) =
-  label <> " mismatch at 0x" <> padHex 8 (unOffset checkOffset)
+renderSlapAdvisory (DeclaredCheckMismatched mismatch) = renderVerificationMismatch mismatch
 
 renderSlapAdvisory (VerificationOptedOutByCreator label) =
   formatLabelName label
     <> ": creator opted out of verification (--omit-verification); slap cannot attest the output matches the creator's intent"
+
+-- | The words a mismatch speaks — shared by the 'DeclaredCheckMismatched' warnings and the 'Slap.Status.VerificationFatal' refusal.
+renderVerificationMismatch :: VerificationMismatch -> Text
+
+renderVerificationMismatch (VerificationCRCMismatch side (ExpectedCRC32 expected) (ActualCRC32 actual)) =
+  verificationSideLabel side <> " CRC mismatch (expected 0x"
+  <> showCRC32 expected <> ", got 0x" <> showCRC32 actual <> ")"
+
+renderVerificationMismatch (VerificationHashMismatch side algorithm) =
+  verificationSideLabel side <> " " <> hashAlgorithmLabel algorithm <> " mismatch"
+
+renderVerificationMismatch (VerificationAdler32Mismatch windowOffset (ExpectedAdler32 expected) (ActualAdler32 actual)) =
+  "Adler32 mismatch at window 0x" <> padHex 8 (unOffset windowOffset)
+  <> " (expected 0x" <> showAdler32 expected
+  <> ", got 0x" <> showAdler32 actual <> ")"
+
+renderVerificationMismatch (VerificationFileSizeMismatch side (ExpectedSize expectedSize) (ActualSize actualSize)) =
+  verificationSideLabel side <> " file size mismatch (expected "
+  <> renderAsText (unFileSize expectedSize) <> " bytes, got "
+  <> renderAsText (unFileSize actualSize) <> " bytes)"
+
+renderVerificationMismatch (VerificationBlockCRC16Mismatch side blockOffset) =
+  verificationSideLabel side <> " CRC16 mismatch at 0x" <> padHex 8 (unOffset blockOffset)
+
+renderVerificationMismatch (VerificationPPFBlockMismatch blockOffset) =
+  "validation block mismatch at 0x" <> padHex 8 (unOffset blockOffset)
+
+renderVerificationMismatch (VerificationFileSizeAdvisory (ExpectedSize expectedSize) (ActualSize actualSize)) =
+  "file size mismatch (expected " <> renderAsText (unFileSize expectedSize)
+  <> ", got " <> renderAsText (unFileSize actualSize) <> ")"
+
+renderVerificationMismatch (VerificationSourceBytesMismatch (ByteCheckLabel label) checkOffset) =
+  label <> " mismatch at 0x" <> padHex 8 (unOffset checkOffset)
+
+renderVerificationMismatch APSN64ImageFormatMismatch =
+  formatLabelName LabelAPSN64 <> ": the source ROM's byte order does not match"
+  <> " the image format this patch was built for (V64 vs Z64)"
 
 -- | Choose the singular or plural label for a count. Call sites carry any leading space inside the two label strings.
 plural :: (Eq count, Num count) => count -> Text -> Text -> Text

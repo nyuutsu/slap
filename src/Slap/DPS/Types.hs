@@ -41,8 +41,8 @@ import Data.Word (Word8, Word32)
 import Slap.Status (SlapError(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (lengthToInt, Offset(..), Length(..), FileSize(..), FoundVersion(..),
-                     advance, byteLength, offsetToFileSize)
+import Slap.Measure (Offset(..), Length(..), FileSize(..), FoundVersion(..),
+                     advance, byteLength, lengthToOffset, offsetToFileSize)
 import Slap.Narrow (narrowToWord32)
 import Slap.Text (EncodedText)
 
@@ -179,20 +179,20 @@ dpsFieldCount :: Int
 dpsFieldCount = 3
 
 -- | Total metadata size: 3 × 64 = 192 bytes.
-dpsMetadataSize :: Int
-dpsMetadataSize = dpsFieldCount * lengthToInt dpsFieldWidth
+dpsMetadataSize :: Length
+dpsMetadataSize = mconcat (replicate dpsFieldCount dpsFieldWidth)
 
 -- | Minimum valid DPS file: 192 (metadata) + 1 (flag) + 1 (version) + 4 (orig size).
-dpsMinimumFileSize :: Int
-dpsMinimumFileSize = dpsMetadataSize + 6
+dpsMinimumFileSize :: Length
+dpsMinimumFileSize = dpsMetadataSize <> Length 6
 
 -- | Byte offset of the version field (0-indexed).
-dpsVersionOffset :: Int
-dpsVersionOffset = dpsMetadataSize + 1
+dpsVersionOffset :: Offset
+dpsVersionOffset = lengthToOffset (dpsMetadataSize <> Length 1)
 
 -- | Byte offset of the stability flag (0-indexed).
-dpsStabilityOffset :: Int
-dpsStabilityOffset = dpsMetadataSize
+dpsStabilityOffset :: Offset
+dpsStabilityOffset = lengthToOffset dpsMetadataSize
 
 -- | Mode byte for CopyFromROM records.
 dpsCopyFromROMMode :: Word8

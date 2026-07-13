@@ -12,6 +12,8 @@ import Slap.Status (SlapError(..), ByteParserError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Text (EncodingName(EncodingUtf8))
 import Slap.FileContents (PatchFileContents(..))
+import Slap.Binary (replicateLength)
+import Slap.Measure (Length(..), byteLength)
 
 import qualified Data.ByteString as ByteString
 import Test.Tasty
@@ -28,30 +30,30 @@ detectionTests = testGroup "DPS Detection"
 -- | Valid DPS with zero records: 198 bytes, correct version and stability.
 test_isDPSValidZeroRecords :: IO ()
 test_isDPSValidZeroRecords = do
-  let metadata = ByteString.replicate DPS.dpsMetadataSize 0    -- 192 bytes of nulls
+  let metadata = replicateLength DPS.dpsMetadataSize 0    -- 192 bytes of nulls
       stabilityByte = ByteString.singleton 0                    -- stable
       versionByte = ByteString.singleton 1                      -- DPSVersion1
       originalSize = ByteString.pack [0x00, 0x00, 0x00, 0x00]  -- 4 bytes LE
       input = metadata <> stabilityByte <> versionByte <> originalSize
-  assertEqual "input length" DPS.dpsMinimumFileSize (ByteString.length input)
+  assertEqual "input length" DPS.dpsMinimumFileSize (byteLength input)
   assertBool "isDPS returns True" (DPS.isDPS input)
 
 -- | Valid header but first record byte is an invalid mode (2).
 test_isDPSInvalidRecordMode :: IO ()
 test_isDPSInvalidRecordMode = do
-  let metadata = ByteString.replicate DPS.dpsMetadataSize 0
+  let metadata = replicateLength DPS.dpsMetadataSize 0
       stabilityByte = ByteString.singleton 0
       versionByte = ByteString.singleton 1
       originalSize = ByteString.pack [0x00, 0x00, 0x00, 0x00]
       invalidMode = ByteString.singleton 2  -- not 0 or 1
       input = metadata <> stabilityByte <> versionByte <> originalSize <> invalidMode
-  assertEqual "input length" (DPS.dpsMinimumFileSize + 1) (ByteString.length input)
+  assertEqual "input length" (DPS.dpsMinimumFileSize <> Length 1) (byteLength input)
   assertBool "isDPS returns False" (not (DPS.isDPS input))
 
 -- | 198 bytes of 'A': version byte at dpsVersionOffset is 0x41, not 1.
 test_isDPSPrintableAsciiNotDPS :: IO ()
 test_isDPSPrintableAsciiNotDPS = do
-  let input = ByteString.replicate DPS.dpsMinimumFileSize 0x41
+  let input = replicateLength DPS.dpsMinimumFileSize 0x41
   assertBool "isDPS returns False" (not (DPS.isDPS input))
 
 -- | The parse-side complement of 'test_isDPSInvalidRecordMode': a valid
@@ -62,7 +64,7 @@ test_isDPSPrintableAsciiNotDPS = do
 -- silently dropping the tail as a zero-record patch.
 test_parseDPSRejectsTrailingFragment :: IO ()
 test_parseDPSRejectsTrailingFragment = do
-  let metadata = ByteString.replicate DPS.dpsMetadataSize 0
+  let metadata = replicateLength DPS.dpsMetadataSize 0
       input = metadata
               <> ByteString.singleton 0            -- stability flag: stable
               <> ByteString.singleton 1            -- format version: 1

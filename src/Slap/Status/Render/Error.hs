@@ -39,7 +39,7 @@ import Slap.Status.Decompression (renderDecompressionFailure,
                                   SecondaryStreamGranularity(..),
                                   secondaryStreamGranularity, secondaryStreamPossessive)
 import Slap.Status.Error (SlapError(..), UnencodeabilityReason(..), SourceRequiredCause(..))
-import Slap.Status.Render.Advisory (renderSlapAdvisory, plural)
+import Slap.Status.Render.Advisory (renderVerificationMismatch, plural)
 import Slap.Status.VCDIFF (VCDIFFShapeViolation(..), VCDIFFCodeTableMalformation(..),
                            codeTableFieldName, codeTableTemplateKindPhrase, indicatorKindName,
                            vcdiffSectionName, ReservedBitsSet(..), VCDIFFOnDemandSection(..),
@@ -671,8 +671,8 @@ renderSlapError (TruncationViolatesSMCShape size) =
   <> " bytes does not satisfy (size & 0xFFF) == 0x200; "
   <> "the resulting IPS patch's truncation marker would be rejected by SNESTool"
 
-renderSlapError (VerificationFatal advisory) =
-  renderSlapAdvisory advisory <> "\n  use --no-verify to proceed anyway"
+renderSlapError (VerificationFatal mismatch) =
+  renderVerificationMismatch mismatch <> "\n  use --no-verify to proceed anyway"
 
 renderNarrowingFailure :: NarrowingFailure -> Text
 renderNarrowingFailure (OffsetExceedsBound label (ActualOffset actual) (MaxOffset maxOffset)) =

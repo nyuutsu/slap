@@ -108,7 +108,7 @@ import Slap.Status (CreateResult(..), Parsed(..), SlapError(..), Outcome(..),
                    SlapAdvisory(..), renderSlapError)
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (lengthToInt, Offset(..), Length(..), FileSize(..),
+import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      EncodingMethodByte(..), RawFlagByte(..),
                      Hunk(..), SentinelOffset(..),
                      OriginalLength(..), TruncatedLength(..),
@@ -2058,15 +2058,19 @@ genCopyLength :: Gen Length
 genCopyLength = oneof
   [ Length . fromIntegral <$> chooseInt (0,          0xFF)
   , Length . fromIntegral <$> chooseInt (0xFF + 1,   0xFFFF)
-  , Length . fromIntegral <$> chooseInt (0xFFFF + 1, lengthToInt GDIFF.maxSingleCommandLength)
+  , Length . fromIntegral <$> chooseInt (0xFFFF + 1, maxSingleCommandByteCount)
   , genCopyAboveThresholdLength
   ]
+
+-- | 'GDIFF.maxSingleCommandLength' as the 'Int' the 'chooseInt' generators want.
+maxSingleCommandByteCount :: Int
+maxSingleCommandByteCount = fromIntegral (unLength GDIFF.maxSingleCommandLength)
 
 -- | Lengths strictly larger than 'maxSingleCommandLength', forcing
 -- 'planCopy' to chunk.
 genCopyAboveThresholdLength :: Gen Length
 genCopyAboveThresholdLength = Length . fromIntegral <$>
-  chooseInt (lengthToInt GDIFF.maxSingleCommandLength + 1, 100 * lengthToInt GDIFF.maxSingleCommandLength)
+  chooseInt (maxSingleCommandByteCount + 1, 100 * maxSingleCommandByteCount)
 
 -- | Chunk lengths must sum to the requested length.
 prop_planCopyLengthSum :: Property
@@ -2701,7 +2705,7 @@ ninja2EncodingRoundTrips textMode =
 -- diverged from the bytes actually stored.
 ninja2FieldTruncationWarningReportsActualStoredLength :: Assertion
 ninja2FieldTruncationWarningReportsActualStoredLength =
-  let asciiPrefixLength       = lengthToInt NINJA2.ninja2DescriptionWidth - 3
+  let asciiPrefixLength       = fromIntegral (unLength NINJA2.ninja2DescriptionWidth) - 3
       asciiPrefix             = replicate asciiPrefixLength 'a'
       fourByteCodepoint       = '\x1F3AE'   -- 🎮 (U+1F3AE), encodes to 4 UTF-8 bytes
       descriptionText         = Text.pack (asciiPrefix ++ [fourByteCodepoint])

@@ -46,11 +46,11 @@ import qualified Data.ByteString.Char8 as ByteString8
 import Data.Char (isDigit)
 import Data.List (mapAccumL)
 
-import Slap.Binary (getWord16LE, getWord32LE,
+import Slap.Binary (getWord16LE, getWord32LE, dropLength, splitAtLength,
                     swapAdjacentBytePairs, deinterleaveSMDBlock)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.FormatLabel (FormatLabel)
-import Slap.Measure (Length(..), FileSize(..), byteLength, byteFileSize, lengthToInt,
+import Slap.Measure (Length(..), FileSize(..), byteLength, byteFileSize,
                      ActualSize(..), ExpectedSize(..))
 import Slap.PlatformType (PlatformType(..))
 import Slap.Status (SlapAdvisory(..), NormalizationStep(..),
@@ -227,23 +227,19 @@ procedureForPlatform _                = imageTakenAsIs
 
 stripHeaderKeeping :: NormalizationStep -> Length -> ByteString -> ProcedureOutcome
 stripHeaderKeeping step width image
-  | ByteString.length image < headerWidth =
+  | byteLength image < width =
       ProcedureOutcome image NothingToRestore [SkippedBecause ImageShorterThanItsHeader]
   | otherwise =
-      let (header, body) = ByteString.splitAt headerWidth image
+      let (header, body) = splitAtLength width image
       in ProcedureOutcome body (RestoreHeaderPrefix (StrippedHeader header)) [PerformedStep step]
-  where
-    headerWidth = lengthToInt width
 
 -- | Remove a header of the given width and let it go — the reference never restores these (copier and SmartCard-style headers).
 stripHeaderDropping :: NormalizationStep -> Length -> ByteString -> ProcedureOutcome
 stripHeaderDropping step width image
-  | ByteString.length image < headerWidth =
+  | byteLength image < width =
       ProcedureOutcome image NothingToRestore [SkippedBecause ImageShorterThanItsHeader]
   | otherwise =
-      ProcedureOutcome (ByteString.drop headerWidth image) NothingToRestore [PerformedStep step]
-  where
-    headerWidth = lengthToInt width
+      ProcedureOutcome (dropLength width image) NothingToRestore [PerformedStep step]
 
 -- | The @0xAA 0xBB@ marker at offset 8 that FFE-style copier headers carry; NES (FFE) and the Sega SMD header share it.
 copierMarkerPresentAtOffset8 :: ByteString -> Bool

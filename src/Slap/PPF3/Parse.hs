@@ -13,14 +13,14 @@ import Slap.PPF3.Types (PPF3Patch(..), PPF3Record(..),
                         ppf3ValidationSize,
                         ppf3FileIdLengthFieldWidth,
                         ppf3FileIdMarkerLength, ppf3FileIdFooterLength)
-import Slap.Binary (getWord16LE)
+import Slap.Binary (getWord16LE, dropLength, dropLengthFromEnd, splitSuffixOfLength)
 import Slap.Status (SlapError(..), SlapAdvisory, Parsed(..), ByteParserError(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runFormatParser, parseWhen, throwByteParserError,
                         getByte, getBytes, remaining, skip, int64LE)
-import Slap.Measure (lengthToInt, offsetFromParsed, Length(..), EncodingMethodByte(..),
+import Slap.Measure (offsetFromParsed, Length(..), EncodingMethodByte(..),
                      RawFlagByte(..),
                      ActionIndex,
                      RequiredLength(..), ActualLength(..), RemainingLength(..),
@@ -45,7 +45,7 @@ data PPF3ParsedHeader = PPF3ParsedHeader
 
 parsePPF3 :: EncodingName -> PatchFileContents -> Either SlapError (Parsed PPF3Patch)
 parsePPF3 metadataEncoding (PatchFileContents input)
-  | ByteString.length input < lengthToInt minimumPPF3ParseLength =
+  | byteLength input < minimumPPF3ParseLength =
       Left (InputTooShort LabelPPF3
               (RequiredLength minimumPPF3ParseLength)
               (ActualLength (byteLength input)))
@@ -153,28 +153,22 @@ data PPF3FileIdSplit = PPF3FileIdSplit
 -- as the whole post-header slice.
 splitFileIdTrailer :: EncodingName -> Length -> ByteString -> PPF3FileIdSplit
 splitFileIdTrailer metadataEncoding headerLength input
-  | inputLength < markerSize + lengthFieldSize = withoutTrailer
-  | trailerCandidate /= "@END_FILE_ID.DIZ"     = withoutTrailer
-  | dizContentStart < 0                         = withoutTrailer
+  | byteLength input < ppf3FileIdFooterLength <> ppf3FileIdLengthFieldWidth = withoutTrailer
+  | footerCandidate /= "@END_FILE_ID.DIZ"                                   = withoutTrailer
+  | dizContentLength > byteLength bytesBeforeFooter                         = withoutTrailer
   | otherwise = PPF3FileIdSplit
       { ppf3SplitFileId     = Just (ppf3FileIdFromParsed dizText)
-      , ppf3SplitRecordBody =
-          ByteString.take (ByteString.length recordBody - trailerSize) recordBody
+      , ppf3SplitRecordBody = dropLengthFromEnd trailerSize recordBody
       , ppf3SplitAdvisories = decodeLossAdvisories LabelPPF3 FieldFileIdDiz dizNotices
       }
   where
-    inputLength      = ByteString.length input
-    markerSize       = lengthToInt ppf3FileIdFooterLength
-    lengthFieldSize  = lengthToInt ppf3FileIdLengthFieldWidth
-    recordBody       = ByteString.drop (lengthToInt headerLength) input
-    withoutTrailer   = PPF3FileIdSplit Nothing recordBody []
+    recordBody     = dropLength headerLength input
+    withoutTrailer = PPF3FileIdSplit Nothing recordBody []
 
-    trailerCandidate = ByteString.take markerSize
-                         (ByteString.drop (inputLength - lengthFieldSize - markerSize) input)
-    dizContentLength = fromIntegral (getWord16LE (inputLength - lengthFieldSize) input)
-    dizContentStart  = inputLength - lengthFieldSize - markerSize - dizContentLength
-    (dizText, dizNotices) =
-      decodeTextLenient metadataEncoding
-        (ByteString.take dizContentLength (ByteString.drop dizContentStart input))
-    trailerSize = lengthToInt ppf3FileIdMarkerLength + dizContentLength
-                + lengthToInt ppf3FileIdFooterLength + lengthToInt ppf3FileIdLengthFieldWidth
+    (bytesBeforeLengthField, lengthFieldBytes) = splitSuffixOfLength ppf3FileIdLengthFieldWidth input
+    (bytesBeforeFooter, footerCandidate)       = splitSuffixOfLength ppf3FileIdFooterLength bytesBeforeLengthField
+    (_, dizContentBytes)                       = splitSuffixOfLength dizContentLength bytesBeforeFooter
+    dizContentLength      = Length (fromIntegral (getWord16LE 0 lengthFieldBytes))
+    (dizText, dizNotices) = decodeTextLenient metadataEncoding dizContentBytes
+    trailerSize = ppf3FileIdMarkerLength <> dizContentLength
+               <> ppf3FileIdFooterLength <> ppf3FileIdLengthFieldWidth

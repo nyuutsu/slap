@@ -72,12 +72,12 @@ import Slap.VCDIFF.AddressCache
   , selectCopyAddressMode, SelectedCopyAddress(..), CopyAddressOperand(..)
   , SameSlotByte(..) )
 import qualified Slap.VCDIFF.CodeTable as Table
-import Slap.Binary (putVcdiffVarint, viewBytesInRange)
+import Slap.Binary (putVcdiffVarint, viewBytesInRange, splitAtLength)
 import Slap.Checksum (Adler32(..))
 import Slap.FFI (adler32)
 import Slap.MetadataInclusion (VerificationInclusion(..))
 import Slap.Status (SlapError(..), CreateResult(..))
-import Slap.Measure (lengthToInt, Offset(..), Length(..), FileSize(..), byteLength, byteFileSize,
+import Slap.Measure (Offset(..), Length(..), FileSize(..), byteLength, byteFileSize,
                      Cursor(..), lengthToOffset,
                      SourceFileSize(..), TargetFileSize(..), MaxAddressableSize(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
@@ -612,7 +612,7 @@ encodeWindowBytes plannedWindow carriages = builderBytes windowBuilder
         <> case plannedSourcing plannedWindow of
              DrawsOn _origin segmentSpan ->
                   varintOfLength (segmentSpanLength segmentSpan)
-               <> putVcdiffVarint (fromIntegral (unOffset (segmentSpanPosition segmentSpan)))
+               <> putVcdiffVarint (unOffset (segmentSpanPosition segmentSpan))
              SelfContained -> mempty
 
     checksumBytes = case plannedChecksum plannedWindow of
@@ -734,7 +734,7 @@ windowSlicesForCovers target covers = pairFrom target (NonEmpty.toList covers)
   where
     pairFrom _ [] = []
     pairFrom remaining (cover : laterCovers) =
-      let (windowSlice, restOfTarget) = ByteString.splitAt (lengthToInt (coverOutputLength cover)) remaining
+      let (windowSlice, restOfTarget) = splitAtLength (coverOutputLength cover) remaining
       in (windowSlice, cover) : pairFrom restOfTarget laterCovers
 
 -- | The byte length a cover reconstructs. A cover spans its whole window with no gaps or overlaps,
@@ -1188,7 +1188,7 @@ frequencies items = Map.fromListWith (+) [ (item, 1) | item <- items ]
 
 -- | A 'Length' as a VCDIFF varint.
 varintOfLength :: Length -> Builder
-varintOfLength (Length n) = putVcdiffVarint (fromIntegral n)
+varintOfLength (Length byteCount) = putVcdiffVarint byteCount
 
 -- | Version byte: VCDIFF is at version 0 (RFC 3284 §4.1).
 version0 :: Word8

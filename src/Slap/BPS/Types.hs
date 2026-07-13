@@ -14,7 +14,6 @@ module Slap.BPS.Types
   , bpsMagicLength
   , bpsCRC32Length
   , bpsFooterLength
-  , bpsOverheadLength
   ) where
 
 import Data.Bits (shiftR, testBit)
@@ -80,10 +79,6 @@ bpsCRC32Length = Length 4
 -- | Length of the BPS footer: three CRC32 fields (source, target, patch).
 bpsFooterLength :: Length
 bpsFooterLength = bpsCRC32Length <> bpsCRC32Length <> bpsCRC32Length
-
--- | Everything past this overhead — sizes, metadata, the action stream — is the body.
-bpsOverheadLength :: Length
-bpsOverheadLength = bpsMagicLength <> bpsFooterLength
 
 -- | Decode a signed varint: bit 0 = sign (1 = negative), bits 1+ = magnitude.
 decodeSignedVarint :: Int64 -> Int64

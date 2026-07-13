@@ -16,11 +16,10 @@ import Slap.Display.Analysis
     )
 import Slap.Display.Common (InfoLine(..),
                      Tally(..), CountUnit(..), ByteCount(..), renderAsText)
-import Slap.Measure (lengthToInt, Length(..), FileSize(..), byteLength)
+import Slap.Measure (Length, FileSize(..), byteLength)
 import Slap.Text (EncodedText, encodedTextContent)
 
 import Data.Text (Text)
-import qualified Data.ByteString as ByteString
 import qualified Data.Text as Text
 
 ----------------------------------------------------------------------------
@@ -60,13 +59,14 @@ dpsMeta patch = concat
 analyzeDPS :: DPSPatch -> PatchAnalysis
 analyzeDPS patch = PatchAnalysis
   { analysisSections = [SectionRegions (map makeDPSRegion (dpsRecords patch))]
-  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes (Length (fromIntegral totalBytes)))))
+  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes totalBytes)))
   }
   where
     recordCount = length (dpsRecords patch)
-    totalBytes = sum (map recordBytes (dpsRecords patch))
-    recordBytes DPSEnclosedData { dpsDataPayload } = ByteString.length dpsDataPayload
-    recordBytes DPSCopyFromROM { dpsCopyLength }   = lengthToInt dpsCopyLength
+    totalBytes = foldMap recordBytes (dpsRecords patch)
+    recordBytes :: DPSRecord -> Length
+    recordBytes DPSEnclosedData { dpsDataPayload } = byteLength dpsDataPayload
+    recordBytes DPSCopyFromROM { dpsCopyLength }   = dpsCopyLength
 
 makeDPSRegion :: DPSRecord -> AnalysisRegion
 makeDPSRegion (DPSEnclosedData outputOffset payload) = AnalysisRegion

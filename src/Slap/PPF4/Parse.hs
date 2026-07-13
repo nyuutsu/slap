@@ -15,7 +15,7 @@ import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runFormatParser, throwByteParserError,
                         getByte, getBytes, skip, remaining, word32LE)
-import Slap.Measure (lengthToInt, offsetFromParsed, Length(..),
+import Slap.Measure (offsetFromParsed, Length(..),
                      EncodingMethodByte(..), RawFlagByte(..),
                      RequiredLength(..), ActualLength(..), RemainingLength(..),
                      ActionIndex, firstAction, nextAction,
@@ -45,7 +45,7 @@ data PPF4WireRecord
 
 parsePPF4 :: EncodingName -> PatchFileContents -> Either SlapError (Parsed PPF4Patch)
 parsePPF4 metadataEncoding (PatchFileContents input)
-  | ByteString.length input < lengthToInt minPPF4Length =
+  | byteLength input < minPPF4Length =
       Left (InputTooShort LabelPPF4
               (RequiredLength minPPF4Length)
               (ActualLength (byteLength input)))

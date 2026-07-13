@@ -1,20 +1,19 @@
 module Slap.PPF4.Apply (applyPPF4) where
 
 import Slap.PPF4.Types (PPF4Patch(..), PPF4Replace(..), PPF4Append(..))
-import Slap.Binary (copyRegion, fillNewBuffer)
+import Slap.Binary (copyRegion, fillNewBuffer, fillRegion)
 import Slap.Status (SlapError(..), ApplyError(..))
-import Slap.Measure (Offset(..), FileSize(..), lengthToInt,
+import Slap.Measure (Offset(..), FileSize(..),
                      ActionIndex,
                      RequestedLength(..), RemainingLength(..),
                      fitsWithin, remainingFromOffset, minLength,
                      advance, byteLength, distance, offsetToFileSize,
-                     firstAction, nextAction, plusOffset)
+                     firstAction, nextAction)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.FormatLabel (FormatLabel(LabelPPF4))
 
 import qualified Data.ByteString as ByteString
 import Control.Monad (when)
-import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (Ptr)
 import Data.Word (Word8)
 import System.IO.Unsafe (unsafePerformIO)
@@ -33,9 +32,7 @@ applyPPF4 patch (InputFileContents source)
       (result, finalOutcome) <- fillNewBuffer outputFileSize $ \outputPointer -> do
         copyRegion outputPointer (Offset 0) source (Offset 0) initialCopyLength
         when (outputEnd > sourceEnd) $
-          fillBytes (plusOffset outputPointer sourceEnd)
-                    (0 :: Word8)
-                    (lengthToInt (distance sourceEnd outputEnd))
+          fillRegion outputPointer sourceEnd 0x00 (distance sourceEnd outputEnd)
         replaceOutcome <- applyReplaces outputPointer firstAction (ppf4Replaces patch)
         -- First failure wins: a Replace-phase error short-circuits the
         -- Append phase, so an Append-phase failure on a buffer corrupted

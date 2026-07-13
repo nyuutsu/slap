@@ -24,7 +24,7 @@ import Slap.IPS.Types
   , offsetWidthByteCount
   )
 import Slap.JSON (parseEBPMetadata)
-import Slap.Binary (getWord24BE)
+import Slap.Binary (getWord24BE, takeLength, dropLength)
 import Slap.Status (SlapError(..), SlapAdvisory(..), Parsed(..), OverlapCount(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -41,7 +41,7 @@ import Slap.ByteParser
   , remaining
   )
 import Slap.Measure
-  (lengthToInt,  Offset(unOffset)
+  ( Offset(unOffset)
   , Length(..)
   , FileSize(..)
   , ActionIndex
@@ -83,7 +83,7 @@ import Data.Word (Word8)
 -- looked up via 'variantSpec'.
 parseIPS :: PatchFileContents -> Either SlapError (Parsed IPSParseResult)
 parseIPS (PatchFileContents inputBytes)
-  | ByteString.length inputBytes < lengthToInt ipsMagicLength =
+  | byteLength inputBytes < ipsMagicLength =
       Left (InputTooShort LabelIPS
               (RequiredLength ipsMagicLength)
               (ActualLength (byteLength inputBytes)))
@@ -95,11 +95,11 @@ parseIPS (PatchFileContents inputBytes)
       Left (BadMagic LabelIPS (ActualMagic leadingMagicBytes))
   where
     leadingMagicBytes =
-      ByteString.take (lengthToInt ipsMagicLength) inputBytes
+      takeLength ipsMagicLength inputBytes
 
     runVariantParser variant =
       let bodyAfterMagic =
-            ByteString.drop (lengthToInt ipsMagicLength) inputBytes
+            dropLength ipsMagicLength inputBytes
       in runFormatParser (labelForIPSVariant variant) (parseIPSBody variant) bodyAfterMagic
            >>= finalizeBodyShape variant
 
@@ -673,7 +673,7 @@ assembleCleanResult StandardIPS recordVector trailingBytes
                                }
         , ipsCleanAdvisories = []
         }
-  | ByteString.length trailingBytes == lengthToInt ipsTruncationMarkerLength =
+  | byteLength trailingBytes == ipsTruncationMarkerLength =
       let truncatedTargetSize =
             FileSize (fromIntegral (getWord24BE 0 trailingBytes))
       in Right IPSCleanResult

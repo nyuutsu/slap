@@ -28,7 +28,7 @@ module Slap.IPS.Create
   , optimalIPSRecords
   ) where
 
-import Slap.Binary (putWord16BE)
+import Slap.Binary (putWord16BE, byteAtOffset)
 import Slap.Status (SlapError(..))
 import Slap.FileContents
   ( PatchFileContents(..)
@@ -46,7 +46,9 @@ import Slap.IPS.Types
   )
 import Slap.Text (encodedTextContent)
 import Slap.Measure
-  (fileSizeToInt,  FileSize(..)
+  ( Offset(..)
+  , Length(..)
+  , FileSize(..)
   , Delta(..)
   , Cursor(..)
   , Hunk(..)
@@ -54,7 +56,11 @@ import Slap.Measure
   , splitOffset
   , splitPayload
   , SentinelOffset(..)
-  , offsetToInt
+  , byteLength
+  , byteFileSize
+  , distance
+  , lengthToOffset
+  , fitsWithin
   )
 import Slap.Narrow
   ( EncodedHunk
@@ -72,6 +78,7 @@ import Data.ByteString.Builder
   , word8
   )
 import qualified Data.ByteString.Lazy as LazyByteString
+import Data.Int (Int64)
 import Data.Maybe (listToMaybe)
 import Data.Word (Word8)
 import qualified Data.Aeson as Aeson
@@ -157,7 +164,7 @@ encodeEBPPatch records metadata =
 -- in step with the DP's break-even (@rleBreakEvenRunLength@ in 'Slap.IPS.Optimize').
 encodeIPSRecord :: OffsetWidth -> EncodedHunk -> Builder
 encodeIPSRecord offsetWidth ehunk =
-  encodeOffset offsetWidth (offsetToInt recordOffset)
+  encodeOffset offsetWidth (unOffset recordOffset)
   <> if shouldEncodeAsRLE recordPayload
        then runLengthEncodedBody
        else literalCopyBody
@@ -192,7 +199,7 @@ shouldEncodeAsRLE payload =
 -- only two cases — there is no fall-through default branch, so
 -- adding a new 'OffsetWidth' constructor in 'Slap.IPS.Types' would
 -- force a compile error here, which is exactly what we want.
-encodeOffset :: OffsetWidth -> Int -> Builder
+encodeOffset :: OffsetWidth -> Int64 -> Builder
 encodeOffset Offset24 offsetValue =
      word8 (fromIntegral (offsetValue `shiftR` 16))
   <> word8 (fromIntegral ((offsetValue `shiftR` 8) .&. 0xFF))
@@ -213,7 +220,7 @@ encodeOffset Offset32 offsetValue =
 -- field.
 encodeTruncationMarker :: OffsetWidth -> FileSize -> Builder
 encodeTruncationMarker offsetWidth truncatedSize =
-  encodeOffset offsetWidth (fileSizeToInt truncatedSize)
+  encodeOffset offsetWidth (unFileSize truncatedSize)
 
 -- | Resolve every record that sits on the variant's trailer
 -- sentinel. Two outcomes per record:
@@ -270,9 +277,7 @@ resolveSentinelCollisions label sentinel (InputFileContents source) records =
   traverse resolveOne records
   where
     SentinelOffset sentinelOffset = sentinel
-    sentinelPosition              = offsetToInt sentinelOffset
-    precedingPosition             = sentinelPosition - 1
-    sourceLength                  = ByteString.length source
+    precedingOffset               = displace sentinelOffset (Delta (-1))
 
     -- The byte the output is meant to hold at @sentinel - 1@: the one
     -- the shifted record must prepend. Computed once and shared, and
@@ -282,28 +287,27 @@ resolveSentinelCollisions label sentinel (InputFileContents source) records =
     -- if neither can, the collision is unfixable.
     outputByteBeforeSentinel :: Maybe Word8
     outputByteBeforeSentinel
-      | precedingPosition < 0 = Nothing
-      | otherwise = case lastRecordByteAt precedingPosition of
+      | sentinelOffset <= Offset 0 = Nothing
+      | otherwise = case lastRecordByteAt precedingOffset of
           Just covered -> Just covered
           Nothing
-            | precedingPosition < sourceLength ->
-                Just (ByteString.index source precedingPosition)
+            | fitsWithin precedingOffset (Length 1) (byteFileSize source) ->
+                Just (byteAtOffset precedingOffset source)
             | otherwise -> Nothing
 
-    -- The byte the last record (in wire order) covering @position@
-    -- writes there, if any record covers it.
-    lastRecordByteAt :: Int -> Maybe Word8
+    -- The byte the last record (in wire order) covering @position@ writes there, if any record covers it.
+    lastRecordByteAt :: Offset -> Maybe Word8
     lastRecordByteAt position = listToMaybe
-      [ ByteString.index payload (position - recordStart)
+      [ byteAtOffset (lengthToOffset (distance recordStart position)) payload
       | record <- reverse records
-      , let recordStart = offsetToInt (splitOffset record)
+      , let recordStart = splitOffset record
             payload     = splitPayload record
       , recordStart <= position
-      , position < recordStart + ByteString.length payload
+      , position < advance recordStart (byteLength payload)
       ]
 
     resolveOne record
-      | offsetToInt recordOffset /= sentinelPosition =
+      | recordOffset /= sentinelOffset =
           Right (Hunk recordOffset recordPayload)
       | Just prependByte <- outputByteBeforeSentinel =
           Right (Hunk (displace recordOffset (Delta (-1)))

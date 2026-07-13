@@ -51,11 +51,10 @@ module Slap.Measure
   , rangeEndExclusive
   , rangeLastByte
     -- * Conversions
-  , offsetToInt
-  , fileSizeToInt
-  , lengthToInt
   , lengthToFileSize
   , lengthToOffset
+  , fileSizeToLength
+  , fileSizeToOffset
   , offsetToFileSize
   , offsetFromParsed
     -- * Seeking
@@ -381,17 +380,12 @@ instance Monoid Length where
 -- Conversions
 ----------------------------------------------------------------------------
 
--- | Narrow a measure to the 'Int' a 'ByteString' operation wants. Sound for a value already bounded
--- against a real in-memory buffer ('fitsWithin', 'remainingFromOffset'), whose extent fits 'Int'
--- because a 'ByteString''s length is one.
+-- Narrow a measure to the 'Int' a 'ByteString' operation wants — module-internal; the exported seam is 'Slap.Binary''s measure-typed vocabulary.
+-- Sound for a value already bounded against a real in-memory buffer, whose extent fits 'Int' because a 'ByteString''s length is one.
 offsetToInt :: Offset -> Int
 offsetToInt (Offset position) = fromIntegral position
 
--- | 'offsetToInt''s 'FileSize' sibling, with the same soundness condition.
-fileSizeToInt :: FileSize -> Int
-fileSizeToInt (FileSize size) = fromIntegral size
-
--- | 'offsetToInt''s 'Length' sibling, with the same soundness condition.
+-- 'offsetToInt''s 'Length' sibling, with the same soundness condition.
 lengthToInt :: Length -> Int
 lengthToInt (Length lengthValue) = fromIntegral lengthValue
 
@@ -400,6 +394,14 @@ lengthToFileSize (Length lengthValue) = FileSize lengthValue
 
 lengthToOffset :: Length -> Offset
 lengthToOffset (Length lengthValue) = Offset lengthValue
+
+-- | A whole space as a span: the inverse view of 'lengthToFileSize'.
+fileSizeToLength :: FileSize -> Length
+fileSizeToLength (FileSize size) = Length size
+
+-- | A whole space as the position one past its last byte — the boundary where appended content starts.
+fileSizeToOffset :: FileSize -> Offset
+fileSizeToOffset (FileSize size) = Offset size
 
 -- | An 'Offset' as a 'FileSize': for a zero-indexed buffer with no gaps,
 -- the byte count is the cursor's position from the start (its last written byte sits one position before this 'Offset').
@@ -414,7 +416,7 @@ offsetToFileSize (Offset position) = FileSize position
 --
 -- Pure widening, no validation. A negative value is preserved as-is: PPF1/PPF2/PPF3/PPF4 carry signed offsets on the wire,
 -- and an out-of-range one is the apply layer's to reject (via 'Slap.Status.ApplyNegativeRecordOffset'),
--- not the parser's to pre-empt. The 'Integral' constraint lets one builder serve every wire width.
+-- not the parser's to pre-empt.
 offsetFromParsed :: Integral a => a -> Offset
 offsetFromParsed = Offset . fromIntegral
 
@@ -430,15 +432,11 @@ seekTo handle targetOffset =
 -- Cursor typeclass
 ----------------------------------------------------------------------------
 
--- | Buffer cursors that support position arithmetic. 'Offset' is
--- the everyday case (forward-walking; non-negative by convention).
--- 'SignedOffset' carries the potentially-negative result of BPS
--- apply's relative-delta arithmetic from the displace site to the
--- validity check at the read site. Per the BPS spec, a negative
--- cursor means the patch is invalid; slap detects this at apply
--- time via 'examineSignedOffset', per the wire-vs-semantic-
--- invalidity doctrine in @questions.md@. Currently only BPS apply
--- uses the 'SignedOffset' instance.
+-- | Buffer cursors that support position arithmetic.
+-- 'Offset' is the everyday case (forward-walking; non-negative by convention);
+-- 'SignedOffset' carries BPS apply's may-be-negative displace results to the read-site check ('examineSignedOffset');
+-- 'Position' is the 'ByteString' parse cursor, whose strides narrow into 'Int' —
+-- sound once the parser's room check has proven the advance fits its buffer.
 class Cursor cursor where
   advance  :: cursor -> Length -> cursor
   displace :: cursor -> Delta  -> cursor
@@ -454,6 +452,12 @@ instance Cursor SignedOffset where
     SignedOffset (position + stride)
   displace (SignedOffset position) (Delta displacement) =
     SignedOffset (position + displacement)
+
+instance Cursor Position where
+  advance  (Position cursorPosition) (Length stride) =
+    Position (cursorPosition + fromIntegral stride)
+  displace (Position cursorPosition) (Delta displacement) =
+    Position (cursorPosition + fromIntegral displacement)
 
 instance Cursor ReadOffset where
   advance  (ReadOffset position) stride = ReadOffset (advance  position stride)
@@ -566,12 +570,10 @@ plusOffset pointer position = pointer `plusPtr` offsetToInt position
 -- Arithmetic
 ----------------------------------------------------------------------------
 
--- | The 'Length' from the start 'Offset' to the end 'Offset':
--- @end - start@. Assumes @startOffset '<=' endOffset@ and raises
--- 'error' otherwise — call sites that span a forward walk
--- ('findRegionEnd', record-stream order, sorted seed positions) have
--- this ordering. The argument order mirrors the
--- typical reading "the distance /from/ start /to/ end."
+-- | The 'Length' from the start 'Offset' to the end 'Offset': @end - start@.
+-- Assumes @startOffset '<=' endOffset@ and raises 'error' otherwise;
+-- every call site owes that ordering a proof — a forward walk, a preceding guard, or an upstream invariant.
+-- The argument order mirrors the typical reading "the distance /from/ start /to/ end."
 distance :: Offset -> Offset -> Length
 distance (Offset startOffset) (Offset endOffset)
   | startOffset <= endOffset = Length (endOffset - startOffset)
@@ -583,15 +585,10 @@ distance (Offset startOffset) (Offset endOffset)
 -- lie entirely within a space of @totalSize@ bytes? The bounds check
 -- every apply and parse walk leans on before a read or a write.
 --
--- Total over the whole 'Int64' range. slap carries offsets and sizes as a signed 'Int64',
--- and several formats decode wire fields wide enough — a 63-bit PPF3 offset, a byuu or VCDIFF varint,
--- a bsdiff sign-magnitude length — to seat a near-'maxBound' value here.
--- A plain @regionStart + regionLength <= totalSize@ would then overflow the carrier
--- and wrap to a negative sum that falsely reports "fits", which is the gap an out-of-bounds access slips through.
--- So the test never adds: each clause is a comparison, and the @totalSize - regionStart@ subtraction
--- is reached only once @0 <= regionStart <= totalSize@ holds, so it cannot underflow either.
--- A negative @regionStart@ or @regionLength@ — a malformed wire value that was never a real position or length —
--- answers "does not fit" rather than being summed into a wrong verdict.
+-- The test never adds: a wire field can be as wide as the carrier — PPF3's offset is a signed 64-bit —
+-- so @regionStart + regionLength <= totalSize@ could wrap 'Int64' into a negative sum that falsely reports "fits".
+-- Each clause is a comparison, and the @totalSize - regionStart@ subtraction is reached only once @0 <= regionStart <= totalSize@ holds,
+-- so it cannot underflow either.
 fitsWithin :: Offset -> Length -> FileSize -> Bool
 fitsWithin (Offset regionStart) (Length regionLength) (FileSize totalSize) =
      regionStart  >= 0
@@ -602,15 +599,10 @@ fitsWithin (Offset regionStart) (Length regionLength) (FileSize totalSize) =
 -- | The exclusive end of a write of @regionLength@ bytes at @regionStart@ — @regionStart + regionLength@ —
 -- or 'Nothing' when that sum overflows the signed 'Int64' a position is carried in.
 --
--- This is the apply-side companion to 'fitsWithin': the same ceiling ('maxBound' :: 'Int64'),
--- met not by a bounds check but by /computing/ an extent that crosses it.
--- A format whose wire offset is as wide as the carrier — PPF3's signed 64-bit field —
--- can name a write whose end no 'Int64' can hold; the fold that sizes the output buffer
--- must answer "I cannot address that" rather than wrap into a too-small buffer.
--- A non-negative @regionLength@ added to a non-negative @regionStart@ can only land lower by wrapping,
--- so @end < regionStart@ detects the overflow exactly. A negative @regionStart@ cannot wrap a
--- non-negative length upward and so is not reported here — it is the apply walk's to reject
--- as the malformed position it is.
+-- The apply-side companion to 'fitsWithin', for the fold that sizes an output buffer and so must /compute/ an extent rather than test one.
+-- Here the sum is unavoidable, so the overflow is detected instead of avoided:
+-- a non-negative @regionLength@ added to a non-negative @regionStart@ can only land lower by wrapping,
+-- and @end < regionStart@ catches exactly that.
 boundedWriteEnd :: Offset -> Length -> Maybe Offset
 boundedWriteEnd (Offset regionStart) (Length regionLength)
   | end < regionStart = Nothing
@@ -641,7 +633,7 @@ hunkEnd hunk = advance (hunkOffset hunk) (byteLength (hunkPayload hunk))
 ----------------------------------------------------------------------------
 
 -- | Split a 'Hunk' into 'SplitHunk's whose payloads are each at most
--- @maxLength@ bytes. Offset advances by chunk length between
+-- @payloadBound@ bytes. Offset advances by chunk length between
 -- emissions. Empty payloads pass through as a single empty
 -- 'SplitHunk'; callers that want to drop empties must filter at their
 -- own level. A 'SplitHunk' is the type-level proof that the
@@ -649,17 +641,17 @@ hunkEnd hunk = advance (hunkOffset hunk) (byteLength (hunkPayload hunk))
 -- 'EncodedHunk', which can only be produced by narrowing a 'SplitHunk'
 -- in 'Slap.Narrow'.
 splitHunk :: Length -> Hunk -> [SplitHunk]
-splitHunk maxLength (Hunk startOffset payload)
-  | byteLength payload <= maxLength = [SplitHunk startOffset payload]
+splitHunk payloadBound (Hunk startOffset payload)
+  | byteLength payload <= payloadBound = [SplitHunk startOffset payload]
   | otherwise =
-      let (chunk, remaining) = ByteString.splitAt (lengthToInt maxLength) payload
-          nextOffset         = advance startOffset maxLength
-      in SplitHunk startOffset chunk : splitHunk maxLength (Hunk nextOffset remaining)
+      let (chunk, remaining) = ByteString.splitAt (lengthToInt payloadBound) payload
+          nextOffset         = advance startOffset payloadBound
+      in SplitHunk startOffset chunk : splitHunk payloadBound (Hunk nextOffset remaining)
 
 -- | Split a list of hunks so every emitted 'SplitHunk' carries a
--- payload of at most @maxLength@ bytes.
+-- payload of at most @payloadBound@ bytes.
 splitHunks :: Length -> [Hunk] -> [SplitHunk]
-splitHunks maxLength = concatMap (splitHunk maxLength)
+splitHunks payloadBound = concatMap (splitHunk payloadBound)
 
 -- | Split hunks with no per-record payload cap, for NINJA1: it encodes each length in as many bytes as the value needs.
 splitHunksUnbounded :: [Hunk] -> [SplitHunk]
@@ -671,12 +663,12 @@ splitHunksUnbounded = map (\h -> SplitHunk (hunkOffset h) (hunkPayload h))
 -- Empty payloads produce no output. When a piece extends past the
 -- source's end, the missing tail bytes are zero-padded.
 splitUndoHunks :: Length -> ByteString -> [Hunk] -> [SplitUndoHunk]
-splitUndoHunks maxLength source = concatMap pieces
+splitUndoHunks payloadBound source = concatMap pieces
   where
     sourceLength = ByteString.length source
     pieces h
       | ByteString.null (hunkPayload h) = []
-      | otherwise = map perPiece (splitHunk maxLength h)
+      | otherwise = map perPiece (splitHunk payloadBound h)
     perPiece piece =
       SplitUndoHunk
         (splitOffset piece)

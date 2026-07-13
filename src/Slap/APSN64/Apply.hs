@@ -5,20 +5,17 @@ module Slap.APSN64.Apply
 import Slap.APSN64.Types
 import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Binary (copyRegion, fillNewBuffer)
-import Slap.Measure (fileSizeToInt, Offset(..), Length(..),
+import Slap.Binary (copyRegion, fillNewBuffer, fillRegion, seedBufferFromSource)
+import Slap.Measure (Offset(..), Length(..),
                      ActionIndex, RequestedLength(..), RemainingLength(..),
-                     byteLength, offsetToInt, fitsWithin, remainingFromOffset,
+                     byteLength, fitsWithin, remainingFromOffset,
                      firstAction, nextAction)
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
-import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 import Data.Word (Word8)
-import Control.Monad (when)
-import Foreign.Marshal.Utils (fillBytes)
-import Foreign.Ptr (Ptr, plusPtr)
+import Foreign.Ptr (Ptr)
 import System.IO.Unsafe (unsafePerformIO)
 
 -- | Apply an APS-N64 patch. The output is sized to the header's destination-size field, matching the reference @n64aps@,
@@ -33,19 +30,7 @@ applyAPSN64 (APSN64Patch header records) (InputFileContents source) =
       Just applyErr -> Left (ApplyFailed LabelAPSN64 applyErr)
       Nothing       -> Right (OutputFileContents result)
   where
-    sourceLength   = ByteString.length source
     outputFileSize = apsN64DestinationSizeAsFileSize (apsN64DestinationSize header)
-    outputSize     = fileSizeToInt outputFileSize
-
-    -- | The initial buffer: the source bytes, clipped to the destination size when shrinking and zero-padded when growing.
-    seedBuffer :: Ptr Word8 -> IO ()
-    seedBuffer targetPointer = do
-      copyRegion targetPointer (Offset 0) source (Offset 0)
-                 (Length (fromIntegral (min sourceLength outputSize)))
-      when (outputSize > sourceLength) $
-        fillBytes (targetPointer `plusPtr` sourceLength)
-                  (0 :: Word8)
-                  (outputSize - sourceLength)
 
     checkWriteFitsTarget :: ActionIndex -> Offset -> Length
                          -> Either ApplyError ()
@@ -58,7 +43,7 @@ applyAPSN64 (APSN64Patch header records) (InputFileContents source) =
 
     runApply :: Ptr Word8 -> IO (Maybe ApplyError)
     runApply targetPointer = do
-      seedBuffer targetPointer
+      seedBufferFromSource targetPointer outputFileSize source
       applyRecords firstAction (Vector.toList records)
       where
         applyRecords :: ActionIndex -> [APSN64Record] -> IO (Maybe ApplyError)
@@ -77,6 +62,5 @@ applyAPSN64 (APSN64Patch header records) (InputFileContents source) =
               in case checkWriteFitsTarget actionIndex writeOffset writeLength of
                    Left err -> pure (Just err)
                    Right () -> do
-                     fillBytes (targetPointer `plusPtr` offsetToInt writeOffset)
-                               fillValue (fromIntegral fillCount)
+                     fillRegion targetPointer writeOffset fillValue writeLength
                      applyRecords (nextAction actionIndex) remainingRecords

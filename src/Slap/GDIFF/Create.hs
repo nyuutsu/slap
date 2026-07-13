@@ -10,14 +10,14 @@ module Slap.GDIFF.Create
   , planCopy
   ) where
 
-import Slap.Binary (putWord16BE, putWord32BE, putInt64BE)
+import Slap.Binary (putWord16BE, putWord32BE, putInt64BE, splitAtLength)
 import Slap.Status (SlapError, CreateResult(..))
 import Slap.GDIFF.FFI (gdiffDiff)
 import Slap.GDIFF.Types (GDiffPatch(..), GDiffCommand(..),
                          gdiffMagicBytes, maxSingleCommandLength,
                          maximumTwoByteOffset, maximumFourByteOffset,
                          maximumOneByteLength, maximumTwoByteLength)
-import Slap.Measure (Offset(..), Length(..), advance, minLength, subtractLength, lengthToInt)
+import Slap.Measure (Offset(..), Length(..), advance, byteLength, minLength, subtractLength)
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
@@ -50,13 +50,13 @@ encodeCommand (GDiffCommandCopy copyOffset copyLength) = encodeCopy copyOffset c
 -- Each branch's guard establishes the bound the 'fromIntegral' relies on.
 encodeData :: ByteString -> Builder
 encodeData payload
-  | ByteString.null payload                          = mempty
-  | payloadLength <= 246                             = word8 (fromIntegral payloadLength) <> byteString payload
-  | payloadLength <= 0xFFFF                          = word8 247 <> putWord16BE (fromIntegral payloadLength) <> byteString payload
-  | payloadLength <= lengthToInt maxSingleCommandLength = word8 248 <> putWord32BE (fromIntegral payloadLength) <> byteString payload
-  | otherwise                                        = splitData payload
+  | ByteString.null payload                    = mempty
+  | payloadLength <= Length 246                = word8 (fromIntegral (unLength payloadLength)) <> byteString payload
+  | payloadLength <= Length 0xFFFF             = word8 247 <> putWord16BE (fromIntegral (unLength payloadLength)) <> byteString payload
+  | payloadLength <= maxSingleCommandLength    = word8 248 <> putWord32BE (fromIntegral (unLength payloadLength)) <> byteString payload
+  | otherwise                                  = splitData payload
   where
-    payloadLength = ByteString.length payload
+    payloadLength = byteLength payload
 
 -- | Split a large payload into multiple DATA 248 commands, each carrying
 -- at most 'maxSingleCommandLength' bytes.
@@ -64,10 +64,10 @@ splitData :: ByteString -> Builder
 splitData remaining
   | ByteString.null remaining = mempty
   | otherwise =
-      -- 'chunkLength' is bounded above by 'unLength maxSingleCommandLength', so the 'fromIntegral' below fits 'Word32'.
-      let chunkLength    = min (lengthToInt maxSingleCommandLength) (ByteString.length remaining)
-          (chunk, leftover) = ByteString.splitAt chunkLength remaining
-      in word8 248 <> putWord32BE (fromIntegral chunkLength) <> byteString chunk
+      -- 'chunkLength' is bounded above by 'maxSingleCommandLength', so the 'fromIntegral' below fits 'Word32'.
+      let chunkLength       = minLength maxSingleCommandLength (byteLength remaining)
+          (chunk, leftover) = splitAtLength chunkLength remaining
+      in word8 248 <> putWord32BE (fromIntegral (unLength chunkLength)) <> byteString chunk
          <> splitData leftover
 
 -- | A single COPY command, opcode-tagged so the constructor field types match the wire field widths exactly.
@@ -128,7 +128,7 @@ selectCopy offset copyLength
   | offset <= maximumFourByteOffset                                       =
       Copy254 (fromIntegral (unOffset offset)) (fromIntegral (unLength copyLength))
   | otherwise                                                             =
-      Copy255 (fromIntegral (unOffset offset)) (fromIntegral (unLength copyLength))
+      Copy255 (unOffset offset) (fromIntegral (unLength copyLength))
 
 -- | Serialise a single 'CopyEncoding' to the wire — one line per opcode,
 -- structured as a wire-format reference card.

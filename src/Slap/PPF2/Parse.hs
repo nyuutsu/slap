@@ -12,14 +12,14 @@ import Slap.PPF2.Types (PPF2Patch(..), PPF2Record(..),
                         ppf2ValidationSize,
                         ppf2FileIdLengthFieldWidth,
                         ppf2FileIdMarkerLength, ppf2FileIdFooterLength)
-import Slap.Binary (getWord32LE)
+import Slap.Binary (getWord32LE, dropLength, dropLengthFromEnd, splitSuffixOfLength)
 import Slap.Status (SlapError(..), SlapAdvisory, Parsed(..), ByteParserError(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runFormatParser, throwByteParserError,
                         getByte, getBytes, remaining, skip, word32LE)
-import Slap.Measure (lengthToInt, offsetFromParsed, Length(..),
+import Slap.Measure (offsetFromParsed, Length(..),
                      EncodingMethodByte(..),
                      ActionIndex,
                      RequiredLength(..), ActualLength(..), RemainingLength(..),
@@ -44,7 +44,7 @@ data PPF2ParsedHeader = PPF2ParsedHeader
 
 parsePPF2 :: EncodingName -> PatchFileContents -> Either SlapError (Parsed PPF2Patch)
 parsePPF2 metadataEncoding (PatchFileContents input)
-  | ByteString.length input < lengthToInt minimumPPF2ParseLength =
+  | byteLength input < minimumPPF2ParseLength =
       Left (InputTooShort LabelPPF2
               (RequiredLength minimumPPF2ParseLength)
               (ActualLength (byteLength input)))
@@ -140,29 +140,22 @@ data PPF2FileIdSplit = PPF2FileIdSplit
 -- whole post-header slice.
 splitFileIdTrailer :: EncodingName -> Length -> ByteString -> PPF2FileIdSplit
 splitFileIdTrailer metadataEncoding headerLength input
-  | inputLength < markerSize + lengthFieldSize = withoutTrailer
-  | trailerCandidate /= "@END_FILE_ID.DIZ"     = withoutTrailer
-  | dizContentStart < 0                         = withoutTrailer
+  | byteLength input < ppf2FileIdFooterLength <> ppf2FileIdLengthFieldWidth = withoutTrailer
+  | footerCandidate /= "@END_FILE_ID.DIZ"                                   = withoutTrailer
+  | dizContentLength > byteLength bytesBeforeFooter                         = withoutTrailer
   | otherwise = PPF2FileIdSplit
       { ppf2SplitFileId     = Just (ppf2FileIdFromParsed dizText)
-      , ppf2SplitRecordBody =
-          ByteString.take (ByteString.length recordBody - trailerSize) recordBody
+      , ppf2SplitRecordBody = dropLengthFromEnd trailerSize recordBody
       , ppf2SplitAdvisories = decodeLossAdvisories LabelPPF2 FieldFileIdDiz dizNotices
       }
   where
-    inputLength      = ByteString.length input
-    markerSize       = lengthToInt ppf2FileIdFooterLength
-    lengthFieldSize  = lengthToInt ppf2FileIdLengthFieldWidth
-    recordBody       = ByteString.drop (lengthToInt headerLength) input
-    withoutTrailer   = PPF2FileIdSplit Nothing recordBody []
+    recordBody     = dropLength headerLength input
+    withoutTrailer = PPF2FileIdSplit Nothing recordBody []
 
-    lengthFieldStart = inputLength - lengthFieldSize
-    markerStart      = lengthFieldStart - markerSize
-    trailerCandidate = ByteString.take markerSize (ByteString.drop markerStart input)
-    dizContentLength = fromIntegral (getWord32LE lengthFieldStart input)
-    dizContentStart  = markerStart - dizContentLength
-    (dizText, dizNotices) =
-      decodeTextLenient metadataEncoding
-        (ByteString.take dizContentLength (ByteString.drop dizContentStart input))
-    trailerSize = lengthToInt ppf2FileIdMarkerLength + dizContentLength
-                + lengthToInt ppf2FileIdFooterLength + lengthToInt ppf2FileIdLengthFieldWidth
+    (bytesBeforeLengthField, lengthFieldBytes) = splitSuffixOfLength ppf2FileIdLengthFieldWidth input
+    (bytesBeforeFooter, footerCandidate)       = splitSuffixOfLength ppf2FileIdFooterLength bytesBeforeLengthField
+    (_, dizContentBytes)                       = splitSuffixOfLength dizContentLength bytesBeforeFooter
+    dizContentLength      = Length (fromIntegral (getWord32LE 0 lengthFieldBytes))
+    (dizText, dizNotices) = decodeTextLenient metadataEncoding dizContentBytes
+    trailerSize = ppf2FileIdMarkerLength <> dizContentLength
+               <> ppf2FileIdFooterLength <> ppf2FileIdLengthFieldWidth

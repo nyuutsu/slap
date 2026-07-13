@@ -18,6 +18,7 @@ module Slap.Status
   , SourceRequiredCause(..)
   , ExtractionSubject(..)
   , SlapAdvisory(..)
+  , VerificationMismatch(..)
   , ApplyError(..)
   , CursorKind(..)
   , UnencodeabilityReason(..)
@@ -99,6 +100,7 @@ module Slap.Status
   , renderByteParserError
   , renderCursorKind
   , renderSlapAdvisory
+  , renderVerificationMismatch
   ) where
 
 import Slap.Status.Advisory
@@ -106,7 +108,7 @@ import Slap.Status.ApplyError
 import Slap.Status.ByteParserError
 import Slap.Status.Decompression
 import Slap.Status.Error
-import Slap.Status.Render.Advisory (renderSlapAdvisory)
+import Slap.Status.Render.Advisory (renderSlapAdvisory, renderVerificationMismatch)
 import Slap.Status.Render.Error (renderSlapError)
 import Slap.Status.Severity
 import Slap.Status.VCDIFF

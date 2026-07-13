@@ -9,18 +9,16 @@ import qualified Data.ByteString as ByteString
 import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffInstruction(..))
 import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Binary (copyRegion, fillNewBuffer)
+import Slap.Binary (copyRegion, fillNewBuffer, viewBytesInRange)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
-                     offsetToInt, lengthToInt,
                      SignedOffset(..), Cursor(..), Delta,
                      ActionIndex, RequestedLength(..), RemainingLength(..),
                      ExpectedSize(..), WritePosition(..),
-                     fitsWithin, remainingFromOffset, byteFileSize,
+                     fitsWithin, remainingFromOffset, byteFileSize, plusOffset,
                      firstAction, nextAction)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.State.Strict (StateT, evalStateT, gets, modify)
 import Data.Word (Word8)
-import Foreign.Ptr (plusPtr)
 import Foreign.Storable (pokeByteOff)
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -136,15 +134,16 @@ applyBSDiff patch (InputFileContents source) = unsafePerformIO $ do
         executeAddRegion addLength originalPosition diffReadOffset outputPosition =
             writeRemainingBytes 0
           where
-            totalBytes = lengthToInt addLength
-            sourceBase = fromIntegral (unSignedOffset originalPosition)
-            diffBase   = offsetToInt diffReadOffset
-            writeBase  = targetPointer `plusPtr` offsetToInt outputPosition
+            diffRegion = viewBytesInRange diffReadOffset addLength diffBytes
+            addByteCount :: Int
+            addByteCount = fromIntegral (unLength addLength)
+            sourceBase   = fromIntegral (unSignedOffset originalPosition)
+            writeBase    = targetPointer `plusOffset` outputPosition
             writeRemainingBytes !byteOffset
-              | byteOffset >= totalBytes = pure ()
+              | byteOffset >= addByteCount = pure ()
               | otherwise = do
                   let sourceByte = sourceByteOrZero source (sourceBase + byteOffset)
-                      diffByte   = ByteString.index diffBytes (diffBase + byteOffset)
+                      diffByte   = ByteString.index diffRegion byteOffset
                   pokeByteOff writeBase byteOffset (sourceByte + diffByte :: Word8)
                   writeRemainingBytes (byteOffset + 1)
 

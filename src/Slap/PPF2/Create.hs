@@ -33,7 +33,8 @@ import Slap.PPF2.Types (PPF2ValidationBlock(..),
                         PPF2FileId, unPPF2FileId,
                         PPF2SourceSize, unPPF2SourceSize,
                         ppf2DescriptionLength)
-import Slap.Measure (lengthToInt, Offset(..))
+import Slap.Binary (replicateLength)
+import Slap.Measure (Offset(..), byteLength, minLength, subtractLength)
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
 import Slap.Status (SlapAdvisory, CreateResult(..))
 import Slap.Text (EncodedText, EncodingName(..),
@@ -70,8 +71,8 @@ padDescription :: EncodedText -> (ByteString, [SlapAdvisory])
 padDescription description =
   let (truncatedBytes, notices) =
         encodeTextBounded EncodingUtf8 ppf2DescriptionLength (encodedTextContent description)
-      padded = truncatedBytes <> ByteString.replicate
-                 (max 0 (lengthToInt ppf2DescriptionLength - ByteString.length truncatedBytes)) 0x20
+      padded = truncatedBytes <> replicateLength
+                 (subtractLength ppf2DescriptionLength (minLength ppf2DescriptionLength (byteLength truncatedBytes))) 0x20
       advisories = encodeLossAdvisories LabelPPF2 FieldDescription notices
   in (padded, advisories)
 

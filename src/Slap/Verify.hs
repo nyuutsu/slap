@@ -28,6 +28,10 @@ module Slap.Verify
   , judgeWeighing
   , verifySource
   , verifyTarget
+    -- * The mismatches and their enforcement lanes
+  , VerificationMismatch(..)
+  , MismatchClass(..)
+  , mismatchClass
     -- * The verdict, before any policy
   , VerificationVerdict(..)
   , DeclaredCheckKind(..)
@@ -44,7 +48,7 @@ import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Measure (Offset, Length(..), FileSize,
                      ExpectedSize(..), ActualSize(..), byteFileSize, byteLength)
 import Slap.Normalize (isV64Image)
-import Slap.Status (SlapError(..), SlapAdvisory(..), Outcome(..),
+import Slap.Status (SlapError(..), SlapAdvisory(..), VerificationMismatch(..), Outcome(..),
                     VerificationSide(..), HashAlgorithm(..), DeclaredCheckKind(..),
                     ExpectedAdler32(..), ActualAdler32(..), ByteCheckLabel(..))
 import qualified Slap.NINJA1.Create as NINJA1
@@ -52,7 +56,6 @@ import qualified Slap.NINJA1.Create as NINJA1
 import Data.ByteString (ByteString)
 import Data.List (nub)
 import Data.List.NonEmpty (NonEmpty(..))
-import Data.Maybe (maybeToList)
 import Data.Text (Text)
 
 ----------------------------------------------------------------------------
@@ -171,14 +174,34 @@ data FileSizeCheck
 -- 'judgeWeighing' and 'verdictOnWeighing' both read one weighing, so they cannot disagree about what was compared.
 newtype Weighing = Weighing [WeighedCheck]
 
--- | One declared check, weighed against the actual bytes.
-data WeighedCheck = WeighedCheck !DeclaredCheckKind !MismatchClass !CheckFinding
+instance Semigroup Weighing where
+  Weighing leftChecks <> Weighing rightChecks = Weighing (leftChecks <> rightChecks)
 
-data CheckFinding = CheckHeld | CheckMismatched !SlapAdvisory
+instance Monoid Weighing where
+  mempty = Weighing []
+
+-- | One declared check, weighed against the actual bytes.
+data WeighedCheck = WeighedCheck !DeclaredCheckKind !CheckFinding
+
+data CheckFinding = CheckHeld | CheckMismatched !VerificationMismatch
 
 -- | Which enforcement lane a mismatch lands in; 'judgeWeighing' folds the user's policy over the fatal class only.
 data MismatchClass = AdvisoryClass | FatalClass
   deriving (Eq)
+
+-- | Every mismatch's lane, read off its constructor. File size is the one check whose severity varies by format,
+-- and its two severities are already two constructors, so the table stays total.
+mismatchClass :: VerificationMismatch -> MismatchClass
+mismatchClass mismatch = case mismatch of
+  VerificationCRCMismatch {}         -> FatalClass
+  VerificationHashMismatch {}        -> FatalClass
+  VerificationAdler32Mismatch {}     -> FatalClass
+  VerificationFileSizeMismatch {}    -> FatalClass
+  APSN64ImageFormatMismatch          -> FatalClass
+  VerificationFileSizeAdvisory {}    -> AdvisoryClass
+  VerificationBlockCRC16Mismatch {}  -> AdvisoryClass
+  VerificationPPFBlockMismatch {}    -> AdvisoryClass
+  VerificationSourceBytesMismatch {} -> AdvisoryClass
 
 -- | Weigh apply's input against everything the patch declared about its source, and judge it in one step.
 verifySource :: VerificationPolicy -> Verification -> InputFileContents -> Outcome (Either SlapError ())
@@ -190,38 +213,41 @@ verifyTarget verificationPolicy verification = judgeWeighing verificationPolicy 
 
 -- | Weigh apply's input against everything the patch declared about its source.
 -- The size check sorts ahead of the whole-file hashes: a wrong-size file mismatches both, and the size is the better first fact.
+-- Row order does double duty: it picks which fatal mismatch 'judgeWeighing' refuses with,
+-- and it orders the kinds 'verdictOnWeighing' hands the report's prose.
 weighSource :: Verification -> InputFileContents -> Weighing
-weighSource verification (InputFileContents sourceBytes) = Weighing $
-     [ weigh DeclaredBlockCRC16 AdvisoryClass (blockCRC16Mismatch SourceSide sourceBytes blockCheck)
-     | blockCheck <- verifySourceBlocks verification ]
-  ++ [ weigh DeclaredValidationBlock AdvisoryClass (ppfBlockMismatch sourceBytes validationBlock)
-     | validationBlock <- maybeToList (verifyPPFBlock verification) ]
-  ++ [ weigh DeclaredByteComparison AdvisoryClass (sourceBytesMismatch sourceBytes byteCheck)
-     | byteCheck <- verifySourceBytes verification ]
-  ++ [ weighFileSize sizeCheck (byteFileSize sourceBytes)
-     | sizeCheck <- maybeToList (verifyFileSize verification) ]
-  ++ [ weigh DeclaredCRC32 FatalClass (crcMismatch SourceSide expected (crc32 preprocessed))
-     | expected <- maybeToList (verifySourceCRC32 verification) ]
-  ++ [ weigh DeclaredMD5 FatalClass (hashMismatch SourceSide MD5 expected (md5 preprocessed))
-     | expected <- maybeToList (verifySourceMD5 verification) ]
-  ++ [ weigh DeclaredSHA1 FatalClass (hashMismatch SourceSide SHA1 expected (sha1 preprocessed))
-     | expected <- maybeToList (verifySourceSHA1 verification) ]
-  ++ [ weigh DeclaredByteOrder FatalClass (byteOrderMismatch sourceBytes expected)
-     | expected <- maybeToList (verifyN64ByteOrder verification) ]
+weighSource verification (InputFileContents sourceBytes) = mconcat
+  [ weighAll DeclaredBlockCRC16      (blockCRC16Mismatch SourceSide sourceBytes)                 (verifySourceBlocks verification)
+  , weighAll DeclaredValidationBlock (ppfBlockMismatch sourceBytes)                              (verifyPPFBlock verification)
+  , weighAll DeclaredByteComparison  (sourceBytesMismatch sourceBytes)                           (verifySourceBytes verification)
+  , weighAll DeclaredFileSize        (fileSizeMismatch (byteFileSize sourceBytes))               (verifyFileSize verification)
+  , weighAll DeclaredCRC32           (crcMismatch SourceSide (ActualCRC32 (crc32 preprocessed))) (verifySourceCRC32 verification)
+  , weighAll DeclaredMD5             (hashMismatch SourceSide MD5 (md5 preprocessed))            (verifySourceMD5 verification)
+  , weighAll DeclaredSHA1            (hashMismatch SourceSide SHA1 (sha1 preprocessed))          (verifySourceSHA1 verification)
+  , weighAll DeclaredByteOrder       (byteOrderMismatch sourceBytes)                             (verifyN64ByteOrder verification)
+  ]
   where
     preprocessed = applySourcePreHash (verifySourcePreHash verification) sourceBytes
 
 -- | Weigh apply's output against everything the patch declared about its target.
 weighTarget :: Verification -> OutputFileContents -> Weighing
-weighTarget verification (OutputFileContents targetBytes) = Weighing $
-     [ weigh DeclaredBlockCRC16 AdvisoryClass (blockCRC16Mismatch TargetSide targetBytes blockCheck)
-     | blockCheck <- verifyTargetBlocks verification ]
-  ++ [ weigh DeclaredCRC32 FatalClass (crcMismatch TargetSide expected (crc32 targetBytes))
-     | expected <- maybeToList (verifyTargetCRC32 verification) ]
-  ++ [ weigh DeclaredMD5 FatalClass (hashMismatch TargetSide MD5 expected (md5 targetBytes))
-     | expected <- maybeToList (verifyTargetMD5 verification) ]
-  ++ [ weigh DeclaredWindowAdler32 FatalClass (adlerMismatch windowOffset expected (adler32 (viewBytesInRange windowOffset windowLength targetBytes)))
-     | WindowCheck windowOffset windowLength expected <- verifyWindowAdler32 verification ]
+weighTarget verification (OutputFileContents targetBytes) = mconcat
+  [ weighAll DeclaredBlockCRC16    (blockCRC16Mismatch TargetSide targetBytes)                (verifyTargetBlocks verification)
+  , weighAll DeclaredCRC32         (crcMismatch TargetSide (ActualCRC32 (crc32 targetBytes))) (verifyTargetCRC32 verification)
+  , weighAll DeclaredMD5           (hashMismatch TargetSide MD5 (md5 targetBytes))            (verifyTargetMD5 verification)
+  , weighAll DeclaredWindowAdler32 windowAdlerMismatch                                        (verifyWindowAdler32 verification)
+  ]
+  where
+    windowAdlerMismatch (WindowCheck windowOffset windowLength expected) =
+      adlerMismatch windowOffset (ActualAdler32 (adler32 (viewBytesInRange windowOffset windowLength targetBytes))) expected
+
+-- | One weighing row: judge every declared check of one kind.
+-- 'Foldable' spans the two shapes a declaration arrives in — a list of checks, or one optional check.
+weighAll :: Foldable declared => DeclaredCheckKind -> (check -> Maybe VerificationMismatch) -> declared check -> Weighing
+weighAll checkKind judge = foldMap (\declaredCheck -> Weighing [weigh checkKind (judge declaredCheck)])
+
+weigh :: DeclaredCheckKind -> Maybe VerificationMismatch -> WeighedCheck
+weigh checkKind = WeighedCheck checkKind . maybe CheckHeld CheckMismatched
 
 -- | Speak a weighing's side labels reversed. Undo reads the patch backwards —
 -- the target declaration describes the file handed in, the source declaration the file written back —
@@ -229,38 +255,45 @@ weighTarget verification (OutputFileContents targetBytes) = Weighing $
 flipSpokenSides :: Weighing -> Weighing
 flipSpokenSides (Weighing weighedChecks) = Weighing (map flipWeighedCheck weighedChecks)
   where
-    flipWeighedCheck (WeighedCheck checkKind mismatchClass checkFinding) =
-      WeighedCheck checkKind mismatchClass (flipCheckFinding checkFinding)
+    flipWeighedCheck (WeighedCheck checkKind checkFinding) =
+      WeighedCheck checkKind (flipCheckFinding checkFinding)
     flipCheckFinding CheckHeld = CheckHeld
     flipCheckFinding (CheckMismatched mismatch) = CheckMismatched (flipMismatchSide mismatch)
-    flipMismatchSide mismatch = case mismatch of
-      VerificationCRCMismatch side expected actual      -> VerificationCRCMismatch (opposite side) expected actual
-      VerificationHashMismatch side algorithm           -> VerificationHashMismatch (opposite side) algorithm
-      VerificationFileSizeMismatch side expected actual -> VerificationFileSizeMismatch (opposite side) expected actual
-      VerificationBlockCRC16Mismatch side blockOffset   -> VerificationBlockCRC16Mismatch (opposite side) blockOffset
-      unsided                                           -> unsided
+
+-- | The sided mismatches speak the opposite side; the unsided ones have nothing to flip.
+-- Total over 'VerificationMismatch', so a new sided check cannot slip past undo unflipped.
+flipMismatchSide :: VerificationMismatch -> VerificationMismatch
+flipMismatchSide mismatch = case mismatch of
+  VerificationCRCMismatch side expected actual      -> VerificationCRCMismatch (opposite side) expected actual
+  VerificationHashMismatch side algorithm           -> VerificationHashMismatch (opposite side) algorithm
+  VerificationFileSizeMismatch side expected actual -> VerificationFileSizeMismatch (opposite side) expected actual
+  VerificationBlockCRC16Mismatch side blockOffset   -> VerificationBlockCRC16Mismatch (opposite side) blockOffset
+  VerificationAdler32Mismatch {}                    -> mismatch
+  VerificationPPFBlockMismatch {}                   -> mismatch
+  VerificationFileSizeAdvisory {}                   -> mismatch
+  VerificationSourceBytesMismatch {}                -> mismatch
+  APSN64ImageFormatMismatch                         -> mismatch
+  where
     opposite SourceSide = TargetSide
     opposite TargetSide = SourceSide
-
-weigh :: DeclaredCheckKind -> MismatchClass -> Maybe SlapAdvisory -> WeighedCheck
-weigh checkKind mismatchClass = WeighedCheck checkKind mismatchClass . maybe CheckHeld CheckMismatched
 
 -- | Fold the user's policy over a weighing.
 -- 'EnforceVerification' turns the first fatal-class mismatch into the run-stopping error; 'SkipVerification' warns instead.
 -- Advisory-class findings ride the 'Outcome' either way, the 'Left' included.
 judgeWeighing :: VerificationPolicy -> Weighing -> Outcome (Either SlapError ())
 judgeWeighing verificationPolicy (Weighing weighedChecks) = case verificationPolicy of
-  SkipVerification    -> Outcome (Right ()) (advisoryMismatches ++ fatalMismatches)
+  SkipVerification    -> Outcome (Right ()) (spoken (advisoryMismatches ++ fatalMismatches))
   EnforceVerification -> case fatalMismatches of
-    []                -> Outcome (Right ()) advisoryMismatches
-    firstMismatch : _ -> Outcome (Left (VerificationFatal firstMismatch)) advisoryMismatches
+    []                -> Outcome (Right ()) (spoken advisoryMismatches)
+    firstMismatch : _ -> Outcome (Left (VerificationFatal firstMismatch)) (spoken advisoryMismatches)
   where
+    spoken             = map DeclaredCheckMismatched
     advisoryMismatches = mismatchesInClass AdvisoryClass weighedChecks
     fatalMismatches    = mismatchesInClass FatalClass weighedChecks
 
-mismatchesInClass :: MismatchClass -> [WeighedCheck] -> [SlapAdvisory]
+mismatchesInClass :: MismatchClass -> [WeighedCheck] -> [VerificationMismatch]
 mismatchesInClass wantedClass weighedChecks =
-  [ mismatch | WeighedCheck _ checkClass (CheckMismatched mismatch) <- weighedChecks, checkClass == wantedClass ]
+  [ mismatch | WeighedCheck _ (CheckMismatched mismatch) <- weighedChecks, mismatchClass mismatch == wantedClass ]
 
 ----------------------------------------------------------------------------
 -- The verdict, before any policy
@@ -271,7 +304,7 @@ mismatchesInClass wantedClass weighedChecks =
 data VerificationVerdict
   = VerdictMatches !(NonEmpty DeclaredCheckKind)
     -- ^ At least one check is declared, and every one of them held — the kinds say what that claim rests on.
-  | VerdictDiffers !(NonEmpty SlapAdvisory)
+  | VerdictDiffers !(NonEmpty VerificationMismatch)
     -- ^ At least one declared check did not hold. Every disagreement is carried, advisory-class included —
     -- a wider net than 'EnforceVerification', which refuses only over fatal-class mismatches.
   | VerdictUncheckable
@@ -292,55 +325,53 @@ verdictOnWeighing (Weighing weighedChecks)
   | checkKind : checkKinds  <- declaredKinds = VerdictMatches (checkKind :| checkKinds)
   | otherwise                                = VerdictUncheckable
   where
-    disagreements = [ mismatch | WeighedCheck _ _ (CheckMismatched mismatch) <- weighedChecks ]
-    declaredKinds = nub [ checkKind | WeighedCheck checkKind _ _ <- weighedChecks ]
+    disagreements = [ mismatch | WeighedCheck _ (CheckMismatched mismatch) <- weighedChecks ]
+    declaredKinds = nub [ checkKind | WeighedCheck checkKind _ <- weighedChecks ]
 
 ----------------------------------------------------------------------------
 -- The per-check judgments
 ----------------------------------------------------------------------------
 
-blockCRC16Mismatch :: VerificationSide -> ByteString -> BlockCheck -> Maybe SlapAdvisory
+blockCRC16Mismatch :: VerificationSide -> ByteString -> BlockCheck -> Maybe VerificationMismatch
 blockCRC16Mismatch side subjectBytes (BlockCheck blockOffset blockLength expected)
   | crc16 (zeroExtendedBlock blockOffset blockLength subjectBytes) == expected = Nothing
   | otherwise = Just (VerificationBlockCRC16Mismatch side blockOffset)
 
-ppfBlockMismatch :: ByteString -> ValidationBlock -> Maybe SlapAdvisory
+ppfBlockMismatch :: ByteString -> ValidationBlock -> Maybe VerificationMismatch
 ppfBlockMismatch sourceBytes (ValidationBlock blockOffset expectedData)
   | viewBytesInRange blockOffset (byteLength expectedData) sourceBytes == expectedData = Nothing
   | otherwise = Just (VerificationPPFBlockMismatch blockOffset)
 
-sourceBytesMismatch :: ByteString -> ByteCheck -> Maybe SlapAdvisory
+sourceBytesMismatch :: ByteString -> ByteCheck -> Maybe VerificationMismatch
 sourceBytesMismatch sourceBytes (ByteCheck checkOffset (AdvisoryExpectedBytes expectedData) checkLabel)
   | viewBytesInRange checkOffset (byteLength expectedData) sourceBytes == expectedData = Nothing
   | otherwise = Just (VerificationSourceBytesMismatch (ByteCheckLabel checkLabel) checkOffset)
 
-weighFileSize :: FileSizeCheck -> FileSize -> WeighedCheck
-weighFileSize sizeCheck actualSize = case sizeCheck of
-  AdvisorySize expected -> WeighedCheck DeclaredFileSize AdvisoryClass
-    (finding expected (VerificationFileSizeAdvisory (ExpectedSize expected) (ActualSize actualSize)))
-  RequiredSize expected -> WeighedCheck DeclaredFileSize FatalClass
-    (finding expected (VerificationFileSizeMismatch SourceSide (ExpectedSize expected) (ActualSize actualSize)))
+fileSizeMismatch :: FileSize -> FileSizeCheck -> Maybe VerificationMismatch
+fileSizeMismatch actualSize sizeCheck = case sizeCheck of
+  AdvisorySize expected -> disagreement expected (VerificationFileSizeAdvisory (ExpectedSize expected) (ActualSize actualSize))
+  RequiredSize expected -> disagreement expected (VerificationFileSizeMismatch SourceSide (ExpectedSize expected) (ActualSize actualSize))
   where
-    finding expected mismatch
-      | expected == actualSize = CheckHeld
-      | otherwise              = CheckMismatched mismatch
+    disagreement expected mismatch
+      | expected == actualSize = Nothing
+      | otherwise              = Just mismatch
 
-crcMismatch :: VerificationSide -> CRC32 -> CRC32 -> Maybe SlapAdvisory
-crcMismatch side expected actual
+crcMismatch :: VerificationSide -> ActualCRC32 -> CRC32 -> Maybe VerificationMismatch
+crcMismatch side (ActualCRC32 actual) expected
   | expected == actual = Nothing
   | otherwise          = Just (VerificationCRCMismatch side (ExpectedCRC32 expected) (ActualCRC32 actual))
 
-hashMismatch :: Eq hash => VerificationSide -> HashAlgorithm -> hash -> hash -> Maybe SlapAdvisory
-hashMismatch side algorithm expected actual
+hashMismatch :: Eq hash => VerificationSide -> HashAlgorithm -> hash -> hash -> Maybe VerificationMismatch
+hashMismatch side algorithm actual expected
   | expected == actual = Nothing
   | otherwise          = Just (VerificationHashMismatch side algorithm)
 
-adlerMismatch :: Offset -> Adler32 -> Adler32 -> Maybe SlapAdvisory
-adlerMismatch windowOffset expected actual
+adlerMismatch :: Offset -> ActualAdler32 -> Adler32 -> Maybe VerificationMismatch
+adlerMismatch windowOffset (ActualAdler32 actual) expected
   | expected == actual = Nothing
   | otherwise          = Just (VerificationAdler32Mismatch windowOffset (ExpectedAdler32 expected) (ActualAdler32 actual))
 
-byteOrderMismatch :: ByteString -> ExpectedN64ByteOrder -> Maybe SlapAdvisory
+byteOrderMismatch :: ByteString -> ExpectedN64ByteOrder -> Maybe VerificationMismatch
 byteOrderMismatch sourceBytes expected
   | mismatched = Just APSN64ImageFormatMismatch
   | otherwise  = Nothing

@@ -20,6 +20,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString8
 import Data.Char (isPrint, ord)
+import Data.Int (Int64)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Word (Word8, Word64)
@@ -39,7 +40,7 @@ padRight :: Int -> Text -> Text
 padRight minWidth text = text <> Text.replicate (minWidth - Text.length text) " "
 
 -- | Show a signed offset as +0xNNNNNN or -0xNNNNNN.
-showSigned :: Integral value => value -> Text
+showSigned :: Int64 -> Text
 showSigned value
   | value >= 0 = "+0x" <> padHex 6 value
   | otherwise  = "-0x" <> padHex 6 (abs value)

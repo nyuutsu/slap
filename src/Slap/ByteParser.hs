@@ -60,9 +60,10 @@ import Slap.Binary
   , getWord16BE, getWord24BE, getWord32BE, getInt64BE
   , getByuuVarint, getVcdiffVarint
   , minimalVcdiffVarintLength
+  , takeLength
   )
 import Slap.Measure
-  ( Position(..), Length(..), lengthToInt, remainingFromPosition
+  ( Position(..), Length(..), advance, remainingFromPosition
   , RequestedLength(..), RemainingLength(..), ActualLength(..)
   )
 import Slap.Status
@@ -159,8 +160,8 @@ getBytes requestedLength@(Length count)
       -- the comparison — and only a count proven to fit is narrowed for the take.
       if count <= fromIntegral (inputLength - startAt)
         then do
-          ByteParser (put (Position (startAt + lengthToInt requestedLength)))
-          pure (ByteString.take (lengthToInt requestedLength) (ByteString.drop startAt input))
+          ByteParser (put (advance currentPosition requestedLength))
+          pure (takeLength requestedLength (ByteString.drop startAt input))
         else
           throwByteParserError
             (ByteParserUnderflow
@@ -199,7 +200,7 @@ skip requestedLength@(Length count)
       let inputLength      = ByteString.length input
           Position startAt = currentPosition
       if count <= fromIntegral (inputLength - startAt)
-        then ByteParser (put (Position (startAt + lengthToInt requestedLength)))
+        then ByteParser (put (advance currentPosition requestedLength))
         else
           throwByteParserError
             (ByteParserUnderflow
@@ -269,7 +270,7 @@ liftRead readWidth@(Length width) reader = do
       Position startAt = currentPosition
   if width <= fromIntegral (inputLength - startAt)
     then do
-      ByteParser (put (Position (startAt + lengthToInt readWidth)))
+      ByteParser (put (advance currentPosition readWidth))
       pure (reader startAt input)
     else
       throwByteParserError

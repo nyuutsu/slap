@@ -9,22 +9,21 @@
 module Slap.PPF3.Apply (applyPPF3, undoPPF3) where
 
 import Slap.PPF3.Types (PPF3Patch(..), PPF3Record(..))
-import Slap.Binary (copyRegion, fillNewBuffer)
+import Slap.Binary (copyRegion, fillNewBuffer, fillRegion)
 import Slap.Status (SlapError(..), SlapAdvisory(..), ApplyError(..),
                     Outcome(..), noAdvisories)
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), Length(..), FileSize(..), lengthToInt,
+import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex,
                      RequestedLength(..), RemainingLength(..),
                      fitsWithin, boundedWriteEnd, remainingFromOffset, minLength,
                      byteLength, distance, offsetToFileSize,
-                     firstAction, nextAction, plusOffset)
+                     firstAction, nextAction)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import qualified Data.ByteString as ByteString
 import Data.Maybe (fromMaybe)
 import Control.Monad (when)
-import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (Ptr)
 import Data.Word (Word8)
 import System.IO.Unsafe (unsafePerformIO)
@@ -65,9 +64,7 @@ applyPPF3 patch (InputFileContents source) =
         (result, maybeErr) <- fillNewBuffer outputFileSize $ \outputPointer -> do
           copyRegion outputPointer (Offset 0) source (Offset 0) initialCopyLength
           when (outputEnd > sourceEnd) $
-            fillBytes (plusOffset outputPointer sourceEnd)
-                      (0 :: Word8)
-                      (lengthToInt (distance sourceEnd outputEnd))
+            fillRegion outputPointer sourceEnd 0x00 (distance sourceEnd outputEnd)
           applyRecordStream outputFileSize outputPointer firstAction (ppf3Records patch)
         pure $ case maybeErr of
           Just applyErr -> Left (ApplyFailed LabelPPF3 applyErr)

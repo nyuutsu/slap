@@ -24,6 +24,7 @@ module Slap.IPS.Optimize
   ( optimalIPSRecords
   ) where
 
+import Slap.Binary (byteAtOffset, viewBytesInRange)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.IPS.Types
   ( OffsetWidth
@@ -32,7 +33,7 @@ import Slap.IPS.Types
   , ipsMaxRecordPayload
   )
 import Slap.Measure
-  (offsetToInt, lengthToInt,  Offset(..)
+  ( Offset(..)
   , Length(..)
   , Hunk(..)
   , subtractLength
@@ -47,6 +48,7 @@ import Data.Array.MArray (newArray, readArray, writeArray)
 import Data.Array.ST (STUArray)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import Data.Int (Int64)
 import Data.List (sort)
 import Data.Word (Word8)
 
@@ -147,15 +149,12 @@ scanDiffRegions (InputFileContents source) (OutputFileContents target) =
     scanFromPosition :: Offset -> [Hunk]
     scanFromPosition !position
       | position >= overlapEnd = []
-      | ByteString.index source (offsetToInt position)
-          == ByteString.index target (offsetToInt position) =
+      | byteAtOffset position source == byteAtOffset position target =
           scanFromPosition (advance position (Length 1))
       | otherwise =
           let regionEnd     = findRegionEnd (advance position (Length 1))
               regionLength  = distance position regionEnd
-              regionPayload =
-                ByteString.take (lengthToInt regionLength)
-                                (ByteString.drop (offsetToInt position) target)
+              regionPayload = viewBytesInRange position regionLength target
               region = Hunk
                 { hunkOffset  = position
                 , hunkPayload = regionPayload
@@ -168,8 +167,7 @@ scanDiffRegions (InputFileContents source) (OutputFileContents target) =
     findRegionEnd :: Offset -> Offset
     findRegionEnd !position
       | position >= overlapEnd = overlapEnd
-      | ByteString.index source (offsetToInt position)
-          /= ByteString.index target (offsetToInt position) =
+      | byteAtOffset position source /= byteAtOffset position target =
           findRegionEnd (advance position (Length 1))
       | otherwise = position
 
@@ -216,11 +214,9 @@ mergeNarrowGaps offsetWidth target = mergeStep
              let mergedEnd =
                    advance secondStart
                            (byteLength (hunkPayload secondRegion))
-                 mergedLength = distance firstStart mergedEnd
-                 mergedPayload =
-                   ByteString.take (lengthToInt mergedLength)
-                                   (ByteString.drop (offsetToInt firstStart) target)
-                 mergedRegion = Hunk
+                 mergedLength  = distance firstStart mergedEnd
+                 mergedPayload = viewBytesInRange firstStart mergedLength target
+                 mergedRegion  = Hunk
                    { hunkOffset  = firstStart
                    , hunkPayload = mergedPayload
                    }
@@ -271,9 +267,13 @@ partitionDiffRegion offsetWidth _target region
     regionStart   = hunkOffset region
     regionLength  = byteLength regionPayload
 
-    copyRecordOverheadBytes = lengthToInt (ipsCopyRecordOverhead offsetWidth)
-    rleRecordOverheadBytes  = lengthToInt (ipsRleRecordOverhead  offsetWidth)
-    rleBreakEvenLength      = rleBreakEvenRunLength offsetWidth
+    -- The DP's cost currency is wire bytes, carried as 'Int64' — the representation 'Length' wraps —
+    -- so payload lengths enter the cost arithmetic without narrowing. Array indices are seed-position ordinals and stay 'Int'.
+    copyRecordOverheadBytes, rleRecordOverheadBytes :: Int64
+    copyRecordOverheadBytes = unLength (ipsCopyRecordOverhead offsetWidth)
+    rleRecordOverheadBytes  = unLength (ipsRleRecordOverhead  offsetWidth)
+
+    rleBreakEvenLength = rleBreakEvenRunLength offsetWidth
 
     -- Step 3a: every maximal same-byte run inside the region.
     runs :: [ByteRun]
@@ -319,15 +319,15 @@ partitionDiffRegion offsetWidth _target region
     -- @candidateCost < bestCost@ comparison never matches the seed
     -- by accident. The @+1@ keeps the seed strictly above the worst
     -- feasible cost rather than just at it.
-    impossiblyExpensiveCost :: Int
+    impossiblyExpensiveCost :: Int64
     impossiblyExpensiveCost =
-      lengthToInt regionLength * (copyRecordOverheadBytes + 5) + 1
+      unLength regionLength * (copyRecordOverheadBytes + 5) + 1
 
     runPartitionDP :: forall s. ST s [Hunk]
     runPartitionDP = do
       costArray <-
         newArray (0, seedPositionCount - 1) impossiblyExpensiveCost
-        :: ST s (STUArray s Int Int)
+        :: ST s (STUArray s Int Int64)
       predecessorArray <-
         newArray (0, seedPositionCount - 1) noPredecessor
         :: ST s (STUArray s Int Int)
@@ -356,7 +356,7 @@ partitionDiffRegion offsetWidth _target region
                           let candidateCost =
                                 predecessorCost
                                 + copyRecordOverheadBytes
-                                + lengthToInt recordPayloadLength
+                                + unLength recordPayloadLength
                           if candidateCost < bestCost
                             then scanCopyCandidates candidateCost
                                                     predecessorIndex
@@ -411,9 +411,8 @@ partitionDiffRegion offsetWidth _target region
                 let predecessorPosition = seedPositionArray ! predecessorIndex
                     destinationPosition = seedPositionArray ! destinationIndex
                     sliceLength         = distance predecessorPosition destinationPosition
-                    slicePayload =
-                      ByteString.take (lengthToInt sliceLength)
-                                      (ByteString.drop (offsetToInt predecessorPosition) regionPayload)
+                    slicePayload        =
+                      viewBytesInRange predecessorPosition sliceLength regionPayload
                     -- Region-relative Offset to absolute file Offset.
                     absoluteOffset = advance regionStart
                                              (distance (Offset 0) predecessorPosition)

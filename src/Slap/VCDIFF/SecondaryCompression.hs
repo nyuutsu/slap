@@ -28,12 +28,12 @@ module Slap.VCDIFF.SecondaryCompression
   , djwSectionCompressor
   ) where
 
-import Slap.Binary (getVcdiffVarint, VarintResult(..), putVcdiffVarint)
+import Slap.Binary (getVcdiffVarint, VarintResult(..), putVcdiffVarint, splitAtLength)
 import Slap.Compression.Stream (LzmaDecoded(..), lzmaDecompress,
                                 LzmaSectionStream(..), lzmaCompressSections,
                                 DjwDecoded(..), djwDecompress, djwCompress,
                                 FgkDecoded(..), fgkDecompress)
-import Slap.Measure (lengthToInt, Length(..), byteLength, lengthToFileSize, subtractLength,
+import Slap.Measure (Length(..), byteLength, lengthToFileSize, subtractLength,
                      ExpectedSize(..), ActualSize(..))
 import Slap.Status
   ( SlapError(..), VCDIFFMalformation(..), VCDIFFSection(..)
@@ -285,7 +285,7 @@ handOutDecodedSlices decodedStream contributions =
       (remainingDecoded, sectionBytes)
     handOneContribution remainingDecoded (CompressedContribution piece) =
       let (slice, restDecoded) =
-            ByteString.splitAt (lengthToInt (pieceDeclaredOutputSize piece)) remainingDecoded
+            splitAtLength (pieceDeclaredOutputSize piece) remainingDecoded
       in (restDecoded, slice)
 
 ----------------------------------------------------------------------------
@@ -376,5 +376,5 @@ carriageKeepingSmaller compress plainSection
 framedCompressedSection :: Length -> ByteString -> ByteString
 framedCompressedSection declaredOutputLength streamPiece =
   LazyByteString.toStrict
-    (toLazyByteString (putVcdiffVarint (fromIntegral (unLength declaredOutputLength))))
+    (toLazyByteString (putVcdiffVarint (unLength declaredOutputLength)))
     <> streamPiece

@@ -14,9 +14,9 @@ module Slap.Header
   ) where
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as ByteString
 import Data.Text (Text)
-import Slap.Measure (Length(..), lengthToInt)
+import Slap.Binary (dropLength, replicateLength)
+import Slap.Measure (Length(..), byteLength)
 
 data ConsoleHeader
   = NESHeader           -- ^ iNES.
@@ -66,16 +66,16 @@ consoleHeaderLength Atari7800Header    = Length 128
 -- | Prepend a blank header: the console's width of zero bytes, for a patch that expects a headered input.
 addHeader :: ConsoleHeader -> ByteString -> ByteString
 addHeader console inputBytes =
-  ByteString.replicate (lengthToInt (consoleHeaderLength console)) 0x00 <> inputBytes
+  replicateLength (consoleHeaderLength console) 0x00 <> inputBytes
 
 -- | Drop the console's header from the front of the input;
 -- 'Nothing' when the input is shorter than the header it supposedly wears.
 removeHeader :: ConsoleHeader -> ByteString -> Maybe ByteString
 removeHeader console inputBytes
-  | ByteString.length inputBytes < headerWidth = Nothing
-  | otherwise                                  = Just (ByteString.drop headerWidth inputBytes)
+  | byteLength inputBytes < headerWidth = Nothing
+  | otherwise                           = Just (dropLength headerWidth inputBytes)
   where
-    headerWidth = lengthToInt (consoleHeaderLength console)
+    headerWidth = consoleHeaderLength console
 
 -- | What the user said about the input's header relative to what the patch expects.
 -- The default is that they already agree; the two flags name a console,

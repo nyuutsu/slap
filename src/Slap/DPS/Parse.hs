@@ -19,6 +19,7 @@ import Slap.Status (SlapError(..), SlapAdvisory, Parsed(..), ByteParserError(..)
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
+import Slap.Binary (byteAtOffset)
 import Slap.ByteParser (ByteParser, runFormatParser, flattenParse, getByte, getBytes, remaining,
                         throwByteParserError)
 import qualified Slap.ByteParser as ByteParser
@@ -38,12 +39,14 @@ import qualified Data.ByteString as ByteString
 
 isDPS :: ByteString -> Bool
 isDPS input
-  | ByteString.length input < dpsMinimumFileSize = False
-  | ByteString.index input dpsVersionOffset /= 1 = False
-  | ByteString.index input dpsStabilityOffset > 1 = False
-  | otherwise = recordsConsumeToEnd dpsMinimumFileSize
+  | byteLength input < dpsMinimumFileSize = False
+  | byteAtOffset dpsVersionOffset input /= 1 = False
+  | byteAtOffset dpsStabilityOffset input > 1 = False
+  | otherwise = recordsConsumeToEnd recordStreamStart
   where
     inputLength = ByteString.length input
+    -- The walk below is an Int cursor over 'ByteString.index'; it steps out of measure space once, here at its seed.
+    recordStreamStart = fromIntegral (unLength dpsMinimumFileSize) :: Int
     -- Tentative record walk: each record starts with a mode byte, then
     -- mode 0 (CopyFromROM): outputOffset(4) + sourceOffset(4) + length(4)
     -- mode 1 (EnclosedData): outputOffset(4) + dataLength(4) + data(dataLength)
@@ -77,8 +80,8 @@ isDPS input
 
 parseDPS :: EncodingName -> PatchFileContents -> Either SlapError (Parsed DPSPatch)
 parseDPS metadataEncoding (PatchFileContents input)
-  | ByteString.length input < dpsMinimumFileSize = Left (InputTooShort LabelDPS (RequiredLength (Length (fromIntegral dpsMinimumFileSize))) (ActualLength (byteLength input)))
-  | Left versionError <- toDPSFormatVersion (ByteString.index input dpsVersionOffset)
+  | byteLength input < dpsMinimumFileSize = Left (InputTooShort LabelDPS (RequiredLength dpsMinimumFileSize) (ActualLength (byteLength input)))
+  | Left versionError <- toDPSFormatVersion (byteAtOffset dpsVersionOffset input)
     = Left versionError
   | otherwise = do
       (patch, advisories) <- flattenParse (runFormatParser LabelDPS (parseDPSBody metadataEncoding) input)

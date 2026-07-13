@@ -6,25 +6,22 @@ import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), IPSVariant(..),
                        ipsRecordOffset, recordPayloadLength,
                        MarkerDisposition(..), decideMarkerDisposition,
                        effectiveTargetSize)
-import Slap.Binary (copyRegion, fillNewBuffer)
+import Slap.Binary (copyRegion, fillRegion, seedBufferFromSource, fillNewBuffer)
 import Slap.Status (SlapError(..), ApplyError(..), SlapAdvisory(..),
                    Outcome(..), ClippedRecordCount(..), MarkerOvershootBytes(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (lengthToInt, Offset(..), Length(..), FileSize(..),
+import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex(unActionIndex),
                      RequestedLength(..), RemainingLength(..),
                      DeclaredTargetSize(..), NaturalTargetSize(..),
                      Cursor(..), fitsWithin, offsetToFileSize, remainingFromOffset,
-                     subtractLength, minLength, byteLength, byteFileSize,
-                     firstAction, nextAction, streamEndIndex, plusOffset)
+                     subtractLength, byteLength, byteFileSize,
+                     firstAction, nextAction, streamEndIndex)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
-import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.State.Strict (StateT, modify, runStateT)
 import qualified Data.Vector as Vector
-import Data.Word (Word8)
-import Foreign.Marshal.Utils (fillBytes)
 import System.IO.Unsafe (unsafePerformIO)
 
 ----------------------------------------------------------------------------
@@ -65,7 +62,7 @@ classifyRecordPlacement writePosition writeLength effectiveSize
 -- IPS has no output-length field, so the target size is derived.
 -- The natural size is @max sourceSize maxRecordEnd@; the marker disposition (see 'MarkerDisposition') then turns natural into effective.
 --
--- The buffer is allocated to the effective size, seeded by 'initialFill', and the record walk overlays each named write on that baseline.
+-- The buffer is allocated to the effective size, seeded by 'seedBufferFromSource', and the record walk overlays each named write on that baseline.
 -- Any byte no record names keeps its seeded value: the source byte at that offset, or zero past the source end.
 --
 -- Under 'MarkerHonored', 'handleHonored' clips and counts records that cross the effective size;
@@ -138,23 +135,6 @@ applyIPS (InputFileContents source) patch
         recordClip recordIndex overshootLength =
           modify (<> Just (ClipAccumulator (ClippedRecordCount 1) recordIndex (MarkerOvershootBytes overshootLength)))
 
-        -- | Seed every byte of the output buffer before any record runs.
-        -- The leading @min sourceSize effectiveSize@ bytes are a direct copy of the source ByteString;
-        -- the trailing @effectiveSize - sourceSize@ bytes (if any) are zero-filled. After this call returns,
-        -- every byte in the buffer holds a well-defined value, and subsequent record writes overlay that value at their declared offsets.
-        initialFill :: IO ()
-        initialFill = do
-          let targetLength      = Length (unFileSize effectiveSize)
-              availableInSource = remainingFromOffset (Offset 0) sourceSize
-              sourceCopyLength  = minLength targetLength availableInSource
-              zeroFillLength    = subtractLength targetLength sourceCopyLength
-              zeroFillStart     = advance (Offset 0) sourceCopyLength
-          copyRegion outputPointer (Offset 0) source (Offset 0) sourceCopyLength
-          when (unLength zeroFillLength > 0) $
-            fillBytes (plusOffset outputPointer zeroFillStart)
-                      (0 :: Word8)
-                      (lengthToInt zeroFillLength)
-
         -- | Execute a single record's write against the output
         -- buffer. Called only after the per-disposition handler has
         -- proven the write fits — this helper itself performs no
@@ -167,9 +147,7 @@ applyIPS (InputFileContents source) patch
         writeRecord IPSRecordRLE { ipsRleOffset = writePosition
                                  , ipsRleCount  = runLength
                                  , ipsRleFill   = fillByte } =
-          fillBytes (plusOffset outputPointer writePosition)
-                    fillByte
-                    (lengthToInt runLength)
+          fillRegion outputPointer writePosition fillByte runLength
 
         -- | Write only the leading @prefixLength@ bytes of a
         -- record's payload. Used by 'handleHonored' for records
@@ -181,14 +159,12 @@ applyIPS (InputFileContents source) patch
                      payload (Offset 0) prefixLength
         writeRecordPrefix IPSRecordRLE { ipsRleOffset = writePosition
                                        , ipsRleFill   = fillByte } prefixLength =
-          fillBytes (plusOffset outputPointer writePosition)
-                    fillByte
-                    (lengthToInt prefixLength)
+          fillRegion outputPointer writePosition fillByte prefixLength
 
         -- | The clip accumulator lives in the surrounding 'IPSApply' state, so each step needs only the current index.
         -- End-of-stream returns no error;
         -- a failed bounds guard returns the error, leaving whatever clip state had been built up so far in place.
-        -- The buffer is already fully populated by 'initialFill' before the walk begins.
+        -- The buffer is already fully populated by 'seedBufferFromSource' before the walk begins.
         --
         -- A record that writes nothing is the parse-accepted no-op (docs/ips/questions.md).
         -- It takes no part in the walk — no write, no bounds geometry, no clip accounting — just as it took no part in the natural-size fold above.
@@ -253,7 +229,7 @@ applyIPS (InputFileContents source) patch
                  applyRecordStream (nextAction recordIndex)
 
       in do
-        liftIO initialFill
+        liftIO (seedBufferFromSource outputPointer effectiveSize source)
         applyRecordStream firstAction
 
 ----------------------------------------------------------------------------

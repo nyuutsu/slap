@@ -22,7 +22,8 @@ import Slap.PPF3.Types (PPF3ImageType(..),
                         PPF3ValidationBlock(..),
                         fromImageType,
                         ppf3DescriptionLength)
-import Slap.Measure (lengthToInt, Offset(..))
+import Slap.Binary (replicateLength)
+import Slap.Measure (Offset(..), byteLength, minLength, subtractLength)
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload,
                     EncodedUndoHunk, encodedUndoOffset, encodedUndoPayload,
                     encodedUndoOriginal)
@@ -49,8 +50,8 @@ padDescription :: EncodedText -> (ByteString, [SlapAdvisory])
 padDescription description =
   let (truncatedBytes, notices) =
         encodeTextBounded EncodingUtf8 ppf3DescriptionLength (encodedTextContent description)
-      padded = truncatedBytes <> ByteString.replicate
-                 (max 0 (lengthToInt ppf3DescriptionLength - ByteString.length truncatedBytes)) 0x20
+      padded = truncatedBytes <> replicateLength
+                 (subtractLength ppf3DescriptionLength (minLength ppf3DescriptionLength (byteLength truncatedBytes))) 0x20
       advisories = encodeLossAdvisories LabelPPF3 FieldDescription notices
   in (padded, advisories)
 
@@ -67,14 +68,14 @@ buildHeader description validationBlock hasUndo imageType =
 
 encodeUndoRecord :: EncodedUndoHunk -> Builder
 encodeUndoRecord ehunk =
-  int64LE (fromIntegral (unOffset (encodedUndoOffset ehunk)))
+  int64LE (unOffset (encodedUndoOffset ehunk))
   <> word8 (fromIntegral (ByteString.length (encodedUndoPayload ehunk)))
   <> byteString (encodedUndoPayload ehunk)
   <> byteString (encodedUndoOriginal ehunk)
 
 encodeWriteRecord :: EncodedHunk -> Builder
 encodeWriteRecord ehunk =
-  int64LE (fromIntegral (unOffset (encodedOffset ehunk)))
+  int64LE (unOffset (encodedOffset ehunk))
   <> word8 (fromIntegral (ByteString.length (encodedPayload ehunk)))
   <> byteString (encodedPayload ehunk)
 

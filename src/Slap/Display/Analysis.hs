@@ -16,6 +16,7 @@ module Slap.Display.Analysis
   , renderAnalysisSummary
   ) where
 
+import Slap.Binary (viewBytesInRange, zeroExtendedBlock)
 import Slap.Checksum (CRC16, showCRC16)
 import Slap.Display.Common (InfoLine(..),
                              Tally(..), CountUnit, ByteCount,
@@ -26,7 +27,7 @@ import Slap.Display.EmbeddedContent (EmbeddedDepth(..))
 import Slap.Display.Primitives (padHex, padNum, padRight, showSigned, hexDump)
 import Slap.Display.Glyph (spacePaddedEnDash)
 import Slap.Measure (Offset(..), Length(..), Delta(..), SignedOffset(unSignedOffset),
-                     offsetToInt, lengthToInt,
+                     byteLength,
                      OffsetRange(..), rangeLastByte, advance, distance)
 import Slap.Status (CursorKind, renderCursorKind)
 import Data.Array (Array, Ix, accumArray, assocs, elems)
@@ -168,7 +169,7 @@ renderAnalysisFull info analysis mSource = Text.unlines $ joinSections
         padNum index <> "  " <> regionLabel region <> padRight 10 (renderAsText (unLength (regionSize region)) <> " B")
         <> annotation region
         <> "\n" <> labeledHexDump "delta" deltaBytes
-        <> renderResolvedXOR mSource (offsetToInt (regionOffset region)) deltaBytes
+        <> renderResolvedXOR mSource (regionOffset region) deltaBytes
       PayloadXOR Nothing ->
         padNum index <> "  " <> regionLabel region <> padRight 10 (renderAsText (unLength (regionSize region)) <> " B")
         <> annotation region
@@ -227,11 +228,9 @@ renderDetail (DetailCursorUnderflow cursorKind underflowedCursor) =
 labeledHexDump :: Text -> ByteString -> Text
 labeledHexDump label bytes = "      " <> label <> ":\n" <> hexDump bytes
 
-resolveXOR :: ByteString -> Int -> ByteString -> ByteString
-resolveXOR source offset deltaBytes =
-  let sourceSlice = ByteString.take (ByteString.length deltaBytes) (ByteString.drop offset source)
-      padded = sourceSlice <> ByteString.replicate (ByteString.length deltaBytes - ByteString.length sourceSlice) 0
-  in ByteString.pack (ByteString.zipWith xor padded deltaBytes)
+resolveXOR :: ByteString -> Offset -> ByteString -> ByteString
+resolveXOR source deltaOffset deltaBytes =
+  ByteString.pack (ByteString.zipWith xor (zeroExtendedBlock deltaOffset (byteLength deltaBytes) source) deltaBytes)
 
 findSourceOffset :: Annotation -> Maybe Offset
 findSourceOffset (AnnotationAt _ _ details) = searchDetails details
@@ -240,10 +239,10 @@ findSourceOffset (AnnotationAt _ _ details) = searchDetails details
     searchDetails (DetailSource sourceOffset:_) = Just sourceOffset
     searchDetails (_:remaining)                = searchDetails remaining
 
-renderResolvedXOR :: Maybe ByteString -> Int -> ByteString -> Text
+renderResolvedXOR :: Maybe ByteString -> Offset -> ByteString -> Text
 renderResolvedXOR Nothing _ _ = ""
-renderResolvedXOR (Just source) offset deltaBytes =
-  "\n" <> labeledHexDump "resolved" (resolveXOR source offset deltaBytes)
+renderResolvedXOR (Just source) deltaOffset deltaBytes =
+  "\n" <> labeledHexDump "resolved" (resolveXOR source deltaOffset deltaBytes)
 
 renderCopySource :: Maybe ByteString -> AnalysisRegion -> Text
 renderCopySource Nothing _ = ""
@@ -251,8 +250,7 @@ renderCopySource (Just source) region =
   case findSourceOffset (regionAnnotation region) of
     Nothing          -> ""
     Just sourceOffset ->
-      let slice = ByteString.take (lengthToInt (regionSize region)) (ByteString.drop (offsetToInt sourceOffset) source)
-      in "\n" <> labeledHexDump "source data" slice
+      "\n" <> labeledHexDump "source data" (viewBytesInRange sourceOffset (regionSize region) source)
 
 ----------------------------------------------------------------------------
 -- Summary renderer
@@ -282,15 +280,15 @@ occupancyGlyph ColumnVacant   = '.'
 data BucketTally = BucketTally
   { tallyOccupancy :: ColumnOccupancy
   , tallyRecords   :: Int
-  , tallyBytes     :: Int
+  , tallyBytes     :: Length
   }
 
 instance Semigroup BucketTally where
   BucketTally leftOccupancy leftRecords leftBytes <> BucketTally rightOccupancy rightRecords rightBytes =
-    BucketTally (leftOccupancy <> rightOccupancy) (leftRecords + rightRecords) (leftBytes + rightBytes)
+    BucketTally (leftOccupancy <> rightOccupancy) (leftRecords + rightRecords) (leftBytes <> rightBytes)
 
 instance Monoid BucketTally where
-  mempty = BucketTally mempty 0 0
+  mempty = BucketTally mempty 0 mempty
 
 -- | An inclusive run of occupied sparkline columns, carrying the columns it spans.
 newtype BucketRun = BucketRun (NonEmpty (BucketIndex, BucketTally))
@@ -299,9 +297,11 @@ runFirstBucket, runLastBucket :: BucketRun -> BucketIndex
 runFirstBucket (BucketRun columns) = fst (NonEmpty.head columns)
 runLastBucket  (BucketRun columns) = fst (NonEmpty.last columns)
 
-runRecords, runBytes :: BucketRun -> Int
+runRecords :: BucketRun -> Int
 runRecords (BucketRun columns) = sum (fmap (tallyRecords . snd) columns)
-runBytes   (BucketRun columns) = sum (fmap (tallyBytes . snd) columns)
+
+runBytes :: BucketRun -> Length
+runBytes (BucketRun columns) = foldMap (tallyBytes . snd) columns
 
 -- Returns the upper of the two middles when the length is even.
 middleElement :: NonEmpty a -> a
@@ -398,21 +398,31 @@ renderAnalysisSummary info analysis mSource = Text.unlines $ joinSections
            _              -> Nothing
 
     -- Bucket-based analysis
-    bucketCount = 56 :: Int  -- terminal sparkline width
+    bucketCount = 56 :: Int64  -- terminal sparkline width
+
+    -- Column arithmetic runs in Int64; 'BucketIndex' wraps the Int that 'Array' indexing wants, and this pair is the only crossing.
+    bucketAtColumn :: Int64 -> BucketIndex
+    bucketAtColumn = BucketIndex . fromIntegral
+
+    columnOfBucket :: BucketIndex -> Int64
+    columnOfBucket = fromIntegral . unBucketIndex
 
     -- Ceiling division, so bucketWidth * bucketCount >= rangeLength and every offset in the range lands in a column below bucketCount.
-    bucketWidth :: OffsetRange -> Int
-    bucketWidth range = max 1 ((lengthToInt (rangeLength range) + bucketCount - 1) `div` bucketCount)
+    bucketWidth :: OffsetRange -> Int64
+    bucketWidth range = max 1 ((unLength (rangeLength range) + bucketCount - 1) `div` bucketCount)
+
+    -- The column a region's first byte lands in.
+    regionStartColumn :: OffsetRange -> AnalysisRegion -> Int64
+    regionStartColumn range region = unLength (distance (rangeStart range) (regionOffset region)) `div` bucketWidth range
 
     spannedColumns :: OffsetRange -> AnalysisRegion -> [BucketIndex]
     spannedColumns range region =
-      let width = bucketWidth range
-          startColumn = lengthToInt (distance (rangeStart range) (regionOffset region)) `div` width
-          endColumn   = (offsetToInt (advance (regionOffset region) (regionSize region)) - 1 - offsetToInt (rangeStart range)) `div` width
-      in [ BucketIndex column | column <- [max 0 startColumn .. min (bucketCount-1) endColumn] ]
+      let endColumn = (unOffset (advance (regionOffset region) (regionSize region)) - 1 - unOffset (rangeStart range))
+                      `div` bucketWidth range
+      in [ bucketAtColumn column | column <- [max 0 (regionStartColumn range region) .. min (bucketCount - 1) endColumn] ]
 
     bucketBounds :: (BucketIndex, BucketIndex)
-    bucketBounds = (BucketIndex 0, BucketIndex (bucketCount - 1))
+    bucketBounds = (BucketIndex 0, bucketAtColumn (bucketCount - 1))
 
     emptyBuckets :: Array BucketIndex BucketTally
     emptyBuckets = accumArray (<>) mempty bucketBounds []
@@ -421,13 +431,11 @@ renderAnalysisSummary info analysis mSource = Text.unlines $ joinSections
     bucketTallies = case offsetRange of
       Nothing -> emptyBuckets
       Just range ->
-        let width = bucketWidth range
-            regionStartColumn region = lengthToInt (distance (rangeStart range) (regionOffset region)) `div` width
-            occupancyEntries =
-              [ (column, BucketTally ColumnOccupied 0 0) | region <- allRegions, column <- spannedColumns range region ]
+        let occupancyEntries =
+              [ (column, BucketTally ColumnOccupied 0 (Length 0)) | region <- allRegions, column <- spannedColumns range region ]
             startEntries =
-              [ (BucketIndex column, BucketTally ColumnVacant 1 (lengthToInt (regionSize region))) | region <- allRegions
-              , let column = regionStartColumn region, column >= 0, column < bucketCount ]
+              [ (bucketAtColumn column, BucketTally ColumnVacant 1 (regionSize region)) | region <- allRegions
+              , let column = regionStartColumn range region, column >= 0, column < bucketCount ]
         in accumArray (<>) mempty bucketBounds (occupancyEntries <> startEntries)
 
     findRuns :: Array BucketIndex BucketTally -> [BucketRun]
@@ -445,21 +453,21 @@ renderAnalysisSummary info analysis mSource = Text.unlines $ joinSections
           let width = bucketWidth range
               runs = findRuns bucketTallies
               formatRun run =
-                let runStart = unBucketIndex (runFirstBucket run)
-                    runEnd   = unBucketIndex (runLastBucket run)
-                    startOffset = offsetToInt (rangeStart range) + runStart * width
+                let runStartColumn = columnOfBucket (runFirstBucket run)
+                    runEndColumn   = columnOfBucket (runLastBucket run)
+                    startOffset = unOffset (rangeStart range) + runStartColumn * width
                     -- The ceiling-rounded last bucket can nominally reach past the range's final byte;
                     -- clamp the shown end to the real last byte.
-                    endOffset = min (offsetToInt (rangeStart range) + (runEnd + 1) * width - 1)
-                                    (offsetToInt (rangeLastByte range))
+                    endOffset = min (unOffset (rangeStart range) + (runEndColumn + 1) * width - 1)
+                                    (unOffset (rangeLastByte range))
                     recordsInRun = runRecords run
                     bytesInRun   = runBytes run
                     percentage = if totalModified > 0
-                          then 100.0 * fromIntegral bytesInRun / fromIntegral totalModified :: Double
+                          then 100.0 * fromIntegral (unLength bytesInRun) / fromIntegral totalModified :: Double
                           else 0
                 in "  0x" <> padHex 6 startOffset <> spacePaddedEnDash <> "0x" <> padHex 6 endOffset
                    <> "   " <> padRight 5 (renderAsText recordsInRun) <> " records"
-                   <> "   " <> padRight 10 (commaNum bytesInRun <> " B")
+                   <> "   " <> padRight 10 (commaNum (unLength bytesInRun) <> " B")
                    <> "   " <> showPercent percentage
           in case runs of
                [] -> []

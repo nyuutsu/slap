@@ -15,7 +15,8 @@ module Slap.PPF1.Create
   ) where
 
 import Slap.PPF1.Types (PPF1Origin(..), ppf1DescriptionLength)
-import Slap.Measure (lengthToInt, Offset(..))
+import Slap.Binary (replicateLength)
+import Slap.Measure (Offset(..), byteLength, minLength, subtractLength)
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
 import Slap.Status (SlapAdvisory, CreateResult(..))
 import Slap.Text (EncodedText, EncodingName(..),
@@ -61,8 +62,8 @@ padDescription :: EncodedText -> (ByteString, [SlapAdvisory])
 padDescription description =
   let (truncatedBytes, notices) =
         encodeTextBounded EncodingUtf8 ppf1DescriptionLength (encodedTextContent description)
-      padded = truncatedBytes <> ByteString.replicate
-                 (max 0 (lengthToInt ppf1DescriptionLength - ByteString.length truncatedBytes)) 0x20
+      padded = truncatedBytes <> replicateLength
+                 (subtractLength ppf1DescriptionLength (minLength ppf1DescriptionLength (byteLength truncatedBytes))) 0x20
       advisories = encodeLossAdvisories LabelPPF1 FieldDescription notices
   in (padded, advisories)
 

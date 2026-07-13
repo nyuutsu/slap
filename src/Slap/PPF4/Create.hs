@@ -23,8 +23,8 @@ module Slap.PPF4.Create
   ) where
 
 import Slap.PPF4.Types (PPF4Append(..), ppf4DescriptionLength)
-import Slap.Binary (putWord32LE)
-import Slap.Measure (Offset(..), FileSize(..), Hunk(..), offsetToInt, lengthToInt, fileSizeToInt)
+import Slap.Binary (putWord32LE, dropLength, replicateLength, takeLength)
+import Slap.Measure (Offset(..), FileSize, Hunk(..), distance, fileSizeToOffset, hunkEnd)
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
 import Slap.Status (CreateResult(..))
 import Slap.FileContents (PatchFileContents(..))
@@ -57,7 +57,7 @@ header :: Builder
 header =
   byteString "PPF40"                                          -- magic + version (5 bytes)
   <> word8 0xFF                                                -- encoding method
-  <> byteString (ByteString.replicate (lengthToInt ppf4DescriptionLength) 0x00)
+  <> byteString (replicateLength ppf4DescriptionLength 0x00)
   <> word8 0x00                                                -- image type
   <> word8 0x00                                                -- validation flag
   <> word8 0x00                                                -- undo flag
@@ -90,18 +90,16 @@ encodeAppendRecord (PPF4Append payload) =
 partitionPPF4Phases :: FileSize -> [Hunk] -> ([Hunk], [Hunk])
 partitionPPF4Phases sourceSize = foldr classify ([], [])
   where
-    sourceLength = fileSizeToInt sourceSize
+    sourceBoundary = fileSizeToOffset sourceSize
     classify hunk (replaces, appends)
-      | startOffset >= sourceLength = (replaces, hunk : appends)
-      | endOffset   <= sourceLength = (hunk : replaces, appends)
+      | hunkOffset hunk >= sourceBoundary = (replaces, hunk : appends)
+      | hunkEnd hunk    <= sourceBoundary = (hunk : replaces, appends)
       | otherwise =
-          let withinSourceCount = sourceLength - startOffset
+          let withinSourceCount = distance (hunkOffset hunk) sourceBoundary
               replacePart = Hunk (hunkOffset hunk)
-                                 (ByteString.take withinSourceCount payload)
-              appendPart  = Hunk (Offset (fromIntegral sourceLength))
-                                 (ByteString.drop withinSourceCount payload)
+                                 (takeLength withinSourceCount payload)
+              appendPart  = Hunk sourceBoundary
+                                 (dropLength withinSourceCount payload)
           in (replacePart : replaces, appendPart : appends)
       where
-        startOffset = offsetToInt (hunkOffset hunk)
-        payload     = hunkPayload hunk
-        endOffset   = startOffset + ByteString.length payload
+        payload = hunkPayload hunk

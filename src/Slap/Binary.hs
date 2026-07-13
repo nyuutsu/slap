@@ -13,6 +13,7 @@ module Slap.Binary
   , VarintReadFailure(..)
   , getByuuVarint
   , getVcdiffVarint
+  , getVcdiffVarintAtOffset
   , minimalVcdiffVarintLength
     -- * Builders
   , putWord16LE
@@ -31,12 +32,25 @@ module Slap.Binary
   , md5
   , sha1
   , sha256
-    -- * Bulk memory operations
-  , copyRegion
-  , copyInPlace
+    -- * Measure-typed ByteString operations
+  , takeLength
+  , dropLength
+  , splitAtLength
+  , bytesFromOffset
+  , byteAtOffset
+  , replicateLength
+  , splitSuffixOfLength
+  , dropLengthFromEnd
   , viewBytesInRange
   , zeroExtendedBlock
+    -- * Bulk memory operations
+  , copyRegion
+  , copyBetweenBuffers
+  , copyInPlace
+  , fillRegion
+  , seedBufferFromSource
   , fillNewBuffer
+  , filledBufferOfSize
     -- * Byte permutations
   , swapAdjacentBytePairs
   , deinterleaveSMDBlock
@@ -54,16 +68,16 @@ import Data.Array (Array, listArray, (!))
 import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.), testBit)
 import Data.Int (Int64)
 import Data.Word (Word8, Word16, Word32, Word64)
-import Foreign.Marshal.Utils (copyBytes, moveBytes)
-import Foreign.Ptr (Ptr, plusPtr, castPtr)
+import Foreign.Marshal.Utils (copyBytes, fillBytes, moveBytes)
+import Foreign.Ptr (Ptr, castPtr)
 import Foreign.Storable (pokeByteOff)
 import qualified Crypto.Hash as Hash
 import qualified Data.ByteArray as ByteArray
 import Slap.Checksum (CRC16(..), MD5Hash(..), SHA1Hash(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Hunk(..),
-                     advance, byteLength, distance,
-                     offsetToInt, lengthToInt, fileSizeToInt)
+                     advance, byteLength, distance, minLength, subtractLength,
+                     lengthToOffset, fileSizeToLength, plusOffset)
 
 ----------------------------------------------------------------------------
 -- Little-endian readers
@@ -198,6 +212,10 @@ getVcdiffVarint offset input = decode offset 0
              else if value > largestSigned
                then Left VarintExceedsSignedButFitsUnsigned
                else Right (VarintResult (fromIntegral value) (position - offset + 1))
+
+-- | 'getVcdiffVarint' at a typed 'Offset' — for cursors that live in measure space rather than in a parser's 'Slap.Measure.Position'.
+getVcdiffVarintAtOffset :: Offset -> ByteString -> Either VarintReadFailure VarintResult
+getVcdiffVarintAtOffset (Offset cursorPosition) = getVcdiffVarint (fromIntegral cursorPosition)
 
 -- | Byte count of the canonical (shortest) VCDIFF varint encoding of a
 -- non-negative value: one base-128 group per seven significant bits,
@@ -347,6 +365,69 @@ sha256 :: ByteString -> ByteString
 sha256 = ByteArray.convert . Hash.hashWith Hash.SHA256
 
 ----------------------------------------------------------------------------
+-- Measure-typed ByteString operations
+----------------------------------------------------------------------------
+--
+-- The seam where 'Offset', 'Length', and 'FileSize' meet the 'Int'-shaped 'ByteString' API:
+-- each operation takes its position or extent as a measure and narrows inside, so no format module has to.
+-- The slicing operations narrow through 'countWithin'; 'byteAtOffset' and 'replicateLength' deliberately do not —
+-- clamping an index would read the wrong byte and clamping a fill would shorten it —
+-- so those two narrow plainly and their callers establish the bounds.
+
+-- A count met by a specific buffer: bounded into the buffer's @[0, length]@ range before it narrows,
+-- so a count outside the host's 'Int' gets the underlying operation's own boundary answer.
+countWithin :: ByteString -> Int64 -> Int
+countWithin buffer count = fromIntegral (max 0 (min (fromIntegral (ByteString.length buffer)) count))
+
+takeLength :: Length -> ByteString -> ByteString
+takeLength (Length sliceLength) input = ByteString.take (countWithin input sliceLength) input
+
+dropLength :: Length -> ByteString -> ByteString
+dropLength (Length skippedLength) input = ByteString.drop (countWithin input skippedLength) input
+
+splitAtLength :: Length -> ByteString -> (ByteString, ByteString)
+splitAtLength (Length prefixLength) input = ByteString.splitAt (countWithin input prefixLength) input
+
+bytesFromOffset :: Offset -> ByteString -> ByteString
+bytesFromOffset (Offset position) input = ByteString.drop (countWithin input position) input
+
+-- | The byte at a typed position; partial exactly as 'ByteString.index' is, and callers bound the position first.
+byteAtOffset :: Offset -> ByteString -> Word8
+byteAtOffset (Offset position) bytes = ByteString.index bytes (fromIntegral position)
+
+replicateLength :: Length -> Word8 -> ByteString
+replicateLength (Length fillLength) fillByte = ByteString.replicate (fromIntegral fillLength) fillByte
+
+lengthBeforeSuffix :: Length -> ByteString -> Length
+lengthBeforeSuffix suffixLength input =
+  subtractLength wholeLength (minLength wholeLength suffixLength)
+  where wholeLength = byteLength input
+
+-- | The input split before its last @suffixLength@ bytes: the bytes before the suffix, and the suffix itself.
+-- A suffix wider than the input yields @("", input)@.
+splitSuffixOfLength :: Length -> ByteString -> (ByteString, ByteString)
+splitSuffixOfLength suffixLength input = splitAtLength (lengthBeforeSuffix suffixLength input) input
+
+-- | The input without its last @trimmedLength@ bytes. A trim wider than the input yields empty —
+-- the clamp is load-bearing where a wire-declared trailer can claim more bytes than its region holds (PPF2/PPF3's FILE_ID.DIZ trim).
+dropLengthFromEnd :: Length -> ByteString -> ByteString
+dropLengthFromEnd trimmedLength input = takeLength (lengthBeforeSuffix trimmedLength input) input
+
+-- | The bytes in a given range of a 'ByteString' — the subrange starting at 'Offset' and continuing for 'Length' bytes,
+-- delivered as a view (a shared substring in the 'ByteString' sense, O(1)).
+-- A starting 'Offset' past the end yields an empty result, and a 'Length' that runs past the end yields the bytes that exist.
+viewBytesInRange :: Offset -> Length -> ByteString -> ByteString
+viewBytesInRange rangeStart rangeLength input =
+  takeLength rangeLength (bytesFromOffset rangeStart input)
+
+-- | The @regionLength@-byte block starting at @rangeStart@, always exactly that long:
+-- a range that runs past the end of the input is zero-extended rather than clipped.
+zeroExtendedBlock :: Offset -> Length -> ByteString -> ByteString
+zeroExtendedBlock rangeStart regionLength input =
+  present <> replicateLength (subtractLength regionLength (byteLength present)) 0
+  where present = viewBytesInRange rangeStart regionLength input
+
+----------------------------------------------------------------------------
 -- Bulk memory operations
 ----------------------------------------------------------------------------
 
@@ -357,27 +438,33 @@ copyRegion :: Ptr Word8 -> Offset -> ByteString -> Offset -> Length -> IO ()
 copyRegion destination destinationOffset source sourcePosition regionLength =
   when (unLength regionLength > 0) $
     UnsafeByteString.unsafeUseAsCStringLen source $ \(sourcePointer, _) ->
-      copyBytes (destination `plusPtr` offsetToInt destinationOffset)
-                (castPtr sourcePointer `plusPtr` offsetToInt sourcePosition)
-                (lengthToInt regionLength)
+      copyBytes (destination `plusOffset` destinationOffset)
+                (castPtr sourcePointer `plusOffset` sourcePosition)
+                (fromIntegral (unLength regionLength))
 
--- | The bytes in a given range of a 'ByteString' — the subrange
--- starting at 'Offset' and continuing for 'Length' bytes. The input
--- buffer is unchanged; the result is a view (a shared substring in
--- the 'ByteString' sense, O(1)). Out-of-range arguments are handled
--- gracefully by the underlying 'ByteString.drop' / 'ByteString.take':
--- a starting 'Offset' past the end yields an empty result, and a
--- 'Length' that runs past the end yields the bytes that exist.
-viewBytesInRange :: Offset -> Length -> ByteString -> ByteString
-viewBytesInRange rangeStart rangeLength input =
-  ByteString.take (lengthToInt rangeLength) (ByteString.drop (offsetToInt rangeStart) input)
+-- | Copy @regionLength@ bytes between raw buffers; the pointer-to-pointer sibling of 'copyRegion',
+-- with the same no-op on a zero or negative length. The regions must not overlap ('copyBytes' is memcpy).
+copyBetweenBuffers :: Ptr Word8 -> Ptr Word8 -> Length -> IO ()
+copyBetweenBuffers destination source regionLength =
+  when (unLength regionLength > 0) $
+    copyBytes destination source (fromIntegral (unLength regionLength))
 
--- | The @regionLength@-byte block starting at @rangeStart@, always exactly that long:
--- a range that runs past the end of the input is zero-extended rather than clipped.
-zeroExtendedBlock :: Offset -> Length -> ByteString -> ByteString
-zeroExtendedBlock rangeStart regionLength input =
-  present <> ByteString.replicate (lengthToInt regionLength - ByteString.length present) 0
-  where present = viewBytesInRange rangeStart regionLength input
+-- | Fill @regionLength@ bytes at a typed 'Offset' in a raw buffer with one byte value.
+-- The fill sibling of 'copyRegion', with the same no-op on a zero or negative length.
+fillRegion :: Ptr Word8 -> Offset -> Word8 -> Length -> IO ()
+fillRegion destination destinationOffset fillByte regionLength =
+  when (unLength regionLength > 0) $
+    fillBytes (destination `plusOffset` destinationOffset) fillByte (fromIntegral (unLength regionLength))
+
+-- | Seed a fresh output buffer from the source: copy whichever prefix of @source@ fits the buffer,
+-- and zero-fill whatever tail of the buffer the source could not reach.
+seedBufferFromSource :: Ptr Word8 -> FileSize -> ByteString -> IO ()
+seedBufferFromSource outputPointer outputSize source = do
+  copyRegion outputPointer (Offset 0) source (Offset 0) seededLength
+  fillRegion outputPointer (lengthToOffset seededLength) 0 (subtractLength wholeBuffer seededLength)
+  where
+    wholeBuffer  = fileSizeToLength outputSize
+    seededLength = minLength (byteLength source) wholeBuffer
 
 -- | Copy @regionLength@ bytes from one position in a buffer to
 -- another position in the SAME buffer. Used by apply workers for
@@ -390,9 +477,9 @@ zeroExtendedBlock rangeStart regionLength input =
 copyInPlace :: Ptr Word8 -> Offset -> Offset -> Length -> IO ()
 copyInPlace buffer sourceOffset destinationOffset regionLength =
   when (unLength regionLength > 0) $
-    moveBytes (buffer `plusPtr` offsetToInt destinationOffset)
-              (buffer `plusPtr` offsetToInt sourceOffset)
-              (lengthToInt regionLength)
+    moveBytes (buffer `plusOffset` destinationOffset)
+              (buffer `plusOffset` sourceOffset)
+              (fromIntegral (unLength regionLength))
 
 -- | Allocate an output buffer of exactly @size@ bytes, run a fill
 -- action over it, and return the filled buffer paired with whatever
@@ -410,9 +497,14 @@ copyInPlace buffer sourceOffset destinationOffset regionLength =
 -- between.
 fillNewBuffer :: FileSize -> (Ptr Word8 -> IO a) -> IO (ByteString, a)
 fillNewBuffer size fill =
-  Internal.createAndTrim' (fileSizeToInt size) $ \bufferPointer -> do
+  Internal.createAndTrim' (fromIntegral (unFileSize size)) $ \bufferPointer -> do
     extra <- fill bufferPointer
-    pure (0, fileSizeToInt size, extra)
+    pure (0, fromIntegral (unFileSize size), extra)
+
+-- | A buffer of exactly @size@ bytes as a pure value, wholly written by the fill action ('Internal.unsafeCreate''s contract).
+-- 'fillNewBuffer' is the sibling for fills that compute a result along the way.
+filledBufferOfSize :: FileSize -> (Ptr Word8 -> IO ()) -> ByteString
+filledBufferOfSize size = Internal.unsafeCreate (fromIntegral (unFileSize size))
 
 ----------------------------------------------------------------------------
 -- Byte permutations
@@ -504,8 +596,7 @@ diffHunks (InputFileContents original) (OutputFileContents modified) =
     mergeNearby [hunk] = [hunk]
     mergeNearby (Hunk firstOffset firstPayload : Hunk nextOffset nextPayload : remainingHunks)
       | gapBetween <= mergeGapThreshold =
-          let merged = ByteString.take (lengthToInt mergedLength)
-                         (ByteString.drop (offsetToInt firstOffset) modified)
+          let merged = viewBytesInRange firstOffset mergedLength modified
           in mergeNearby (Hunk firstOffset merged : remainingHunks)
       | otherwise = Hunk firstOffset firstPayload : mergeNearby (Hunk nextOffset nextPayload : remainingHunks)
       where

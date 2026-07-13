@@ -62,7 +62,7 @@ import Slap.PPF2.Types (PPF2ValidationBlock(..),
 import qualified Slap.PPF3.Create as PPF3
 import Slap.PPF3.Types (PPF3ImageType(..), PPF3ValidationBlock(..),
                         narrowPPF3FileId, ppf3MaxRecordPayload, ppf3Limits,
-                        ppf3ValidationOffset,
+                        ppf3ValidationOffset, ppf3ValidationSize,
                         ppf3RejectIncompatibleSizeChange)
 import qualified Slap.PPF4.Create as PPF4
 import Slap.PPF4.Types (PPF4Append(..), ppf4Limits, ppf4MaxRecordPayload,
@@ -107,15 +107,15 @@ import qualified Slap.NINJA1.Create as NINJA1
 import Slap.PlatformType (PlatformType(..), CarriedRomType(..), RequestedRomType(..))
 import Slap.Platform (platformToNINJA1, ninja1ToPlatform)
 import Slap.Normalize (normalizeCreatePair, sharesNormalizationLayout)
-import Slap.Binary (diffHunks, md5, sha1)
+import Slap.Binary (diffHunks, md5, sha1, viewBytesInRange)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.FFI (crc32)
-import Slap.Measure (offsetToInt, FileSize(..), Length(..), Offset(..), Hunk(..),
+import Slap.Measure (FileSize(..), Length(..), Offset(..), Hunk(..),
                       SplitHunk, SplitUndoHunk,
                       ActualSize(..), ExpectedSize(..),
                       SentinelOffset(..), MaxLength(..),
                       splitHunks, splitHunksUnbounded, splitUndoHunks,
-                      splitPayload, byteFileSize, byteLength)
+                      splitPayload, byteFileSize, byteLength, fitsWithin)
 import Slap.Narrow (EncodedHunk, EncodingLimits(..),
                     narrowHunks, narrowUndoHunks)
 import Slap.Constraint (Constraint(..))
@@ -1281,15 +1281,16 @@ normalizeDirectCreateInputs CreateNINJA1 meta sourceContents source target
 normalizeDirectCreateInputs _ _ _ source target = (source, target, [])
 
 -- | The whole validation block, when the source reaches it.
--- The block occupies [validationOffset, validationOffset + 1024), so a source ending exactly at validationOffset + 1024 supplies it whole:
--- the bound is '>=', not '>'. The same sum is the minimum 'SourceTooSmallForPPF2Validation' enforces in 'encodeDirect',
--- so '>=' keeps this in step with what that encoder accepts.
+-- The block occupies [validationOffset, validationOffset + ppf3ValidationSize), and 'fitsWithin' admits a source ending exactly at the block's end.
+-- That boundary is also the minimum 'SourceTooSmallForPPF2Validation' enforces in 'encodeDirect',
+-- so this stays in step with what that encoder accepts.
 ppf3ValidationBlockFrom :: RequestedPatchMetadata -> ByteString -> Maybe ByteString
 ppf3ValidationBlockFrom meta source
-  | ByteString.length source >= validationOffset + 1024 = Just (ByteString.take 1024 (ByteString.drop validationOffset source))
-  | otherwise                                            = Nothing
+  | fitsWithin validationOffset ppf3ValidationSize (byteFileSize source) =
+      Just (viewBytesInRange validationOffset ppf3ValidationSize source)
+  | otherwise = Nothing
   where
-    validationOffset = offsetToInt (ppf3ValidationOffset (fromMaybe BIN (requestedImageType meta)))
+    validationOffset = ppf3ValidationOffset (fromMaybe BIN (requestedImageType meta))
 
 buildContents :: DirectCreate -> InputFileContents -> OutputFileContents
               -> RequestedPatchMetadata -> Maybe PatchContents -> PatchContents
