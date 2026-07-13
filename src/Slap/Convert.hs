@@ -861,12 +861,12 @@ defaultAssumptionAdvisories target meta sourceRomType sourceImageType = concat
   ]
 
 -- | Default-assumption notes for the create and --with convert paths,
--- where no source PatchContents is available.
-createDefaultAdvisories :: CreateFormat -> RequestedPatchMetadata -> [SlapAdvisory]
-createDefaultAdvisories format meta =
+-- where no source PatchContents is available but the source file is.
+createDefaultAdvisories :: CreateFormat -> RequestedPatchMetadata -> InputFileContents -> [SlapAdvisory]
+createDefaultAdvisories format meta sourceFile =
   droppedEmbeddedBlobAdvisories format meta ++ windowSizeAdvisories format meta ++ case format of
     CreateDirect target  -> defaultAssumptionAdvisories target meta Nothing Nothing
-                            ++ undoVerificationAdvisories target meta
+                            ++ undoVerificationAdvisories target meta sourceFile
     CreateDifferential _ -> []
 
 -- | The note for an xdelta3 create asked (@--window-size@) for windows past what the widespread reference build decodes:
@@ -898,15 +898,16 @@ effectiveFileIdDiz meta contents = case requestedFileIdDiz meta of
   SetFileIdDiz diz -> Just diz
   DropFileIdDiz    -> Nothing
 
--- | Warn when undo / verification are included by default (no CLI
--- flag, no inherited source value). Same pattern as rom-type
--- defaulting to RAW.
-undoVerificationAdvisories :: DirectCreate -> RequestedPatchMetadata -> [SlapAdvisory]
-undoVerificationAdvisories CreatePPF3 meta = concat
+-- | Warn when undo / verification are included by default (no CLI flag, no inherited source value) —
+-- the same pattern as rom-type defaulting to RAW.
+-- The verification note stays silent when the source cannot supply the validation block: nothing gets embedded then.
+undoVerificationAdvisories :: DirectCreate -> RequestedPatchMetadata -> InputFileContents -> [SlapAdvisory]
+undoVerificationAdvisories CreatePPF3 meta (InputFileContents source) = concat
   [ [ IncludingUndoByDefault         | Nothing <- [requestedUndoInclusion         meta] ]
-  , [ IncludingVerificationByDefault | Nothing <- [requestedVerificationInclusion meta] ]
+  , [ IncludingVerificationByDefault | Nothing <- [requestedVerificationInclusion meta]
+                                     , isJust (ppf3ValidationBlockFrom meta source) ]
   ]
-undoVerificationAdvisories _ _ = []
+undoVerificationAdvisories _ _ _ = []
 
 -- | Note when converting to NINJA1 without source verification hashes.
 ninja1HashAdvisories :: PatchContents -> DirectCreate -> [SlapAdvisory]
@@ -1279,6 +1280,17 @@ normalizeDirectCreateInputs CreateNINJA1 meta sourceContents source target
                        (requestedRomType meta <|> (sourceContents >>= contentsRomType))
 normalizeDirectCreateInputs _ _ _ source target = (source, target, [])
 
+-- | The whole validation block, when the source reaches it.
+-- The block occupies [validationOffset, validationOffset + 1024), so a source ending exactly at validationOffset + 1024 supplies it whole:
+-- the bound is '>=', not '>'. The same sum is the minimum 'SourceTooSmallForPPF2Validation' enforces in 'encodeDirect',
+-- so '>=' keeps this in step with what that encoder accepts.
+ppf3ValidationBlockFrom :: RequestedPatchMetadata -> ByteString -> Maybe ByteString
+ppf3ValidationBlockFrom meta source
+  | ByteString.length source >= validationOffset + 1024 = Just (ByteString.take 1024 (ByteString.drop validationOffset source))
+  | otherwise                                            = Nothing
+  where
+    validationOffset = unOffset (ppf3ValidationOffset (fromMaybe BIN (requestedImageType meta)))
+
 buildContents :: DirectCreate -> InputFileContents -> OutputFileContents
               -> RequestedPatchMetadata -> Maybe PatchContents -> PatchContents
 buildContents format inputFileContents@(InputFileContents source) outputFileContents@(OutputFileContents target) meta sourceContents = PatchContents
@@ -1290,11 +1302,8 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
   , contentsDestinationSize    = if needs FieldDestinationSize
                     then Just (byteFileSize target)
                     else Nothing
-  -- The block occupies [validationOffset, validationOffset + 1024), so a source ending exactly at validationOffset + 1024 supplies it whole:
-  -- the bound is '>=', not '>'. The same sum is the minimum 'SourceTooSmallForPPF2Validation' enforces in 'encodeDirect',
-  -- so '>=' keeps this in step with what that encoder accepts.
-  , contentsValidation  = if needs FieldValidation && ByteString.length source >= validationOffset + 1024
-                    then Just (ByteString.take 1024 (ByteString.drop validationOffset source))
+  , contentsValidation  = if needs FieldValidation
+                    then ppf3ValidationBlockFrom meta source
                     else Nothing
   , contentsUndoData    = if needs FieldUndoData
                     then Just (splitUndoHunks ppf3MaxRecordPayload source patchHunks)
@@ -1338,7 +1347,6 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
       CreateNINJA1 -> NINJA1.ninja1HashInput source
       CreatePMSR   -> source
       CreateAPSN64 -> source
-    validationOffset = unOffset (ppf3ValidationOffset (fromMaybe BIN (requestedImageType meta)))
     undoChoice         = fromMaybe IncludeUndoData     (requestedUndoInclusion         meta)
     verificationChoice = fromMaybe IncludeVerification (requestedVerificationInclusion meta)
     contract           = directConversionContract format undoChoice verificationChoice

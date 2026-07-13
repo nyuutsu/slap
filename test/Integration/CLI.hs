@@ -77,6 +77,7 @@ cliTests tier = do
       , bpsConvertMetadataTests dm4yBase dm4yBps
       , undoCliTests dm4yBase dm4yUps
       , xdelta1SourceLengthTests dm4yBase dm4yXdelta1
+      , verificationReportTests dm4yBase dm4yBps dm4yIps
       , headerFlagTests dm4yBase dm4yIps dm4yBps
       , onlyAtFull tier (forceTests dm4yBase dm4yUps)
       , onlyAtFull tier (noverifyTests dm4yBase dm4yBps)
@@ -161,6 +162,50 @@ xdelta1SourceLengthTests base xdelta1 =
         removeIfExists out
         expectOk ["apply", xdelta1, lengthened, "-o", out, "--no-verify"]
           "xdelta1-length/--no-verify downgrades the gate" "applied"
+  ]
+
+-- | The happy-path verification report. The undo case is the load-bearing one:
+-- a PPF3's only check is its source-side validation block, and undo weighs crosswise,
+-- so the report must call the handed-in file uncheckable and the reverted file matched — a transposed wiring would say the opposite.
+verificationReportTests :: FilePath -> FilePath -> FilePath -> [TestTree]
+verificationReportTests base bps ips =
+  [ testCase "report/a checksummed apply names what matched" $
+      withTempFile "slap-out" $ \out -> do
+        removeIfExists out
+        expectOk ["apply", bps, base, "-o", out]
+          "report/checksummed apply" "input matches the patch's declared size and crc"
+
+  , testCase "report/a checkless apply says nothing was compared" $
+      withTempFile "slap-out" $ \out -> do
+        removeIfExists out
+        expectOk ["apply", ips, base, "-o", out]
+          "report/checkless apply" "carries no checks, so nothing was compared"
+
+  , testCase "report/undo labels its crosswise sides truthfully" $
+      withTempFile "slap-original" $ \original ->
+      withTempFile "slap-modified" $ \modified ->
+      withTempFile "slap-ppf" $ \ppf ->
+      withTempFile "slap-patched" $ \patched ->
+      withTempFile "slap-reverted" $ \reverted -> do
+        baseBytes <- ByteString.readFile base
+        -- 64 KiB reaches past the BIN validation block (1024 bytes at 0x9320), so the created PPF3 carries it;
+        -- the changed byte sits outside that block.
+        let originalBytes = ByteString.take 65536 baseBytes
+            alteredByte   = if ByteString.index originalBytes 40000 == 0xAA then 0xAB else 0xAA
+            modifiedBytes = ByteString.take 40000 originalBytes
+                         <> ByteString.singleton alteredByte
+                         <> ByteString.drop 40001 originalBytes
+        ByteString.writeFile original originalBytes
+        ByteString.writeFile modified modifiedBytes
+        removeIfExists ppf
+        removeIfExists patched
+        removeIfExists reverted
+        expectOk ["create", "--format", "ppf3", original, modified, ppf]
+          "report/ppf3 create" "wrote"
+        expectOk ["apply", ppf, original, "-o", patched]
+          "report/ppf3 apply" "applied"
+        expectOk ["undo", ppf, patched, "-o", reverted]
+          "report/undo input side is the uncheckable one" "the patch carries no checks for the input"
   ]
 
 -- | The --add-header and --remove-header flags: a console name aliases a byte quantity,

@@ -585,6 +585,7 @@ xdelta3WindowCapNote = do
   let advisoriesAt windowSize = createDefaultAdvisories
         (CreateDifferential CreateXDelta3)
         noMetadataRequested { requestedWindowSize = windowSize }
+        (InputFileContents "window-size notes never look at the source")
       isCapNote XDelta3WindowSizePastReferenceDecoder{} = True
       isCapNote _                                       = False
   assertBool "a 17 MiB window earns the note"

@@ -25,7 +25,7 @@ data UndoInclusion
 -- The embed-side member of slap's verification family, set by @--omit-verification@ on 'slap create' (and convert).
 -- Family siblings:
 --
--- * @VerificationPolicy@ (in @app\/CLI.hs@) — the apply-side member, set by @--no-verify@:
+-- * 'Slap.Verify.VerificationPolicy' — the apply-side member, set by @--no-verify@:
 --   what 'slap apply' does at runtime when verification data is present and mismatches the input.
 -- * 'Slap.XDelta1.Types.XDelta1VerificationPosture' — the parse-side member:
 --   what a parsed xdelta1 patch declares about its own verification data,

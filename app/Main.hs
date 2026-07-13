@@ -10,9 +10,10 @@ import Slap.SomePatch
   , UndoAvailability(..)
   , parseSome
   )
-import Slap.Verify (verifySource, verifyTarget)
+import Slap.Verify (verifySource, weighSource, weighTarget, flipSpokenSides, judgeWeighing, verdictOnWeighing)
 import Slap.Display.Common (pathText)
-import Slap.Display.Info (renderPatchInfo, renderActionLine)
+import Slap.Display.Info (renderPatchInfo, renderActionLine,
+                          InputSideVerdict(..), OutputSideVerdict(..), renderVerificationReport)
 import Slap.Display.Analysis (renderAnalysisFull, renderAnalysisSummary)
 import Slap.Display.EmbeddedContent (EmbeddedDepth(SizeOnly))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
@@ -320,16 +321,27 @@ doApply parsedCommand = do
         let normalized = normalizeApplySource (patchSourceNormalization parsed) (InputFileContents reframedBytes)
         emitAdvisories (normalizedSourceAdvisories normalized)
         let source = normalizedSourceBytes normalized
-        settleVerification (verifySource verificationPolicy verification source)
+            sourceWeighing = weighSource verification source
+        settleVerification (judgeWeighing verificationPolicy sourceWeighing)
         outcome <- orBail =<< runApply (patchApply parsed) source
         emitAdvisories (outcomeAdvisories outcome)
         let target = outcomeValue outcome
-        settleVerification (verifyTarget verificationPolicy verification target)
+            targetWeighing = weighTarget verification target
+        settleVerification (judgeWeighing verificationPolicy targetWeighing)
         let (restoredTarget, restoreAdvisories) =
               restoreStrippedContent (patchFormat parsed) (normalizedSourceRestore normalized) target
         emitAdvisories restoreAdvisories
         writeFileAtomicallyOver outputPath (unOutputFileContents restoredTarget)
         TextIO.putStrLn (renderActionLine "applied" (patchInfo parsed) outputPath)
+        -- The report's nouns are the files on disk. When normalization or restore reshaped the bytes,
+        -- the weighed form is a different artifact — the advisories tell that story, and the report stays out of it.
+        let weighedFormsAreTheFilesOnDisk =
+              unInputFileContents source == reframedBytes
+              && unOutputFileContents restoredTarget == unOutputFileContents target
+        when weighedFormsAreTheFilesOnDisk $
+          mapM_ TextIO.putStrLn (renderVerificationReport
+            (InputSideVerdict (verdictOnWeighing sourceWeighing))
+            (OutputSideVerdict (verdictOnWeighing targetWeighing)))
 
   case applyOutput parsedCommand of
     ApplyInPlace backupBehavior -> do
@@ -368,14 +380,19 @@ doUndo parsedCommand = do
 
       undoAndWriteTo undo outputPath = do
         modified <- readMaybeUnwrap (undoFileReading parsedCommand) (undoSource parsedCommand)
-        settleVerification (verifyTarget verificationPolicy verification (OutputFileContents modified))
+        let patchedWeighing = flipSpokenSides (weighTarget verification (OutputFileContents modified))
+        settleVerification (judgeWeighing verificationPolicy patchedWeighing)
         outcome <- orBail (runUndo undo (OutputFileContents modified))
         emitAdvisories (outcomeAdvisories outcome)
         let revertedSource = outcomeValue outcome
-        settleVerification (verifySource verificationPolicy verification revertedSource)
+            revertedWeighing = flipSpokenSides (weighSource verification revertedSource)
+        settleVerification (judgeWeighing verificationPolicy revertedWeighing)
         let InputFileContents result = revertedSource
         writeFileAtomicallyOver outputPath result
         TextIO.putStrLn (renderActionLine "reverted" (patchInfo parsed) outputPath)
+        mapM_ TextIO.putStrLn (renderVerificationReport
+          (InputSideVerdict (verdictOnWeighing patchedWeighing))
+          (OutputSideVerdict (verdictOnWeighing revertedWeighing)))
 
       undoUsing undo = case undoOutput parsedCommand of
         UndoInPlace backupBehavior -> do
@@ -414,7 +431,7 @@ doCreate parsedCommand = do
   refuseOverwrite (createOverwritePolicy parsedCommand) (createOutput parsedCommand)
   originalBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createOriginal parsedCommand)
   modifiedBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createModified parsedCommand)
-  emitAdvisories (createDefaultAdvisories (createFormat parsedCommand) createMeta)
+  emitAdvisories (createDefaultAdvisories (createFormat parsedCommand) createMeta (InputFileContents originalBytes))
   result <- orBail (createPatch
                      (createFormat parsedCommand)
                      resolvedXDelta1Names
@@ -518,7 +535,7 @@ doConvert parsedCommand = do
       emitAdvisories restoreAdvisories
       createResult <- orBail (createPatch (convertTo parsedCommand) resolvedXDelta1Names (InputFileContents handedSourceBytes) restoredTarget mergedMeta (patchContentsOf parsed) (convertConstraints parsedCommand) noDialectsRequested)
       emitAdvisories (patchSourceAdvisories parsed
-                        ++ createDefaultAdvisories (convertTo parsedCommand) mergedMeta
+                        ++ createDefaultAdvisories (convertTo parsedCommand) mergedMeta (InputFileContents handedSourceBytes)
                         ++ resultAdvisories createResult)
       writeOutputFile outputFile (unPatchFileContents (resultBytes createResult))
       TextIO.putStrLn ("converted to " <> formatName (convertTo parsedCommand) <> ": " <> pathText outputFile)

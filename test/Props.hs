@@ -35,6 +35,10 @@
 --                                  case-insensitive lookup, escaped
 --                                  Unicode, nested-object tolerance,
 --                                  honest failure on malformed input.
+--   * 'Props.Verify'             — the verification weighing:
+--                                  verdict, enforcement, and
+--                                  the report's sentences,
+--                                  projected from one pass.
 --
 -- Shared generators, helpers, and predicates live in 'Props.Helpers'.
 module Main (main) where
@@ -57,6 +61,7 @@ import qualified Props.SpecConformance as SpecConformance
 import qualified Props.Text as Text
 import qualified Props.Truncation as Truncation
 import qualified Props.Undo as Undo
+import qualified Props.Verify as Verify
 import qualified Props.XDelta1Conformance as XDelta1Conformance
 
 import Test.Tasty
@@ -81,5 +86,6 @@ main = defaultMain $ testGroup "Properties"
   , Narrow.narrowTests
   , NegativeWireValues.negativeWireValuesTests
   , Normalize.normalizeTests
+  , Verify.verifyTests
   , XDelta1Conformance.xdelta1ConformanceTests
   ]

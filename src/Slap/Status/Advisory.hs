@@ -271,7 +271,7 @@ data SlapAdvisory
 
   -- Verification: source/target integrity check mismatches
   --
-  -- The first four kinds are fatal-class: under 'Slap.Measure.EnforceVerification' they promote to 'Slap.Status.VerificationFatal',
+  -- The first four kinds are fatal-class: under 'Slap.Verify.EnforceVerification' they promote to 'Slap.Status.VerificationFatal',
   -- and @--no-verify@ demotes them to warnings.
   -- The other four are advisory by design (block CRC16, PPF validation block, file-size advisory, source-bytes comparison)
   -- and always emit as warnings — @--no-verify@ does not silence them;
