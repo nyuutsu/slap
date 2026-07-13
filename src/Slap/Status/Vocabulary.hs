@@ -26,6 +26,8 @@ module Slap.Status.Vocabulary
   , verificationSideLabel
   , HashAlgorithm(..)
   , hashAlgorithmLabel
+  , DeclaredCheckKind(..)
+  , declaredCheckKindNoun
   , ExpectedAdler32(..)
   , ActualAdler32(..)
   , ByteCheckLabel(..)
@@ -179,6 +181,32 @@ data HashAlgorithm = MD5 | SHA1
 hashAlgorithmLabel :: HashAlgorithm -> Text
 hashAlgorithmLabel MD5  = "MD5"
 hashAlgorithmLabel SHA1 = "SHA1"
+
+-- | The kind of a declared check, named so a message can say what a match actually rests on —
+-- a held size check and a held SHA1 earn different sentences.
+data DeclaredCheckKind
+  = DeclaredCRC32
+  | DeclaredMD5
+  | DeclaredSHA1
+  | DeclaredFileSize
+  | DeclaredBlockCRC16
+  | DeclaredValidationBlock
+  | DeclaredByteComparison
+  | DeclaredByteOrder
+  | DeclaredWindowAdler32
+  deriving (Eq, Show)
+
+-- | The check vocabulary of match-side messages, in the mismatch warnings' own dialect ("input CRC mismatch").
+declaredCheckKindNoun :: DeclaredCheckKind -> Text
+declaredCheckKindNoun DeclaredCRC32           = "CRC"
+declaredCheckKindNoun DeclaredMD5             = "MD5"
+declaredCheckKindNoun DeclaredSHA1            = "SHA1"
+declaredCheckKindNoun DeclaredFileSize        = "declared size"
+declaredCheckKindNoun DeclaredBlockCRC16      = "block CRC16s"
+declaredCheckKindNoun DeclaredValidationBlock = "validation block"
+declaredCheckKindNoun DeclaredByteComparison  = "identifying bytes"
+declaredCheckKindNoun DeclaredByteOrder       = "byte order"
+declaredCheckKindNoun DeclaredWindowAdler32   = "window checksums"
 
 -- | An Adler32 value a patch declared or stored — 'Slap.Checksum.ExpectedCRC32''s peer.
 newtype ExpectedAdler32 = ExpectedAdler32 { unExpectedAdler32 :: Adler32 }

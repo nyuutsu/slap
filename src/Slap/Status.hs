@@ -56,6 +56,8 @@ module Slap.Status
   , ByteCheckLabel(..)
   , verificationSideLabel
   , hashAlgorithmLabel
+  , DeclaredCheckKind(..)
+  , declaredCheckKindNoun
     -- Restructured payload sums / newtypes
   , EmptyUnit(..)
   , emptyUnitLabel

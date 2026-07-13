@@ -10,14 +10,14 @@ import Slap.SomePatch
   , UndoAvailability(..)
   , parseSome
   )
-import Slap.Verify (verifySource, weighSource, weighTarget, flipSpokenSides, judgeWeighing, verdictOnWeighing)
+import Slap.Verify (verifySource, weighSource, weighTarget,
+                    flipSpokenSides, judgeWeighing, verdictOnWeighing)
 import Slap.Display.Common (pathText)
 import Slap.Display.Info (renderPatchInfo, renderActionLine,
                           InputSideVerdict(..), OutputSideVerdict(..), renderVerificationReport)
 import Slap.Display.Analysis (renderAnalysisFull, renderAnalysisSummary)
 import Slap.Display.EmbeddedContent (EmbeddedDepth(SizeOnly))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
-import Slap.Measure (ActualSize(..), byteFileSize)
 import Slap.Convert (CreateFormat(..), DifferentialCreate(..),
                      PatchContents, contentsFileIdDiz,
                      RequestedPatchMetadata(..),
@@ -47,7 +47,8 @@ import Slap.Status (SlapError(..), SourceRequiredCause(..), ExtractionSubject(..
                    emitAdvisories, bailError, orBail)
 import Slap.Normalize (NormalizedSource(..), normalizeApplySource, restoreStrippedContent)
 import Slap.Display.Glyph (spacePaddedRightwardsArrow)
-import Slap.Header (addHeader, removeHeader)
+import Slap.Header (InputHeaderDirective(..))
+import Slap.Preflight (HeaderRescueCandidate(..), headerRescueCandidates, reframeInput)
 
 import CLI
   ( Command(..)
@@ -67,7 +68,6 @@ import CLI
   , ConvertMetadataInputs(..)
   , FileReadingOptions(..)
   , ArchiveHandling(..)
-  , InputHeaderDirective(..)
   , ExplainVerbosity(..)
   , Verbosity(..)
   , OverwritePolicy(..)
@@ -77,6 +77,7 @@ import CLI
 import Archive (unwrapArchive)
 
 import Data.ByteString (ByteString)
+import Data.Either (isLeft)
 import qualified Data.ByteString as ByteString
 import Control.Exception (try, bracketOnError)
 import Control.Monad (when)
@@ -191,19 +192,6 @@ readMaybeUnwrap fileReadingOptions = case fileReadingArchiveHandling fileReading
   AutoUnwrapSingleEntryArchives -> readUnwrap
   ReadBytesVerbatim             -> readInputFile
 
--- | Carry out the user's @--add-header@\/@--remove-header@ instruction on the handed input,
--- narrating the action with a note so the reframe never happens silently.
-reframeInput :: InputHeaderDirective -> ByteString -> IO ByteString
-reframeInput TakeInputAsIs handedBytes = pure handedBytes
-reframeInput (AddHeader console) handedBytes = do
-  emitAdvisories [InputHeaderAdded console]
-  pure (addHeader console handedBytes)
-reframeInput (RemoveHeader console) handedBytes = case removeHeader console handedBytes of
-  Nothing -> bailError (HeaderRemovalExceedsInput console (ActualSize (byteFileSize handedBytes)))
-  Just bytesBeneath -> do
-    emitAdvisories [InputHeaderRemoved console]
-    pure bytesBeneath
-
 -- | Resolve @slap create@'s metadata inputs: @--metadata FILE@ becomes the embedded blob, @--diz FILE@ the FILE_ID.DIZ.
 resolveCreateMetadata :: CreateMetadataInputs -> IO RequestedPatchMetadata
 resolveCreateMetadata inputs = do
@@ -315,14 +303,20 @@ doApply parsedCommand = do
 
       applyAndWriteTo outputPath = do
         handedBytes <- readMaybeUnwrap (applyFileReading parsedCommand) (applySource parsedCommand)
-        reframedBytes <- reframeInput (applyHeaderDirective parsedCommand) handedBytes
+        let reframeOutcome = reframeInput (applyHeaderDirective parsedCommand) handedBytes
+        emitAdvisories (outcomeAdvisories reframeOutcome)
+        reframedBytes <- orBail (outcomeValue reframeOutcome)
         -- ROM-type normalization comes before the source hashes are taken, so they cover the bytes the patch's checksums were computed over;
         -- what it sets aside returns to the output only after target verification, whose stored hash also describes the clean form.
         let normalized = normalizeApplySource (patchSourceNormalization parsed) (InputFileContents reframedBytes)
         emitAdvisories (normalizedSourceAdvisories normalized)
         let source = normalizedSourceBytes normalized
             sourceWeighing = weighSource verification source
-        settleVerification (judgeWeighing verificationPolicy sourceWeighing)
+            sourceOutcome = judgeWeighing verificationPolicy sourceWeighing
+        emitAdvisories (outcomeAdvisories sourceOutcome)
+        when (applyHeaderDirective parsedCommand == TakeInputAsIs && isLeft (outcomeValue sourceOutcome)) $
+          emitAdvisories (headerRescueAdvisories (headerRescueCandidates parsed handedBytes))
+        orBail (outcomeValue sourceOutcome)
         outcome <- orBail =<< runApply (patchApply parsed) source
         emitAdvisories (outcomeAdvisories outcome)
         let target = outcomeValue outcome
@@ -608,6 +602,12 @@ settleVerification :: Outcome (Either SlapError ()) -> IO ()
 settleVerification verificationOutcome = do
   emitAdvisories (outcomeAdvisories verificationOutcome)
   orBail (outcomeValue verificationOutcome)
+
+headerRescueAdvisories :: [HeaderRescueCandidate] -> [SlapAdvisory]
+headerRescueAdvisories [] = [NoHeaderAdjustmentMatches]
+headerRescueAdvisories candidates =
+  [ SourceMatchesAfterHeaderAdjustment (rescueAdjustment candidate) (rescueConsoles candidate) (rescueHeldKinds candidate)
+  | candidate <- candidates ]
 
 -- | Render the full per-record analysis to stderr, gated on 'Verbose'.
 emitVerboseAnalysis :: Verbosity -> SomePatch -> IO ()

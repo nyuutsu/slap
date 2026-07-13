@@ -9,6 +9,8 @@ module Slap.Header
   , consoleHeaderLength
   , addHeader
   , removeHeader
+  , InputHeaderDirective(..)
+  , HeaderAdjustment(..)
   ) where
 
 import Data.ByteString (ByteString)
@@ -74,3 +76,18 @@ removeHeader console inputBytes
   | otherwise                                  = Just (ByteString.drop headerWidth inputBytes)
   where
     headerWidth = unLength (consoleHeaderLength console)
+
+-- | What the user said about the input's header relative to what the patch expects.
+-- The default is that they already agree; the two flags name a console,
+-- which is a friendly alias for how many bytes to put on or take off the front.
+data InputHeaderDirective
+  = TakeInputAsIs
+  | AddHeader ConsoleHeader
+    -- ^ @--add-header CONSOLE@: the patch expects a headered input and this one is bare.
+  | RemoveHeader ConsoleHeader
+    -- ^ @--remove-header CONSOLE@: the input wears a header and the patch expects the bytes beneath.
+  deriving (Show, Eq)
+
+-- | An arrangement's direction without a chosen console; 'InputHeaderDirective' is the flag-side shape that has picked one.
+data HeaderAdjustment = HeaderComesOff | HeaderGoesOn
+  deriving (Eq, Show)

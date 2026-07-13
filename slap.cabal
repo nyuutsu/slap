@@ -106,6 +106,7 @@ library slap-internal
     , Slap.PMSR.Describe
     , Slap.PMSR.Parse
     , Slap.PMSR.Types
+    , Slap.Preflight
     , Slap.NINJA2.Apply
     , Slap.NINJA2.Create
     , Slap.NINJA2.Describe
@@ -212,6 +213,7 @@ test-suite props
                   , Props.NegativeWireValues
                   , Props.Normalize
                   , Props.ParseWarnings
+                  , Props.Preflight
                   , Props.ResolveCopyAddress
                   , Props.RoundTrip
                   , Props.SpecConformance

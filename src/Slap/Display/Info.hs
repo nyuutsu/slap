@@ -24,11 +24,12 @@ import Slap.Display.Common (InfoLine(..), renderInfoLine, Tally(..), CountUnit, 
                              FormatHeader, renderFormatHeader,
                              renderCountUnit, pluralCountUnit,
                              renderByteCount, renderOffsetRange,
-                             renderAsText)
+                             renderAsText, proseList)
 import Slap.Display.EmbeddedContent (EmbeddedContent, EmbeddedDepth(..), renderEmbedded)
 import Slap.Display.Glyph (spacePaddedRightwardsArrow)
 import Slap.Measure (OffsetRange)
-import Slap.Verify (VerificationVerdict(..), DeclaredCheckKind(..))
+import Slap.Status (declaredCheckKindNoun)
+import Slap.Verify (VerificationVerdict(..), DeclaredCheckKind)
 
 -- | What @slap info@ shows about a patch.
 -- Populated cheaply at parse time: every field is a fact the format helper already had at hand,
@@ -100,24 +101,4 @@ renderVerificationReport (InputSideVerdict inputVerdict) (OutputSideVerdict outp
     sideLine _         (VerdictDiffers _)         = Nothing
 
 heldKindsPhrase :: NonEmpty DeclaredCheckKind -> Text
-heldKindsPhrase = proseList . map checkKindNoun . NonEmpty.toList
-
--- | The match line's check vocabulary, in the mismatch warnings' own dialect ("input CRC mismatch").
-checkKindNoun :: DeclaredCheckKind -> Text
-checkKindNoun DeclaredCRC32           = "CRC"
-checkKindNoun DeclaredMD5             = "MD5"
-checkKindNoun DeclaredSHA1            = "SHA1"
-checkKindNoun DeclaredFileSize        = "declared size"
-checkKindNoun DeclaredBlockCRC16      = "block CRC16s"
-checkKindNoun DeclaredValidationBlock = "validation block"
-checkKindNoun DeclaredByteComparison  = "identifying bytes"
-checkKindNoun DeclaredByteOrder       = "byte order"
-checkKindNoun DeclaredWindowAdler32   = "window checksums"
-
--- | Join nouns the way a sentence would: "CRC", "CRC and MD5", "CRC, MD5, and SHA1".
-proseList :: [Text] -> Text
-proseList nouns = case nouns of
-  []                      -> ""
-  [onlyNoun]              -> onlyNoun
-  [firstNoun, secondNoun] -> firstNoun <> " and " <> secondNoun
-  _                       -> Text.intercalate ", " (init nouns) <> ", and " <> last nouns
+heldKindsPhrase = proseList . map declaredCheckKindNoun . NonEmpty.toList

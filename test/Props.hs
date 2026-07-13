@@ -39,6 +39,10 @@
 --                                  verdict, enforcement, and
 --                                  the report's sentences,
 --                                  projected from one pass.
+--   * 'Props.Preflight'          — the pre-apply pipeline:
+--                                  reframe narration and refusal,
+--                                  rescue finds, alias grouping,
+--                                  and the vacuous-pass guards.
 --
 -- Shared generators, helpers, and predicates live in 'Props.Helpers'.
 module Main (main) where
@@ -55,6 +59,7 @@ import qualified Props.Narrow as Narrow
 import qualified Props.NegativeWireValues as NegativeWireValues
 import qualified Props.Normalize as Normalize
 import qualified Props.ParseWarnings as ParseWarnings
+import qualified Props.Preflight as Preflight
 import qualified Props.ResolveCopyAddress as ResolveCopyAddress
 import qualified Props.RoundTrip as RoundTrip
 import qualified Props.SpecConformance as SpecConformance
@@ -87,5 +92,6 @@ main = defaultMain $ testGroup "Properties"
   , NegativeWireValues.negativeWireValuesTests
   , Normalize.normalizeTests
   , Verify.verifyTests
+  , Preflight.preflightTests
   , XDelta1Conformance.xdelta1ConformanceTests
   ]

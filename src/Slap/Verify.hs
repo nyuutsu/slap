@@ -45,7 +45,7 @@ import Slap.Measure (Offset, Length(..), FileSize,
                      ExpectedSize(..), ActualSize(..), byteFileSize)
 import Slap.Normalize (isV64Image)
 import Slap.Status (SlapError(..), SlapAdvisory(..), Outcome(..),
-                    VerificationSide(..), HashAlgorithm(..),
+                    VerificationSide(..), HashAlgorithm(..), DeclaredCheckKind(..),
                     ExpectedAdler32(..), ActualAdler32(..), ByteCheckLabel(..))
 import qualified Slap.NINJA1.Create as NINJA1
 
@@ -180,20 +180,6 @@ data CheckFinding = CheckHeld | CheckMismatched !SlapAdvisory
 -- | Which enforcement lane a mismatch lands in; 'judgeWeighing' folds the user's policy over the fatal class only.
 data MismatchClass = AdvisoryClass | FatalClass
   deriving (Eq)
-
--- | The kind of a declared check, named so a report can say what a match actually rests on —
--- a held size check and a held SHA1 earn different sentences.
-data DeclaredCheckKind
-  = DeclaredCRC32
-  | DeclaredMD5
-  | DeclaredSHA1
-  | DeclaredFileSize
-  | DeclaredBlockCRC16
-  | DeclaredValidationBlock
-  | DeclaredByteComparison
-  | DeclaredByteOrder
-  | DeclaredWindowAdler32
-  deriving (Eq, Show)
 
 -- | Weigh apply's input against everything the patch declared about its source, and judge it in one step.
 verifySource :: VerificationPolicy -> Verification -> InputFileContents -> Outcome (Either SlapError ())

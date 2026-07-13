@@ -22,6 +22,8 @@ module Slap.Display.Common
     -- * Show-to-Text
   , renderAsText
   , renderHexAsText
+    -- * Sentence-shaped list joining
+  , proseList
     -- * FilePath ↔ Text boundary
   , pathText
   ) where
@@ -203,3 +205,11 @@ renderHexAsText value = Text.pack (showHex value "")
 -- The lift is named so the 'FilePath' → 'Text' boundary is visible at every site it crosses.
 pathText :: FilePath -> Text
 pathText = Text.pack
+
+-- | Join nouns the way a sentence would: "CRC", "CRC and MD5", "CRC, MD5, and SHA1".
+proseList :: [Text] -> Text
+proseList nouns = case nouns of
+  []                      -> ""
+  [onlyNoun]              -> onlyNoun
+  [firstNoun, secondNoun] -> firstNoun <> " and " <> secondNoun
+  _                       -> Text.intercalate ", " (init nouns) <> ", and " <> last nouns

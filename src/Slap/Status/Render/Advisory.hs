@@ -7,11 +7,11 @@ module Slap.Status.Render.Advisory
   ) where
 
 import Slap.Checksum (showCRC32, showAdler32, ExpectedCRC32(..), ActualCRC32(..))
-import Slap.Display.Common (renderAsText)
+import Slap.Display.Common (renderAsText, proseList)
 import Slap.Display.Primitives (padHex)
 import Slap.FieldName (fieldNameLabel)
 import Slap.FormatLabel (FormatLabel(..), formatLabelName)
-import Slap.Header (consoleHeaderName, consoleHeaderLength)
+import Slap.Header (ConsoleHeader, HeaderAdjustment(..), consoleHeaderName, consoleHeaderLength, consoleHeaderToken)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), ActionIndex(unActionIndex),
                      ExpectedSize(..), ActualSize(..),
                      DeclaredTargetSize(..), NaturalTargetSize(..),
@@ -21,7 +21,7 @@ import Slap.PatchField (fieldName)
 import Slap.PlatformType (PlatformType(..), platformName)
 import Slap.Status.Advisory (SlapAdvisory(..), BPSMetadataDivergence(..))
 import Slap.Status.Vocabulary (emptyUnitLabel, renderDroppedValue, directionVerb,
-                               verificationSideLabel, hashAlgorithmLabel,
+                               verificationSideLabel, hashAlgorithmLabel, declaredCheckKindNoun,
                                OverlapCount(..), ClippedRecordCount(..), OOBBlockCount(..),
                                UndoRecordCount(..), MarkerOvershootBytes(..), OOBOvershootBytes(..),
                                ExpectedAdler32(..), ActualAdler32(..), ByteCheckLabel(..),
@@ -30,6 +30,8 @@ import Slap.Status.Vocabulary (emptyUnitLabel, renderDroppedValue, directionVerb
                                normalizedImageRoleLabel, NormalizationSkipReason(..), RestoredContent(..))
 import Slap.Status.XDelta1 (XDelta1SourcelessShape(..))
 
+import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as Text
 
@@ -48,6 +50,19 @@ renderSlapAdvisory (InputHeaderRemoved console) =
 renderSlapAdvisory (InputHeaderAdded console) =
   "prepended a blank " <> renderAsText (unLength (consoleHeaderLength console)) <> "-byte "
   <> consoleHeaderName console <> " header to the input"
+
+renderSlapAdvisory (SourceMatchesAfterHeaderAdjustment adjustment consoles heldKinds) =
+  "the input matches the patch's " <> proseList (map declaredCheckKindNoun (NonEmpty.toList heldKinds))
+  <> " once a " <> renderAsText (unLength (consoleHeaderLength (NonEmpty.head consoles))) <> "-byte "
+  <> slashedConsoleNames consoles <> " header " <> adjustmentPhrase
+  <> " (retry with --" <> flagName <> " " <> Text.pack (consoleHeaderToken (NonEmpty.head consoles)) <> ")"
+  where
+    (adjustmentPhrase, flagName) = case adjustment of
+      HeaderComesOff -> ("comes off", "remove-header")
+      HeaderGoesOn   -> ("goes on",   "add-header")
+
+renderSlapAdvisory NoHeaderAdjustmentMatches =
+  "no header arrangement reconciles the input with this patch; it is most likely a different ROM"
 
 renderSlapAdvisory (PPFApplyGrewPastSource label (FileSize sourceSize) (Length overflow)) =
   formatLabelName label
@@ -397,6 +412,10 @@ normalizationSkipPhrase UNIFChunkTableTruncated =
   "chunk table runs past the end of the file"
 normalizationSkipPhrase N64ImageOddLength =
   "byteswapped image has an odd byte count"
+
+-- | Width-sharing consoles, spoken as one: "NES / FDS".
+slashedConsoleNames :: NonEmpty ConsoleHeader -> Text
+slashedConsoleNames = Text.intercalate " / " . map consoleHeaderName . NonEmpty.toList
 
 -- | What the image was expected to show and did not, for the 'RomImageShapeUnrecognized' rendering.
 -- Only platforms whose procedures reach that verdict have a specific phrase; the final arm covers the rest.

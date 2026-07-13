@@ -15,7 +15,7 @@ import Slap.Checksum (ExpectedCRC32, ActualCRC32)
 import Slap.FieldName (FieldName)
 import Slap.FileContents (PatchFileContents)
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Header (ConsoleHeader)
+import Slap.Header (ConsoleHeader, HeaderAdjustment)
 import Slap.Measure (Offset, Length, FileSize, ActionIndex,
                      ExpectedSize, ActualSize,
                      DeclaredTargetSize, NaturalTargetSize,
@@ -26,7 +26,7 @@ import Slap.PlatformType (PlatformType)
 import Slap.Status.Severity (Severity(..))
 import Slap.Status.Vocabulary (EmptyUnit, DroppedValue, OverlapCount, ClippedRecordCount,
                                OOBBlockCount, UndoRecordCount, MarkerOvershootBytes, OOBOvershootBytes,
-                               ApplyDirection, VerificationSide, HashAlgorithm,
+                               ApplyDirection, VerificationSide, HashAlgorithm, DeclaredCheckKind,
                                ExpectedAdler32, ActualAdler32, ByteCheckLabel,
                                NINJA1SubformatConversion,
                                NormalizationStep, NormalizedImageRole, NormalizationSkipReason, RestoredContent)
@@ -34,6 +34,7 @@ import Slap.Status.XDelta1 (XDelta1SourcelessShape)
 
 import Data.ByteString (ByteString)
 import Data.Int (Int64)
+import Data.List.NonEmpty (NonEmpty)
 import Data.Text (Text)
 import Data.Word (Word8)
 
@@ -58,6 +59,11 @@ data SlapAdvisory
   | InputHeaderRemoved ConsoleHeader
   -- | Note: @--add-header@ prepended a blank header to the input before applying.
   | InputHeaderAdded ConsoleHeader
+
+  -- | The header rescue's find: this arrangement makes the input match every check the patch declares.
+  | SourceMatchesAfterHeaderAdjustment HeaderAdjustment (NonEmpty ConsoleHeader) (NonEmpty DeclaredCheckKind)
+  -- | The header rescue's empty hands, so the fiddling can stop: no arrangement reconciles the input with the patch.
+  | NoHeaderAdjustmentMatches
 
   -- | A PPF patch's apply produced an output longer than the source; slap applies it and remarks.
   -- The 'FileSize' is the source's length; the 'Length' is the overshoot.
@@ -344,6 +350,8 @@ slapAdvisorySeverity advisory = case advisory of
   EmptyPatch{}                         -> SeverityNote
   InputHeaderRemoved{}                 -> SeverityNote
   InputHeaderAdded{}                   -> SeverityNote
+  SourceMatchesAfterHeaderAdjustment{} -> SeverityNote
+  NoHeaderAdjustmentMatches            -> SeverityNote
   ZeroCountRLERecord{}                 -> SeverityNote
   NegativeZeroInBPS                    -> SeverityNote
   NonCanonicalVCDIFFVarint{}           -> SeverityNote

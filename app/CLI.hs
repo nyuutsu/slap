@@ -17,7 +17,6 @@ module CLI
     -- The option and policy micro-types those payloads carry
   , ArchiveHandling(..)
   , FileReadingOptions(..)
-  , InputHeaderDirective(..)
   , ExplainVerbosity(..)
   , ApplyOutput(..)
   , BackupBehavior(..)
@@ -52,7 +51,7 @@ import Slap.PPF1.Types (PPF1Origin(..))
 import Slap.IPS.Types (SMCShapeRequirement(..))
 import Slap.PPF3.Types (PPF3ImageType(..))
 import Slap.PlatformType (PlatformType(..))
-import Slap.Header (ConsoleHeader, consoleHeaderToken)
+import Slap.Header (ConsoleHeader, InputHeaderDirective(..), consoleHeaderToken)
 import Slap.Verify (VerificationPolicy(..))
 -- The parsers below wrap incoming 'String' as 'EncodedText' tagged 'EncodingUtf8' at the boundary:
 -- text slap writes is always UTF-8, with no write-side encoding choice.
@@ -86,17 +85,6 @@ data ArchiveHandling
 data FileReadingOptions = FileReadingOptions
   { fileReadingArchiveHandling :: ArchiveHandling
   }
-  deriving (Show, Eq)
-
--- | What the user said about the input's header relative to what the patch expects.
--- The default is that they already agree; the two flags name a console,
--- which is a friendly alias for how many bytes to put on or take off the front.
-data InputHeaderDirective
-  = TakeInputAsIs
-  | AddHeader ConsoleHeader
-    -- ^ @--add-header CONSOLE@: the patch expects a headered input and this one is bare.
-  | RemoveHeader ConsoleHeader
-    -- ^ @--remove-header CONSOLE@: the input wears a header and the patch expects the bytes beneath.
   deriving (Show, Eq)
 
 -- | How much detail 'slap explain' should emit.

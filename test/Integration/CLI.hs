@@ -77,6 +77,7 @@ cliTests tier = do
       , bpsConvertMetadataTests dm4yBase dm4yBps
       , undoCliTests dm4yBase dm4yUps
       , xdelta1SourceLengthTests dm4yBase dm4yXdelta1
+      , headerRescueTests dm4yBase dm4yBps
       , verificationReportTests dm4yBase dm4yBps dm4yIps
       , headerFlagTests dm4yBase dm4yIps dm4yBps
       , onlyAtFull tier (forceTests dm4yBase dm4yUps)
@@ -162,6 +163,48 @@ xdelta1SourceLengthTests base xdelta1 =
         removeIfExists out
         expectOk ["apply", xdelta1, lengthened, "-o", out, "--no-verify"]
           "xdelta1-length/--no-verify downgrades the gate" "applied"
+  ]
+
+-- | The rescue hint beside a source mismatch: the take-it-off find, and the kinder empty-handed line.
+headerRescueTests :: FilePath -> FilePath -> [TestTree]
+headerRescueTests base bps =
+  [ testCase "rescue/a headered input earns the take-it-off hint" $
+      withTempFile "slap-headered" $ \headered ->
+      withTempFile "slap-out" $ \out -> do
+        baseBytes <- ByteString.readFile base
+        ByteString.writeFile headered (ByteString.replicate 512 0x00 <> baseBytes)
+        removeIfExists out
+        expectFail ["apply", bps, headered, "-o", out]
+          "rescue/headered input hint" "retry with --remove-header"
+
+  , testCase "rescue/an unrelated input is told the kinder truth" $
+      withTempFile "slap-unrelated" $ \unrelated ->
+      withTempFile "slap-out" $ \out -> do
+        ByteString.writeFile unrelated (ByteString.replicate 4096 0xEE)
+        removeIfExists out
+        expectFail ["apply", bps, unrelated, "-o", out]
+          "rescue/unrelated input" "most likely a different rom"
+
+  , testCase "rescue/stays quiet when a header directive is already in play" $
+      withTempFile "slap-headered" $ \headered ->
+      withTempFile "slap-out" $ \out -> do
+        baseBytes <- ByteString.readFile base
+        ByteString.writeFile headered (ByteString.replicate 512 0x00 <> baseBytes)
+        removeIfExists out
+        run <- runExternal SlapBinary ["apply", bps, headered, "-o", out, "--remove-header", "nes"] Nothing ""
+        assertBool "no rescue hint when a directive is given"
+          (not (ciContains "retry with" (externalRunStdout run ++ externalRunStderr run)))
+
+  , testCase "rescue/stays quiet under --no-verify" $
+      withTempFile "slap-headered" $ \headered ->
+      withTempFile "slap-out" $ \out -> do
+        baseBytes <- ByteString.readFile base
+        ByteString.writeFile headered (ByteString.replicate 512 0x00 <> baseBytes)
+        removeIfExists out
+        run <- runExternal SlapBinary ["apply", bps, headered, "-o", out, "--no-verify"] Nothing ""
+        let combined = externalRunStdout run ++ externalRunStderr run
+        assertBool "no rescue hint on a run that proceeds" (not (ciContains "retry with" combined))
+        assertBool "no empty-handed line on a run that proceeds" (not (ciContains "different rom" combined))
   ]
 
 -- | The happy-path verification report. The undo case is the load-bearing one:
