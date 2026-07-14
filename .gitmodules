@@ -4,3 +4,6 @@
 [submodule "docs"]
 	path = docs
 	url = git@github.com:nyuutsu/slap-format-documentation.git
+[submodule "vendor/ram"]
+	path = vendor/ram
+	url = git@github.com:nyuutsu/slap-ram.git

@@ -1,13 +1,16 @@
 dist-newstyle/
+dist-newstyle-wasm/
 rusty-slap/target/
 .rusty-stamp
+.rusty-wasm-stamp
 *.hi
 *.o
 *.dyn_hi
 *.dyn_o
 
-# Per-machine cabal override; `make` writes the rusty-slap link path here
+# Per-machine cabal overrides; `make` and `make wasm` write the rusty-slap link paths here
 cabal.project.local
+cabal.project.wasm32-wasi.local
 
 # Claude Code local config
 .claude/

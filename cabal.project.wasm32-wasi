@@ -1,0 +1,22 @@
+-- The wasm cross-build's project file; `make wasm` drives it.
+-- Mirrors cabal.project, with the extras the wasm32-wasi target needs.
+packages: .
+          -- the slap-ram submodule: ram-0.22.0 with a wasi arm on its MemMap conditional,
+          -- because upstream's if os(windows)/else hands wasm the Posix mmap module, whose constants wasi-libc does not have
+          vendor/ram
+
+allow-newer:
+    tasty-stats:*
+  , encoding:containers
+
+-- The extra-lib-dirs pointing at the wasm32-wasip1 rusty-slap lives in cabal.project.wasm32-wasi.local,
+-- written by `make wasm`; ghc-pkg insists the path be absolute, so the committed file cannot carry it.
+
+-- Static ways only: rusty-slap's staticlib objects are not position-independent,
+-- and nothing in the wasm story wants a shared slap-internal anyway.
+shared: False
+
+-- crypton's bundled argon2 reaches for pthreads, which wasm32-wasi does not have;
+-- the reference implementation's own ARGON2_NO_THREADS switch compiles the single-lane paths instead.
+package crypton
+  ghc-options: -optc-DARGON2_NO_THREADS
