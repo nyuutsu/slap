@@ -19,7 +19,6 @@ module CLI
   , FileReadingOptions(..)
   , ExplainVerbosity(..)
   , ApplyOutput(..)
-  , BackupBehavior(..)
   , UndoOutput(..)
   , ConvertOutput(..)
   , ConvertWithSource(..)
@@ -109,35 +108,21 @@ data ExplainVerbosity
   deriving (Show, Eq)
 
 -- | What to do with an applied patch's output bytes.
--- The three variants are mutually exclusive CLI lanes;
--- the parser rejects a command line that mixes distinguishing flags from more than one (see 'applyOutputParser').
---
--- 'ApplyInPlace' overwrites the source file, carrying a 'BackupBehavior' for an optional @.bak@ copy.
--- 'ApplyToExplicitFile' writes to an operator-chosen path.
--- The path is @-o FILE@ or, equivalently, a bare third positional @OUTPUT@; both at once is a parse error.
+-- 'ApplyToExplicitFile' writes to an operator-chosen path:
+-- @-o FILE@ or, equivalently, a bare third positional @OUTPUT@; both at once is a parse error.
 -- 'ApplyToDerivedFile' writes to a path derived from the source name — the default lane.
--- The 'OverwritePolicy' those two carry guards @--force@;
--- it is a sub-flag of the two file-writing lanes because clobbering is meaningless in place.
+-- The 'OverwritePolicy' both carry guards @--force@.
 data ApplyOutput
-  = ApplyInPlace BackupBehavior
-  | ApplyToExplicitFile FilePath OverwritePolicy
+  = ApplyToExplicitFile FilePath OverwritePolicy
   | ApplyToDerivedFile OverwritePolicy
-  deriving (Show, Eq)
-
--- | Whether in-place apply should make a @.bak@ copy before writing.
-data BackupBehavior
-  = WriteBackup
-  | NoBackup
   deriving (Show, Eq)
 
 -- | What to do with an undo's reverted source bytes.
 -- Mirrors 'ApplyOutput' lane-for-lane (see there for the @-o@\/positional and @--force@ rules);
--- the only difference is that undo operates on the modified file where apply operates on the source file —
--- so 'UndoInPlace' overwrites it and 'UndoToDerivedFile' derives its path from it.
--- The parser rejects mixing distinguishing flags from more than one lane (see 'undoOutputParser').
+-- the only difference is that undo operates on the modified file where apply operates on the source file,
+-- so 'UndoToDerivedFile' derives its path from that.
 data UndoOutput
-  = UndoInPlace BackupBehavior
-  | UndoToExplicitFile FilePath OverwritePolicy
+  = UndoToExplicitFile FilePath OverwritePolicy
   | UndoToDerivedFile OverwritePolicy
   deriving (Show, Eq)
 
@@ -238,7 +223,6 @@ convertMetadataRequests inputs = sortOn requestField $
       CarryDiz         -> []
 
 -- | Whether to refuse writing over an existing output file.
--- Does not apply to the @--in-place@ lane, which writes to the source by definition.
 data OverwritePolicy
   = RefuseOverwrite
   | ForceOverwrite
@@ -344,7 +328,7 @@ options = info (commandParser <**> encodingsInfo <**> helper)
 
 commandParser :: Parser Command
 commandParser = subparser
-  ( command "apply"   (info (Apply   <$> applyParser     <**> helper) (progDesc "Apply a patch (safe by default; use -i for in-place)"))
+  ( command "apply"   (info (Apply   <$> applyParser     <**> helper) (progDesc "Apply a patch"))
  <> command "undo"    (info (Undo    <$> undoParser      <**> helper) (progDesc "Undo a patch (PPF3 undo data, or UPS self-inverse)"))
  <> command "create"  (info (Create  <$> createParser    <**> helper) (progDesc "Create a patch from two files"))
  <> command "convert" (info (Convert <$> convertParser   <**> helper) (progDesc "Convert a patch to a different format"))
@@ -408,7 +392,7 @@ applyParser = do
     fileReadingOptions <- fileReadingOptionsParser
     headerDirective    <- headerDirectiveParser
     patch              <- pathArgument (metavar "PATCH" <> help "Patch file")
-    source             <- pathArgument (metavar "SOURCE" <> help "Source file to patch (not modified unless --in-place)")
+    source             <- pathArgument (metavar "SOURCE" <> help "Source file to patch (not modified)")
     output             <- applyOutputParser
     dialects           <- dialectsParser
     pure ApplyCommand
@@ -452,47 +436,29 @@ verbosityParser :: Parser Verbosity
 verbosityParser = flag Quiet Verbose
   (long "verbose" <> short 'v' <> help "Print each record as it's applied")
 
--- | Parser for the three mutually exclusive output lanes.
--- 'asum' tries each in turn; a combination spanning lanes is rejected at parse time rather than resolved by precedence.
--- The two writing lanes share one 'writingLane' parser so @--force@ has a single home in the parser tree.
--- Split across lanes, a bare @--force@ would partially match the explicit-file lane (flag consumed, path missing),
+-- | One parser spans the explicit-file and derived-file lanes so @--force@ has a single home in the parser tree.
+-- Split into 'asum' alternatives, a bare @--force@ would partially match the explicit-file lane (flag consumed, path missing),
 -- and optparse-applicative would then prefer that partial match's error over the derived-file lane's success.
--- @--in-place@ commits to its own lane, so a @--force@ paired with it is left unconsumed and errors.
 applyOutputParser :: Parser ApplyOutput
-applyOutputParser = asum
-  [ inPlaceLane
-  , writingLane
-  ]
+applyOutputParser = chooseWritingLane
+  <$> optional outputPathOption
+  <*> overwritePolicyFlag
   where
-    inPlaceLane :: Parser ApplyOutput
-    inPlaceLane = ApplyInPlace
-      <$> (flag' () (long "in-place" <> short 'i'
-              <> help "Modify SOURCE directly (destructive; creates .bak by default)")
-          *> backupBehaviorFlag)
-      where
-        backupBehaviorFlag = flag WriteBackup NoBackup
-          (long "no-backup" <> help "Don't create .bak backup with --in-place")
+    outputPathOption :: Parser FilePath
+    outputPathOption =
+          pathOption (long "output" <> short 'o' <> metavar "FILE"
+            <> help "Write patched output to FILE. Or pass it as the third argument.")
+      <|> pathArgument (metavar "OUTPUT"
+            <> help "Write patched output to this path. Or pass it via -o FILE.")
 
-    writingLane :: Parser ApplyOutput
-    writingLane = chooseWritingLane
-      <$> optional outputPathOption
-      <*> overwritePolicyFlag
-      where
-        outputPathOption :: Parser FilePath
-        outputPathOption =
-              pathOption (long "output" <> short 'o' <> metavar "FILE"
-                <> help "Write patched output to FILE. Or pass it as the third argument.")
-          <|> pathArgument (metavar "OUTPUT"
-                <> help "Write patched output to this path. Or pass it via -o FILE.")
+    overwritePolicyFlag :: Parser OverwritePolicy
+    overwritePolicyFlag = flag RefuseOverwrite ForceOverwrite
+      (long "force" <> short 'f'
+        <> help "Overwrite existing output files")
 
-        overwritePolicyFlag :: Parser OverwritePolicy
-        overwritePolicyFlag = flag RefuseOverwrite ForceOverwrite
-          (long "force" <> short 'f'
-            <> help "Overwrite existing output files")
-
-        chooseWritingLane :: Maybe FilePath -> OverwritePolicy -> ApplyOutput
-        chooseWritingLane Nothing     policy = ApplyToDerivedFile policy
-        chooseWritingLane (Just path) policy = ApplyToExplicitFile path policy
+    chooseWritingLane :: Maybe FilePath -> OverwritePolicy -> ApplyOutput
+    chooseWritingLane Nothing     policy = ApplyToDerivedFile policy
+    chooseWritingLane (Just path) policy = ApplyToExplicitFile path policy
 
 fileReadingOptionsParser :: Parser FileReadingOptions
 fileReadingOptionsParser = FileReadingOptions <$> archiveHandlingFromSwitch
@@ -519,43 +485,27 @@ undoParser = do
       , undoDialects           = dialects
       }
 
--- | Parser for the three mutually exclusive undo output lanes.
--- Mirror of 'applyOutputParser'; the same 'asum' \/ 'writingLane' shape, so its @--force@ discipline carries over.
+-- | Mirror of 'applyOutputParser', so its @--force@ discipline carries over.
 undoOutputParser :: Parser UndoOutput
-undoOutputParser = asum
-  [ inPlaceLane
-  , writingLane
-  ]
+undoOutputParser = chooseWritingLane
+  <$> optional outputPathOption
+  <*> overwritePolicyFlag
   where
-    inPlaceLane :: Parser UndoOutput
-    inPlaceLane = UndoInPlace
-      <$> (flag' () (long "in-place" <> short 'i'
-              <> help "Overwrite SOURCE with the reverted bytes (destructive; creates .bak by default)")
-          *> backupBehaviorFlag)
-      where
-        backupBehaviorFlag = flag WriteBackup NoBackup
-          (long "no-backup" <> help "Don't create .bak backup with --in-place")
+    outputPathOption :: Parser FilePath
+    outputPathOption =
+          pathOption (long "output" <> short 'o' <> metavar "FILE"
+            <> help "Write reverted output to FILE. Or pass it as the third argument.")
+      <|> pathArgument (metavar "OUTPUT"
+            <> help "Write reverted output to this path. Or pass it via -o FILE.")
 
-    writingLane :: Parser UndoOutput
-    writingLane = chooseWritingLane
-      <$> optional outputPathOption
-      <*> overwritePolicyFlag
-      where
-        outputPathOption :: Parser FilePath
-        outputPathOption =
-              pathOption (long "output" <> short 'o' <> metavar "FILE"
-                <> help "Write reverted output to FILE. Or pass it as the third argument.")
-          <|> pathArgument (metavar "OUTPUT"
-                <> help "Write reverted output to this path. Or pass it via -o FILE.")
+    overwritePolicyFlag :: Parser OverwritePolicy
+    overwritePolicyFlag = flag RefuseOverwrite ForceOverwrite
+      (long "force" <> short 'f'
+        <> help "Overwrite existing output files")
 
-        overwritePolicyFlag :: Parser OverwritePolicy
-        overwritePolicyFlag = flag RefuseOverwrite ForceOverwrite
-          (long "force" <> short 'f'
-            <> help "Overwrite existing output files")
-
-        chooseWritingLane :: Maybe FilePath -> OverwritePolicy -> UndoOutput
-        chooseWritingLane Nothing     policy = UndoToDerivedFile policy
-        chooseWritingLane (Just path) policy = UndoToExplicitFile path policy
+    chooseWritingLane :: Maybe FilePath -> OverwritePolicy -> UndoOutput
+    chooseWritingLane Nothing     policy = UndoToDerivedFile policy
+    chooseWritingLane (Just path) policy = UndoToExplicitFile path policy
 
 convertOutputParser :: Parser ConvertOutput
 convertOutputParser = chooseConvertLane

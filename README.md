@@ -51,7 +51,6 @@ This is the most common thing you'd do with it. Give it a patch and a rom and it
 slap apply patch.bps rom.gba
 slap apply patch.bps rom.gba patched.gba
 slap apply patch.bps rom.gba -o patched.gba
-slap apply patch.bps rom.gba --in-place
 ```
 
 The output of the first example will be in the same directory as the input rom, and named `rom [patch].gba`.
@@ -59,10 +58,6 @@ The output of the first example will be in the same directory as the input rom, 
 Application can be modified in these ways:
 
 `--output` or `-o`: Name the output file. This can be a filename (in which case the output will be in the cwd) or a fully qualified path (in which case the output goes to the exact location it is given). The output can also be declared positionally, so, this flag is "nice, but unnecessary".
-
-`--in-place` or `-i`: Make a backup copy of the input rom: `rom.gba.bak`. Then, modify the input rom directly.
-
-`--no-backup`: Don't make the backup copy. This modifies `--in-place`.
 
 `--no-verify`: If the patch contains identity checksums or validation criteria, and these don't match the rom you're trying to apply to, proceed anyway with a warning.
 
@@ -380,7 +375,7 @@ The per-test durations are logged to `test-results/`.
 
 # footnotes (👣)
 
-[^WEB]: Web-based slap doesn't have the flags `--force`, `--in-place`, and `--no-backup`. It also doesn't have the same archive-unwrapping skills.
+[^WEB]: Web-based slap doesn't have the flag `--force`. It, browser dependent, might not have the same archive-unwrapping skills. For [wasm32](https://doc.rust-lang.org/rustc/platform-support/wasm32-wasip1.html) reasons it probably isn't going to play nice with files larger than about 1GiB. This *probably will not matter to you*. Try cli-based slap if you want to be limited *only* by the exact outer boundaries of what your chosen patch format allows. Either way, it is an in-memory patcher, so to diff truly huge stuff you may need to [download more RAM](https://downloadmoreram.com/).
 
 [^EXCESSIVE]: The project page linked above talks about this.
 

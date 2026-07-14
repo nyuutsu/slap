@@ -92,10 +92,6 @@ data SlapError
   -- The 'ActualSize' is the input's size; the header's width comes from 'Slap.Header.consoleHeaderLength'.
   | HeaderRemovalExceedsInput ConsoleHeader ActualSize
 
-  -- | @--add-header@ and @--remove-header@ change the output's shape,
-  -- so they refuse @--in-place@ rather than replace the original with a differently-shaped file.
-  | HeaderDirectiveRequiresSeparateOutput
-
   -- Detection
   | UnrecognizedFormat
   | AmbiguousDetection [FormatLabel]

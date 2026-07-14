@@ -252,8 +252,7 @@ wrongSourceTests base bps ups rup xdelta1 =
   , testCase "wrong-source/BPS patched-as-source rejects" $
       withTempFile "slap-work" $ \work ->
       withTempFile "slap-out" $ \out -> do
-        ByteString.readFile base >>= ByteString.writeFile work
-        _ <- runExternal SlapBinary ["apply", bps, work, "--in-place", "--no-backup"] Nothing ""
+        _ <- runExternal SlapBinary ["apply", bps, base, "-o", work, "--force"] Nothing ""
         -- work is now the patched output, not the original source
         removeIfExists out
         expectFail ["apply", bps, work, "-o", out]

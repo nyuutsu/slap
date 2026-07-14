@@ -121,9 +121,6 @@ renderSlapError (HeaderRemovalExceedsInput console (ActualSize inputSize)) =
   <> consoleHeaderName console <> " header from a "
   <> renderAsText (unFileSize inputSize) <> "-byte input"
 
-renderSlapError HeaderDirectiveRequiresSeparateOutput =
-  "--add-header and --remove-header don't combine with --in-place: the output would replace the original with a differently-shaped file"
-
 renderSlapError UnrecognizedFormat =
   "this file doesn't look like any patch format slap knows"
 

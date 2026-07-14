@@ -74,7 +74,6 @@ import CLI
   , ExplainVerbosity(..)
   , Verbosity(..)
   , OverwritePolicy(..)
-  , BackupBehavior(..)
   , parseCommandLine
   )
 import Archive (unwrapArchive)
@@ -84,7 +83,7 @@ import Data.Either (isLeft)
 import qualified Data.ByteString as ByteString
 import Control.Exception (try, bracketOnError)
 import Control.Monad (when)
-import System.Directory (copyFile, doesFileExist, renameFile, removeFile)
+import System.Directory (doesFileExist, renameFile, removeFile)
 import System.FilePath (dropExtension, replaceExtension, takeBaseName, takeExtension, takeDirectory, takeFileName)
 import System.IO (IOMode(ReadMode), hFileSize, hSetEncoding, stderr, stdout, withFile, openBinaryTempFile, hClose)
 import System.IO.MMap (mmapFileByteString)
@@ -122,7 +121,7 @@ main = do
 
 -- | Read a user-supplied input file, memory-mapped when its shape allows ('readWholeFile').
 -- The mapped bytes are live pages, not a snapshot, so nothing may read the input after slap has written over it:
--- in-place apply and undo stay clear by writing a finished output and never reading the input again.
+-- every verb stays clear by writing a finished output and never reading the input again.
 -- An absent or unopenable path surfaces as a typed 'SlapError' rather than an exception.
 readInputFile :: FilePath -> IO ByteString
 readInputFile path = do
@@ -157,7 +156,7 @@ writeOutputFile path outputBytes = do
 
 -- | Replace @path@'s contents atomically: write a sibling temporary, then 'renameFile' it over @path@.
 -- The original is never truncated mid-write — an interrupted or failed write leaves it whole, not half-written —
--- which is what makes in-place apply and undo safe to run on a ROM the user cannot re-fetch.
+-- which is what makes a @--force@ overwrite survivable on a file the user cannot re-fetch.
 writeFileAtomicallyOver :: FilePath -> ByteString -> IO ()
 writeFileAtomicallyOver path outputBytes = do
   result <- try $ bracketOnError
@@ -344,16 +343,6 @@ doApply parsedCommand = do
             (OutputSideVerdict (verdictOnWeighing targetWeighing)))
 
   case applyOutput parsedCommand of
-    ApplyInPlace backupBehavior -> do
-      when (applyHeaderDirective parsedCommand /= TakeInputAsIs) $
-        bailError HeaderDirectiveRequiresSeparateOutput
-      case backupBehavior of
-        WriteBackup -> do
-          let backupPath = applySource parsedCommand ++ ".bak"
-          copyFile (applySource parsedCommand) backupPath
-          TextIO.hPutStrLn stderr ("slap: backup: " <> pathText backupPath)
-        NoBackup -> pure ()
-      applyAndWriteTo (applySource parsedCommand)
     ApplyToExplicitFile outputPath overwritePolicy -> do
       refuseOverwrite overwritePolicy outputPath
       applyAndWriteTo outputPath
@@ -395,14 +384,6 @@ doUndo parsedCommand = do
           (OutputSideVerdict (verdictOnWeighing revertedWeighing)))
 
       undoUsing undo = case undoOutput parsedCommand of
-        UndoInPlace backupBehavior -> do
-          case backupBehavior of
-            WriteBackup -> do
-              let backupPath = undoSource parsedCommand ++ ".bak"
-              copyFile (undoSource parsedCommand) backupPath
-              TextIO.hPutStrLn stderr ("slap: backup: " <> pathText backupPath)
-            NoBackup -> pure ()
-          undoAndWriteTo undo (undoSource parsedCommand)
         UndoToExplicitFile outputPath overwritePolicy -> do
           refuseOverwrite overwritePolicy outputPath
           undoAndWriteTo undo outputPath
