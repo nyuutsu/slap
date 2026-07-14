@@ -574,9 +574,14 @@ renderSlapError (FieldTooLong label name (EncodedLength encodedLength) (MaxLengt
   <> " too long (" <> renderAsText (unLength encodedLength)
   <> " bytes, maximum " <> renderAsText (unLength maxLength) <> ")"
 
-renderSlapError (MissingRequiredField label field) =
-  formatLabelName label <> " requires " <> fieldName field
-  <> " but source patch doesn't provide it"
+renderSlapError (MissingRequiredFields label fields) =
+  case NonEmpty.toList fields of
+    [single] ->
+      formatLabelName label <> " requires " <> fieldName single
+      <> " but source patch doesn't provide it"
+    many ->
+      formatLabelName label <> " requires fields the source patch doesn't provide:"
+      <> Text.concat (map (\field -> "\n  - " <> fieldName field) many)
 
 renderSlapError (ApplyOutputFieldsWouldBeDropped label drops) =
   "cannot convert to " <> formatLabelName label <> ": "

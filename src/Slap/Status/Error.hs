@@ -299,7 +299,7 @@ data SlapError
   | FieldTooLong FormatLabel FieldName EncodedLength MaxLength
 
   -- Convert
-  | MissingRequiredField FormatLabel PatchField
+  | MissingRequiredFields FormatLabel (NonEmpty PatchField)
 
   -- | The contract layer's refusal when the source patch carries fields that affect apply output ('Slap.PatchField.affectsApplyOutput')
   -- and that the target format has no wire home for — dropping them silently would change what the converted patch produces,

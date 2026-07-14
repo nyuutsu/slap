@@ -18,6 +18,7 @@ module Slap.Convert
   , requestedConstraints
   , acceptedConstraints
   , rejectIncompatibleConstraints
+  , rejectIncompatibleSizeChange
   , RequestedDialects(..)
   , noDialectsRequested
   , requestedDialects
@@ -29,7 +30,10 @@ module Slap.Convert
   , provides
   , directConversionContract
   , canConvert
+  , preservingDirectTargets
   , conversionNotes
+  , AdmissibleDirectConversion(..)
+  , verdictOnDirectConversion
   , convertDirect
   , createPatch
   , createDefaultAdvisories
@@ -136,6 +140,7 @@ import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Char (toLower)
+import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (fromMaybe, isJust, isNothing)
 import qualified Data.Set as Set
@@ -663,23 +668,9 @@ rejectNonSMCShapedTruncation constraints contents
 -- Source/target size-pair refusal (per-format wire-rule dispatch)
 ----------------------------------------------------------------------------
 
--- | Run the target format's source\/target size-pair rule. Pattern-
--- matched exhaustively across 'DirectCreate' so adding a constructor
--- fires @-Wincomplete-patterns@ and forces an explicit decision; each
--- arm dispatches to the format's own
--- @\<format\>RejectIncompatibleSizeChange@ checker, or routes to
--- 'acceptsAnySizeChange' when the format imposes no size-pair
--- refusal.
---
--- Differential formats are absent from this dispatcher by design.
--- Every differential format slap can emit carries source and target
--- sizes natively in its wire shape, so any (source, target) pair is
--- representable and none refuses on size grounds.
---
--- Called as a precondition of 'createPatch'\'s 'CreateDirect' arm,
--- once per create, with the actual source\/target byte counts in
--- hand. Source-less convert ('convertDirect') does not invoke this
--- dispatcher — it has no source bytes to size against.
+-- | Run the target format's source/target size-pair rule over the two files' actual byte counts, source first.
+-- Differential formats are absent by design: no differential wire shape constrains the size pair,
+-- so any pair is representable and none refuses on size grounds.
 rejectIncompatibleSizeChange
   :: DirectCreate -> FileSize -> FileSize -> Either SlapError ()
 rejectIncompatibleSizeChange CreatePPF1   = ppf1RejectIncompatibleSizeChange
@@ -773,57 +764,33 @@ rejectIncompatibleDialects accepted reportedLabel dialects =
 -- Contract checking
 ----------------------------------------------------------------------------
 
--- | Why 'canConvert' refused to sign off on a conversion. Two
--- mutually exclusive failure modes, distinguished because they
--- point the caller at different corrective actions.
+-- | Why 'canConvert' refused to sign off on a conversion.
 data ConversionFailure
-  = -- | The target format lists fields as required that the source
-    -- patch doesn't provide. Corrective action: populate the
-    -- missing fields (e.g. hash a source ROM via @--with INPUT@
-    -- for NINJA1) or choose a target that doesn't require them.
-    RequirementsMissing (Set.Set PatchField)
-
-    -- | The source patch carries one or more fields that affect the
-    -- output bytes of the apply operation (see
-    -- 'Slap.PatchField.affectsApplyOutput') and that the target
-    -- format has no wire representation for. Silently dropping
-    -- them would change what the resulting patch produces on
-    -- apply, so the conversion is refused at the contract layer
-    -- rather than papered over with a warning. Corrective action:
-    -- choose a target that preserves the field.
+  = RequirementsMissing (NonEmpty PatchField)
   | ApplyOutputFieldsDropped (Set.Set PatchField)
+    -- ^ 'affectsApplyOutput' fields the target has no wire home for.
   deriving (Eq, Show)
 
 canConvert :: PatchContents -> DirectConversionContract -> Either ConversionFailure ()
-canConvert contents contract =
-  let have = provides contents
-      need = contractRequiredFields contract
-      kept = need `Set.union` contractAcceptedFields contract
-      droppedApplyOutput = Set.filter affectsApplyOutput
-                             (have `Set.difference` kept)
-      missing = need `Set.difference` have
-  in if not (Set.null droppedApplyOutput)
-       -- Apply-output violations are the sharper signal: the resulting
-       -- patch would apply to produce different bytes. Surface this
-       -- first even when requirements are also unmet.
-       then Left (ApplyOutputFieldsDropped droppedApplyOutput)
-     else if not (Set.null missing)
-       then Left (RequirementsMissing missing)
-     else Right ()
+canConvert contents contract
+  -- Apply-output violations are the sharper signal, so they surface first even when requirements are also unmet.
+  | not (Set.null droppedApplyOutput) = Left (ApplyOutputFieldsDropped droppedApplyOutput)
+  | Just missingFields <- NonEmpty.nonEmpty (Set.toAscList missingRequirements) = Left (RequirementsMissing missingFields)
+  | otherwise = Right ()
+  where
+    have = provides contents
+    need = contractRequiredFields contract
+    kept = need `Set.union` contractAcceptedFields contract
+    droppedApplyOutput  = Set.filter affectsApplyOutput (have `Set.difference` kept)
+    missingRequirements = need `Set.difference` have
 
 -- | Every direct creation target, used to scan 'directConversionContract' for formats that preserve a given 'PatchField'.
 allDirectTargets :: [DirectCreate]
 allDirectTargets = [minBound..maxBound]
 
--- | Direct creation targets whose 'directConversionContract' accepts the
--- given 'PatchField'. Used by 'convertDirect' to populate the
--- @Targets that preserve ...@ clause of the
--- 'ApplyOutputFieldsWouldBeDropped' refusal message; dynamic so
--- future additions to the format table get picked up automatically.
---
--- 'IncludeUndoData' and 'IncludeVerification' only influence PPF3's
--- /required/ set, not its /accepted/ set, so we pass the @Include@
--- constructors for both without affecting the answer.
+-- | The direct targets whose contract keeps a given 'PatchField' — a new format row joins the answer on its own.
+-- 'IncludeUndoData' and 'IncludeVerification' are the inclusive reading of PPF3's contract:
+-- a field it requires only when undo or verification rides along is still a field it can keep.
 preservingDirectTargets :: PatchField -> [FormatLabel]
 preservingDirectTargets field =
   [ directLabel target
@@ -954,38 +921,47 @@ fieldNote contents field = case field of
 -- Direct conversion (direct → direct)
 ----------------------------------------------------------------------------
 
+-- | 'verdictOnDirectConversion's yes.
+data AdmissibleDirectConversion = AdmissibleDirectConversion
+  { admittedTarget    :: !DirectCreate
+  , admittingContract :: !DirectConversionContract
+  }
+
+-- | Judge a source-less conversion before anything encodes; 'convertDirect' acts only on this verdict.
+-- A differential target has nothing to diff without the source ROM;
+-- @--with INPUT@ escapes every refusal here by applying the patch and re-diffing against real bytes.
+verdictOnDirectConversion
+  :: PatchContents -> CreateFormat -> RequestedPatchMetadata
+  -> Either SlapError AdmissibleDirectConversion
+verdictOnDirectConversion _ (CreateDifferential target) _ = Left (DiffRequiresSource (differentialLabel target))
+verdictOnDirectConversion _ (CreateDirect CreatePPF4)   _ = Left (PPF4ConvertRequiresSource LabelPPF4)
+verdictOnDirectConversion contents (CreateDirect target) meta =
+  case canConvert contents contract of
+    Left (RequirementsMissing missing) ->
+      Left (MissingRequiredFields (directLabel target) missing)
+    Left (ApplyOutputFieldsDropped fields) ->
+      Left (ApplyOutputFieldsWouldBeDropped (directLabel target)
+              [(field, preservingDirectTargets field) | field <- Set.toList fields])
+    Right () -> Right (AdmissibleDirectConversion target contract)
+  where
+    undoChoice         = fromMaybe (inferUndoInclusion         contents) (requestedUndoInclusion         meta)
+    verificationChoice = fromMaybe (inferVerificationInclusion contents) (requestedVerificationInclusion meta)
+    contract           = directConversionContract target undoChoice verificationChoice
+
 -- | Convert parsed patch contents to a target format without the source ROM.
 convertDirect :: PatchContents -> CreateFormat -> RequestedPatchMetadata
               -> RequestedConstraints
               -> RequestedDialects
               -> Either SlapError CreateResult
-convertDirect _ (CreateDifferential target) _ _ _ = Left (DiffRequiresSource (differentialLabel target))
--- PPF4 splits its records into in-place writes and appended bytes by
--- where they fall relative to the source's size. A source-less convert
--- has the source patch's records but not the source's size, so it can't
--- make that split; refuse and point at the --with path (which applies
--- the source patch and re-diffs against real bytes via createPatch).
-convertDirect _ (CreateDirect CreatePPF4) _ _ _ = Left (PPF4ConvertRequiresSource LabelPPF4)
-convertDirect contents (CreateDirect target) meta constraints dialects = do
-  let undoChoice         = fromMaybe (inferUndoInclusion         contents) (requestedUndoInclusion         meta)
-      verificationChoice = fromMaybe (inferVerificationInclusion contents) (requestedVerificationInclusion meta)
-      contract           = directConversionContract target undoChoice verificationChoice
-  case canConvert contents contract of
-    Left (RequirementsMissing missing) ->
-      Left (MissingRequiredField (directLabel target) (Set.findMin missing))
-    Left (ApplyOutputFieldsDropped fields) ->
-      Left (ApplyOutputFieldsWouldBeDropped (directLabel target)
-              [(field, preservingDirectTargets field) | field <- Set.toList fields])
-    Right () -> do
-      -- Source-less path: 'encodeDirect' still runs 'resolveSentinelCollisions'
-      -- with an empty 'InputFileContents', so a record on the variant's
-      -- trailer sentinel produces 'SentinelCollisionUnfixable'.
-      let notes = conversionNotes contents target contract meta
-      encoded <- encodeDirect contents (InputFileContents ByteString.empty) target meta (encodingLimits target) constraints dialects
-      Right CreateResult
-        { resultBytes    = resultBytes encoded
-        , resultAdvisories = notes ++ resultAdvisories encoded
-        }
+convertDirect contents format meta constraints dialects = do
+  AdmissibleDirectConversion target contract <- verdictOnDirectConversion contents format meta
+  -- 'encodeDirect' still runs 'resolveSentinelCollisions', here against empty 'InputFileContents',
+  -- so a record on the variant's trailer sentinel produces 'SentinelCollisionUnfixable'.
+  encoded <- encodeDirect contents (InputFileContents ByteString.empty) target meta (encodingLimits target) constraints dialects
+  Right CreateResult
+    { resultBytes      = resultBytes encoded
+    , resultAdvisories = conversionNotes contents target contract meta ++ resultAdvisories encoded
+    }
 
 -- | The offset bound the @narrow@ helper checks each format's hunks against.
 -- Each pairs a maximum offset with a 'FormatLabel', so an out-of-range or negative offset surfaces as 'NarrowingError' naming the right format.
@@ -1098,14 +1074,10 @@ encodeDirect contents source target meta limits constraints dialects = case targ
           , resultAdvisories = resultAdvisories ppfResult ++ trailerAdvisories
           }
   CreatePPF4 -> do
-    -- PPF4's two phases come from where each hunk falls relative to the
-    -- source's length: hunks within @[0, sourceLength)@ overwrite source
-    -- bytes (Replace records), hunks at or past @sourceLength@ extend the
-    -- file (Append records). This split is valid only because these
-    -- hunks were produced by 'diffHunks' against this very source — the
-    -- create and @--with@-convert paths. Source-less convert to PPF4 is
-    -- refused upstream in 'convertDirect', because its records' offsets
-    -- are relative to a source we don't hold and so can't be split.
+    -- PPF4's two phases come from where each hunk falls relative to the source's length:
+    -- hunks within @[0, sourceLength)@ overwrite source bytes (Replace records), hunks at or past @sourceLength@ extend the file (Append records).
+    -- The split is valid only because these hunks were produced by 'diffHunks' against this very source;
+    -- source-less convert to PPF4 is refused upstream ('verdictOnDirectConversion').
     let (replaceHunks, appendHunks) =
           PPF4.partitionPPF4Phases (byteFileSize (unInputFileContents source))
                                    (contentsRecords contents)
@@ -1138,7 +1110,7 @@ encodeDirect contents source target meta limits constraints dialects = case targ
       Just targetSize -> do
         destinationSize <- APSN64.narrowAPSN64DestinationSize targetSize
         Right (APSN64.encodeAPSN64 records destinationSize apsDescription)
-      Nothing -> Left (MissingRequiredField LabelAPSN64 FieldDestinationSize)
+      Nothing -> Left (MissingRequiredFields LabelAPSN64 (NonEmpty.singleton FieldDestinationSize))
   where
     narrow :: [SplitHunk] -> Either SlapError [EncodedHunk]
     narrow = first NarrowingError . narrowHunks limits
