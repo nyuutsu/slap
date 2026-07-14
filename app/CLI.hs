@@ -34,14 +34,16 @@ module CLI
   ) where
 
 import Slap.Convert (CreateFormat(..), DifferentialCreate(CreateBPS),
-                     TokenVisibility(..), advertisedCreateFormats, lookupCreateFormatToken,
+                     advertisedCreateFormats, lookupCreateFormatToken,
                      RequestedPatchMetadata(..),
                      FileIdDizRequest(..),
                      RequestedConstraints(..),
                      RequestedDialects(..),
                      UndoInclusion(..), VerificationInclusion(..), CompressionInclusion(..),
                      PatchStability(..),
-                     TextMode(..))
+                     TextMode)
+import Slap.MetadataField (MetadataField(..), metadataFieldFlagName)
+import Slap.Surface (imageTypeTokens, romTypeTokens, textModeTokens)
 import Slap.XDelta1.Types (XDelta1FromName(..), XDelta1ToName(..))
 import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor, secondaryCompressorTokens)
 import Slap.VCDIFF.Types (EmissionWindowSize, emissionWindowSizeOfBytes)
@@ -49,8 +51,8 @@ import Slap.Constraint (Constraint(..), constraintFlagName)
 import Slap.Dialect (Dialect(..), dialectFlagName)
 import Slap.PPF1.Types (PPF1Origin(..))
 import Slap.IPS.Types (SMCShapeRequirement(..))
-import Slap.PPF3.Types (PPF3ImageType(..))
-import Slap.PlatformType (PlatformType(..))
+import Slap.PPF3.Types (PPF3ImageType)
+import Slap.PlatformType (PlatformType)
 import Slap.Header (ConsoleHeader, InputHeaderDirective(..), consoleHeaderToken)
 import Slap.Verify (VerificationPolicy(..))
 -- The parsers below wrap incoming 'String' as 'EncodedText' tagged 'EncodingUtf8' at the boundary:
@@ -630,16 +632,10 @@ data CompressionIntent
   = DeclineCompression
   | CompressWith XDelta3SecondaryCompressor
 
--- | Resolve a @--compress-with@ token against the catalog's token table.
--- fgk resolves — slap knows the name; whether it can encode with it is judged later,
--- with a fuller answer ('Slap.Convert.rejectUnencodableSecondaryCompressor') —
--- while an unknown word is refused here, with the list of real ones.
+-- | fgk resolves — slap knows the name; whether it can encode with it is judged later,
+-- with a fuller answer ('Slap.Convert.rejectUnencodableSecondaryCompressor').
 parseSecondaryCompressor :: String -> Either String XDelta3SecondaryCompressor
-parseSecondaryCompressor input =
-  case lookup (map toLower input) secondaryCompressorTokens of
-    Just compressor -> Right compressor
-    Nothing         -> Left ("unknown compressor: " ++ input
-                          ++ "\n  expected: " ++ intercalate ", " (map fst secondaryCompressorTokens))
+parseSecondaryCompressor = tokenReader "compressor" secondaryCompressorTokens
 
 -- | Parse a @--window-size@ value: a byte count with an optional k or m suffix (KiB / MiB).
 -- Sized in 'Integer' first, so an absurd count is refused rather than wrapped;
@@ -663,60 +659,66 @@ parseWindowSize input = case span isDigit input of
 windowSizeShapeHint :: String
 windowSizeShapeHint = "\n  expected: a byte count with an optional k or m suffix, e.g. 65536, 512k, 8m"
 
+metadataFlag :: HasName f => MetadataField -> Mod f a
+metadataFlag field = long (Text.unpack (metadataFieldFlagName field))
+
 -- | Parse the metadata flags shared between @slap create@ and @slap convert@.
 -- Produces a 'RequestedPatchMetadata' with 'requestedEmbeddedBlob' set to 'Nothing';
 -- the resolvers @resolveCreateMetadata@ and @resolveConvertMetadata@ (in @Main@) fill that field from each command's blob source:
 -- the @--metadata FILE@ path for create, the 'EmbeddedBlobIntent' for convert.
 requestedMetadataParser :: Parser RequestedPatchMetadata
 requestedMetadataParser = do
-    title             <- optional (option str (long "title" <> metavar "TEXT"
+    title             <- optional (option str (metadataFlag MetadataTitle <> metavar "TEXT"
                             <> help "Patch title (EBP/DPS/NINJA2)"))
-    author            <- optional (option str (long "author" <> metavar "TEXT"
+    author            <- optional (option str (metadataFlag MetadataAuthor <> metavar "TEXT"
                             <> help "Patch author (EBP/DPS/NINJA2)"))
-    description       <- optional (option str (long "description" <> metavar "TEXT"
+    description       <- optional (option str (metadataFlag MetadataDescription <> metavar "TEXT"
                             <> help "Patch description (EBP/PPF1/PPF2/PPF3/APS-N64/NINJA2)"))
-    version           <- optional (option str (long "patch-version" <> metavar "TEXT"
+    version           <- optional (option str (metadataFlag MetadataVersion <> metavar "TEXT"
                             <> help "Patch version (DPS/NINJA2)"))
-    includeUndo         <- optional (flag' OmitUndoData     (long "no-undo"
+    includeUndo         <- optional (flag' OmitUndoData     (metadataFlag MetadataUndoInclusion
                             <> help "Omit undo data (default: included when the format supports it)"))
-    includeVerification <- optional (flag' OmitVerification (long "omit-verification"
+    includeVerification <- optional (flag' OmitVerification (metadataFlag MetadataVerificationInclusion
                             <> help "Omit source-integrity-checking data from the created patch (default: included when the format supports it)"))
     compressionIntent <- optional
-                           (   DeclineCompression <$ flag' () (long "no-compress"
+                           (   DeclineCompression <$ flag' () (metadataFlag MetadataPatchCompression
                                  <> help "Do not compress the output patch (xdelta1's gzip envelope, xdelta3's secondary compression; default emits compressed)")
                            <|> CompressWith <$> option (eitherReader parseSecondaryCompressor)
-                                 (long "compress-with" <> metavar "ALGORITHM"
+                                 (metadataFlag MetadataSecondaryCompressor <> metavar "ALGORITHM"
                                   <> completeWith (map fst secondaryCompressorTokens)
                                   <> help ("Secondary compressor for xdelta3 (default lzma): "
                                         ++ intercalate ", " (map fst secondaryCompressorTokens))))
-    windowSize        <- optional (option (eitherReader parseWindowSize) (long "window-size" <> metavar "SIZE"
+    windowSize        <- optional (option (eitherReader parseWindowSize) (metadataFlag MetadataWindowSize <> metavar "SIZE"
                             <> help ("VCDIFF window size: bytes with an optional k or m suffix. xdelta3 defaults to 8m;"
                                   ++ " rfc-vcdiff defaults to one window spanning the whole output."
                                   ++ " The widespread xdelta3 3.0.11 build declines to decode windows past 16m; slap reads them fine.")))
-    unstable          <- optional (flag' UnstablePatch (long "unstable"
+    unstable          <- optional (flag' UnstablePatch (metadataFlag MetadataStability
                             <> help "Mark patch unstable (DPS)"))
-    romType           <- optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
-                            <> help ("ROM type (NINJA1/NINJA2): " ++ intercalate ", " advertisedRomTypes)))
-    imageType         <- optional (option (eitherReader parseImageType) (long "image-type" <> metavar "TYPE"
-                            <> help "Image type (PPF3): bin, gi"))
-    genre             <- optional (option str (long "genre" <> metavar "TEXT"
+    romType           <- optional (option (eitherReader parseRomType) (metadataFlag MetadataRomType <> metavar "TYPE"
+                            <> completeWith (map fst romTypeTokens)
+                            <> help ("ROM type (NINJA1/NINJA2): " ++ intercalate ", " (map fst romTypeTokens))))
+    imageType         <- optional (option (eitherReader parseImageType) (metadataFlag MetadataImageType <> metavar "TYPE"
+                            <> completeWith (map fst imageTypeTokens)
+                            <> help ("Image type (PPF3): " ++ intercalate ", " (map fst imageTypeTokens))))
+    genre             <- optional (option str (metadataFlag MetadataGenre <> metavar "TEXT"
                             <> help "Genre (NINJA2)"))
-    language          <- optional (option str (long "language" <> metavar "TEXT"
+    language          <- optional (option str (metadataFlag MetadataLanguage <> metavar "TEXT"
                             <> help "Language (NINJA2)"))
-    date              <- optional (option str (long "date" <> metavar "YYYYMMDD"
+    date              <- optional (option str (metadataFlag MetadataDate <> metavar "YYYYMMDD"
                             <> help "Date (NINJA2)"))
-    website           <- optional (option str (long "website" <> metavar "URL"
+    website           <- optional (option str (metadataFlag MetadataWebsite <> metavar "URL"
                             <> help "Website (NINJA2)"))
-    textMode          <- optional (option (eitherReader parseTextMode) (long "ninja2-text-mode" <> metavar "MODE"
-                            <> help ("Wire text mode for NINJA2 metadata: utf8, undeclared."
+    textMode          <- optional (option (eitherReader parseTextMode) (metadataFlag MetadataTextMode <> metavar "MODE"
+                            <> completeWith (map fst textModeTokens)
+                            <> help ("Wire text mode for NINJA2 metadata: " ++ intercalate ", " (map fst textModeTokens) ++ "."
                                   ++ " Overrides any encoding declared by the source patch when supplied."
                                   ++ " When omitted: inherit from the source patch's metadata encoding"
                                   ++ " if one is available, otherwise utf8.")))
-    xdelta1FromName   <- optional (option str (long "from-name" <> metavar "TEXT"
+    xdelta1FromName   <- optional (option str (metadataFlag MetadataXDelta1FromName <> metavar "TEXT"
                             <> help ("Embedded source-file display label (xdelta1 only;"
                                   ++ " default: basename of input/source ROM on create,"
                                   ++ " inherited from source patch on xdelta1" ++ [rightwardsArrow] ++ "xdelta1 convert)")))
-    xdelta1ToName     <- optional (option str (long "to-name" <> metavar "TEXT"
+    xdelta1ToName     <- optional (option str (metadataFlag MetadataXDelta1ToName <> metavar "TEXT"
                             <> help "Embedded target-file display label (xdelta1 only; same defaulting as --from-name)"))
     pure RequestedPatchMetadata
       { requestedTitle               = fmap wrapUtf8 title
@@ -756,9 +758,9 @@ requestedMetadataParser = do
 createMetadataInputsParser :: Parser CreateMetadataInputs
 createMetadataInputsParser = CreateMetadataInputs
   <$> requestedMetadataParser
-  <*> optional (pathOption (long "metadata" <> metavar "FILE"
+  <*> optional (pathOption (metadataFlag MetadataEmbeddedBlob <> metavar "FILE"
         <> help "Embed bytes from FILE as the output patch's embedded metadata"))
-  <*> optional (pathOption (long "diz" <> metavar "FILE"
+  <*> optional (pathOption (metadataFlag MetadataFileIdDiz <> metavar "FILE"
         <> help "Embed FILE as the output patch's FILE_ID.DIZ (PPF2/PPF3)"))
 
 convertMetadataInputsParser :: Parser ConvertMetadataInputs
@@ -772,7 +774,7 @@ convertMetadataInputsParser = ConvertMetadataInputs
 -- The three are mutually exclusive: passing both flags leaves one unconsumed and the top-level parser rejects the command.
 embeddedBlobIntentParser :: Parser EmbeddedBlobIntent
 embeddedBlobIntentParser = asum
-  [ EmbedFromFile <$> pathOption (long "metadata" <> metavar "FILE"
+  [ EmbedFromFile <$> pathOption (metadataFlag MetadataEmbeddedBlob <> metavar "FILE"
       <> help "Override the embedded metadata with bytes from FILE")
   , DropEmbeddedBlob <$ flag' () (long "drop-metadata"
       <> help "Discard the source patch's embedded metadata (default is to inherit)")
@@ -783,7 +785,7 @@ embeddedBlobIntentParser = asum
 -- @--drop-diz@ drops it, and neither carries the source patch's through.
 dizIntentParser :: Parser DizIntent
 dizIntentParser = asum
-  [ SetDizFromFile <$> pathOption (long "diz" <> metavar "FILE"
+  [ SetDizFromFile <$> pathOption (metadataFlag MetadataFileIdDiz <> metavar "FILE"
       <> help "Set the FILE_ID.DIZ from FILE (PPF2/PPF3 target)")
   , DropDiz <$ flag' () (long "drop-diz"
       <> help "Discard the source patch's FILE_ID.DIZ (default is to inherit)")
@@ -798,54 +800,22 @@ parseCreateFormat input = case lookupCreateFormatToken input of
   Nothing     -> Left ("unknown format: " ++ input
                     ++ "\n  expected: " ++ intercalate ", " advertisedCreateFormats)
 
+-- | Read a token against a closed table, answering an unknown word with the real ones.
+tokenReader :: String -> [(String, value)] -> String -> Either String value
+tokenReader vocabularyNoun tokenTable input =
+  case lookup (map toLower input) tokenTable of
+    Just resolved -> Right resolved
+    Nothing       -> Left ("unknown " ++ vocabularyNoun ++ ": " ++ input
+                        ++ "\n  expected: " ++ intercalate ", " (map fst tokenTable))
+
 parseTextMode :: String -> Either String TextMode
-parseTextMode input = case map toLower input of
-  "utf8"       -> Right TextModeUTF8
-  "undeclared" -> Right TextModeUndeclared
-  _            -> Left ("unknown NINJA2 text mode: " ++ input ++ "\n  expected: utf8, undeclared")
-
--- | Source of truth for slap's ROM-type tokens:
--- both 'parseRomType' and 'advertisedRomTypes' derive from this table.
-romTypeTokens :: [(String, PlatformType, TokenVisibility)]
-romTypeTokens =
-  [ ("raw",  PlatformRaw,             Canonical)
-  , ("nes",  PlatformNES,             Canonical)
-  , ("fds",  PlatformFDS,             Canonical)
-  , ("snes", PlatformSNES,            Canonical)
-  , ("n64",  PlatformN64,             Canonical)
-  , ("gb",   PlatformGB,              Canonical)
-  , ("gbc",  PlatformGBC,             Canonical)
-  , ("gba",  PlatformGBA,             Canonical)
-  , ("ngp",  PlatformNGP,             Canonical)
-  , ("ngpc", PlatformNGPC,            Canonical)
-  , ("sms",  PlatformSMS,             Canonical)
-  , ("gg",   PlatformGameGear,        Canonical)
-  , ("mega", PlatformGenesis,         Canonical)
-  , ("pce",  PlatformPCEngine,        Canonical)
-  , ("ws",   PlatformWonderSwan,      Canonical)
-  , ("wsc",  PlatformWonderSwanColor, Canonical)
-  , ("lynx", PlatformLynx,            Canonical)
-  , ("jag",  PlatformJaguar,          Canonical)
-  , ("gp32", PlatformGP32,            Canonical)
-  ]
-
-advertisedRomTypes :: [String]
-advertisedRomTypes =
-  [token | (token, _platformType, Canonical) <- romTypeTokens]
+parseTextMode = tokenReader "NINJA2 text mode" textModeTokens
 
 parseRomType :: String -> Either String PlatformType
-parseRomType input =
-  case lookup (map toLower input)
-              [(token, platformType) | (token, platformType, _visibility) <- romTypeTokens] of
-    Just platformType -> Right platformType
-    Nothing           -> Left ("unknown ROM type: " ++ input
-                            ++ "\n  expected: " ++ intercalate ", " advertisedRomTypes)
+parseRomType = tokenReader "ROM type" romTypeTokens
 
 parseImageType :: String -> Either String PPF3ImageType
-parseImageType typeString = case map toLower typeString of
-  "bin" -> Right BIN
-  "gi"  -> Right GI
-  _ -> Left ("unknown image type: " ++ typeString ++ "\n  expected: bin, gi")
+parseImageType = tokenReader "image type" imageTypeTokens
 
 patchInfoParser :: Parser InfoCommand
 patchInfoParser = do

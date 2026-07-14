@@ -44,6 +44,7 @@
 --                                  rescue finds, alias grouping,
 --                                  and the vacuous-pass guards.
 --   * 'Props.Classify'           — the drop sorter and the identity projection.
+--   * 'Props.Surface'            — the metadata-field surface: flag tokens and control kinds.
 --
 -- Shared generators, helpers, and predicates live in 'Props.Helpers'.
 module Main (main) where
@@ -65,6 +66,7 @@ import qualified Props.Preflight as Preflight
 import qualified Props.ResolveCopyAddress as ResolveCopyAddress
 import qualified Props.RoundTrip as RoundTrip
 import qualified Props.SpecConformance as SpecConformance
+import qualified Props.Surface as Surface
 import qualified Props.Text as Text
 import qualified Props.Truncation as Truncation
 import qualified Props.Undo as Undo
@@ -96,5 +98,6 @@ main = defaultMain $ testGroup "Properties"
   , Verify.verifyTests
   , Preflight.preflightTests
   , Classify.classifyTests
+  , Surface.surfaceTests
   , XDelta1Conformance.xdelta1ConformanceTests
   ]

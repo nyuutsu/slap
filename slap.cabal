@@ -113,6 +113,7 @@ library slap-internal
     , Slap.NINJA2.Parse
     , Slap.NINJA2.Types
     , Slap.SomePatch
+    , Slap.Surface
     , Slap.Text
     , Slap.Verify
     , Slap.PatchFormat
@@ -218,6 +219,7 @@ test-suite props
                   , Props.ResolveCopyAddress
                   , Props.RoundTrip
                   , Props.SpecConformance
+                  , Props.Surface
                   , Props.Text
                   , Props.Truncation
                   , Props.Undo

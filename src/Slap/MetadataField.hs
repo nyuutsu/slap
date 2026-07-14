@@ -37,7 +37,7 @@ data MetadataField
   | MetadataXDelta1FromName
   | MetadataXDelta1ToName
   | MetadataWindowSize
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show, Enum, Bounded)
 
 -- | Human-readable name for prose contexts in error and help messages.
 metadataFieldName :: MetadataField -> Text
@@ -63,16 +63,15 @@ metadataFieldName MetadataXDelta1FromName     = "xdelta1 from-name"
 metadataFieldName MetadataXDelta1ToName       = "xdelta1 to-name"
 metadataFieldName MetadataWindowSize          = "window size"
 
--- | The CLI flag name (without leading dashes) that sets each field.
--- Used in rejection messages so the user sees the exact flag they
--- typed in slap's response.
+-- | The CLI flag (without dashes) that sets each field — one table read by the parser and by the rejection messages,
+-- so the flag slap answers with is always a flag the parser accepts.
 metadataFieldFlagName :: MetadataField -> Text
 metadataFieldFlagName MetadataTitle               = "title"
 metadataFieldFlagName MetadataAuthor              = "author"
 metadataFieldFlagName MetadataDescription         = "description"
-metadataFieldFlagName MetadataVersion             = "version"
+metadataFieldFlagName MetadataVersion             = "patch-version"
 metadataFieldFlagName MetadataUndoInclusion       = "no-undo"
-metadataFieldFlagName MetadataVerificationInclusion = "no-verify"
+metadataFieldFlagName MetadataVerificationInclusion = "omit-verification"
 metadataFieldFlagName MetadataPatchCompression    = "no-compress"
 metadataFieldFlagName MetadataSecondaryCompressor = "compress-with"
 metadataFieldFlagName MetadataStability           = "unstable"
