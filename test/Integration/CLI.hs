@@ -1033,7 +1033,7 @@ metadataRejectionTests base bps =
   ]
 
 -- | BPS\8594BPS convert preserves embedded metadata by default
--- ('CarryIfPresent'), lets the user replace it (@--metadata FILE@), or
+-- ('CarryBlob'), lets the user replace it (@--metadata FILE@), or
 -- discard it (@--drop-metadata@).  The three intents are mutually
 -- exclusive — combining the two override flags is a parse error.
 -- These tests build a BPS that carries a known blob, run convert, and
@@ -1086,16 +1086,33 @@ bpsConvertMetadataTests base bps =
            "--metadata", newBlob, "--drop-metadata", "-o", out]
           "bps-convert/mutex" "invalid"
 
-  , testCase "bps-convert/--drop-metadata is accepted when target is not BPS" $
-      -- Discarding metadata is a coherent request regardless of the
-      -- target format.  The drop intent suppresses any source-metadata
-      -- carry; the existing metadata-dropped warning still fires
-      -- because BPS\8594IPS has no metadata channel either way.
+  , testCase "bps-convert/--drop-metadata is refused when the target has no metadata channel" $
+      -- A drop is still a request about the metadata field, and IPS has no such field —
+      -- the wrong flag for the task gets an objection, exactly as --drop-diz does.
       withSourceBps $ \sourceBps _ ->
       withTempFile "slap-out" $ \out ->
-        expectOk ["convert", sourceBps, "--to", "ips",
-                  "--with", base, "--drop-metadata", "-o", out, "--force"]
-          "bps-convert/drop-cross-format" "converted"
+        expectFail ["convert", sourceBps, "--to", "ips",
+                    "--with", base, "--drop-metadata", "-o", out, "--force"]
+          "bps-convert/drop-cross-format" "--drop-metadata is not accepted"
+
+  , testCase "bps-convert/--drop-diz is refused under its own name when the target has no FILE_ID.DIZ" $
+      withSourceBps $ \sourceBps _ ->
+      withTempFile "slap-out" $ \out ->
+        expectFail ["convert", sourceBps, "--to", "ips",
+                    "--with", base, "--drop-diz", "-o", out, "--force"]
+          "bps-convert/drop-diz-cross-format" "--drop-diz is not accepted"
+
+  , testCase "gate-order/incoherent --diz outranks its missing file" $
+      withTempFile "slap-out" $ \out ->
+        expectFail ["convert", "no-such-patch.bps", "--to", "ips",
+                    "--diz", "no-such-diz.txt", "-o", out]
+          "gate-order/incoherent" "--diz is not accepted"
+
+  , testCase "gate-order/coherent --diz still reports its missing file" $
+      withTempFile "slap-out" $ \out ->
+        expectFail ["convert", "no-such-patch.bps", "--to", "ppf3",
+                    "--diz", "no-such-diz.txt", "-o", out]
+          "gate-order/coherent" "cannot read"
   ]
   where
     -- Build a BPS that carries a known metadata blob, by patching a

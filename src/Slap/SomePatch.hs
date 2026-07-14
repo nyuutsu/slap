@@ -20,6 +20,7 @@ import Slap.Dialect (Dialect)
 import Slap.Convert (PatchContents(..), emptyContents, RequestedPatchMetadata(..),
                      UndoInclusion(..), VerificationInclusion(..), CompressionInclusion(..), PatchStability(..),
                      RequestedDialects(..), NINJA1Compression(..),
+                     EmbeddedBlobRequest(..),
                      noMetadataRequested, acceptedDialects)
 import Slap.Text (EncodedText, EncodingName, encodedTextContent)
 import Data.Text (Text)
@@ -532,7 +533,8 @@ parseSomePatchFromBPS metadataEncoding patchContents = do
         , verifyFileSize = Just (AdvisorySize (BPS.bpsSourceSize patch))
         }
     , patchMetadata      = bpsMetaBlob
-    , patchExtractedMeta = noMetadataRequested { requestedEmbeddedBlob = bpsMetaBlob }
+    , patchExtractedMeta = noMetadataRequested
+        { requestedEmbeddedBlob = maybe InheritEmbeddedBlob SetEmbeddedBlob bpsMetaBlob }
     }
 
 parseSomePatchFromUPS :: PatchFileContents -> Either SlapError SomePatch
@@ -602,7 +604,7 @@ parseSomePatchFromVCDIFF metadataEncoding patchContents = do
         { verifyWindowAdler32 = vcdiffWindowChecks patch }
     , patchMetadata      = appHeaderBlob
     , patchExtractedMeta = noMetadataRequested
-        { requestedEmbeddedBlob        = appHeaderBlob
+        { requestedEmbeddedBlob        = maybe InheritEmbeddedBlob SetEmbeddedBlob appHeaderBlob
         , requestedSecondaryCompressor = inheritedCompressor
         }
     }

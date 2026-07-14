@@ -27,6 +27,8 @@ module CLI
   , DizIntent(..)
   , CreateMetadataInputs(..)
   , ConvertMetadataInputs(..)
+  , createMetadataRequests
+  , convertMetadataRequests
   , OverwritePolicy(..)
   , Verbosity(..)
     -- Turning argv into the above
@@ -35,14 +37,17 @@ module CLI
 
 import Slap.Convert (CreateFormat(..), DifferentialCreate(CreateBPS),
                      advertisedCreateFormats, lookupCreateFormatToken,
+                     metadataRequests,
                      RequestedPatchMetadata(..),
                      FileIdDizRequest(..),
                      RequestedConstraints(..),
                      RequestedDialects(..),
                      UndoInclusion(..), VerificationInclusion(..), CompressionInclusion(..),
-                     PatchStability(..),
+                     PatchStability(..), EmbeddedBlobRequest(..),
                      TextMode)
-import Slap.MetadataField (MetadataField(..), metadataFieldFlagName)
+import Slap.MetadataField (MetadataField(..), metadataFieldFlagName,
+                           DroppableField(..), dropFlagName,
+                           MetadataRequest(..), requestField)
 import Slap.Surface (imageTypeTokens, romTypeTokens, textModeTokens)
 import Slap.XDelta1.Types (XDelta1FromName(..), XDelta1ToName(..))
 import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor, secondaryCompressorTokens)
@@ -63,7 +68,8 @@ import Slap.Display.Glyph (rightwardsArrow)
 
 import qualified Data.Text as Text
 import Data.Char (isDigit, toLower)
-import Data.List (intercalate)
+import Data.List (intercalate, sortOn)
+import Data.Maybe (isJust)
 import Options.Applicative
 import Options.Applicative.Help.Pretty (pretty, vcat)
 
@@ -149,14 +155,14 @@ data ConvertWithSource = ConvertWithSource
   }
   deriving (Show, Eq)
 
--- | What the user wants done with the BPS embedded-metadata blob during a convert.
--- 'CarryIfPresent' (the default) inherits from the source patch unless the user overrides, like every other metadata field.
--- 'DropEmbeddedBlob' discards the source's blob without substituting anything —
+-- | What the user wants done with the embedded metadata blob during a convert.
+-- 'CarryBlob' (the default) inherits from the source patch unless the user overrides, like every other metadata field.
+-- 'DropBlob' discards the source's blob without substituting anything —
 -- the only way to produce a metadata-less BPS from a source BPS that carried metadata.
 data EmbeddedBlobIntent
-  = CarryIfPresent
-  | EmbedFromFile FilePath
-  | DropEmbeddedBlob
+  = CarryBlob
+  | SetBlobFromFile FilePath
+  | DropBlob
   deriving (Show, Eq)
 
 -- | The convert-side FILE_ID.DIZ choice: carry the source patch's, set it from a file, or drop it.
@@ -182,6 +188,27 @@ data ConvertMetadataInputs = ConvertMetadataInputs
   , convertEmbeddedBlobIntent :: EmbeddedBlobIntent
   , convertDizIntent          :: DizIntent
   }
+
+-- | The metadata requests a create command makes, read off argv alone.
+createMetadataRequests :: CreateMetadataInputs -> [MetadataRequest]
+createMetadataRequests inputs = sortOn requestField $
+  metadataRequests (createParsedMetadata inputs)
+  ++ [SetField MetadataEmbeddedBlob | isJust (createEmbeddedBlobPath inputs)]
+  ++ [SetField MetadataFileIdDiz    | isJust (createDizPath inputs)]
+
+-- | The convert-side counterpart of 'createMetadataRequests'.
+convertMetadataRequests :: ConvertMetadataInputs -> [MetadataRequest]
+convertMetadataRequests inputs = sortOn requestField $
+  metadataRequests (convertParsedMetadata inputs) ++ blobRequest ++ dizRequest
+  where
+    blobRequest = case convertEmbeddedBlobIntent inputs of
+      SetBlobFromFile _ -> [SetField MetadataEmbeddedBlob]
+      DropBlob          -> [DropField DroppableEmbeddedBlob]
+      CarryBlob         -> []
+    dizRequest = case convertDizIntent inputs of
+      SetDizFromFile _ -> [SetField MetadataFileIdDiz]
+      DropDiz          -> [DropField DroppableFileIdDiz]
+      CarryDiz         -> []
 
 -- | Whether to refuse writing over an existing output file.
 -- Does not apply to the @--in-place@ lane, which writes to the source by definition.
@@ -662,8 +689,11 @@ windowSizeShapeHint = "\n  expected: a byte count with an optional k or m suffix
 metadataFlag :: HasName f => MetadataField -> Mod f a
 metadataFlag field = long (Text.unpack (metadataFieldFlagName field))
 
+dropFlag :: HasName f => DroppableField -> Mod f a
+dropFlag droppable = long (Text.unpack (dropFlagName droppable))
+
 -- | Parse the metadata flags shared between @slap create@ and @slap convert@.
--- Produces a 'RequestedPatchMetadata' with 'requestedEmbeddedBlob' set to 'Nothing';
+-- Produces a 'RequestedPatchMetadata' with 'requestedEmbeddedBlob' left 'InheritEmbeddedBlob';
 -- the resolvers @resolveCreateMetadata@ and @resolveConvertMetadata@ (in @Main@) fill that field from each command's blob source:
 -- the @--metadata FILE@ path for create, the 'EmbeddedBlobIntent' for convert.
 requestedMetadataParser :: Parser RequestedPatchMetadata
@@ -738,7 +768,7 @@ requestedMetadataParser = do
       , requestedDate                = fmap wrapUtf8 date
       , requestedWebsite             = fmap wrapUtf8 website
       , requestedTextMode            = textMode
-      , requestedEmbeddedBlob        = Nothing
+      , requestedEmbeddedBlob        = InheritEmbeddedBlob
       , requestedXDelta1FromName     = fmap (XDelta1FromName . wrapUtf8) xdelta1FromName
       , requestedXDelta1ToName       = fmap (XDelta1ToName   . wrapUtf8) xdelta1ToName
       , requestedWindowSize          = windowSize
@@ -770,15 +800,15 @@ convertMetadataInputsParser = ConvertMetadataInputs
   <*> dizIntentParser
 
 -- | Parse the embedded-blob intent for @slap convert@.
--- @--metadata FILE@ selects 'EmbedFromFile', @--drop-metadata@ selects 'DropEmbeddedBlob', neither selects 'CarryIfPresent'.
+-- @--metadata FILE@ selects 'SetBlobFromFile', @--drop-metadata@ selects 'DropBlob', neither selects 'CarryBlob'.
 -- The three are mutually exclusive: passing both flags leaves one unconsumed and the top-level parser rejects the command.
 embeddedBlobIntentParser :: Parser EmbeddedBlobIntent
 embeddedBlobIntentParser = asum
-  [ EmbedFromFile <$> pathOption (metadataFlag MetadataEmbeddedBlob <> metavar "FILE"
+  [ SetBlobFromFile <$> pathOption (metadataFlag MetadataEmbeddedBlob <> metavar "FILE"
       <> help "Override the embedded metadata with bytes from FILE")
-  , DropEmbeddedBlob <$ flag' () (long "drop-metadata"
+  , DropBlob <$ flag' () (dropFlag DroppableEmbeddedBlob
       <> help "Discard the source patch's embedded metadata (default is to inherit)")
-  , pure CarryIfPresent
+  , pure CarryBlob
   ]
 
 -- | The FILE_ID.DIZ counterpart to 'embeddedBlobIntentParser' — @--diz@ sets it,
@@ -787,7 +817,7 @@ dizIntentParser :: Parser DizIntent
 dizIntentParser = asum
   [ SetDizFromFile <$> pathOption (metadataFlag MetadataFileIdDiz <> metavar "FILE"
       <> help "Set the FILE_ID.DIZ from FILE (PPF2/PPF3 target)")
-  , DropDiz <$ flag' () (long "drop-diz"
+  , DropDiz <$ flag' () (dropFlag DroppableFileIdDiz
       <> help "Discard the source patch's FILE_ID.DIZ (default is to inherit)")
   , pure CarryDiz
   ]

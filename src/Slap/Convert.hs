@@ -8,6 +8,8 @@ module Slap.Convert
   , CreateFormat(..)
   , RequestedPatchMetadata(..)
   , FileIdDizRequest(..)
+  , EmbeddedBlobRequest(..)
+  , embeddedBlobBytes
   , UndoInclusion(..)
   , VerificationInclusion(..)
   , CompressionInclusion(..)
@@ -48,7 +50,9 @@ module Slap.Convert
   , lookupCreateFormatToken
   , acceptedMetadataFields
   , requestedMetadataFields
+  , metadataRequests
   , rejectIncompatibleMetadata
+  , rejectIncompatibleMetadataRequests
   , xdelta3CompressionEmission
   , rejectUnencodableSecondaryCompressor
   , TextMode(..)
@@ -127,7 +131,7 @@ import Slap.Dialect (Dialect(..))
 import Slap.Status (SlapError(..), SlapAdvisory(..), UndoRecordCount(..), DroppedValue(..),
                     DroppedDescriptionText(..), CreateResult(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.MetadataField (MetadataField(..))
+import Slap.MetadataField (MetadataField(..), MetadataRequest(..), DroppableField(..), requestField)
 import Slap.MetadataInclusion (UndoInclusion(..), VerificationInclusion(..), CompressionInclusion(..))
 import Slap.PatchField (PatchField(..), affectsApplyOutput)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
@@ -269,9 +273,7 @@ data RequestedPatchMetadata = RequestedPatchMetadata
     -- patch's metadata fields tagged themselves as; absent means
     -- "inherit from the source if its tags agree, otherwise UTF-8"
     -- (see the @CreateNINJA2@ arm of 'createPatch').
-  , requestedEmbeddedBlob         :: Maybe ByteString
-    -- ^ Contents of the user's @--metadata FILE@ flag: a raw blob to
-    -- embed verbatim.
+  , requestedEmbeddedBlob         :: EmbeddedBlobRequest
   , requestedXDelta1FromName      :: Maybe XDelta1FromName
     -- ^ xdelta1 only: user-supplied @--from-name TEXT@, already
     -- locale-encoded so the bytes match canonical xdelta's wire
@@ -295,6 +297,21 @@ data FileIdDizRequest
   | SetFileIdDiz EncodedText
   | DropFileIdDiz
   deriving (Eq, Show)
+
+-- | What to do with the embedded metadata blob on create or convert:
+-- keep whatever the source carried, replace it, or drop it.
+data EmbeddedBlobRequest
+  = InheritEmbeddedBlob
+  | SetEmbeddedBlob ByteString
+  | DropEmbeddedBlob
+  deriving (Eq, Show)
+
+-- | The bytes an emit embeds. An 'InheritEmbeddedBlob' that reaches an emit found nothing to inherit:
+-- create has no source patch, and convert's merge has already substituted any blob the source carried.
+embeddedBlobBytes :: EmbeddedBlobRequest -> Maybe ByteString
+embeddedBlobBytes (SetEmbeddedBlob blob) = Just blob
+embeddedBlobBytes InheritEmbeddedBlob    = Nothing
+embeddedBlobBytes DropEmbeddedBlob       = Nothing
 
 -- | Stability flag for DPS patches.
 --
@@ -334,7 +351,7 @@ noMetadataRequested = RequestedPatchMetadata
   , requestedDate                = Nothing
   , requestedWebsite             = Nothing
   , requestedTextMode            = Nothing
-  , requestedEmbeddedBlob        = Nothing
+  , requestedEmbeddedBlob        = InheritEmbeddedBlob
   , requestedXDelta1FromName     = Nothing
   , requestedXDelta1ToName       = Nothing
   , requestedWindowSize          = Nothing
@@ -363,7 +380,9 @@ mergeRequestedMetadata cli source = RequestedPatchMetadata
   , requestedDate                = requestedDate cli                <|> requestedDate source
   , requestedWebsite             = requestedWebsite cli             <|> requestedWebsite source
   , requestedTextMode            = requestedTextMode cli            <|> requestedTextMode source
-  , requestedEmbeddedBlob        = requestedEmbeddedBlob cli        <|> requestedEmbeddedBlob source
+  , requestedEmbeddedBlob        = case requestedEmbeddedBlob cli of
+                                     InheritEmbeddedBlob -> requestedEmbeddedBlob source
+                                     chosen              -> chosen
   , requestedWindowSize          = requestedWindowSize cli          <|> requestedWindowSize source
   , requestedXDelta1FromName     = requestedXDelta1FromName cli     <|> requestedXDelta1FromName source
   , requestedXDelta1ToName       = requestedXDelta1ToName cli       <|> requestedXDelta1ToName source
@@ -526,8 +545,8 @@ acceptedMetadataFields (CreateDifferential format) = case format of
                                    MetadataSecondaryCompressor, MetadataEmbeddedBlob,
                                    MetadataWindowSize]
 
--- | The 'MetadataField's the user explicitly set on a
--- 'RequestedPatchMetadata'. A 'Maybe' field counts as set when 'Just'.
+-- | The 'MetadataField's a 'RequestedPatchMetadata' asks about:
+-- a 'Maybe' field counts when 'Just', the DIZ and blob requests when not left to inherit.
 requestedMetadataFields :: RequestedPatchMetadata -> Set.Set MetadataField
 requestedMetadataFields meta = Set.fromList $ concat
   [ [MetadataTitle                | isJust (requestedTitle                meta)]
@@ -547,23 +566,37 @@ requestedMetadataFields meta = Set.fromList $ concat
   , [MetadataDate                | isJust (requestedDate                meta)]
   , [MetadataWebsite             | isJust (requestedWebsite             meta)]
   , [MetadataTextMode            | isJust (requestedTextMode            meta)]
-  , [MetadataEmbeddedBlob        | isJust (requestedEmbeddedBlob        meta)]
+  , [MetadataEmbeddedBlob        | requestedEmbeddedBlob meta /= InheritEmbeddedBlob]
   , [MetadataXDelta1FromName     | isJust (requestedXDelta1FromName     meta)]
   , [MetadataXDelta1ToName       | isJust (requestedXDelta1ToName       meta)]
   , [MetadataWindowSize          | isJust (requestedWindowSize          meta)]
   ]
 
--- | Reject any metadata field set by the user that the target format
--- doesn't consume. Reports every offending field in one error so users
--- see all flag mistakes in a single run.
+-- | Every metadata request a 'RequestedPatchMetadata' makes, as it arrived.
+metadataRequests :: RequestedPatchMetadata -> [MetadataRequest]
+metadataRequests meta = map requestOf (Set.toList (requestedMetadataFields meta))
+  where
+    requestOf MetadataFileIdDiz    | DropFileIdDiz    <- requestedFileIdDiz meta    = DropField DroppableFileIdDiz
+    requestOf MetadataEmbeddedBlob | DropEmbeddedBlob <- requestedEmbeddedBlob meta = DropField DroppableEmbeddedBlob
+    requestOf field = SetField field
+
+-- | Reject any metadata request — a field set, or a drop asked — that the target format doesn't consume.
+-- Reports every offender in one error so users see all flag mistakes in a single run.
+-- Takes bare requests so a frontend can ask before it resolves anything the request names:
+-- the CLI judges argv's own view of a command before opening any file its flags point at.
+rejectIncompatibleMetadataRequests :: CreateFormat -> [MetadataRequest] -> Either SlapError ()
+rejectIncompatibleMetadataRequests format requests =
+  case NonEmpty.nonEmpty (filter unconsumed requests) of
+    Nothing      -> Right ()
+    Just rejects -> Left (MetadataFieldRejected rejects (createFormatLabel format))
+  where
+    unconsumed request = requestField request `Set.notMember` acceptedMetadataFields format
+
 rejectIncompatibleMetadata
   :: CreateFormat
   -> RequestedPatchMetadata
   -> Either SlapError ()
-rejectIncompatibleMetadata format meta =
-  case NonEmpty.nonEmpty (Set.toList (requestedMetadataFields meta `Set.difference` acceptedMetadataFields format)) of
-    Nothing      -> Right ()
-    Just rejects -> Left (MetadataFieldRejected rejects (createFormatLabel format))
+rejectIncompatibleMetadata format = rejectIncompatibleMetadataRequests format . metadataRequests
 
 -- | Fold the two compression requests into xdelta3's emission choice:
 -- @--no-compress@ wins, a selected compressor is honored when slap can encode with it,
@@ -854,7 +887,7 @@ windowSizeAdvisories _ _ = []
 droppedEmbeddedBlobAdvisories :: CreateFormat -> RequestedPatchMetadata -> [SlapAdvisory]
 droppedEmbeddedBlobAdvisories format meta =
   [ MetadataDropped (byteLength blob)
-  | Just blob <- [requestedEmbeddedBlob meta]
+  | Just blob <- [embeddedBlobBytes (requestedEmbeddedBlob meta)]
   , MetadataEmbeddedBlob `Set.notMember` acceptedMetadataFields format
   ]
 
@@ -1186,7 +1219,7 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
   -- format, and a requested constraint is rejected upstream by
   -- 'rejectIncompatibleConstraints' before this arm runs. It stays in
   -- the signature for shape-symmetry with the direct arm.
-  CreateBPS    -> BPS.createBPS source target (fromMaybe ByteString.empty (requestedEmbeddedBlob meta))
+  CreateBPS    -> BPS.createBPS source target (fromMaybe ByteString.empty (embeddedBlobBytes (requestedEmbeddedBlob meta)))
   CreateUPS    -> UPS.createUPS source target
   CreateDPS    -> DPS.createDPS source target
                     (DPS.DPSCreateMetadata
@@ -1221,7 +1254,7 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
       source target
   CreateXDelta3 -> do
     compressionEmission <- xdelta3CompressionEmission meta
-    VCDIFF.createXDelta3 verificationChoice compressionEmission windowChoice (requestedEmbeddedBlob meta) source target
+    VCDIFF.createXDelta3 verificationChoice compressionEmission windowChoice (embeddedBlobBytes (requestedEmbeddedBlob meta)) source target
     where
       verificationChoice = fromMaybe IncludeVerification (requestedVerificationInclusion meta)
       windowChoice       = fromMaybe defaultXDelta3WindowSize (requestedWindowSize meta)

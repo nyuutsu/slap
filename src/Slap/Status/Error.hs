@@ -24,7 +24,7 @@ import Slap.Measure (Offset, Length, FileSize, ActionIndex,
                      ExpectedMagic, ActualMagic, TrailerMarker,
                      ParsedSizeValue, FoundVersion,
                      RawFlagByte, EncodingMethodByte)
-import Slap.MetadataField (MetadataField)
+import Slap.MetadataField (MetadataRequest)
 import Slap.Narrow (NarrowingFailure)
 import Slap.PatchField (PatchField)
 import Slap.PlatformType (CarriedRomType, RequestedRomType)
@@ -318,8 +318,8 @@ data SlapError
   -- The target-side mirror is 'DiffRequiresSource' \/ 'PPF4ConvertRequiresSource'; this is the input side.
   | ConvertRequiresSource FormatLabel SourceRequiredCause
 
-  -- | The user set metadata fields via CLI flags that the target format has no wire home for. Surfaced before any IO touches their files.
-  | MetadataFieldRejected (NonEmpty MetadataField) FormatLabel
+  -- | Metadata requests — a field set, or a drop asked — that the target format has no wire home for.
+  | MetadataFieldRejected (NonEmpty MetadataRequest) FormatLabel
 
   -- | The user opted into 'Constraint's the target format cannot honor — same shape and rationale as 'MetadataFieldRejected'.
   | ConstraintNotSupported (NonEmpty Constraint) FormatLabel

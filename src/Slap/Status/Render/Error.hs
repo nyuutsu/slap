@@ -28,7 +28,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..), ActionIndex(unActionI
                      ExpectedMagic(..), ActualMagic(..), TrailerMarker(..),
                      ParsedSizeValue(..), FoundVersion(..),
                      RawFlagByte(..), EncodingMethodByte(..))
-import Slap.MetadataField (metadataFieldFlagName, metadataFieldName)
+import Slap.MetadataField (MetadataRequest(..), metadataFieldName, requestField, requestFlagName)
 import Slap.Narrow (NarrowingFailure(..))
 import Slap.PatchField (PatchField, fieldName)
 import Slap.PlatformType (platformName, CarriedRomType(..), RequestedRomType(..))
@@ -610,19 +610,22 @@ renderSlapError (ConvertRequiresSource label cause) =
       SourcePatchIsDifferential -> "tells us what to change in the input ROM, not what the result should be"
       SourcePatchNotReencodable -> "can't be converted directly into another patch format"
 
-renderSlapError (MetadataFieldRejected fields target) =
-  let renderOne field =
-        "--" <> metadataFieldFlagName field
-        <> " (" <> metadataFieldName field <> ")"
-  in case NonEmpty.toList fields of
+renderSlapError (MetadataFieldRejected requests target) =
+  let renderOne request =
+        "--" <> requestFlagName request
+        <> " (" <> metadataFieldName (requestField request) <> ")"
+      -- Only a request that arrived on a drop flag earns the extra clause: such a request is not just unaccepted, it is about nothing.
+      dropTail (DropField _) = ", so there is nothing to drop"
+      dropTail (SetField _)  = ""
+  in case NonEmpty.toList requests of
        [single] ->
-         "--" <> metadataFieldFlagName single <> " is not accepted by "
+         "--" <> requestFlagName single <> " is not accepted by "
          <> formatLabelName target
-         <> " (the " <> metadataFieldName single <> " field is not part of this format)"
+         <> " (the " <> metadataFieldName (requestField single) <> " field is not part of this format" <> dropTail single <> ")"
        many ->
          formatLabelName target
          <> " does not accept these flags:"
-         <> Text.concat (map (\field -> "\n  - " <> renderOne field) many)
+         <> Text.concat (map (\request -> "\n  - " <> renderOne request) many)
 
 renderSlapError (ConstraintNotSupported constraints target) =
   let renderOne c =

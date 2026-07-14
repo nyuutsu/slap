@@ -30,7 +30,8 @@ import Slap.Convert (CreateFormat(..), DifferentialCreate(..),
                      rejectIncompatibleDialects,
                      rejectCrossPlatformRomTypeRetag,
                      createDefaultAdvisories, convertDirect,
-                     mergeRequestedMetadata, rejectIncompatibleMetadata,
+                     mergeRequestedMetadata, rejectIncompatibleMetadataRequests,
+                     EmbeddedBlobRequest(..),
                      formatExtension, formatName)
 import Slap.XDelta1.Types (ResolvedXDelta1FileNames,
                            resolveXDelta1FileNames,
@@ -66,6 +67,8 @@ import CLI
   , DizIntent(..)
   , CreateMetadataInputs(..)
   , ConvertMetadataInputs(..)
+  , createMetadataRequests
+  , convertMetadataRequests
   , FileReadingOptions(..)
   , ArchiveHandling(..)
   , ExplainVerbosity(..)
@@ -195,7 +198,8 @@ readMaybeUnwrap fileReadingOptions = case fileReadingArchiveHandling fileReading
 -- | Resolve @slap create@'s metadata inputs: @--metadata FILE@ becomes the embedded blob, @--diz FILE@ the FILE_ID.DIZ.
 resolveCreateMetadata :: CreateMetadataInputs -> IO RequestedPatchMetadata
 resolveCreateMetadata inputs = do
-  embeddedBlob <- traverse readInputFile (createEmbeddedBlobPath inputs)
+  embeddedBlob <- maybe InheritEmbeddedBlob SetEmbeddedBlob
+                    <$> traverse readInputFile (createEmbeddedBlobPath inputs)
   fileIdDiz    <- resolveCreateFileIdDiz (createDizPath inputs)
   pure (createParsedMetadata inputs)
     { requestedEmbeddedBlob = embeddedBlob
@@ -209,14 +213,12 @@ resolveCreateFileIdDiz Nothing     = pure InheritFileIdDiz
 resolveCreateFileIdDiz (Just path) =
   SetFileIdDiz . fst . decodeTextLenient EncodingUtf8 <$> readInputFile path
 
--- | 'CarryIfPresent' and 'DropEmbeddedBlob' both leave the blob 'Nothing' here;
--- the two only diverge later, in 'doConvert', after the source-patch merge.
 resolveConvertMetadata :: EncodingName -> ConvertMetadataInputs -> IO RequestedPatchMetadata
 resolveConvertMetadata metadataEncoding inputs = do
   embeddedBlob <- case convertEmbeddedBlobIntent inputs of
-    EmbedFromFile path -> Just <$> readInputFile path
-    DropEmbeddedBlob   -> pure Nothing
-    CarryIfPresent     -> pure Nothing
+    SetBlobFromFile path -> SetEmbeddedBlob <$> readInputFile path
+    DropBlob             -> pure DropEmbeddedBlob
+    CarryBlob            -> pure InheritEmbeddedBlob
   fileIdDiz <- case convertDizIntent inputs of
     SetDizFromFile path -> SetFileIdDiz . fst . decodeTextLenient metadataEncoding <$> readInputFile path
     DropDiz             -> pure DropFileIdDiz
@@ -417,8 +419,8 @@ doUndo parsedCommand = do
 
 doCreate :: CreateCommand -> IO ()
 doCreate parsedCommand = do
+  orBail (rejectIncompatibleMetadataRequests (createFormat parsedCommand) (createMetadataRequests (createMetadata parsedCommand)))
   createMeta    <- resolveCreateMetadata (createMetadata parsedCommand)
-  orBail (rejectIncompatibleMetadata    (createFormat parsedCommand) createMeta)
   orBail (rejectUnencodableSecondaryCompressor (createFormat parsedCommand) createMeta)
   orBail (rejectIncompatibleConstraints (createFormat parsedCommand) (createConstraints parsedCommand))
   resolvedXDelta1Names <- orBail (resolveCreateXDelta1Names parsedCommand createMeta)
@@ -487,8 +489,8 @@ patchContentsOf parsed = case patchKind parsed of
 
 doConvert :: ConvertCommand -> IO ()
 doConvert parsedCommand = do
+  orBail (rejectIncompatibleMetadataRequests (convertTo parsedCommand) (convertMetadataRequests (convertMetadata parsedCommand)))
   cliMeta <- resolveConvertMetadata (convertMetadataEncoding parsedCommand) (convertMetadata parsedCommand)
-  orBail (rejectIncompatibleMetadata    (convertTo parsedCommand) cliMeta)
   orBail (rejectUnencodableSecondaryCompressor (convertTo parsedCommand) cliMeta)
   orBail (rejectIncompatibleConstraints (convertTo parsedCommand) (convertConstraints parsedCommand))
   parsed <- readAndParsePatch (convertDialects parsedCommand) (convertMetadataEncoding parsedCommand) (convertPatch parsedCommand)
@@ -504,14 +506,7 @@ doConvert parsedCommand = do
           ( replaceExtension (convertPatch parsedCommand)
                              (formatExtension (convertTo parsedCommand))
           , policy )
-      blobIntent = convertEmbeddedBlobIntent (convertMetadata parsedCommand)
-      -- The merge inherits the source patch's embedded blob when the CLI supplied none;
-      -- for 'DropEmbeddedBlob' that would re-introduce the very bytes the user asked to discard.
-      mergedMeta = case blobIntent of
-        DropEmbeddedBlob ->
-          (mergeRequestedMetadata cliMeta (patchExtractedMeta parsed))
-            { requestedEmbeddedBlob = Nothing }
-        _ -> mergeRequestedMetadata cliMeta (patchExtractedMeta parsed)
+      mergedMeta = mergeRequestedMetadata cliMeta (patchExtractedMeta parsed)
   refuseOverwrite overwritePolicy outputFile
   resolvedXDelta1Names <- orBail (resolveConvertXDelta1Names parsedCommand parsed mergedMeta)
   case chooseConvertDispatch parsedCommand parsed of

@@ -4,6 +4,12 @@ module Slap.MetadataField
   ( MetadataField(..)
   , metadataFieldName
   , metadataFieldFlagName
+  , DroppableField(..)
+  , droppableField
+  , dropFlagName
+  , MetadataRequest(..)
+  , requestFlagName
+  , requestField
   ) where
 
 import Data.Text (Text)
@@ -87,3 +93,35 @@ metadataFieldFlagName MetadataEmbeddedBlob        = "metadata"
 metadataFieldFlagName MetadataXDelta1FromName     = "from-name"
 metadataFieldFlagName MetadataXDelta1ToName       = "to-name"
 metadataFieldFlagName MetadataWindowSize          = "window-size"
+
+-- | The two fields a convert can be asked to leave out; each has its own drop flag.
+data DroppableField
+  = DroppableFileIdDiz
+  | DroppableEmbeddedBlob
+  deriving (Eq, Show, Enum, Bounded)
+
+droppableField :: DroppableField -> MetadataField
+droppableField DroppableFileIdDiz    = MetadataFileIdDiz
+droppableField DroppableEmbeddedBlob = MetadataEmbeddedBlob
+
+-- | The drop flag (without dashes) — one table read by the parser and by the rejection messages, like 'metadataFieldFlagName'.
+dropFlagName :: DroppableField -> Text
+dropFlagName DroppableFileIdDiz    = "drop-diz"
+dropFlagName DroppableEmbeddedBlob = "drop-metadata"
+
+-- | A metadata request as it arrived: setting a field, or asking for a droppable one to be left out.
+-- The two arrive on different flags and earn different refusal sentences, so the rejection keeps them apart.
+data MetadataRequest
+  = SetField MetadataField
+  | DropField DroppableField
+  deriving (Eq, Show)
+
+-- | The flag a request arrived on.
+requestFlagName :: MetadataRequest -> Text
+requestFlagName (SetField field)      = metadataFieldFlagName field
+requestFlagName (DropField droppable) = dropFlagName droppable
+
+-- | The field a request is about, for the sentence that names it.
+requestField :: MetadataRequest -> MetadataField
+requestField (SetField field)      = field
+requestField (DropField droppable) = droppableField droppable

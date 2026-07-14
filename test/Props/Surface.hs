@@ -1,7 +1,7 @@
 -- | The metadata-field surface: flag tokens and control kinds.
 module Props.Surface (surfaceTests) where
 
-import Slap.MetadataField (MetadataField, metadataFieldFlagName)
+import Slap.MetadataField (DroppableField, MetadataField, dropFlagName, metadataFieldFlagName)
 import Slap.Surface (MetadataFieldKind(..), metadataFieldKind, romTypeTokens)
 
 import Data.Char (isUpper)
@@ -22,8 +22,10 @@ allMetadataFields = [minBound .. maxBound]
 
 test_flagNamesDistinct :: IO ()
 test_flagNamesDistinct =
-  assertEqual "distinct flag names" (length allMetadataFields)
-    (Set.size (Set.fromList (map metadataFieldFlagName allMetadataFields)))
+  assertEqual "distinct flag names" (length allFlagNames) (Set.size (Set.fromList allFlagNames))
+  where
+    allFlagNames = map metadataFieldFlagName allMetadataFields
+                ++ map dropFlagName [minBound .. maxBound :: DroppableField]
 
 test_choiceVocabularies :: IO ()
 test_choiceVocabularies = sequence_

@@ -122,7 +122,7 @@ import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
                      RequestedDialects(..),
                      VerificationInclusion(..), CompressionInclusion(..),
                      xdelta3CompressionEmission, mergeRequestedMetadata,
-                     createDefaultAdvisories,
+                     createDefaultAdvisories, embeddedBlobBytes,
                      convertDirect, emptyContents)
 import Slap.Create (createBPS, createUPS, createDPS, createNINJA2,
                     createAPSGBA, createGDIFF, createBSDiff, createXDelta1,
@@ -728,7 +728,7 @@ xdelta3AppHeaderOfferedForInheritance =
            Left slapError -> assertFailureT ("parseSome: " <> renderSlapError slapError)
            Right somePatch -> do
              assertEqual "offered for inheritance"
-               (Just headerBytes) (requestedEmbeddedBlob (patchExtractedMeta somePatch))
+               (Just headerBytes) (embeddedBlobBytes (requestedEmbeddedBlob (patchExtractedMeta somePatch)))
              assertEqual "surfaced as metadata"
                (Just headerBytes) (patchMetadata somePatch)
 
@@ -792,7 +792,7 @@ xdelta3EmptyAppHeader =
            Left slapError -> assertFailureT ("parseSome: " <> renderSlapError slapError)
            Right somePatch -> do
              assertEqual "read as no metadata"
-               Nothing (requestedEmbeddedBlob (patchExtractedMeta somePatch))
+               Nothing (embeddedBlobBytes (requestedEmbeddedBlob (patchExtractedMeta somePatch)))
              case createPatch (CreateDifferential CreateXDelta3) Nothing
                     (InputFileContents ByteString.empty) (OutputFileContents target)
                     (mergeRequestedMetadata noMetadataRequested (patchExtractedMeta somePatch))
