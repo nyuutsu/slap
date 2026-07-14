@@ -6,16 +6,21 @@ module Slap.SomePatch
   , ApplyStrategy(..)
   , UndoStrategy(..)
   , UndoAvailability(..)
+  , UndoAnswer(..)
+  , undoAnswerFor
   , parseSome
+  , PatchIdentity(..)
+  , patchIdentity
   ) where
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.PatchFormat (PatchFormat(..), DirectFormat(..), DifferentialFormat(..))
-import Slap.Detect (detectFormat)
+import Slap.Detect (RecognizedPatchFile(..), recognizePatchFile)
+import Slap.Dialect (Dialect)
 import Slap.Convert (PatchContents(..), emptyContents, RequestedPatchMetadata(..),
                      UndoInclusion(..), VerificationInclusion(..), CompressionInclusion(..), PatchStability(..),
                      RequestedDialects(..), NINJA1Compression(..),
-                     noMetadataRequested)
+                     noMetadataRequested, acceptedDialects)
 import Slap.Text (EncodedText, EncodingName, encodedTextContent)
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -106,11 +111,11 @@ import Slap.Status (SlapError(..), SlapAdvisory(..), DecompressionFailure(..),
                    Parsed(..), Outcome(..), noAdvisories,
                    EmptyUnit(..), NINJA1SubformatConversion(..))
 import Slap.FormatLabel (FormatLabel(..))
-import qualified Slap.Compression.Yay0 as Yay0
 import qualified Slap.Compression.Stream as Stream
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import qualified Data.Set as Set
 import qualified Data.Vector as Vector
 import Data.List (partition)
 import Data.Maybe (catMaybes, fromMaybe, isJust, mapMaybe)
@@ -140,6 +145,21 @@ data UndoAvailability
   | UndoAbsentFromPatch
     -- ^ The format can carry undo data; this patch's author left it out.
   | UndoUnsupportedByFormat
+
+-- | 'UndoAvailability' without the strategies: the fact alone.
+data UndoAnswer
+  = PatchIsItsOwnReverse
+  | PatchCarriesUndoData
+  | AuthorOmittedUndoData
+  | FormatHasNoUndo
+  deriving (Eq, Show)
+
+undoAnswerFor :: UndoAvailability -> UndoAnswer
+undoAnswerFor availability = case availability of
+  UndoBySelfInversion _   -> PatchIsItsOwnReverse
+  UndoFromCarriedData _   -> PatchCarriesUndoData
+  UndoAbsentFromPatch     -> AuthorOmittedUndoData
+  UndoUnsupportedByFormat -> FormatHasNoUndo
 
 -- | How the patch's records relate to the target file.
 --
@@ -187,30 +207,43 @@ data SomePatch = SomePatch
 ----------------------------------------------------------------------------
 
 parseSome :: RequestedDialects -> EncodingName -> PatchFileContents -> Either SlapError SomePatch
-parseSome dialects metadataEncoding patchContents = case detectFormat patchContents of
-  Nothing
-    | Yay0.isYay0 rawBytes -> parseSomePatchFromYay0 dialects metadataEncoding patchContents
-    | otherwise            -> Left UnrecognizedFormat
+parseSome dialects metadataEncoding patchContents = case recognizePatchFile patchContents of
+  Nothing                     -> Left UnrecognizedFormat
+  Just RecognizedYay0Envelope -> parseSomePatchFromYay0 dialects metadataEncoding patchContents
+  Just (RecognizedWireFormat wireFormat) -> case wireFormat of
+    PatchDirect       FormatPPF1          -> PPF1.parsePPF1 (requestedPPF1Origin dialects) metadataEncoding patchContents >>= parseSomePatchFromPPF1
+    PatchDirect       FormatPPF2          -> PPF2.parsePPF2 metadataEncoding patchContents >>= parseSomePatchFromPPF2
+    PatchDirect       FormatPPF3          -> PPF3.parsePPF3 metadataEncoding patchContents >>= parseSomePatchFromPPF3
+    PatchDirect       FormatPPF4          -> parseSomePatchFromPPF4 metadataEncoding patchContents
+    PatchDirect       (FormatIPS variant) -> parseSomePatchFromIPS variant patchContents
+    PatchDirect       FormatAPSN64        -> parseSomePatchFromAPSN64 metadataEncoding patchContents
+    PatchDirect       FormatNINJA1        -> parseSomePatchFromNINJA1 patchContents
+    PatchDirect       FormatPMSR          -> parseSomePatchFromPMSR patchContents
+    PatchDifferential FormatBPS           -> parseSomePatchFromBPS metadataEncoding patchContents
+    PatchDifferential FormatUPS           -> parseSomePatchFromUPS patchContents
+    PatchDifferential FormatVCDIFF        -> parseSomePatchFromVCDIFF metadataEncoding patchContents
+    PatchDifferential FormatAPSGBA        -> parseSomePatchFromAPSGBA patchContents
+    PatchDifferential FormatNINJA2        -> parseSomePatchFromNINJA2 metadataEncoding patchContents
+    PatchDifferential FormatBSDiff        -> parseSomePatchFromBSDiff patchContents
+    PatchDifferential FormatGDIFF         -> parseSomePatchFromGDIFF patchContents
+    PatchDifferential FormatXDelta1       -> parseSomePatchFromXDelta1 metadataEncoding patchContents
+    PatchDifferential FormatDPS           -> parseSomePatchFromDPS metadataEncoding patchContents
 
-  Just (PatchDirect       FormatPPF1)           -> PPF1.parsePPF1 (requestedPPF1Origin dialects) metadataEncoding patchContents >>= parseSomePatchFromPPF1
-  Just (PatchDirect       FormatPPF2)           -> PPF2.parsePPF2 metadataEncoding patchContents >>= parseSomePatchFromPPF2
-  Just (PatchDirect       FormatPPF3)           -> PPF3.parsePPF3 metadataEncoding patchContents >>= parseSomePatchFromPPF3
-  Just (PatchDirect       FormatPPF4)           -> parseSomePatchFromPPF4 metadataEncoding patchContents
-  Just (PatchDirect       (FormatIPS variant))  -> parseSomePatchFromIPS variant patchContents
-  Just (PatchDirect       FormatAPSN64)         -> parseSomePatchFromAPSN64 metadataEncoding patchContents
-  Just (PatchDirect       FormatNINJA1)         -> parseSomePatchFromNINJA1 patchContents
-  Just (PatchDirect       FormatPMSR)           -> parseSomePatchFromPMSR patchContents
-  Just (PatchDifferential FormatBPS)            -> parseSomePatchFromBPS metadataEncoding patchContents
-  Just (PatchDifferential FormatUPS)            -> parseSomePatchFromUPS patchContents
-  Just (PatchDifferential FormatVCDIFF)         -> parseSomePatchFromVCDIFF metadataEncoding patchContents
-  Just (PatchDifferential FormatAPSGBA)         -> parseSomePatchFromAPSGBA patchContents
-  Just (PatchDifferential FormatNINJA2)         -> parseSomePatchFromNINJA2 metadataEncoding patchContents
-  Just (PatchDifferential FormatBSDiff)         -> parseSomePatchFromBSDiff patchContents
-  Just (PatchDifferential FormatGDIFF)          -> parseSomePatchFromGDIFF patchContents
-  Just (PatchDifferential FormatXDelta1)        -> parseSomePatchFromXDelta1 metadataEncoding patchContents
-  Just (PatchDifferential FormatDPS)            -> parseSomePatchFromDPS metadataEncoding patchContents
-  where
-    rawBytes = unPatchFileContents patchContents
+-- | The identity a frontend shapes its controls by, with nothing executable inside.
+data PatchIdentity = PatchIdentity
+  { identifiedFormat   :: !FormatLabel
+  , applicableDialects :: !(Set.Set Dialect)
+    -- ^ 'acceptedDialects' of the format — the read-side pruning: a PPF1 origin toggle belongs on screen only when a PPF1 is in hand.
+  , identifiedUndo     :: !UndoAnswer
+  }
+  deriving (Eq, Show)
+
+patchIdentity :: SomePatch -> PatchIdentity
+patchIdentity parsed = PatchIdentity
+  { identifiedFormat   = patchFormat parsed
+  , applicableDialects = acceptedDialects (patchFormat parsed)
+  , identifiedUndo     = undoAnswerFor (patchUndo parsed)
+  }
 
 ----------------------------------------------------------------------------
 -- Helpers

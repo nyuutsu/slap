@@ -43,11 +43,13 @@
 --                                  reframe narration and refusal,
 --                                  rescue finds, alias grouping,
 --                                  and the vacuous-pass guards.
+--   * 'Props.Classify'           — the drop sorter and the identity projection.
 --
 -- Shared generators, helpers, and predicates live in 'Props.Helpers'.
 module Main (main) where
 
 import qualified Props.BPSMetadata as BPSMetadata
+import qualified Props.Classify as Classify
 import qualified Props.ClassifyTargetCopy as ClassifyTargetCopy
 import qualified Props.Contracts as Contracts
 import qualified Props.Detection as Detection
@@ -93,5 +95,6 @@ main = defaultMain $ testGroup "Properties"
   , Normalize.normalizeTests
   , Verify.verifyTests
   , Preflight.preflightTests
+  , Classify.classifyTests
   , XDelta1Conformance.xdelta1ConformanceTests
   ]

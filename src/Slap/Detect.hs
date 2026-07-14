@@ -1,6 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Slap.Detect (detectFormat) where
+module Slap.Detect
+  ( detectFormat
+  , RecognizedPatchFile(..)
+  , recognizePatchFile
+  , DroppedFileClass(..)
+  , classifyDroppedFile
+  ) where
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -10,8 +16,9 @@ import Slap.APSGBA.Types (apsGbaMagicBytes)
 import Slap.APSN64.Types (apsN64MagicBytes)
 import Slap.BPS.Types (bpsMagicBytes)
 import Slap.BSDiff.Types (bsdiffMagicBytes)
+import qualified Slap.Compression.Yay0 as Yay0
 import qualified Slap.DPS.Parse as DPS
-import Slap.FileContents (PatchFileContents(..))
+import Slap.FileContents (InputFileContents(..), PatchFileContents(..))
 import Slap.GDIFF.Types (gdiffMagicBytes)
 import Slap.IPS.Types (IPSVariant(..), ipsMagicBytes, ips32MagicBytes)
 import Slap.NINJA1.Types (ninja1MagicBytes)
@@ -107,3 +114,36 @@ detectFormat patchFile
     resolveAmbiguity (PatchDirect FormatAPSN64)
       | APSGBA.isAPSGBAStructured fileBytes = PatchDifferential FormatAPSGBA
     resolveAmbiguity format = format
+
+----------------------------------------------------------------------------
+-- Recognition and the drop sorter
+----------------------------------------------------------------------------
+
+-- | Everything slap agrees to read as a patch file: a wire format's own leading bytes,
+-- or the Yay0 compression envelope ('Slap.SomePatch.parseSomePatchFromYay0' owns the unwrap).
+data RecognizedPatchFile
+  = RecognizedWireFormat PatchFormat
+  | RecognizedYay0Envelope
+  deriving (Eq, Show)
+
+-- | The recognition 'Slap.SomePatch.parseSome' dispatches on,
+-- in one home so 'classifyDroppedFile' cannot disagree with the parser.
+recognizePatchFile :: PatchFileContents -> Maybe RecognizedPatchFile
+recognizePatchFile patchFile@(PatchFileContents fileBytes)
+  | Just wireFormat <- detectFormat patchFile = Just (RecognizedWireFormat wireFormat)
+  | Yay0.isYay0 fileBytes                     = Just RecognizedYay0Envelope
+  | otherwise                                 = Nothing
+
+data DroppedFileClass
+  = DroppedPatch PatchFileContents
+  | DroppedRom InputFileContents
+  deriving (Eq, Show)
+
+-- | Recognition is not parsing: a 'DroppedPatch' can still fail 'Slap.SomePatch.parseSome',
+-- and that refusal is a different fact from "not a patch".
+classifyDroppedFile :: ByteString -> DroppedFileClass
+classifyDroppedFile rawBytes = case recognizePatchFile candidate of
+    Just _  -> DroppedPatch candidate
+    Nothing -> DroppedRom (InputFileContents rawBytes)
+  where
+    candidate = PatchFileContents rawBytes
