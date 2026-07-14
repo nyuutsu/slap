@@ -19,10 +19,10 @@
 --   * 'Props.Text'               — typed text values with encoding tags;
 --                                  the foundation 'Slap.Text' module.
 --   * 'Props.Detection'          — DPS detection heuristic.
---   * 'Props.BPSMetadata'        — the BPS metadata glance: the
---                                  UTF-8-or-not classifier, the
+--   * 'Props.BPSMetadata'        — the BPS metadata glance: the content
+--                                  shown for the blob, the
 --                                  non-printable-escaping display
---                                  primitive, and the non-conformance
+--                                  primitive, and the UTF-8 conformance
 --                                  remark.
 --   * 'Props.ClassifyTargetCopy' — pure classifier for BPS TargetCopy
 --                                  execution strategies.

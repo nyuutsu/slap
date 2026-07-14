@@ -7,6 +7,9 @@ module Slap.MetadataField
   , DroppableField(..)
   , droppableField
   , dropFlagName
+  , TypedTextField(..)
+  , typedTextField
+  , typedTextFlagName
   , MetadataRequest(..)
   , requestFlagName
   , requestField
@@ -109,19 +112,36 @@ dropFlagName :: DroppableField -> Text
 dropFlagName DroppableFileIdDiz    = "drop-diz"
 dropFlagName DroppableEmbeddedBlob = "drop-metadata"
 
--- | A metadata request as it arrived: setting a field, or asking for a droppable one to be left out.
--- The two arrive on different flags and earn different refusal sentences, so the rejection keeps them apart.
+-- | The fields settable from text typed at the flag itself, each beside its file-taking sibling.
+data TypedTextField
+  = TypedTextEmbeddedBlob
+  | TypedTextFileIdDiz
+  deriving (Eq, Show, Enum, Bounded)
+
+typedTextField :: TypedTextField -> MetadataField
+typedTextField TypedTextEmbeddedBlob = MetadataEmbeddedBlob
+typedTextField TypedTextFileIdDiz    = MetadataFileIdDiz
+
+-- | The typed-text flag (without dashes) — one table read by the parser and by the rejection messages, like 'metadataFieldFlagName'.
+typedTextFlagName :: TypedTextField -> Text
+typedTextFlagName TypedTextEmbeddedBlob = "metadata-text"
+typedTextFlagName TypedTextFileIdDiz    = "diz-text"
+
+-- | A metadata request as it arrived. Each arm carries its own flag, so a rejection answers with the flag the user actually typed.
 data MetadataRequest
   = SetField MetadataField
+  | SetFieldFromText TypedTextField
   | DropField DroppableField
   deriving (Eq, Show)
 
 -- | The flag a request arrived on.
 requestFlagName :: MetadataRequest -> Text
-requestFlagName (SetField field)      = metadataFieldFlagName field
-requestFlagName (DropField droppable) = dropFlagName droppable
+requestFlagName (SetField field)         = metadataFieldFlagName field
+requestFlagName (SetFieldFromText field) = typedTextFlagName field
+requestFlagName (DropField droppable)    = dropFlagName droppable
 
 -- | The field a request is about, for the sentence that names it.
 requestField :: MetadataRequest -> MetadataField
-requestField (SetField field)      = field
-requestField (DropField droppable) = droppableField droppable
+requestField (SetField field)         = field
+requestField (SetFieldFromText field) = typedTextField field
+requestField (DropField droppable)    = droppableField droppable

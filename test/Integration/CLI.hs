@@ -75,6 +75,9 @@ cliTests tier = do
       , descriptionTests dm4yBase dm4yBps
       , metadataRejectionTests dm4yBase dm4yBps
       , bpsConvertMetadataTests dm4yBase dm4yBps
+      , metadataTextTests dm4yBase dm4yBps
+      , dizExtractByteExactTests dm4yBase dm4yBps
+      , dizTextTests dm4yBase dm4yBps
       , undoCliTests dm4yBase dm4yUps
       , xdelta1SourceLengthTests dm4yBase dm4yXdelta1
       , headerRescueTests dm4yBase dm4yBps
@@ -1133,22 +1136,145 @@ bpsConvertMetadataTests base bps =
                                      base, target, sourceBps, "--metadata", blob, "--force"] Nothing ""
         action sourceBps blobBytes
 
-    -- Read back the embedded metadata of a BPS by asking @slap info@
-    -- to extract it. Returns 'Nothing' when the patch carries no metadata
-    -- (info exits nonzero with "no embedded metadata to extract"), or
-    -- 'Just bytes' when it wrote the extraction file.
-    extractEmbeddedMetadata :: FilePath -> IO (Maybe ByteString.ByteString)
-    extractEmbeddedMetadata patchPath =
-      withTempFile "slap-meta" $ \metaPath -> do
+-- | Read back a patch's embedded metadata by asking @slap info@ to extract it.
+-- Returns 'Nothing' when the patch carries no metadata (info exits nonzero with
+-- "no embedded metadata to extract"), or 'Just bytes' when it wrote the extraction file.
+extractEmbeddedMetadata :: FilePath -> IO (Maybe ByteString.ByteString)
+extractEmbeddedMetadata patchPath =
+  withTempFile "slap-meta" $ \metaPath -> do
+    run <- runExternal SlapBinary
+      ["info", patchPath, "--extract-metadata", metaPath, "--force"] Nothing ""
+    case externalRunExitCode run of
+      ExitSuccess -> Just <$> ByteString.readFile metaPath
+      ExitFailure _
+        | "no embedded metadata" `isInfixOf` externalRunStderr run -> pure Nothing
+        | otherwise -> assertFailure
+            ("info --extract-metadata failed: "
+             ++ externalRunStdout run ++ externalRunStderr run)
+
+-- | @--metadata-text TEXT@ is the typed-content lane beside @--metadata FILE@: the person writes content, not markup,
+-- and each target embeds it per its own convention — BPS in the thin XML jacket its spec recommends,
+-- xdelta3's application header as the text's own UTF-8 bytes.
+metadataTextTests :: FilePath -> FilePath -> [TestTree]
+metadataTextTests base bps =
+  [ testCase "metadata-text/bps jackets typed text, markup characters escaped" $
+      withPatchedTarget $ \target ->
+      withTempFile "slap-patch" $ \patch -> do
+        expectOk ["create", "--format", "bps", base, target, patch,
+                  "--metadata-text", "a & b <c>", "--force"]
+          "metadata-text/bps" "wrote"
+        extracted <- extractEmbeddedMetadata patch
+        assertEqual "expected the typed text inside the XML jacket"
+          (Just (ByteString8.pack
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<patch>a &amp; b &lt;c&gt;</patch>"))
+          extracted
+
+  , testCase "metadata-text/xdelta3 takes the text plainly — its application header is a string field" $
+      withPatchedTarget $ \target ->
+      withTempFile "slap-patch" $ \patch -> do
+        expectOk ["create", "--format", "xdelta3", base, target, patch,
+                  "--metadata-text", "typed words", "--force"]
+          "metadata-text/xdelta3" "wrote"
+        extracted <- extractEmbeddedMetadata patch
+        assertEqual "expected the typed text, no jacket"
+          (Just (ByteString8.pack "typed words")) extracted
+
+  , testCase "metadata-text/refused under its own name where the target has no metadata channel" $
+      expectFail ["create", "--format", "ips", "no-such-base", "no-such-target", "out.ips",
+                  "--metadata-text", "x"]
+        "metadata-text/cross-format" "--metadata-text is not accepted"
+
+  , testCase "metadata-text/--metadata and --metadata-text are mutually exclusive" $
+      withTempFile "slap-blob" $ \blob -> do
+        ByteString.writeFile blob (ByteString8.pack "x")
+        expectFail ["create", "--format", "bps", "no-such-base", "no-such-target", "out.bps",
+                    "--metadata", blob, "--metadata-text", "x"]
+          "metadata-text/mutex" "invalid"
+
+  , testCase "metadata-text/convert does not offer the flag (it is create-only by design)" $
+      expectFail ["convert", "no-such-patch.bps", "--to", "bps", "--metadata-text", "x", "-o", "out.bps"]
+        "metadata-text/convert-absent" "invalid"
+  ]
+  where
+    withPatchedTarget :: (FilePath -> IO a) -> IO a
+    withPatchedTarget action =
+      withTempFile "slap-target" $ \target -> do
+        ByteString.readFile base >>= ByteString.writeFile target
+        _ <- runExternal SlapBinary ["apply", bps, target, "--in-place", "--no-backup"] Nothing ""
+        action target
+
+-- | @info --extract-diz@ writes the FILE_ID.DIZ the patch carries, byte-for-byte.
+-- This drives the whole projection — the parse's carried bytes, 'SomePatch.patchFileIdDiz', and the write path —
+-- which the format-level props reach only as far as the parsed record.
+dizExtractByteExactTests :: FilePath -> FilePath -> [TestTree]
+dizExtractByteExactTests base bps =
+  [ testCase "diz-extract/ppf3 --extract-diz returns the bytes the patch was created with" $
+      withTempFile "slap-target" $ \target ->
+      withTempFile "slap-patch"  $ \patch ->
+      withTempFile "slap-dizin"  $ \dizIn ->
+      withTempFile "slap-dizout" $ \dizOut -> do
+        let dizBytes = ByteString8.pack "slap sample FILE_ID.DIZ\nsecond line\n"
+        ByteString.readFile base >>= ByteString.writeFile target
+        _ <- runExternal SlapBinary ["apply", bps, target, "--in-place", "--no-backup"] Nothing ""
+        ByteString.writeFile dizIn dizBytes
+        expectOk ["create", "--format", "ppf3", base, target, patch, "--diz", dizIn, "--force"]
+          "diz-extract/create" "wrote"
+        _ <- runExternal SlapBinary ["info", patch, "--extract-diz", dizOut, "--force"] Nothing ""
+        extracted <- ByteString.readFile dizOut
+        assertEqual "extracted FILE_ID.DIZ matches the bytes create embedded" dizBytes extracted
+  ]
+
+-- | @--diz-text TEXT@ is the FILE_ID.DIZ counterpart to @--metadata-text@: typed at the flag, create-only,
+-- mutually exclusive with @--diz FILE@; and non-ASCII content is noted, not refused.
+dizTextTests :: FilePath -> FilePath -> [TestTree]
+dizTextTests base bps =
+  [ testCase "diz-text/ppf3 --diz-text embeds the typed text, byte-exact on extract" $
+      withPatchedTarget $ \target ->
+      withTempFile "slap-patch"  $ \patch ->
+      withTempFile "slap-dizout" $ \dizOut -> do
+        let dizText = "typed FILE_ID.DIZ\nsecond line\n"
+        expectOk ["create", "--format", "ppf3", base, target, patch, "--diz-text", dizText, "--force"]
+          "diz-text/create" "wrote"
+        _ <- runExternal SlapBinary ["info", patch, "--extract-diz", dizOut, "--force"] Nothing ""
+        extracted <- ByteString.readFile dizOut
+        assertEqual "extracted FILE_ID.DIZ is the typed text as UTF-8"
+          (ByteString8.pack dizText) extracted
+
+  , testCase "diz-text/--diz and --diz-text are mutually exclusive" $
+      withTempFile "slap-dizfile" $ \dizFile -> do
+        ByteString.writeFile dizFile (ByteString8.pack "x")
+        expectFail ["create", "--format", "ppf3", "no-base", "no-target", "out.ppf3",
+                    "--diz", dizFile, "--diz-text", "y"]
+          "diz-text/mutex" "invalid"
+
+  , testCase "diz-text/convert does not offer the flag (create-only, like --metadata-text)" $
+      expectFail ["convert", "no-such-patch.bps", "--to", "ppf3", "--diz-text", "x", "-o", "out.ppf3"]
+        "diz-text/convert-absent" "invalid"
+
+  , testCase "diz-text/refused under its own name where the target has no FILE_ID.DIZ channel" $
+      expectFail ["create", "--format", "ips", "no-such-base", "no-such-target", "out.ips",
+                  "--diz-text", "x"]
+        "diz-text/cross-format" "--diz-text is not accepted"
+
+  , testCase "diz/content outside 7-bit ASCII is noted, not refused" $
+      withPatchedTarget $ \target ->
+      withTempFile "slap-patch"  $ \patch ->
+      withTempFile "slap-dizin"  $ \dizIn -> do
+        -- "café" in UTF-8: the é is two bytes, both outside 7-bit ASCII.
+        ByteString.writeFile dizIn (ByteString.pack [0x63, 0x61, 0x66, 0xC3, 0xA9])
         run <- runExternal SlapBinary
-          ["info", patchPath, "--extract-metadata", metaPath, "--force"] Nothing ""
-        case externalRunExitCode run of
-          ExitSuccess -> Just <$> ByteString.readFile metaPath
-          ExitFailure _
-            | "no embedded metadata" `isInfixOf` externalRunStderr run -> pure Nothing
-            | otherwise -> assertFailure
-                ("info --extract-metadata failed: "
-                 ++ externalRunStdout run ++ externalRunStderr run)
+          ["create", "--format", "ppf3", base, target, patch, "--diz", dizIn, "--force"] Nothing ""
+        assertEqual "create still succeeds" ExitSuccess (externalRunExitCode run)
+        assertBool "the non-ASCII note fires"
+          ("outside 7-bit ASCII" `isInfixOf` (externalRunStdout run ++ externalRunStderr run))
+  ]
+  where
+    withPatchedTarget :: (FilePath -> IO a) -> IO a
+    withPatchedTarget action =
+      withTempFile "slap-target" $ \target -> do
+        ByteString.readFile base >>= ByteString.writeFile target
+        _ <- runExternal SlapBinary ["apply", bps, target, "--in-place", "--no-backup"] Nothing ""
+        action target
 
 -- | Like 'expectFail', but checks for several substrings in one go.
 -- The error message produced by 'MetadataFieldRejected' names both the

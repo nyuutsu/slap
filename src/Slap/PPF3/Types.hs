@@ -13,10 +13,10 @@ module Slap.PPF3.Types
   , PPF3Record(..)
   , PPF3ValidationBlock(..)
   , PPF3ImageType(..)
+  , PPF3CarriedFileId(..)
   , PPF3FileId
   , unPPF3FileId
   , narrowPPF3FileId
-  , ppf3FileIdFromParsed
   , fromImageType
     -- * Named constants
   , ppf3MagicBytes
@@ -30,6 +30,7 @@ module Slap.PPF3.Types
   , ppf3ValidationOffset
   , ppf3ValidationSize
   , ppf3FileIdLengthFieldWidth
+  , ppf3FileIdMaxContentLength
   , ppf3FileIdMarkerLength
   , ppf3FileIdFooterLength
     -- * Source/target size-pair rule
@@ -37,14 +38,14 @@ module Slap.PPF3.Types
   ) where
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as ByteString
 import Data.Word (Word8)
 import Slap.Status (SlapError(..), UnencodeabilityReason(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Length(..), Offset(..), FileSize,
-                     ActualSize(..), ExpectedSize(..))
-import Slap.Narrow (narrowToWord16, EncodingLimits(..))
+                     ActualSize(..), ExpectedSize(..),
+                     EncodedLength(..), MaxLength(..), SubstitutionCount, byteLength)
+import Slap.Narrow (EncodingLimits(..))
 import Slap.Text (EncodedText, EncodingName(..),
                   encodedTextContent, encodeTextLenient)
 
@@ -79,34 +80,28 @@ newtype PPF3ValidationBlock = PPF3ValidationBlock
   { unPPF3ValidationBlock :: ByteString }
   deriving (Show, Eq)
 
--- | FILE_ID.DIZ content optionally appended after the record
--- stream. PPF3's wire trailer uses a 2-byte LE length suffix
--- (vs PPF2's 4-byte). Carries only the inner content as a typed
--- 'EncodedText' value whose encoded byte length has been validated
--- against PPF3's 2-byte LE length field. Constructor private;
--- values come from one of two named producers:
---
--- * 'narrowPPF3FileId' — runtime check, encodes the typed text
---   as UTF-8 (lenient) and refuses with
---   'Slap.Narrow.FieldValueExceedsBound' if the produced byte
---   count exceeds @0xFFFF@.
--- * 'ppf3FileIdFromParsed' — parse-time, trusts the wire format's
---   2-byte length field has already constrained the bytes the
---   typed text was decoded from.
+-- | The FILE_ID.DIZ a parsed patch carries: the trailer's inner content bytes verbatim,
+-- the reading made of them under the metadata encoding, and how many byte sequences that reading substituted.
+data PPF3CarriedFileId = PPF3CarriedFileId
+  { ppf3CarriedFileIdBytes         :: !ByteString
+  , ppf3CarriedFileIdText          :: !EncodedText
+  , ppf3CarriedFileIdSubstitutions :: !SubstitutionCount
+  } deriving (Show, Eq)
+
+-- | A FILE_ID.DIZ validated for emit: typed text whose UTF-8 byte count 'narrowPPF3FileId' has checked against 'ppf3FileIdMaxContentLength'.
+-- Constructor private; that narrow is its one producer.
 newtype PPF3FileId = PPF3FileId { unPPF3FileId :: EncodedText }
   deriving (Show, Eq)
 
 narrowPPF3FileId :: EncodedText -> Either SlapError PPF3FileId
-narrowPPF3FileId description =
-  let (encoded, _notices) =
-        encodeTextLenient EncodingUtf8 (encodedTextContent description)
-  in case narrowToWord16 LabelPPF3 FieldFileIdDizLength
-                         (ByteString.length encoded) of
-       Left  failure -> Left (NarrowingError failure)
-       Right _       -> Right (PPF3FileId description)
-
-ppf3FileIdFromParsed :: EncodedText -> PPF3FileId
-ppf3FileIdFromParsed = PPF3FileId
+narrowPPF3FileId description
+  | contentLength > ppf3FileIdMaxContentLength =
+      Left (FieldTooLong LabelPPF3 FieldFileIdDiz
+              (EncodedLength contentLength) (MaxLength ppf3FileIdMaxContentLength))
+  | otherwise = Right (PPF3FileId description)
+  where
+    (encoded, _notices) = encodeTextLenient EncodingUtf8 (encodedTextContent description)
+    contentLength       = byteLength encoded
 
 data PPF3Patch = PPF3Patch
   { ppf3Description     :: !EncodedText
@@ -118,7 +113,7 @@ data PPF3Patch = PPF3Patch
   , ppf3HasUndo         :: !Bool                -- ^ True iff each 'PPF3Record' carries an undo payload
   , ppf3ValidationBlock :: !(Maybe PPF3ValidationBlock)  -- ^ Present iff the block-check flag was set in the header
   , ppf3Records         :: ![PPF3Record]
-  , ppf3FileId          :: !(Maybe PPF3FileId)
+  , ppf3FileId          :: !(Maybe PPF3CarriedFileId)
   } deriving (Show)
 
 -- | Wire-format magic prefix.
@@ -174,6 +169,12 @@ ppf3ValidationSize = Length 1024
 -- | Width of the FILE_ID.DIZ length field: 2 bytes, little-endian.
 ppf3FileIdLengthFieldWidth :: Length
 ppf3FileIdLengthFieldWidth = Length 2
+
+-- | The cap on FILE_ID.DIZ content: 3072 bytes, well under the 2-byte length field's 65535 wire width.
+-- slap refuses to write more rather than truncate ('narrowPPF3FileId'); reading tolerates a larger one.
+-- PPF3.txt states the cap in prose ("A File_ID.diz file cannot exceed 3072 byte"); see docs/ppf/spec.md.
+ppf3FileIdMaxContentLength :: Length
+ppf3FileIdMaxContentLength = Length 3072
 
 -- | Length of the @"\@BEGIN_FILE_ID.DIZ"@ marker prefix.
 ppf3FileIdMarkerLength :: Length

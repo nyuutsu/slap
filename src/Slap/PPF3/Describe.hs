@@ -14,7 +14,7 @@ module Slap.PPF3.Describe
 
 import Slap.PPF3.Types (PPF3Patch(..), PPF3Record(..),
                         PPF3ValidationBlock(..),
-                        unPPF3FileId,
+                        PPF3CarriedFileId(..),
                         ppf3ValidationOffset)
 import Slap.Measure (Length(..), OffsetRange(..),
                      advance, byteLength, distance)
@@ -57,7 +57,10 @@ ppf3Meta patch = concat
 ppf3EmbeddedContent :: PPF3Patch -> [EmbeddedContent]
 ppf3EmbeddedContent patch = case ppf3FileId patch of
   Nothing        -> []
-  Just fileIdDiz -> [EmbeddedContent "file_id.diz" (FieldText (unPPF3FileId fileIdDiz))]
+  Just fileIdDiz -> [EmbeddedContent "file_id.diz"
+                       (FieldContent (ppf3CarriedFileIdBytes fileIdDiz)
+                                     (ppf3CarriedFileIdText fileIdDiz)
+                                     (ppf3CarriedFileIdSubstitutions fileIdDiz))]
 
 analyzePPF3 :: PPF3Patch -> PatchAnalysis
 analyzePPF3 patch = PatchAnalysis

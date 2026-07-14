@@ -6,7 +6,7 @@ module Slap.PPF2.Parse (parsePPF2, parsePPF2Records) where
 
 import Slap.PPF2.Types (PPF2Patch(..), PPF2Record(..),
                         PPF2ValidationBlock(..),
-                        PPF2FileId, ppf2FileIdFromParsed,
+                        PPF2CarriedFileId(..),
                         PPF2SourceSize, ppf2SourceSizeFromParsed,
                         ppf2DescriptionLength, ppf2HeaderLength,
                         ppf2ValidationSize,
@@ -25,7 +25,7 @@ import Slap.Measure (offsetFromParsed, Length(..),
                      RequiredLength(..), ActualLength(..), RemainingLength(..),
                      firstAction, nextAction, byteLength)
 import Slap.Text (EncodedText, EncodingName(..),
-                  decodeTextLenient, decodeLossAdvisories,
+                  decodeTextLenient, decodeLossAdvisories, substitutionCount,
                   decodeFixedWidthTextField)
 
 import Data.ByteString (ByteString)
@@ -119,7 +119,7 @@ parsePPF2Records recordIndex = do
 -- the typed metadata when present, the record body with the trailer
 -- removed, and any decode advisories.
 data PPF2FileIdSplit = PPF2FileIdSplit
-  { ppf2SplitFileId     :: !(Maybe PPF2FileId)
+  { ppf2SplitFileId     :: !(Maybe PPF2CarriedFileId)
   , ppf2SplitRecordBody :: !ByteString
   , ppf2SplitAdvisories :: ![SlapAdvisory]
   }
@@ -144,7 +144,7 @@ splitFileIdTrailer metadataEncoding headerLength input
   | footerCandidate /= "@END_FILE_ID.DIZ"                                   = withoutTrailer
   | dizContentLength > byteLength bytesBeforeFooter                         = withoutTrailer
   | otherwise = PPF2FileIdSplit
-      { ppf2SplitFileId     = Just (ppf2FileIdFromParsed dizText)
+      { ppf2SplitFileId     = Just (PPF2CarriedFileId dizContentBytes dizText (substitutionCount dizNotices))
       , ppf2SplitRecordBody = dropLengthFromEnd trailerSize recordBody
       , ppf2SplitAdvisories = decodeLossAdvisories LabelPPF2 FieldFileIdDiz dizNotices
       }

@@ -23,11 +23,11 @@ import Slap.PPF3.Types (PPF3ImageType(..),
                         fromImageType,
                         ppf3DescriptionLength)
 import Slap.Binary (replicateLength)
-import Slap.Measure (Offset(..), byteLength, minLength, subtractLength)
+import Slap.Measure (Offset(..), Length(..), byteLength, minLength, subtractLength)
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload,
                     EncodedUndoHunk, encodedUndoOffset, encodedUndoPayload,
                     encodedUndoOriginal)
-import Slap.Status (SlapAdvisory, CreateResult(..))
+import Slap.Status (SlapAdvisory(..), CreateResult(..))
 import Slap.Text (EncodedText, EncodingName(..),
                   encodedTextContent, encodeTextBounded, encodeTextLenient,
                   encodeLossAdvisories)
@@ -103,12 +103,14 @@ encodeFileIdDiz fid =
   let description = unPPF3FileId fid
       (content, notices) =
         encodeTextLenient EncodingUtf8 (encodedTextContent description)
+      nonAsciiCount = ByteString.length (ByteString.filter (>= 0x80) content)
       advisories = encodeLossAdvisories LabelPPF3 FieldFileIdDiz notices
+                ++ [FileIdDizNonASCII LabelPPF3 (Length (fromIntegral nonAsciiCount)) | nonAsciiCount > 0]
       trailer = LazyByteString.toStrict $ toLazyByteString $
                   byteString "@BEGIN_FILE_ID.DIZ"
                   <> byteString content
                   <> byteString "@END_FILE_ID.DIZ"
-                  -- 'narrowPPF3FileId' validated the encoded byte count fits
-                  -- 'Word16', so this 'fromIntegral' cannot truncate.
+                  -- 'narrowPPF3FileId' capped the content at 3072 bytes, well under 'Word16',
+                  -- so this 'fromIntegral' cannot truncate.
                   <> word16LE (fromIntegral (ByteString.length content))
   in (trailer, advisories)

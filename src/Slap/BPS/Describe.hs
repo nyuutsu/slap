@@ -10,8 +10,7 @@ module Slap.BPS.Describe
   , makeBPSRegion
   ) where
 
-import Slap.BPS.Types (BPSPatch(..), BPSAction(..), BPSMetadata(..),
-                       BPSMetadataShape(..), classifyBPSMetadata)
+import Slap.BPS.Types (BPSPatch(..), BPSAction(..), BPSMetadata(..))
 import Slap.Display.Analysis
     ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
     , AnalysisPayload(..), CopySource(..), AnalysisSummary(..)
@@ -19,15 +18,15 @@ import Slap.Display.Analysis
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Checksum (showCRC32)
-import Slap.FormatLabel (FormatLabel(LabelBPS))
+import Slap.FormatLabel (FormatLabel)
 import Slap.Status (SlapAdvisory(..), BPSMetadataDivergence(..),
                    CursorKind(SourceCursor))
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..), renderAsText)
-import Slap.Display.EmbeddedContent (EmbeddedContent(..), EmbeddedField(..))
-import Slap.Text (EncodingName)
+import Slap.Display.EmbeddedContent (EmbeddedContent(..), EmbeddedField(..), readEmbeddedContent)
+import Slap.Text (EncodingName(EncodingUtf8), encodedTextContent, decodeTextLenient, substitutionCount)
 import Slap.Measure (Offset(..), FileSize(..),
                      SignedOffset(SignedOffset),
-                     SignedOffsetSign(..), Cursor(..),
+                     SignedOffsetSign(..), Cursor(..), SubstitutionCount(..),
                      examineSignedOffset, byteLength)
 
 import qualified Data.ByteString as ByteString
@@ -45,42 +44,34 @@ bpsMeta patch = concat
   , [InfoLine "patch CRC" (showCRC32 (bpsPatchCRC patch))]
   ]
 
--- | BPS always has a metadata field, so an empty blob reports "(none)" rather than vanishing.
--- The encoding only governs how the bytes read for display —
--- 'bpsMetadataNotes' judges conformance against UTF-8 however they are viewed.
+-- | The metadata blob as content, read under the viewing encoding. BPS always carries the field,
+-- so an empty blob is 'FieldAbsent' — absence is emptiness, not omission.
 bpsEmbeddedContent :: EncodingName -> BPSPatch -> [EmbeddedContent]
-bpsEmbeddedContent metadataEncoding patch =
-  [ EmbeddedContent "embedded data" metadataField ]
+bpsEmbeddedContent metadataEncoding patch
+  | ByteString.null metadataBytes = [EmbeddedContent "embedded data" FieldAbsent]
+  | otherwise = [EmbeddedContent "embedded data" (readEmbeddedContent metadataEncoding metadataBytes)]
   where
     metadataBytes = unBPSMetadata (bpsMetadata patch)
-    metadataField
-      | ByteString.null metadataBytes = FieldAbsent
-      | otherwise                     = FieldOpaque metadataEncoding metadataBytes
 
--- | The remark companion to 'renderMetadataLine': a note-severity
--- 'SlapAdvisory' when the BPS metadata blob isn't the spec-recommended
--- UTF-8 text. Silent for an absent field and for ordinary UTF-8 text
--- (the field used exactly as recommended); it fires once, through
--- 'patchAdvisories', for the two divergent shapes, so the remark
--- surfaces on apply and convert as well as info.
+-- | The remark on the metadata blob, measured against UTF-8 — the encoding the BPS spec recommends.
+-- Conformance is a fact about the format, so the @--metadata-encoding@ viewing preference does not move it:
+-- a blob viewed as Shift-JIS still earns the note when it is not UTF-8. Silent for an absent or ordinary-text field;
+-- it fires through 'patchAdvisories', so the remark surfaces on apply and convert as well as info.
 --
--- Note the deliberate asymmetry from 'renderMetadataLine''s escaping.
--- The display escapes every non-printable codepoint, newlines included, because the question there is "what is safe to render raw in a terminal."
--- The question here is "is the content surprising," and the answer for whitespace is no —
--- a pretty-printed XML blob is full of newlines and tabs, and that's exactly what the field is meant to hold.
--- So the trigger is "a control that isn't whitespace":
--- NUL, BEL, ESC, the C1 range, and the like, the codepoints that mean the field holds something other than text.
-bpsMetadataNotes :: BPSPatch -> [SlapAdvisory]
-bpsMetadataNotes patch = case classifyBPSMetadata metadata of
-  MetadataAbsent  -> []
-  MetadataNotUTF8 -> [BPSMetadataNonConformant LabelBPS MetadataIsNotUTF8 blobLength]
-  MetadataUTF8Text text
-    | Text.any isNonTextControl text ->
-        [BPSMetadataNonConformant LabelBPS MetadataIsValidUTF8ButNonText blobLength]
-    | otherwise -> []
+-- The non-text trigger is "a control that isn't whitespace": a pretty-printed XML blob is full of newlines and tabs,
+-- which are controls but exactly what the field holds, so they do not count; NUL, ESC, the C1 range do.
+bpsMetadataNotes :: FormatLabel -> BPSPatch -> [SlapAdvisory]
+bpsMetadataNotes label patch
+  | ByteString.null bytes                    = []
+  | unSubstitutionCount substituted > 0      = [BPSMetadataNonConformant label (MetadataBytesSubstituted substituted) blobLength]
+  | Text.any isNonTextControl readingContent = [BPSMetadataNonConformant label MetadataDecodedButNonText blobLength]
+  | otherwise                                = []
   where
-    metadata           = bpsMetadata patch
-    blobLength         = byteLength (unBPSMetadata metadata)
+    bytes              = unBPSMetadata (bpsMetadata patch)
+    blobLength         = byteLength bytes
+    (reading, notices) = decodeTextLenient EncodingUtf8 bytes
+    readingContent     = encodedTextContent reading
+    substituted        = substitutionCount notices
     isNonTextControl c = isControl c && not (isSpace c)
 
 analyzeBPS :: BPSPatch -> PatchAnalysis

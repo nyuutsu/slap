@@ -12,7 +12,7 @@ module Slap.PPF2.Describe
 
 import Slap.PPF2.Types (PPF2Patch(..), PPF2Record(..),
                         PPF2ValidationBlock(..),
-                        unPPF2FileId,
+                        PPF2CarriedFileId(..),
                         unPPF2SourceSize,
                         ppf2ValidationOffset)
 import Slap.Measure (Length(..),
@@ -53,7 +53,10 @@ ppf2Meta patch = concat
 ppf2EmbeddedContent :: PPF2Patch -> [EmbeddedContent]
 ppf2EmbeddedContent patch = case ppf2FileId patch of
   Nothing         -> []
-  Just fileIdDiz  -> [EmbeddedContent "file_id.diz" (FieldText (unPPF2FileId fileIdDiz))]
+  Just fileIdDiz  -> [EmbeddedContent "file_id.diz"
+                        (FieldContent (ppf2CarriedFileIdBytes fileIdDiz)
+                                      (ppf2CarriedFileIdText fileIdDiz)
+                                      (ppf2CarriedFileIdSubstitutions fileIdDiz))]
 
 analyzePPF2 :: PPF2Patch -> PatchAnalysis
 analyzePPF2 patch = PatchAnalysis

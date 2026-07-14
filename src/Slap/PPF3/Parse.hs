@@ -7,7 +7,7 @@ module Slap.PPF3.Parse (parsePPF3, parsePPF3Records) where
 
 import Slap.PPF3.Types (PPF3Patch(..), PPF3Record(..),
                         PPF3ImageType(..), PPF3ValidationBlock(..),
-                        PPF3FileId, ppf3FileIdFromParsed,
+                        PPF3CarriedFileId(..),
                         ppf3PreambleLength, ppf3RecordHeaderLength,
                         ppf3DescriptionLength, ppf3MinHeaderLength,
                         ppf3ValidationSize,
@@ -26,7 +26,7 @@ import Slap.Measure (offsetFromParsed, Length(..), EncodingMethodByte(..),
                      RequiredLength(..), ActualLength(..), RemainingLength(..),
                      firstAction, nextAction, byteLength)
 import Slap.Text (EncodedText, EncodingName(..),
-                  decodeTextLenient, decodeLossAdvisories,
+                  decodeTextLenient, decodeLossAdvisories, substitutionCount,
                   decodeFixedWidthTextField)
 
 import Data.ByteString (ByteString)
@@ -137,7 +137,7 @@ parsePPF3Records hasUndo recordIndex = do
 -- | The optional FILE_ID.DIZ trailer separated from a PPF3 record body;
 -- 'ppf3SplitRecordBody' has the trailer already removed.
 data PPF3FileIdSplit = PPF3FileIdSplit
-  { ppf3SplitFileId     :: !(Maybe PPF3FileId)
+  { ppf3SplitFileId     :: !(Maybe PPF3CarriedFileId)
   , ppf3SplitRecordBody :: !ByteString
   , ppf3SplitAdvisories :: ![SlapAdvisory]
   }
@@ -157,7 +157,7 @@ splitFileIdTrailer metadataEncoding headerLength input
   | footerCandidate /= "@END_FILE_ID.DIZ"                                   = withoutTrailer
   | dizContentLength > byteLength bytesBeforeFooter                         = withoutTrailer
   | otherwise = PPF3FileIdSplit
-      { ppf3SplitFileId     = Just (ppf3FileIdFromParsed dizText)
+      { ppf3SplitFileId     = Just (PPF3CarriedFileId dizContentBytes dizText (substitutionCount dizNotices))
       , ppf3SplitRecordBody = dropLengthFromEnd trailerSize recordBody
       , ppf3SplitAdvisories = decodeLossAdvisories LabelPPF3 FieldFileIdDiz dizNotices
       }

@@ -19,7 +19,7 @@ import Slap.Display.Analysis (renderAnalysisFull, renderAnalysisSummary)
 import Slap.Display.EmbeddedContent (EmbeddedDepth(SizeOnly))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.Convert (CreateFormat(..), DifferentialCreate(..),
-                     PatchContents, contentsFileIdDiz,
+                     PatchContents,
                      RequestedPatchMetadata(..),
                      FileIdDizRequest(..),
                      RequestedDialects,
@@ -38,9 +38,7 @@ import Slap.XDelta1.Types (ResolvedXDelta1FileNames,
                            requireXDelta1FileNames,
                            XDelta1FromName(..), XDelta1ToName(..))
 import Slap.Create (createPatch)
-import Slap.Text (EncodingName(EncodingUtf8),
-                  decodeTextLenient, encodeTextLenient,
-                  encodedTextEncoding, encodedTextContent)
+import Slap.Text (EncodingName(EncodingUtf8), EncodedText(..), decodeTextLenient)
 import qualified Data.Text.IO as TextIO
 import Slap.Archive.Types (detectArchive, EntryName(unEntryName))
 import Slap.Status (SlapError(..), SourceRequiredCause(..), ExtractionSubject(..),
@@ -65,6 +63,8 @@ import CLI
   , ConvertWithSource(..)
   , EmbeddedBlobIntent(..)
   , DizIntent(..)
+  , EmbeddedBlobSource(..)
+  , FileIdDizSource(..)
   , CreateMetadataInputs(..)
   , ConvertMetadataInputs(..)
   , createMetadataRequests
@@ -195,23 +195,27 @@ readMaybeUnwrap fileReadingOptions = case fileReadingArchiveHandling fileReading
   AutoUnwrapSingleEntryArchives -> readUnwrap
   ReadBytesVerbatim             -> readInputFile
 
--- | Resolve @slap create@'s metadata inputs: @--metadata FILE@ becomes the embedded blob, @--diz FILE@ the FILE_ID.DIZ.
+-- | Resolve @slap create@'s metadata inputs: the 'EmbeddedBlobSource' and 'FileIdDizSource' become the blob and DIZ requests.
 resolveCreateMetadata :: CreateMetadataInputs -> IO RequestedPatchMetadata
 resolveCreateMetadata inputs = do
-  embeddedBlob <- maybe InheritEmbeddedBlob SetEmbeddedBlob
-                    <$> traverse readInputFile (createEmbeddedBlobPath inputs)
-  fileIdDiz    <- resolveCreateFileIdDiz (createDizPath inputs)
+  embeddedBlob <- case createEmbeddedBlobSource inputs of
+    NoEmbeddedBlob                  -> pure InheritEmbeddedBlob
+    EmbeddedBlobFromFile path       -> SetEmbeddedBlob <$> readInputFile path
+    EmbeddedBlobFromTypedText typed -> pure (SetEmbeddedTypedText typed)
+  fileIdDiz    <- resolveCreateFileIdDiz (createDizSource inputs)
   pure (createParsedMetadata inputs)
     { requestedEmbeddedBlob = embeddedBlob
     , requestedFileIdDiz    = fileIdDiz
     }
 
--- | The @--diz@ file is read as UTF-8 — create writes every text field as UTF-8
+-- | The @--diz@ file and @--diz-text@ string both become UTF-8: create writes every text field that way,
 -- and has no @--metadata-encoding@ knob to say otherwise.
-resolveCreateFileIdDiz :: Maybe FilePath -> IO FileIdDizRequest
-resolveCreateFileIdDiz Nothing     = pure InheritFileIdDiz
-resolveCreateFileIdDiz (Just path) =
+resolveCreateFileIdDiz :: FileIdDizSource -> IO FileIdDizRequest
+resolveCreateFileIdDiz NoFileIdDiz              = pure InheritFileIdDiz
+resolveCreateFileIdDiz (FileIdDizFromFile path) =
   SetFileIdDiz . fst . decodeTextLenient EncodingUtf8 <$> readInputFile path
+resolveCreateFileIdDiz (FileIdDizFromText typed) =
+  pure (SetFileIdDizFromText (EncodedText EncodingUtf8 typed))
 
 resolveConvertMetadata :: EncodingName -> ConvertMetadataInputs -> IO RequestedPatchMetadata
 resolveConvertMetadata metadataEncoding inputs = do
@@ -254,11 +258,11 @@ doInfo parsedCommand = do
         pure Nothing
   dizMiss <- case infoExtractDiz parsedCommand of
     Nothing -> pure Nothing
-    Just outPath -> case patchContentsOf parsed >>= contentsFileIdDiz of
+    Just outPath -> case patchFileIdDiz parsed of
       Nothing -> pure (Just (NothingToExtract outPath FileIdDizSubject))
-      Just fileIdDiz -> do
+      Just dizBytes -> do
         refuseOverwrite (infoOverwritePolicy parsedCommand) outPath
-        writeOutputFile outPath (fst (encodeTextLenient (encodedTextEncoding fileIdDiz) (encodedTextContent fileIdDiz)))
+        writeOutputFile outPath dizBytes
         TextIO.putStrLn ("wrote FILE_ID.DIZ to " <> pathText outPath)
         pure Nothing
   mapM_ bailError metadataMiss

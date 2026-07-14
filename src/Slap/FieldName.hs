@@ -56,8 +56,9 @@ data FieldName
   | FieldOverflowData
   -- Trailer / count fields
   | FieldFileIdDiz
-  | FieldFileIdDizLength
   | FieldRecordCount
+  -- Embedded application data
+  | FieldAppHeader
   -- xdelta1 header name fields
   | FieldXDelta1FromName
   | FieldXDelta1ToName
@@ -107,8 +108,8 @@ fieldNameLabel FieldRecordSourceOffset = "record source offset"
 fieldNameLabel FieldRecordLength       = "record length"
 fieldNameLabel FieldOverflowData       = "overflow data"
 fieldNameLabel FieldFileIdDiz        = "file_id.diz"
-fieldNameLabel FieldFileIdDizLength  = "file_id.diz length"
 fieldNameLabel FieldRecordCount      = "record count"
+fieldNameLabel FieldAppHeader        = "application header"
 fieldNameLabel FieldXDelta1FromName  = "from-name"
 fieldNameLabel FieldXDelta1ToName    = "to-name"
 fieldNameLabel FieldXDelta1ControlOffset = "control-segment offset"

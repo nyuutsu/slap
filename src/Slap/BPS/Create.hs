@@ -20,6 +20,7 @@
 -- repository for the deviation rationale.
 module Slap.BPS.Create
   ( createBPS
+  , bpsMetadataFromTypedText
   ) where
 
 import Slap.Binary (putWord32LE, word32LEBytes, putByuuVarint)
@@ -36,6 +37,9 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as LazyByteString
+import Data.Text (Text)
+import qualified Data.Text as Text
+import qualified Data.Text.Encoding as TextEncoding
 
 -- | Create a BPS patch using the Rust diff engine.
 -- Rejects inputs larger than the host platform's addressable range,
@@ -61,6 +65,15 @@ createBPS inputContents@(InputFileContents original) outputContents@(OutputFileC
       patchCRC = crc32 bodyBytes
       patchCRCBytes = word32LEBytes (unCRC32 patchCRC)
   Right (CreateResult (PatchFileContents (bodyBytes <> patchCRCBytes)) [])
+
+-- | Typed metadata dressed as a UTF-8 XML document — the form the BPS spec recommends for this field, which permits anything —
+-- with the text escaped inside a @<patch>@ root of slap's own choosing; the spec names no element.
+-- Following the recommendation is the sane default for content typed as plain text.
+bpsMetadataFromTypedText :: Text -> ByteString
+bpsMetadataFromTypedText content = TextEncoding.encodeUtf8
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<patch>" <> escaped <> "</patch>")
+  where
+    escaped = Text.replace "<" "&lt;" (Text.replace ">" "&gt;" (Text.replace "&" "&amp;" content))
 
 -- | The byuu-varint encoder routes lengths through 'Int64', but slap
 -- reads sizes as 'Int'; on 32-bit 'Int' is 31-bit-addressable and a

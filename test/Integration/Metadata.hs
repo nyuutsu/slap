@@ -162,12 +162,26 @@ bpsMetadataGroup = testGroup "bps-metadata"
       case parseSome noDialectsRequested EncodingUtf8 patchBytes of
         Left slapError -> assertFailureT ("parseSome failed: " <> renderSlapError slapError)
         Right parsed -> do
-          assertBool "info shows the byte count"
-            ("20 bytes" `Text.isInfixOf` infoView parsed)
+          assertBool "info shows the character count of the clean reading"
+            ("20 characters" `Text.isInfixOf` infoView parsed)
           assertBool "info withholds the content"
             (not ("hello-world-metadata" `Text.isInfixOf` infoView parsed))
           assertBool "explain shows the content"
             ("hello-world-metadata" `Text.isInfixOf` explainView parsed)
+
+  , testCase "explain shows a non-UTF-8 blob's content rather than hiding it behind a placeholder" $ do
+      let source = ByteString.pack [0..63]
+          target = ByteString.pack [64..127]
+          -- decodable text around a stray 0xFF that will not decode
+          meta   = ByteString.pack [0x68, 0x69, 0xFF, 0x62, 0x79, 0x65]
+      patchBytes <- createBPSOrFail source target meta
+      case parseSome noDialectsRequested EncodingUtf8 patchBytes of
+        Left slapError -> assertFailureT ("parseSome failed: " <> renderSlapError slapError)
+        Right parsed -> do
+          let shown = explainView parsed
+          assertBool "the decodable text survives" ("hi" `Text.isInfixOf` shown && "bye" `Text.isInfixOf` shown)
+          assertBool "no placeholder stands in for the field"
+            (not ("not valid" `Text.isInfixOf` shown))
 
   , testCase "info shows (none) without metadata" $ do
       let source = ByteString.pack [0..63]
@@ -257,13 +271,13 @@ ppfFileIdDizGroup = testGroup "ppf-fileiddiz"
                   (noMetadataRequested { requestedFileIdDiz = SetFileIdDiz overrideDiz })
       assertEqual "overridden FILE_ID.DIZ" (Right (Just overrideDiz)) result
 
-  , testCase "an over-long FILE_ID.DIZ is refused (PPF3 16-bit length)" $ do
-      let overLongDiz = EncodedText EncodingUtf8 (Text.replicate 70000 (Text.pack "x"))
+  , testCase "convert refuses a FILE_ID.DIZ over the 3072-byte content cap" $ do
+      let overCapDiz = EncodedText EncodingUtf8 (Text.replicate 4000 (Text.pack "x"))
       result <- convertedPPF3FileIdDiz InheritFileIdDiz
-                  (noMetadataRequested { requestedFileIdDiz = SetFileIdDiz overLongDiz })
+                  (noMetadataRequested { requestedFileIdDiz = SetFileIdDiz overCapDiz })
       case result of
         Left _  -> pure ()
-        Right _ -> assertFailure "expected an over-long FILE_ID.DIZ to be refused"
+        Right _ -> assertFailure "expected an over-cap FILE_ID.DIZ to be refused"
   ]
 
 -- | The FILE_ID.DIZ a parsed PPF2/PPF3 carries in its 'PatchContents'.

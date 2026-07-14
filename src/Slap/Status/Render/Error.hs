@@ -615,8 +615,9 @@ renderSlapError (MetadataFieldRejected requests target) =
         "--" <> requestFlagName request
         <> " (" <> metadataFieldName (requestField request) <> ")"
       -- Only a request that arrived on a drop flag earns the extra clause: such a request is not just unaccepted, it is about nothing.
-      dropTail (DropField _) = ", so there is nothing to drop"
-      dropTail (SetField _)  = ""
+      dropTail (DropField _)        = ", so there is nothing to drop"
+      dropTail (SetField _)         = ""
+      dropTail (SetFieldFromText _) = ""
   in case NonEmpty.toList requests of
        [single] ->
          "--" <> requestFlagName single <> " is not accepted by "

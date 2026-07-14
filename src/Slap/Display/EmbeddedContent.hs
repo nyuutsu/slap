@@ -13,14 +13,15 @@
 module Slap.Display.EmbeddedContent
   ( EmbeddedContent(..)
   , EmbeddedField(..)
+  , readEmbeddedContent
   , EmbeddedDepth(..)
   , renderEmbedded
   ) where
 
 import Slap.Display.Common (InfoLine(..), renderInfoLine, renderAsText)
 import Slap.Display.Primitives (renderEscapingNonPrintable)
-import Slap.Text (EncodingName, EncodedText, encodedTextContent, encodingDisplayName,
-                  OpaqueFieldReading(..), readOpaqueField)
+import Slap.Text (EncodingName, EncodedText, encodedTextContent, decodeTextLenient, substitutionCount)
+import Slap.Measure (SubstitutionCount(..))
 
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -39,9 +40,17 @@ data EmbeddedContent = EmbeddedContent
 data EmbeddedField
   = FieldAbsent
   | FieldEmpty
-  | FieldOpaque !EncodingName !ByteString
-  | FieldText !EncodedText
+  | FieldContent !ByteString !EncodedText !SubstitutionCount
+    -- ^ The wire bytes (kept so an extraction is byte-exact), the reading a lenient decode made of them,
+    -- and how many sequences it substituted — the count is what the size glance reads to tell characters from bytes.
   deriving (Eq, Show)
+
+-- | Decode a field's wire bytes into its content — always a 'FieldContent'.
+-- A caller with empty or absent bytes reaches for 'FieldEmpty' \/ 'FieldAbsent' itself.
+readEmbeddedContent :: EncodingName -> ByteString -> EmbeddedField
+readEmbeddedContent encoding bytes =
+  let (reading, notices) = decodeTextLenient encoding bytes
+  in FieldContent bytes reading (substitutionCount notices)
 
 -- | How far a view opens the content:
 -- the size glance alone, or the glance with the payload tucked beneath it.
@@ -58,19 +67,18 @@ renderEmbedded depth content =
   where
     field = embeddedField content
 
+-- | A reading that decoded cleanly counts in characters; one that had to substitute is really bytes, and says so.
 sizeGlance :: EmbeddedField -> Text
-sizeGlance FieldAbsent           = "(none)"
-sizeGlance FieldEmpty            = "(empty)"
-sizeGlance (FieldOpaque _ bytes) = renderAsText (ByteString.length bytes) <> " bytes"
-sizeGlance (FieldText text)      = renderAsText (Text.length (encodedTextContent text)) <> " characters"
+sizeGlance FieldAbsent = "(none)"
+sizeGlance FieldEmpty  = "(empty)"
+sizeGlance (FieldContent bytes reading (SubstitutionCount substituted))
+  | substituted == 0 = renderAsText (Text.length (encodedTextContent reading)) <> " characters"
+  | otherwise        = renderAsText (ByteString.length bytes) <> " bytes"
 
 payloadLines :: EmbeddedField -> [Text]
-payloadLines FieldAbsent                  = []
-payloadLines FieldEmpty                   = []
-payloadLines (FieldOpaque encoding bytes) = case readOpaqueField encoding bytes of
-  OpaqueReadsAsText text -> textLines text
-  OpaqueNotText          -> ["(not valid " <> encodingDisplayName encoding <> ")"]
-payloadLines (FieldText text)             = textLines (encodedTextContent text)
+payloadLines FieldAbsent               = []
+payloadLines FieldEmpty                = []
+payloadLines (FieldContent _ reading _) = textLines (encodedTextContent reading)
 
 -- | Break content on its own line breaks, escaping anything unprintable left within a line —
 -- so embedded newlines read as newlines, while a stray control byte still cannot scramble the terminal.

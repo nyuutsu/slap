@@ -9,7 +9,7 @@ module Slap.Convert
   , RequestedPatchMetadata(..)
   , FileIdDizRequest(..)
   , EmbeddedBlobRequest(..)
-  , embeddedBlobBytes
+  , embeddedBlobContentBytes
   , UndoInclusion(..)
   , VerificationInclusion(..)
   , CompressionInclusion(..)
@@ -131,7 +131,8 @@ import Slap.Dialect (Dialect(..))
 import Slap.Status (SlapError(..), SlapAdvisory(..), UndoRecordCount(..), DroppedValue(..),
                     DroppedDescriptionText(..), CreateResult(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.MetadataField (MetadataField(..), MetadataRequest(..), DroppableField(..), requestField)
+import Slap.MetadataField (MetadataField(..), MetadataRequest(..), DroppableField(..),
+                           TypedTextField(..), requestField)
 import Slap.MetadataInclusion (UndoInclusion(..), VerificationInclusion(..), CompressionInclusion(..))
 import Slap.PatchField (PatchField(..), affectsApplyOutput)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
@@ -148,7 +149,9 @@ import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (fromMaybe, isJust, isNothing)
 import qualified Data.Set as Set
+import Data.Text (Text)
 import qualified Data.Text as Text
+import qualified Data.Text.Encoding as TextEncoding
 
 ----------------------------------------------------------------------------
 -- Types
@@ -290,11 +293,12 @@ data RequestedPatchMetadata = RequestedPatchMetadata
     -- its windows each carry their own, so there is no single fact to carry, and extraction leaves this 'Nothing'.
   }
 
--- | What to do with a PPF2/PPF3 FILE_ID.DIZ on create or convert:
--- keep whatever the source carried, replace it, or drop it.
+-- | What to do with a PPF2/PPF3 FILE_ID.DIZ on create or convert: inherit the source's, replace it, or drop it.
+-- The two set arms — from a file, from text typed at the flag — carry and emit identically; they part only on the flag a refusal names.
 data FileIdDizRequest
   = InheritFileIdDiz
   | SetFileIdDiz EncodedText
+  | SetFileIdDizFromText EncodedText
   | DropFileIdDiz
   deriving (Eq, Show)
 
@@ -303,15 +307,26 @@ data FileIdDizRequest
 data EmbeddedBlobRequest
   = InheritEmbeddedBlob
   | SetEmbeddedBlob ByteString
+  | SetEmbeddedTypedText Text
+    -- ^ The person's content, not markup; each emit dresses it per its target's own convention.
   | DropEmbeddedBlob
   deriving (Eq, Show)
 
--- | The bytes an emit embeds. An 'InheritEmbeddedBlob' that reaches an emit found nothing to inherit:
+-- | The content bytes a request carries, typed text as its UTF-8 encoding, before any format's own dressing
+-- — which is why the xdelta3 emit takes exactly this: its application header is a plain string field.
+-- An 'InheritEmbeddedBlob' that reaches an emit found nothing to inherit:
 -- create has no source patch, and convert's merge has already substituted any blob the source carried.
-embeddedBlobBytes :: EmbeddedBlobRequest -> Maybe ByteString
-embeddedBlobBytes (SetEmbeddedBlob blob) = Just blob
-embeddedBlobBytes InheritEmbeddedBlob    = Nothing
-embeddedBlobBytes DropEmbeddedBlob       = Nothing
+embeddedBlobContentBytes :: EmbeddedBlobRequest -> Maybe ByteString
+embeddedBlobContentBytes (SetEmbeddedBlob blob)       = Just blob
+embeddedBlobContentBytes (SetEmbeddedTypedText typed) = Just (TextEncoding.encodeUtf8 typed)
+embeddedBlobContentBytes InheritEmbeddedBlob          = Nothing
+embeddedBlobContentBytes DropEmbeddedBlob             = Nothing
+
+-- | The metadata blob a BPS emit writes: typed text goes in the XML jacket
+-- ('Slap.BPS.Create.bpsMetadataFromTypedText'); anything else is its content, or empty.
+bpsMetadataBlobBytes :: EmbeddedBlobRequest -> ByteString
+bpsMetadataBlobBytes (SetEmbeddedTypedText typed) = BPS.bpsMetadataFromTypedText typed
+bpsMetadataBlobBytes request = fromMaybe ByteString.empty (embeddedBlobContentBytes request)
 
 -- | Stability flag for DPS patches.
 --
@@ -576,8 +591,12 @@ requestedMetadataFields meta = Set.fromList $ concat
 metadataRequests :: RequestedPatchMetadata -> [MetadataRequest]
 metadataRequests meta = map requestOf (Set.toList (requestedMetadataFields meta))
   where
-    requestOf MetadataFileIdDiz    | DropFileIdDiz    <- requestedFileIdDiz meta    = DropField DroppableFileIdDiz
-    requestOf MetadataEmbeddedBlob | DropEmbeddedBlob <- requestedEmbeddedBlob meta = DropField DroppableEmbeddedBlob
+    requestOf MetadataFileIdDiz
+      | DropFileIdDiz          <- requestedFileIdDiz meta = DropField DroppableFileIdDiz
+      | SetFileIdDizFromText _ <- requestedFileIdDiz meta = SetFieldFromText TypedTextFileIdDiz
+    requestOf MetadataEmbeddedBlob
+      | DropEmbeddedBlob       <- requestedEmbeddedBlob meta = DropField DroppableEmbeddedBlob
+      | SetEmbeddedTypedText _ <- requestedEmbeddedBlob meta = SetFieldFromText TypedTextEmbeddedBlob
     requestOf field = SetField field
 
 -- | Reject any metadata request — a field set, or a drop asked — that the target format doesn't consume.
@@ -887,16 +906,17 @@ windowSizeAdvisories _ _ = []
 droppedEmbeddedBlobAdvisories :: CreateFormat -> RequestedPatchMetadata -> [SlapAdvisory]
 droppedEmbeddedBlobAdvisories format meta =
   [ MetadataDropped (byteLength blob)
-  | Just blob <- [embeddedBlobBytes (requestedEmbeddedBlob meta)]
+  | Just blob <- [embeddedBlobContentBytes (requestedEmbeddedBlob meta)]
   , MetadataEmbeddedBlob `Set.notMember` acceptedMetadataFields format
   ]
 
 -- | The FILE_ID.DIZ to emit: the request overrides the source-inherited DIZ.
 effectiveFileIdDiz :: RequestedPatchMetadata -> PatchContents -> Maybe EncodedText
 effectiveFileIdDiz meta contents = case requestedFileIdDiz meta of
-  InheritFileIdDiz -> contentsFileIdDiz contents
-  SetFileIdDiz diz -> Just diz
-  DropFileIdDiz    -> Nothing
+  InheritFileIdDiz         -> contentsFileIdDiz contents
+  SetFileIdDiz diz         -> Just diz
+  SetFileIdDizFromText diz -> Just diz
+  DropFileIdDiz            -> Nothing
 
 -- | Warn when undo / verification are included by default (no CLI flag, no inherited source value) —
 -- the same pattern as rom-type defaulting to RAW.
@@ -1219,7 +1239,7 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
   -- format, and a requested constraint is rejected upstream by
   -- 'rejectIncompatibleConstraints' before this arm runs. It stays in
   -- the signature for shape-symmetry with the direct arm.
-  CreateBPS    -> BPS.createBPS source target (fromMaybe ByteString.empty (embeddedBlobBytes (requestedEmbeddedBlob meta)))
+  CreateBPS    -> BPS.createBPS source target (bpsMetadataBlobBytes (requestedEmbeddedBlob meta))
   CreateUPS    -> UPS.createUPS source target
   CreateDPS    -> DPS.createDPS source target
                     (DPS.DPSCreateMetadata
@@ -1254,7 +1274,7 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
       source target
   CreateXDelta3 -> do
     compressionEmission <- xdelta3CompressionEmission meta
-    VCDIFF.createXDelta3 verificationChoice compressionEmission windowChoice (embeddedBlobBytes (requestedEmbeddedBlob meta)) source target
+    VCDIFF.createXDelta3 verificationChoice compressionEmission windowChoice (embeddedBlobContentBytes (requestedEmbeddedBlob meta)) source target
     where
       verificationChoice = fromMaybe IncludeVerification (requestedVerificationInclusion meta)
       windowChoice       = fromMaybe defaultXDelta3WindowSize (requestedWindowSize meta)

@@ -200,6 +200,7 @@ data SomePatch = SomePatch
     -- The expensive analytical carrier is 'patchAnalysis'.
   , patchSourceAdvisories    :: [SlapAdvisory]
   , patchMetadata       :: Maybe ByteString  -- ^ Opaque embedded metadata blob (BPS metadata / xdelta3 appheader)
+  , patchFileIdDiz      :: Maybe ByteString  -- ^ FILE_ID.DIZ trailer content, byte-verbatim (PPF2/PPF3)
   , patchExtractedMeta  :: RequestedPatchMetadata  -- ^ Text metadata extracted at parse time for conversion
   }
 
@@ -250,8 +251,7 @@ patchIdentity parsed = PatchIdentity
 -- Helpers
 ----------------------------------------------------------------------------
 
--- | A 'SomePatch' with every optional capability absent — no undo, no verification, no normalization,
--- no source advisories, no metadata blob, nothing extracted.
+-- | A 'SomePatch' with every optional capability absent.
 -- Each dispatcher builds one from the six fields every format populates,
 -- then record-updates the capabilities its format actually has.
 bareSomePatch :: FormatLabel -> PatchAnalysis -> PatchKind -> ApplyStrategy -> [SlapAdvisory] -> PatchInfo -> SomePatch
@@ -267,6 +267,7 @@ bareSomePatch format analysis kind applyStrategy advisories info = SomePatch
   , patchSourceAdvisories    = []
   , patchSourceNormalization = Nothing
   , patchMetadata            = Nothing
+  , patchFileIdDiz           = Nothing
   , patchExtractedMeta       = noMetadataRequested
   }
 
@@ -322,7 +323,7 @@ parseSomePatchFromPPF2 (Parsed patch parseAdvisories) =
           { contentsDescription     = Just (PPF2.ppf2Description patch)
           , contentsDestinationSize = Just sourceFileSize
           , contentsValidation      = Just validationBytes
-          , contentsFileIdDiz       = fmap PPF2.unPPF2FileId (PPF2.ppf2FileId patch)
+          , contentsFileIdDiz       = fmap PPF2.ppf2CarriedFileIdText (PPF2.ppf2FileId patch)
           })
       applyStrategy = ApplyStrategy
           { runApply = \source -> pure (PPF2.applyPPF2 patch source) }
@@ -340,6 +341,7 @@ parseSomePatchFromPPF2 (Parsed patch parseAdvisories) =
           }
   in Right (bareSomePatch LabelPPF2 (PPF2.analyzePPF2 patch) kind applyStrategy advisories info)
       { patchVerification  = ppfVerification
+      , patchFileIdDiz     = fmap PPF2.ppf2CarriedFileIdBytes (PPF2.ppf2FileId patch)
       , patchExtractedMeta = noMetadataRequested
             { requestedDescription           = presentField (PPF2.ppf2Description patch)
             , requestedVerificationInclusion = Just IncludeVerification
@@ -371,7 +373,7 @@ parseSomePatchFromPPF3 (Parsed patch parseAdvisories) =
                                       | record <- records ]
                             else Nothing
           , contentsImageType   = Just (PPF3.ppf3ImageType patch)
-          , contentsFileIdDiz   = fmap PPF3.unPPF3FileId (PPF3.ppf3FileId patch)
+          , contentsFileIdDiz   = fmap PPF3.ppf3CarriedFileIdText (PPF3.ppf3FileId patch)
           })
       applyStrategy = ApplyStrategy
           { runApply = \source -> pure (PPF3.applyPPF3 patch source) }
@@ -392,6 +394,7 @@ parseSomePatchFromPPF3 (Parsed patch parseAdvisories) =
                               then UndoFromCarriedData (UndoStrategy (fmap noAdvisories . PPF3.undoPPF3 patch))
                               else UndoAbsentFromPatch
       , patchVerification  = ppfVerification
+      , patchFileIdDiz     = fmap PPF3.ppf3CarriedFileIdBytes (PPF3.ppf3FileId patch)
       , patchExtractedMeta = noMetadataRequested
             { requestedDescription           = presentField (PPF3.ppf3Description patch)
             , requestedImageType             = Just (PPF3.ppf3ImageType patch)
@@ -512,7 +515,7 @@ parseSomePatchFromBPS metadataEncoding patchContents = do
         { runApply     = \source -> pure (fmap noAdvisories (BPS.applyBPS patch source)) }
       advisories = parseAdvisories
                  ++ [EmptyPatch LabelBPS EmptyActions | Vector.null actions]
-                 ++ BPS.bpsMetadataNotes patch
+                 ++ BPS.bpsMetadataNotes LabelBPS patch
       info = PatchInfo
         { infoFormat   = FormatHeader LabelBPS Nothing
         , infoLines    = BPS.bpsMeta patch
@@ -590,6 +593,7 @@ parseSomePatchFromVCDIFF metadataEncoding patchContents = do
         { runApply = \source -> pure (fmap noAdvisories (VCDIFF.applyVCDIFF patch source)) }
       advisories = parseAdvisories
                  ++ [EmptyPatch LabelVCDIFF EmptyWindows | windowCount == 0]
+                 ++ VCDIFFDescribe.vcdiffAppHeaderNotes metadataEncoding patch
       info = PatchInfo
         { infoFormat   = FormatHeader LabelVCDIFF (vcdiffFlavorQualifier patch)
         , infoLines    = VCDIFFDescribe.vcdiffMeta patch

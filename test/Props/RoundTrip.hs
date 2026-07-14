@@ -113,6 +113,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      Hunk(..), SentinelOffset(..),
                      OriginalLength(..), TruncatedLength(..),
                      SourceFileSize(..), TargetFileSize(..),
+                     EncodedLength(..), MaxLength(..), SubstitutionCount(..),
                      byteLength, splitHunks, splitPayload)
 import Slap.FFI (adler32, crc32)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
@@ -122,7 +123,7 @@ import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
                      RequestedDialects(..),
                      VerificationInclusion(..), CompressionInclusion(..),
                      xdelta3CompressionEmission, mergeRequestedMetadata,
-                     createDefaultAdvisories, embeddedBlobBytes,
+                     createDefaultAdvisories, embeddedBlobContentBytes,
                      convertDirect, emptyContents)
 import Slap.Create (createBPS, createUPS, createDPS, createNINJA2,
                     createAPSGBA, createGDIFF, createBSDiff, createXDelta1,
@@ -233,6 +234,8 @@ roundTripTests = testGroup "RoundTrip"
       , testCase     "xdelta3: a source patch's compressor inherits on convert"
           xdelta3DeclaredCompressorInheritsOnConvert
       , testCase     "xdelta3: application header round-trips" xdelta3AppHeaderRoundTrips
+      , testCase     "xdelta3: a non-UTF-8 app header is noted, a clean one is silent"
+          xdelta3AppHeaderSubstitutionNoted
       , testCase     "xdelta3: app header offered for inheritance on convert"
           xdelta3AppHeaderOfferedForInheritance
       , testCase     "xdelta3: app header carries across convert" xdelta3AppHeaderCarriesAcrossConvert
@@ -266,6 +269,8 @@ roundTripTests = testGroup "RoundTrip"
                  ppf2DescriptionCodepointAwareTruncation
       , testCase "file_id.diz: UTF-8-encoded body round-trips byte-faithfully"
                  ppf2FileIdDizRoundTrip
+      , testCase "file_id.diz: carried bytes survive a reading that substitutes"
+                 ppf2FileIdDizBytesSurviveSubstitution
       , testCase "growth: target longer than source round-trips with a grow note"
                  ppf2GrowthRoundTrip
       , testCase "validation: exact-fit source round-trips"
@@ -283,6 +288,14 @@ roundTripTests = testGroup "RoundTrip"
                  ppf3DescriptionCodepointAwareTruncation
       , testCase "file_id.diz: UTF-8-encoded body round-trips byte-faithfully"
                  ppf3FileIdDizRoundTrip
+      , testCase "file_id.diz: carried bytes survive a reading that substitutes"
+                 ppf3FileIdDizBytesSurviveSubstitution
+      , testCase "file_id.diz: content over 3072 bytes is refused on create"
+                 ppf3FileIdDizOverCapRefused
+      , testCase "file_id.diz: content of exactly 3072 bytes is accepted"
+                 ppf3FileIdDizAtCapAccepted
+      , testCase "file_id.diz: an over-cap trailer found in the wild still parses, byte-verbatim"
+                 ppf3FileIdDizOverCapStillParses
       ]
   , testGroup "PPF4"
       [ testProperty "round-trip" prop_ppf4
@@ -714,6 +727,28 @@ xdelta3AppHeaderRoundTrips =
              assertEqual "application header" (Just headerBytes) (xdelta3AppHeader header)
            otherFlavor -> assertFailure ("parsed flavor: " ++ show otherFlavor)
 
+-- | A non-UTF-8 application header raises the substitution note; a clean one stays silent.
+xdelta3AppHeaderSubstitutionNoted :: Assertion
+xdelta3AppHeaderSubstitutionNoted = do
+    noted <- appHeaderAdvisories (ByteString.pack [0x80, 0xFE, 0xFF])
+    assertBool "a non-UTF-8 app header is noted"
+      (FieldDecodedSubstituted LabelVCDIFF FieldAppHeader (SubstitutionCount 3) `elem` noted)
+    silent <- appHeaderAdvisories (ByteString8.pack "clean ascii header")
+    assertBool "a clean app header raises no substitution note"
+      (not (any substitutesTheAppHeader silent))
+  where
+    substitutesTheAppHeader (FieldDecodedSubstituted _ FieldAppHeader _) = True
+    substitutesTheAppHeader _                                            = False
+    appHeaderAdvisories headerBytes =
+      case createXDelta3 OmitVerification EmitSectionsPlain defaultXDelta3WindowSize (Just headerBytes)
+             (InputFileContents (ByteString.replicate 64 0x11))
+             (OutputFileContents (ByteString.replicate 64 0x22)) of
+        Left createError -> assertFailureT ("create: " <> renderSlapError createError)
+        Right (CreateResult patchBytes _) ->
+          case parseSome noDialectsRequested SlapText.EncodingUtf8 patchBytes of
+            Left slapError -> assertFailureT ("parseSome: " <> renderSlapError slapError)
+            Right somePatch -> pure (patchAdvisories somePatch)
+
 -- | A parsed xdelta3 patch offers its application header for inheritance,
 -- and surfaces it as the metadata @info --extract-metadata@ writes.
 xdelta3AppHeaderOfferedForInheritance :: Assertion
@@ -728,7 +763,7 @@ xdelta3AppHeaderOfferedForInheritance =
            Left slapError -> assertFailureT ("parseSome: " <> renderSlapError slapError)
            Right somePatch -> do
              assertEqual "offered for inheritance"
-               (Just headerBytes) (embeddedBlobBytes (requestedEmbeddedBlob (patchExtractedMeta somePatch)))
+               (Just headerBytes) (embeddedBlobContentBytes (requestedEmbeddedBlob (patchExtractedMeta somePatch)))
              assertEqual "surfaced as metadata"
                (Just headerBytes) (patchMetadata somePatch)
 
@@ -792,7 +827,7 @@ xdelta3EmptyAppHeader =
            Left slapError -> assertFailureT ("parseSome: " <> renderSlapError slapError)
            Right somePatch -> do
              assertEqual "read as no metadata"
-               Nothing (embeddedBlobBytes (requestedEmbeddedBlob (patchExtractedMeta somePatch)))
+               Nothing (embeddedBlobContentBytes (requestedEmbeddedBlob (patchExtractedMeta somePatch)))
              case createPatch (CreateDifferential CreateXDelta3) Nothing
                     (InputFileContents ByteString.empty) (OutputFileContents target)
                     (mergeRequestedMetadata noMetadataRequested (patchExtractedMeta somePatch))
@@ -3051,10 +3086,13 @@ ppf2FileIdDizRoundTrip =
        Left slapError -> assertFailureT ("PPF2 parse: " <> renderSlapError slapError)
        Right (Parsed parsed _) -> case PPF2.ppf2FileId parsed of
          Nothing  -> assertFailure "PPF2 parsed file_id.diz was Nothing; expected trailer"
-         Just fid ->
+         Just carriedFileId -> do
            assertEqual "PPF2 parsed file_id.diz content matches the original"
              ppfFileIdDizSampleText
-             (SlapText.encodedTextContent (PPF2.unPPF2FileId fid))
+             (SlapText.encodedTextContent (PPF2.ppf2CarriedFileIdText carriedFileId))
+           assertEqual "PPF2 carried file_id.diz bytes are the wire content verbatim"
+             (TextEncoding.encodeUtf8 ppfFileIdDizSampleText)
+             (PPF2.ppf2CarriedFileIdBytes carriedFileId)
 
 ppf3FileIdDizRoundTrip :: Assertion
 ppf3FileIdDizRoundTrip =
@@ -3071,10 +3109,101 @@ ppf3FileIdDizRoundTrip =
        Left slapError -> assertFailureT ("PPF3 parse: " <> renderSlapError slapError)
        Right (Parsed parsed _) -> case PPF3.ppf3FileId parsed of
          Nothing  -> assertFailure "PPF3 parsed file_id.diz was Nothing; expected trailer"
-         Just fid ->
+         Just carriedFileId -> do
            assertEqual "PPF3 parsed file_id.diz content matches the original"
              ppfFileIdDizSampleText
-             (SlapText.encodedTextContent (PPF3.unPPF3FileId fid))
+             (SlapText.encodedTextContent (PPF3.ppf3CarriedFileIdText carriedFileId))
+           assertEqual "PPF3 carried file_id.diz bytes are the wire content verbatim"
+             (TextEncoding.encodeUtf8 ppfFileIdDizSampleText)
+             (PPF3.ppf3CarriedFileIdBytes carriedFileId)
+
+-- | The FILE_ID.DIZ trailer's content is arbitrary bytes; a byte the metadata encoding cannot decode
+-- substitutes in the reading but must not touch the carried bytes, which extraction returns verbatim.
+-- One case per format: the trailer splits are separate code, differing in their length-field width.
+ppf2FileIdDizBytesSurviveSubstitution :: Assertion
+ppf2FileIdDizBytesSurviveSubstitution =
+  let descriptionTyped = SlapText.EncodedText SlapText.EncodingUtf8 Text.empty
+      sourceSize       = case narrowPPF2SourceSize (FileSize 0x9720) of
+        Right size -> size
+        Left  err  -> error ("narrowPPF2SourceSize: " ++ Text.unpack (renderSlapError err))
+      validation       = PPF2.PPF2ValidationBlock (ByteString.replicate 1024 0)
+      dizContentBytes  = "one byte here is not utf-8: \xFF, carried anyway"
+      CreateResult patchBytes _ =
+        PPF2.encodePPF2 [] descriptionTyped sourceSize validation
+      trailer = ByteString.concat
+        [ "@BEGIN_FILE_ID.DIZ", dizContentBytes, "@END_FILE_ID.DIZ"
+        , ByteString.pack [fromIntegral (ByteString.length dizContentBytes), 0, 0, 0] ]
+      stitched = PatchFileContents (unPatchFileContents patchBytes <> trailer)
+  in case PPF2.parsePPF2 SlapText.EncodingUtf8 stitched of
+       Left slapError -> assertFailureT ("PPF2 parse: " <> renderSlapError slapError)
+       Right (Parsed parsed _) -> case PPF2.ppf2FileId parsed of
+         Nothing  -> assertFailure "PPF2 parsed file_id.diz was Nothing; expected trailer"
+         Just carriedFileId -> do
+           assertEqual "PPF2 carried file_id.diz bytes are the wire content verbatim"
+             dizContentBytes
+             (PPF2.ppf2CarriedFileIdBytes carriedFileId)
+           assertBool "the reading substituted for the undecodable byte"
+             (Text.any (== '\xFFFD') (SlapText.encodedTextContent (PPF2.ppf2CarriedFileIdText carriedFileId)))
+
+ppf3FileIdDizBytesSurviveSubstitution :: Assertion
+ppf3FileIdDizBytesSurviveSubstitution =
+  let descriptionTyped = SlapText.EncodedText SlapText.EncodingUtf8 Text.empty
+      dizContentBytes  = "one byte here is not utf-8: \xFF, carried anyway"
+      CreateResult patchBytes _ = PPF3.encodePPF3 [] descriptionTyped Nothing Nothing BIN
+      trailer = ByteString.concat
+        [ "@BEGIN_FILE_ID.DIZ", dizContentBytes, "@END_FILE_ID.DIZ"
+        , ByteString.pack [fromIntegral (ByteString.length dizContentBytes), 0] ]
+      stitched = PatchFileContents (unPatchFileContents patchBytes <> trailer)
+  in case PPF3.parsePPF3 SlapText.EncodingUtf8 stitched of
+       Left slapError -> assertFailureT ("PPF3 parse: " <> renderSlapError slapError)
+       Right (Parsed parsed _) -> case PPF3.ppf3FileId parsed of
+         Nothing  -> assertFailure "PPF3 parsed file_id.diz was Nothing; expected trailer"
+         Just carriedFileId -> do
+           assertEqual "PPF3 carried file_id.diz bytes are the wire content verbatim"
+             dizContentBytes
+             (PPF3.ppf3CarriedFileIdBytes carriedFileId)
+           assertBool "the reading substituted for the undecodable byte"
+             (Text.any (== '\xFFFD') (SlapText.encodedTextContent (PPF3.ppf3CarriedFileIdText carriedFileId)))
+
+-- | One byte over the 3072-byte content cap ('ppf3FileIdMaxContentLength') is the boundary this pins.
+ppf3FileIdDizOverCapRefused :: Assertion
+ppf3FileIdDizOverCapRefused =
+  case narrowPPF3FileId (dizOfBytes 3073) of
+    Left (FieldTooLong LabelPPF3 FieldFileIdDiz (EncodedLength (Length actual)) (MaxLength (Length cap))) -> do
+      assertEqual "the refused content length" 3073 actual
+      assertEqual "the cap named" 3072 cap
+    Left other -> assertFailureT ("expected FieldTooLong, got " <> renderSlapError other)
+    Right _    -> assertFailure "expected a 3073-byte FILE_ID.DIZ to be refused"
+
+ppf3FileIdDizAtCapAccepted :: Assertion
+ppf3FileIdDizAtCapAccepted =
+  case narrowPPF3FileId (dizOfBytes 3072) of
+    Right _   -> pure ()
+    Left slapError -> assertFailureT ("expected a 3072-byte FILE_ID.DIZ to be accepted: " <> renderSlapError slapError)
+
+-- | Reading tolerates what creation refuses: an over-cap trailer that some other tool wrote still parses,
+-- and its content survives byte-for-byte (the apply path subtracts the whole trailer before it reads records).
+ppf3FileIdDizOverCapStillParses :: Assertion
+ppf3FileIdDizOverCapStillParses =
+  let descriptionTyped = SlapText.EncodedText SlapText.EncodingUtf8 Text.empty
+      dizLength        = 4000 :: Int
+      dizContentBytes  = ByteString.replicate dizLength 0x61
+      CreateResult patchBytes _ = PPF3.encodePPF3 [] descriptionTyped Nothing Nothing BIN
+      trailer = ByteString.concat
+        [ "@BEGIN_FILE_ID.DIZ", dizContentBytes, "@END_FILE_ID.DIZ"
+        , ByteString.pack [fromIntegral (dizLength `mod` 256), fromIntegral (dizLength `div` 256)] ]
+      stitched = PatchFileContents (unPatchFileContents patchBytes <> trailer)
+  in case PPF3.parsePPF3 SlapText.EncodingUtf8 stitched of
+       Left slapError -> assertFailureT ("PPF3 parse: " <> renderSlapError slapError)
+       Right (Parsed parsed _) -> case PPF3.ppf3FileId parsed of
+         Nothing            -> assertFailure "expected the over-cap trailer to be read as a FILE_ID.DIZ"
+         Just carriedFileId ->
+           assertEqual "over-cap FILE_ID.DIZ content read byte-verbatim"
+             dizContentBytes (PPF3.ppf3CarriedFileIdBytes carriedFileId)
+
+-- | A FILE_ID.DIZ of @byteCount@ ASCII bytes, tagged UTF-8 (one byte per character).
+dizOfBytes :: Int -> SlapText.EncodedText
+dizOfBytes byteCount = SlapText.EncodedText SlapText.EncodingUtf8 (Text.replicate byteCount (Text.singleton 'a'))
 
 -- APS-N64: pure direct, no truncation
 prop_apsN64 :: Property

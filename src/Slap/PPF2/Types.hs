@@ -10,10 +10,10 @@ module Slap.PPF2.Types
   ( PPF2Patch(..)
   , PPF2Record(..)
   , PPF2ValidationBlock(..)
+  , PPF2CarriedFileId(..)
   , PPF2FileId
   , unPPF2FileId
   , narrowPPF2FileId
-  , ppf2FileIdFromParsed
   , PPF2SourceSize
   , unPPF2SourceSize
   , narrowPPF2SourceSize
@@ -26,6 +26,7 @@ module Slap.PPF2.Types
   , ppf2ValidationSize
   , ppf2MaxRecordPayload
   , ppf2FileIdLengthFieldWidth
+  , ppf2FileIdMaxContentLength
   , ppf2FileIdMarkerLength
   , ppf2FileIdFooterLength
     -- * Encoding limits
@@ -35,13 +36,13 @@ module Slap.PPF2.Types
   ) where
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as ByteString
 import Data.Word (Word32)
 import Slap.Status (SlapError(..), UnencodeabilityReason(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Length(..), Offset(..), FileSize(..),
-                     ActualSize(..), ExpectedSize(..))
+                     ActualSize(..), ExpectedSize(..),
+                     EncodedLength(..), MaxLength(..), SubstitutionCount, byteLength)
 import Slap.Narrow (EncodingLimits(..), narrowToWord32)
 import Slap.Text (EncodedText, EncodingName(..),
                   encodedTextContent, encodeTextLenient)
@@ -58,32 +59,28 @@ newtype PPF2ValidationBlock = PPF2ValidationBlock
   { unPPF2ValidationBlock :: ByteString }
   deriving (Show, Eq)
 
--- | FILE_ID.DIZ content optionally appended after the record
--- stream. The wire trailer is
--- @"\@BEGIN_FILE_ID.DIZ" <content> "\@END_FILE_ID.DIZ" <4-byte LE length>@;
--- this newtype carries only the inner @<content>@ as a typed
--- 'EncodedText' value whose encoded byte length has been validated
--- against PPF2's 4-byte LE length field. Constructor private;
--- values come from one of two named producers:
---
--- * 'narrowPPF2FileId' — runtime check.
--- * 'ppf2FileIdFromParsed' — parse-time, trusts the wire format's
---   4-byte length field has already constrained the bytes the
---   typed text was decoded from.
+-- | The FILE_ID.DIZ a parsed patch carries: the trailer's inner content bytes verbatim,
+-- the reading made of them under the metadata encoding, and how many byte sequences that reading substituted.
+data PPF2CarriedFileId = PPF2CarriedFileId
+  { ppf2CarriedFileIdBytes         :: !ByteString
+  , ppf2CarriedFileIdText          :: !EncodedText
+  , ppf2CarriedFileIdSubstitutions :: !SubstitutionCount
+  } deriving (Show, Eq)
+
+-- | A FILE_ID.DIZ validated for emit: typed text whose UTF-8 byte count 'narrowPPF2FileId' has checked against 'ppf2FileIdMaxContentLength'.
+-- Constructor private; that narrow is its one producer.
 newtype PPF2FileId = PPF2FileId { unPPF2FileId :: EncodedText }
   deriving (Show, Eq)
 
 narrowPPF2FileId :: EncodedText -> Either SlapError PPF2FileId
-narrowPPF2FileId description =
-  let (encoded, _notices) =
-        encodeTextLenient EncodingUtf8 (encodedTextContent description)
-  in case narrowToWord32 LabelPPF2 FieldFileIdDizLength
-                         (ByteString.length encoded) of
-       Left  failure -> Left (NarrowingError failure)
-       Right _       -> Right (PPF2FileId description)
-
-ppf2FileIdFromParsed :: EncodedText -> PPF2FileId
-ppf2FileIdFromParsed = PPF2FileId
+narrowPPF2FileId description
+  | contentLength > ppf2FileIdMaxContentLength =
+      Left (FieldTooLong LabelPPF2 FieldFileIdDiz
+              (EncodedLength contentLength) (MaxLength ppf2FileIdMaxContentLength))
+  | otherwise = Right (PPF2FileId description)
+  where
+    (encoded, _notices) = encodeTextLenient EncodingUtf8 (encodedTextContent description)
+    contentLength       = byteLength encoded
 
 -- | PPF2's 4-byte LE source-ROM-size header field, narrowed from a
 -- runtime 'FileSize'. Constructor private; values come from
@@ -111,7 +108,7 @@ data PPF2Patch = PPF2Patch
   , ppf2SourceFileSize  :: !PPF2SourceSize   -- ^ 4-byte LE field at header offset 56; declares the source ROM's expected size
   , ppf2ValidationBlock :: !PPF2ValidationBlock
   , ppf2Records         :: ![PPF2Record]
-  , ppf2FileId          :: !(Maybe PPF2FileId)
+  , ppf2FileId          :: !(Maybe PPF2CarriedFileId)
   } deriving (Show)
 
 -- | Wire-format magic prefix.
@@ -146,6 +143,12 @@ ppf2MaxRecordPayload = Length 255
 -- role.
 ppf2FileIdLengthFieldWidth :: Length
 ppf2FileIdLengthFieldWidth = Length 4
+
+-- | The cap on FILE_ID.DIZ content: 3072 bytes, far under the 4-byte length field's wire width.
+-- slap refuses to write more rather than truncate ('narrowPPF2FileId'); reading tolerates a larger one.
+-- (docs/ppf/spec.md, "L ≤ 3072"; PPF2.txt.)
+ppf2FileIdMaxContentLength :: Length
+ppf2FileIdMaxContentLength = Length 3072
 
 -- | Length of the @"\@BEGIN_FILE_ID.DIZ"@ marker prefix.
 ppf2FileIdMarkerLength :: Length

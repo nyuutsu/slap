@@ -51,9 +51,8 @@ module Slap.Text
   , decodeTextLenient
   , LossNotice(..)
 
-    -- * Opaque-field display lens (decode half)
-  , OpaqueFieldReading(..)
-  , readOpaqueField
+    -- * Substitution measurement
+  , substitutionCount
 
     -- * Bounded encoding (fixed-width fields)
   , encodeTextBounded
@@ -329,22 +328,8 @@ decodeTextLenient (EncodingNamed named) bytes =
   let (text, notices) = recoverNamed (useNamedEncoding named) bytes
   in (EncodedText (EncodingNamed named) text, notices)
 
--- | Whether a run of opaque bytes reads as text under an encoding —
--- decoded with no substitution — or does not. The decode half of the
--- lens slap shows opaque metadata fields (the BPS metadata blob, the
--- xdelta3 application header) through: a clean decode is text to
--- display, anything needing recovery is bytes to count.
--- 'Slap.Display.OpaqueField.renderOpaqueFieldBytes' is the render half.
-data OpaqueFieldReading
-  = OpaqueReadsAsText !Text
-  | OpaqueNotText
-  deriving (Eq, Show)
-
--- | Read opaque bytes under an encoding: lossless iff 'decodeTextLenient' substituted nothing, answerable under whatever encoding the caller names.
-readOpaqueField :: EncodingName -> ByteString -> OpaqueFieldReading
-readOpaqueField encoding bytes = case decodeTextLenient encoding bytes of
-  (EncodedText _encoding text, []) -> OpaqueReadsAsText text
-  (_decoded, _substitutions)       -> OpaqueNotText
+substitutionCount :: [LossNotice] -> SubstitutionCount
+substitutionCount notices = SubstitutionCount (length [() | SubstitutedByteSequence <- notices])
 
 -- | Lenient decode for a named encoding, recovering over the @encoding@ library's strict, all-or-nothing decode.
 -- The walk is backward because no forward decode fits: @decodeChar@ loses ISO-2022-JP's charset state between characters,
@@ -520,9 +505,7 @@ decodeFixedWidthTextField encoding label field bytes =
 decodeLossAdvisories
   :: FormatLabel -> FieldName -> [LossNotice] -> [SlapAdvisory]
 decodeLossAdvisories label field notices =
-  let substitutions = length [() | SubstitutedByteSequence <- notices]
-  in [FieldDecodedSubstituted label field (SubstitutionCount substitutions)
-      | substitutions > 0]
+  [FieldDecodedSubstituted label field count | count@(SubstitutionCount n) <- [substitutionCount notices], n > 0]
 
 -- | Adapt the loss notices an 'encodeTextLenient' or 'encodeTextBounded'
 -- call emitted into 'SlapAdvisory' values tagged with the format and

@@ -25,6 +25,8 @@ module CLI
   , ConvertWithSource(..)
   , EmbeddedBlobIntent(..)
   , DizIntent(..)
+  , EmbeddedBlobSource(..)
+  , FileIdDizSource(..)
   , CreateMetadataInputs(..)
   , ConvertMetadataInputs(..)
   , createMetadataRequests
@@ -47,6 +49,7 @@ import Slap.Convert (CreateFormat(..), DifferentialCreate(CreateBPS),
                      TextMode)
 import Slap.MetadataField (MetadataField(..), metadataFieldFlagName,
                            DroppableField(..), dropFlagName,
+                           TypedTextField(..), typedTextFlagName,
                            MetadataRequest(..), requestField)
 import Slap.Surface (imageTypeTokens, romTypeTokens, textModeTokens)
 import Slap.XDelta1.Types (XDelta1FromName(..), XDelta1ToName(..))
@@ -66,10 +69,10 @@ import Slap.Text (EncodedText(..), EncodingName(..), resolveEncodingName,
                   advertisedEncodingNames, renderAdvertisedEncodings)
 import Slap.Display.Glyph (rightwardsArrow)
 
+import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Char (isDigit, toLower)
 import Data.List (intercalate, sortOn)
-import Data.Maybe (isJust)
 import Options.Applicative
 import Options.Applicative.Help.Pretty (pretty, vcat)
 
@@ -173,13 +176,28 @@ data DizIntent
   deriving (Show, Eq)
 
 -- | What @slap create@ accepts on the metadata side: the parsed metadata fields,
--- with 'requestedEmbeddedBlob' / 'requestedFileIdDiz' filled by the resolver from the optional @--metadata FILE@ / @--diz FILE@ paths below.
+-- with 'requestedEmbeddedBlob' / 'requestedFileIdDiz' filled by the resolver from the 'EmbeddedBlobSource' / 'FileIdDizSource' below.
 -- A target that doesn't consume one triggers the same metadata-rejection check as any other format-incompatible field.
 data CreateMetadataInputs = CreateMetadataInputs
-  { createParsedMetadata   :: RequestedPatchMetadata
-  , createEmbeddedBlobPath :: Maybe FilePath
-  , createDizPath          :: Maybe FilePath
+  { createParsedMetadata     :: RequestedPatchMetadata
+  , createEmbeddedBlobSource :: EmbeddedBlobSource
+  , createDizSource          :: FileIdDizSource
   }
+
+-- | Where @slap create@'s embedded metadata comes from: a file's bytes verbatim,
+-- text typed at the flag itself, or nowhere.
+data EmbeddedBlobSource
+  = NoEmbeddedBlob
+  | EmbeddedBlobFromFile FilePath
+  | EmbeddedBlobFromTypedText Text
+  deriving (Show, Eq)
+
+-- | Where @slap create@'s FILE_ID.DIZ comes from — the same three shapes as 'EmbeddedBlobSource', for the DIZ.
+data FileIdDizSource
+  = NoFileIdDiz
+  | FileIdDizFromFile FilePath
+  | FileIdDizFromText Text
+  deriving (Show, Eq)
 
 -- | What @slap convert@ accepts on the metadata side: the parsed metadata fields,
 -- with 'requestedEmbeddedBlob' / 'requestedFileIdDiz' filled by the resolver from the 'EmbeddedBlobIntent' / 'DizIntent' below.
@@ -193,8 +211,17 @@ data ConvertMetadataInputs = ConvertMetadataInputs
 createMetadataRequests :: CreateMetadataInputs -> [MetadataRequest]
 createMetadataRequests inputs = sortOn requestField $
   metadataRequests (createParsedMetadata inputs)
-  ++ [SetField MetadataEmbeddedBlob | isJust (createEmbeddedBlobPath inputs)]
-  ++ [SetField MetadataFileIdDiz    | isJust (createDizPath inputs)]
+  ++ blobRequest
+  ++ dizRequest
+  where
+    blobRequest = case createEmbeddedBlobSource inputs of
+      NoEmbeddedBlob              -> []
+      EmbeddedBlobFromFile _      -> [SetField MetadataEmbeddedBlob]
+      EmbeddedBlobFromTypedText _ -> [SetFieldFromText TypedTextEmbeddedBlob]
+    dizRequest = case createDizSource inputs of
+      NoFileIdDiz         -> []
+      FileIdDizFromFile _ -> [SetField MetadataFileIdDiz]
+      FileIdDizFromText _ -> [SetFieldFromText TypedTextFileIdDiz]
 
 -- | The convert-side counterpart of 'createMetadataRequests'.
 convertMetadataRequests :: ConvertMetadataInputs -> [MetadataRequest]
@@ -692,10 +719,13 @@ metadataFlag field = long (Text.unpack (metadataFieldFlagName field))
 dropFlag :: HasName f => DroppableField -> Mod f a
 dropFlag droppable = long (Text.unpack (dropFlagName droppable))
 
+typedTextFlag :: HasName f => TypedTextField -> Mod f a
+typedTextFlag field = long (Text.unpack (typedTextFlagName field))
+
 -- | Parse the metadata flags shared between @slap create@ and @slap convert@.
 -- Produces a 'RequestedPatchMetadata' with 'requestedEmbeddedBlob' left 'InheritEmbeddedBlob';
 -- the resolvers @resolveCreateMetadata@ and @resolveConvertMetadata@ (in @Main@) fill that field from each command's blob source:
--- the @--metadata FILE@ path for create, the 'EmbeddedBlobIntent' for convert.
+-- the 'EmbeddedBlobSource' for create, the 'EmbeddedBlobIntent' for convert.
 requestedMetadataParser :: Parser RequestedPatchMetadata
 requestedMetadataParser = do
     title             <- optional (option str (metadataFlag MetadataTitle <> metavar "TEXT"
@@ -788,10 +818,28 @@ requestedMetadataParser = do
 createMetadataInputsParser :: Parser CreateMetadataInputs
 createMetadataInputsParser = CreateMetadataInputs
   <$> requestedMetadataParser
-  <*> optional (pathOption (metadataFlag MetadataEmbeddedBlob <> metavar "FILE"
-        <> help "Embed bytes from FILE as the output patch's embedded metadata"))
-  <*> optional (pathOption (metadataFlag MetadataFileIdDiz <> metavar "FILE"
-        <> help "Embed FILE as the output patch's FILE_ID.DIZ (PPF2/PPF3)"))
+  <*> embeddedBlobSourceParser
+  <*> dizSourceParser
+
+-- | The two set lanes are mutually exclusive the same way 'embeddedBlobIntentParser''s are.
+embeddedBlobSourceParser :: Parser EmbeddedBlobSource
+embeddedBlobSourceParser = asum
+  [ EmbeddedBlobFromFile <$> pathOption (metadataFlag MetadataEmbeddedBlob <> metavar "FILE"
+      <> help "Embed bytes from FILE as the output patch's embedded metadata")
+  , EmbeddedBlobFromTypedText <$> option str (typedTextFlag TypedTextEmbeddedBlob <> metavar "TEXT"
+      <> help "Embed TEXT as the output patch's embedded metadata")
+  , pure NoEmbeddedBlob
+  ]
+
+-- | The FILE_ID.DIZ counterpart to 'embeddedBlobSourceParser': @--diz FILE@ and @--diz-text TEXT@, mutually exclusive.
+dizSourceParser :: Parser FileIdDizSource
+dizSourceParser = asum
+  [ FileIdDizFromFile <$> pathOption (metadataFlag MetadataFileIdDiz <> metavar "FILE"
+      <> help "Embed FILE as the output patch's FILE_ID.DIZ (PPF2/PPF3)")
+  , FileIdDizFromText <$> option str (typedTextFlag TypedTextFileIdDiz <> metavar "TEXT"
+      <> help "Embed TEXT as the output patch's FILE_ID.DIZ (PPF2/PPF3)")
+  , pure NoFileIdDiz
+  ]
 
 convertMetadataInputsParser :: Parser ConvertMetadataInputs
 convertMetadataInputsParser = ConvertMetadataInputs

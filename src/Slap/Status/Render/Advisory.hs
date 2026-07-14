@@ -164,13 +164,16 @@ renderSlapAdvisory (EBPMetadataMalformed label) =
 renderSlapAdvisory (BPSMetadataNonConformant label divergence (Length byteCount)) =
   formatLabelName label
   <> ": metadata is " <> renderAsText byteCount
-  <> plural byteCount " byte" " bytes" <> " that " <> divergencePhrase
+  <> plural byteCount " byte" " bytes" <> ", " <> divergencePhrase
   <> "; the spec recommends UTF-8 XML here but permits arbitrary bytes,"
   <> " so this is unusual but valid"
   where
     divergencePhrase = case divergence of
-      MetadataIsNotUTF8             -> "aren't valid UTF-8"
-      MetadataIsValidUTF8ButNonText -> "are valid UTF-8 but carry non-text control codepoints"
+      MetadataBytesSubstituted (SubstitutionCount substituted) ->
+        renderAsText substituted <> plural substituted " sequence" " sequences"
+        <> " of which aren't valid UTF-8 (substituted U+FFFD)"
+      MetadataDecodedButNonText ->
+        "valid UTF-8 but carrying non-text control codepoints"
 
 renderSlapAdvisory (IPSTruncationMarkerHonored label
     (DeclaredTargetSize declared) (NaturalTargetSize natural)) =
@@ -254,6 +257,12 @@ renderSlapAdvisory (FieldDecodedSubstituted label name (SubstitutionCount count)
   <> fieldNameLabel name <> ": "
   <> renderAsText count <> plural count " byte sequence" " byte sequences"
   <> " did not decode under the declared encoding; substituted U+FFFD"
+
+renderSlapAdvisory (FileIdDizNonASCII label (Length nonAsciiCount)) =
+  formatLabelName label
+  <> ": FILE_ID.DIZ has " <> renderAsText nonAsciiCount
+  <> plural nonAsciiCount " byte" " bytes"
+  <> " outside 7-bit ASCII; the convention is plain ASCII, so older viewers may render them as garbage"
 
 renderSlapAdvisory (FieldEncodedSubstituted label name (SubstitutionCount count)) =
   formatLabelName label <> " "

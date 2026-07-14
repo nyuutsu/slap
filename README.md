@@ -99,7 +99,7 @@ The list of metadata flags is below. The ones that need explaining are elaborate
 
 `APS-N64`: `--description`
 
-`BPS`: `--metadata`
+`BPS`: `--metadata`, `--metadata-text`
 
 `DPS`: `--title`, `--author`, `--patch-version`, `--unstable`
 
@@ -111,19 +111,23 @@ The list of metadata flags is below. The ones that need explaining are elaborate
 
 `PPF1`: `--description`
 
-`PPF2`: `--description`, `--diz`
+`PPF2`: `--description`, `--diz`, `--diz-text`
 
-`PPF3`: `--description`, `--diz`, `--image-type`, `--no-undo`, `--omit-verification`
+`PPF3`: `--description`, `--diz`, `--diz-text`, `--image-type`, `--no-undo`, `--omit-verification`
 
 `rfc-vcdiff`: `--window-size`
 
 `xdelta1`: `--from-name`, `--to-name`, `--no-compress`, `--omit-verification`
 
-`xdelta3`: `--metadata`, `--compress-with`, `--window-size`, `--no-compress`, `--omit-verification`
+`xdelta3`: `--metadata`, `--metadata-text`, `--compress-with`, `--window-size`, `--no-compress`, `--omit-verification`
 
 #### BPS
 
+The `metadata`-related flags are two ways of providing metadata. They are mutually exclusive.
+
 `--metadata`: Nestle an arbitrary file into the patch as a metadata payload.
+
+`--metadata-text`: Nestle text into the patch as a metadata payload. The text is wrapped in a thin XML shell[^XML].
 
 #### DPS
 
@@ -147,11 +151,19 @@ The non-`raw` modes are meant to correspond to *normalization procedures*: deint
 
 #### PPF2
 
-`--diz`: Include a DIZ description file.
+The `diz`-related flags are two ways of providing metadata. They are mutually exclusive.
+
+`--diz`: Nestle a DIZ description file into the patch as a metadata payload[^DIZ].
+
+`--diz-text`: Nestle text into the patch as a metadata payload. The text is wrapped in a DIZ container.
 
 #### PPF3
 
-`--diz`: include a DIZ description file.
+The `diz`-related flags are two ways of providing metadata. They are mutually exclusive.
+
+`--diz`: Nestle a DIZ description file into the patch as a metadata payload.
+
+`--diz-text`: Nestle text into the patch as a metadata payload. The text is wrapped in a DIZ container.
 
 `--no-undo`: *Don't* tuck a copy of the original bytes into the patch at each offset. *If you do not use this flag*, the patch can be reversed later. Said reversal can be done with `slap undo`.
 
@@ -174,6 +186,8 @@ The non-`raw` modes are meant to correspond to *normalization procedures*: deint
 #### xdelta3
 
 `--metadata`: Nestle an arbitrary file into the patch as a metadata payload.
+
+`--metadata-text`: The same slot, filled from text you write at the flag rather than a file. Here the text goes in as-is, with no XML shell (that shell is a BPS convention). Mutually exclusive with `--metadata`.
 
 `--compress-with`: The supported values are `lzma` (the default) and `djw`.
 
@@ -395,3 +409,7 @@ The per-test durations are logged to `test-results/`.
 [^NINJA]: There are two formats: `ninja1` and `ninja2`. Both might use the file extension `.rup`.
 
 [^RAR]: The `RAR` format is proprietary; I don't know of a practical way to include a `RAR` decompressor.
+
+[^XML]: This is per what the format *prefers* but does not require.
+
+[^DIZ]: The original tool allows inserting *whatever*. At the moment we also allow inserting *whatever*. I am ambivalent about this decision and it will probably change.

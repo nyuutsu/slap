@@ -39,12 +39,13 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.Text (Text)
 import Data.Word (Word8)
 
--- | How a BPS patch's metadata blob diverged from the spec-recommended UTF-8 XML, carried by 'BPSMetadataNonConformant'.
+-- | How a BPS patch's metadata blob diverged from UTF-8, the encoding the spec recommends.
+-- Both arms leave the blob shown and carried byte-exact; they name what a lenient UTF-8 decode found.
 data BPSMetadataDivergence
-  = MetadataIsNotUTF8
-    -- ^ The bytes do not decode as UTF-8 at all.
-  | MetadataIsValidUTF8ButNonText
-    -- ^ Valid UTF-8 carrying control or format codepoints — not the plain text the field is meant to hold.
+  = MetadataBytesSubstituted !SubstitutionCount
+    -- ^ That many byte sequences are not valid UTF-8; each decoded to U+FFFD.
+  | MetadataDecodedButNonText
+    -- ^ Valid UTF-8, but carrying control codepoints — not the plain text the field is meant to hold.
   deriving (Eq, Show)
 
 -- | A non-halting status item — warning-severity ("you may want to know") or note-severity ("informational"),
@@ -215,6 +216,11 @@ data SlapAdvisory
   -- (A field merely padded with the "wrong" byte — zeros where the format spaces — leaves nothing past a NUL and is not flagged.)
   | FieldContentPastEnd FormatLabel FieldName Length
 
+  -- | A FILE_ID.DIZ being written carries bytes outside 7-bit ASCII. The convention is plain ASCII,
+  -- but neither PPF2.txt nor PPF3.txt names a charset and the reference tools pass the bytes through untouched,
+  -- so this is a note, not a refusal. The 'Length' is how many bytes are non-ASCII.
+  | FileIdDizNonASCII FormatLabel Length
+
   -- Platform conversion
   --
   -- | A requested (@--rom-type@) or inherited platform the target format
@@ -376,6 +382,7 @@ slapAdvisorySeverity advisory = case advisory of
   FieldTruncated{}                     -> SeverityNote
   FieldDecodedSubstituted{}            -> SeverityNote
   FieldEncodedSubstituted{}            -> SeverityNote
+  FileIdDizNonASCII{}                  -> SeverityNote
 
   -- Field, rom-type, image, and platform handling, where severity turns on whether slap could act cleanly:
   -- a recognized default or a clean normalization is a note; anything unrecognized, unconfirmable, or dropped warns.

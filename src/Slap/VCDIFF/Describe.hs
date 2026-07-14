@@ -11,6 +11,7 @@
 module Slap.VCDIFF.Describe
   ( vcdiffMeta
   , vcdiffEmbeddedContent
+  , vcdiffAppHeaderNotes
   , analyzeVCDIFF
   , makeVCDIFFRegion
   ) where
@@ -32,11 +33,14 @@ import Slap.Display.Analysis
   , Annotation(..), OffsetKind(..), AnnotDetail(..) )
 import Slap.Display.Common
   ( InfoLine(..), Tally(..), CountUnit(..), ByteCount(..), renderAsText )
-import Slap.Display.EmbeddedContent (EmbeddedContent(..), EmbeddedField(..))
+import Slap.Display.EmbeddedContent (EmbeddedContent(..), EmbeddedField(..), readEmbeddedContent)
 import Slap.Display.Primitives (padHex)
 import Slap.Checksum (Adler32, showAdler32)
-import Slap.Text (EncodingName)
-import Slap.Measure (Offset(..), Length(..), FileSize(..), Cursor(..), byteLength)
+import Slap.Status (SlapAdvisory(..))
+import Slap.FormatLabel (FormatLabel(LabelVCDIFF))
+import Slap.FieldName (FieldName(FieldAppHeader))
+import Slap.Text (EncodingName, decodeTextLenient, substitutionCount)
+import Slap.Measure (Offset(..), Length(..), FileSize(..), Cursor(..), SubstitutionCount(..), byteLength)
 
 import Data.Maybe (isJust)
 import Data.List (mapAccumL)
@@ -112,7 +116,18 @@ vcdiffEmbeddedContent metadataEncoding patch = case patch of
   where
     appHeaderField AppHeaderAbsent          = FieldAbsent
     appHeaderField AppHeaderEmpty           = FieldEmpty
-    appHeaderField (AppHeaderPresent bytes) = FieldOpaque metadataEncoding bytes
+    appHeaderField (AppHeaderPresent bytes) = readEmbeddedContent metadataEncoding bytes
+
+-- | RFC 3284 leaves the application header application-defined, so slap reports only its substitution count.
+vcdiffAppHeaderNotes :: EncodingName -> VCDIFFPatch -> [SlapAdvisory]
+vcdiffAppHeaderNotes metadataEncoding patch = case patch of
+  PatchXDelta3 header _ -> case classifyAppHeader (xdelta3AppHeader header) of
+    AppHeaderPresent bytes ->
+      let (_reading, notices) = decodeTextLenient metadataEncoding bytes
+          count               = substitutionCount notices
+      in [FieldDecodedSubstituted LabelVCDIFF FieldAppHeader count | unSubstitutionCount count > 0]
+    _ -> []
+  _ -> []
 
 -- | The @compression@ line, when a secondary compressor was declared, named as a /declaration/:
 -- the decoded form has turned the compressed sections back into plain bytes,

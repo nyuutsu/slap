@@ -1,23 +1,18 @@
--- | Properties for the BPS metadata glance: the pure classifier
--- 'Slap.BPS.Types.classifyBPSMetadata' (is the blob absent, valid
--- UTF-8, or not UTF-8 at all), the safe-display primitive
--- 'Slap.Display.Primitives.renderEscapingNonPrintable' (printable
--- codepoints pass, everything else escapes to a visible token), and
--- the remark projection 'Slap.BPS.Describe.bpsMetadataNotes' (a
--- note for the two divergent shapes, silence for the spec-recommended
--- text). The BPS spec recommends UTF-8 XML in the metadata field but
--- permits "literally anything", so these are the three honest answers
--- and the remark that names the oddity.
+-- | Properties for the BPS metadata glance: the content 'Slap.BPS.Describe.bpsEmbeddedContent' shows for the blob,
+-- the safe-display escape 'Slap.Display.Primitives.renderEscapingNonPrintable',
+-- and the conformance remark 'Slap.BPS.Describe.bpsMetadataNotes' — measured against UTF-8, which the spec recommends but does not require.
+-- So the content is always shown, and only the oddity remarked.
 module Props.BPSMetadata (bpsMetadataTests) where
 
-import Slap.BPS.Types (BPSPatch(..), BPSMetadata(..),
-                       BPSMetadataShape(..), classifyBPSMetadata)
-import Slap.BPS.Describe (bpsMetadataNotes)
+import Slap.BPS.Types (BPSPatch(..), BPSMetadata(..))
+import Slap.BPS.Describe (bpsEmbeddedContent, bpsMetadataNotes)
+import Slap.Display.EmbeddedContent (EmbeddedContent(..), EmbeddedField(..))
 import Slap.Display.Primitives (renderEscapingNonPrintable)
+import Slap.Text (EncodingName(EncodingUtf8), encodedTextContent)
 import Slap.Status (SlapAdvisory(..), BPSMetadataDivergence(..))
 import Slap.FormatLabel (FormatLabel(LabelBPS))
 import Slap.Checksum (CRC32(..))
-import Slap.Measure (FileSize(..), Length(..))
+import Slap.Measure (FileSize(..), Length(..), SubstitutionCount(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -31,15 +26,13 @@ import Test.Tasty.QuickCheck
 
 bpsMetadataTests :: TestTree
 bpsMetadataTests = testGroup "BPS metadata"
-  [ testGroup "classifyBPSMetadata"
-      [ testCase "empty-blob-is-absent" test_classifyEmpty
-      , testCase "ascii-text-is-utf8"   test_classifyAscii
-      , testCase "multibyte-text-is-utf8" test_classifyMultibyte
-      , testCase "embedded-nul-is-still-utf8" test_classifyControlIsUTF8
-      , testCase "lone-continuation-byte-is-not-utf8" test_classifyLoneContinuation
-      , testCase "stray-high-byte-is-not-utf8" test_classifyHighByte
-      , testProperty "classification-does-not-bottom-on-arbitrary-bytes"
-          prop_classifyDoesNotBottomOnArbitraryBytes
+  [ testGroup "bpsEmbeddedContent"
+      [ testCase "empty-blob-is-absent"          test_fieldEmpty
+      , testCase "ascii-reads-clean"             test_fieldAscii
+      , testCase "multibyte-reads-clean"         test_fieldMultibyte
+      , testCase "non-utf8-substitutes-but-keeps-bytes" test_fieldNonUtf8
+      , testProperty "reading-does-not-bottom-on-arbitrary-bytes"
+          prop_fieldDoesNotBottomOnArbitraryBytes
       ]
   , testGroup "renderEscapingNonPrintable"
       [ testCase "printable-ascii-passes-through" test_renderAsciiPasses
@@ -56,7 +49,7 @@ bpsMetadataTests = testGroup "BPS metadata"
       , testCase "plain-text-is-silent"          test_notePlainSilent
       , testCase "multiline-xml-is-silent"       test_noteMultilineXMLSilent
       , testCase "embedded-nul-notes-non-text"   test_noteEmbeddedNul
-      , testCase "invalid-utf8-notes-not-utf8"   test_noteInvalidUTF8
+      , testCase "non-utf8-notes-the-count"      test_noteNonUtf8Count
       ]
   ]
 
@@ -68,9 +61,9 @@ bpsMetadataTests = testGroup "BPS metadata"
 utf8Meta :: String -> BPSMetadata
 utf8Meta = BPSMetadata . TextEncoding.encodeUtf8 . Text.pack
 
--- | A 'BPSPatch' carrying the given metadata bytes and nothing else of
--- interest — empty action stream, zero sizes and CRCs. Enough to
--- exercise 'bpsMetadataNotes', which reads only the metadata field.
+-- | A 'BPSPatch' carrying the given metadata bytes and nothing else of interest —
+-- empty action stream, zero sizes and CRCs. Enough to exercise the metadata field and its remark,
+-- which read only that field.
 bpsPatchWithMetadata :: ByteString -> BPSPatch
 bpsPatchWithMetadata metadataBytes = BPSPatch
   { bpsSourceSize = FileSize 0
@@ -82,57 +75,56 @@ bpsPatchWithMetadata metadataBytes = BPSPatch
   , bpsPatchCRC   = CRC32 0
   }
 
+-- | The embedded field slap shows for a blob, read under UTF-8.
+fieldOf :: ByteString -> EmbeddedField
+fieldOf bytes = case bpsEmbeddedContent EncodingUtf8 (bpsPatchWithMetadata bytes) of
+  [content] -> embeddedField content
+  other     -> error ("expected one embedded row, got " ++ show other)
+
+-- | The remark the blob earns, measured against UTF-8.
+notesOf :: ByteString -> [SlapAdvisory]
+notesOf bytes = bpsMetadataNotes LabelBPS (bpsPatchWithMetadata bytes)
+
 ----------------------------------------------------------------------------
--- classifyBPSMetadata
+-- bpsEmbeddedContent
 ----------------------------------------------------------------------------
 
-test_classifyEmpty :: IO ()
-test_classifyEmpty =
-  assertEqual "empty blob" MetadataAbsent
-    (classifyBPSMetadata (BPSMetadata ByteString.empty))
+test_fieldEmpty :: IO ()
+test_fieldEmpty =
+  assertEqual "empty blob is absent" FieldAbsent (fieldOf ByteString.empty)
 
-test_classifyAscii :: IO ()
-test_classifyAscii =
-  assertEqual "ascii text" (MetadataUTF8Text (Text.pack "hello"))
-    (classifyBPSMetadata (utf8Meta "hello"))
+test_fieldAscii :: IO ()
+test_fieldAscii = case fieldOf (TextEncoding.encodeUtf8 (Text.pack "hello")) of
+  FieldContent _ reading (SubstitutionCount substituted) -> do
+    assertEqual "reading is the text" (Text.pack "hello") (encodedTextContent reading)
+    assertEqual "nothing substituted" 0 substituted
+  other -> assertFailure ("expected FieldContent, got " ++ show other)
 
-test_classifyMultibyte :: IO ()
-test_classifyMultibyte =
-  assertEqual "japanese text" (MetadataUTF8Text (Text.pack "\x65E5\x672C\x8A9E"))
-    (classifyBPSMetadata (utf8Meta "\x65E5\x672C\x8A9E"))
+test_fieldMultibyte :: IO ()
+test_fieldMultibyte = case fieldOf (unBPSMetadata (utf8Meta "\x65E5\x672C\x8A9E")) of
+  FieldContent _ reading (SubstitutionCount substituted) -> do
+    assertEqual "reading is the multibyte text" (Text.pack "\x65E5\x672C\x8A9E") (encodedTextContent reading)
+    assertEqual "nothing substituted" 0 substituted
+  other -> assertFailure ("expected FieldContent, got " ++ show other)
 
--- | A NUL byte is valid UTF-8, so a blob carrying one classifies as
--- 'MetadataUTF8Text' — the classifier answers only "is this UTF-8",
--- not "is this text"; the text-versus-binary judgment is
--- 'bpsMetadataNotes''s job.
-test_classifyControlIsUTF8 :: IO ()
-test_classifyControlIsUTF8 =
-  assertEqual "embedded NUL is valid UTF-8"
-    (MetadataUTF8Text (Text.pack "a\NULb"))
-    (classifyBPSMetadata (BPSMetadata (ByteString.pack [0x61, 0x00, 0x62])))
+-- | Bytes that are not UTF-8 are shown, not hidden: the reading substitutes U+FFFD and the count says how many,
+-- but the wire bytes ride through byte-exact for extraction.
+test_fieldNonUtf8 :: IO ()
+test_fieldNonUtf8 = case fieldOf (ByteString.pack [0x80, 0xFE, 0xFF]) of
+  FieldContent bytes _ (SubstitutionCount substituted) -> do
+    assertBool "the reading substituted" (substituted > 0)
+    assertEqual "the wire bytes are kept" (ByteString.pack [0x80, 0xFE, 0xFF]) bytes
+  other -> assertFailure ("expected FieldContent, got " ++ show other)
 
-test_classifyLoneContinuation :: IO ()
-test_classifyLoneContinuation =
-  assertEqual "lone continuation byte" MetadataNotUTF8
-    (classifyBPSMetadata (BPSMetadata (ByteString.pack [0x80])))
-
-test_classifyHighByte :: IO ()
-test_classifyHighByte =
-  assertEqual "stray 0xFF" MetadataNotUTF8
-    (classifyBPSMetadata (BPSMetadata (ByteString.pack [0xFF])))
-
--- | Classification terminates with a fully-defined result for any byte
--- sequence: every input lands in one of the three arms with no
--- exception and no bottom in the carried text. The 'True' arms and the
--- '>= 0' are vacuous as assertions; their job is to force the result
--- so a lurking error/undefined surfaces as a failure.
-prop_classifyDoesNotBottomOnArbitraryBytes :: [Int] -> Bool
-prop_classifyDoesNotBottomOnArbitraryBytes ints =
+-- | The decode terminates with a fully-defined field for any byte sequence — no exception, no bottom in the carried reading.
+-- The arms are vacuous as assertions; their job is to force the result so a lurking bottom fails.
+prop_fieldDoesNotBottomOnArbitraryBytes :: [Int] -> Bool
+prop_fieldDoesNotBottomOnArbitraryBytes ints =
   let bytes = ByteString.pack (map (fromIntegral . (`mod` 256)) ints)
-  in case classifyBPSMetadata (BPSMetadata bytes) of
-       MetadataAbsent       -> True
-       MetadataUTF8Text txt -> Text.length txt >= 0
-       MetadataNotUTF8      -> True
+  in case fieldOf bytes of
+       FieldAbsent                          -> ByteString.null bytes
+       FieldEmpty                           -> True
+       FieldContent _ reading (SubstitutionCount n) -> Text.length (encodedTextContent reading) >= 0 && n >= 0
 
 ----------------------------------------------------------------------------
 -- renderEscapingNonPrintable
@@ -194,14 +186,12 @@ prop_renderIdentityOnPrintable source =
 
 test_noteAbsentSilent :: IO ()
 test_noteAbsentSilent =
-  assertEqual "absent metadata raises no note" []
-    (bpsMetadataNotes (bpsPatchWithMetadata ByteString.empty))
+  assertEqual "absent metadata raises no note" [] (notesOf ByteString.empty)
 
 test_notePlainSilent :: IO ()
 test_notePlainSilent =
   assertEqual "plain UTF-8 text raises no note" []
-    (bpsMetadataNotes (bpsPatchWithMetadata
-       (TextEncoding.encodeUtf8 (Text.pack "Cozy Sunday patch"))))
+    (notesOf (TextEncoding.encodeUtf8 (Text.pack "Cozy Sunday patch")))
 
 -- | A pretty-printed XML blob is full of newlines and tabs, which are
 -- control characters but also whitespace. The note keys off
@@ -211,19 +201,17 @@ test_notePlainSilent =
 test_noteMultilineXMLSilent :: IO ()
 test_noteMultilineXMLSilent =
   assertEqual "multi-line XML (newlines, tabs) raises no note" []
-    (bpsMetadataNotes (bpsPatchWithMetadata
-       (TextEncoding.encodeUtf8 (Text.pack
-          "<?xml version=\"1.0\"?>\n<patch>\n\t<name>x</name>\n</patch>\n"))))
+    (notesOf (TextEncoding.encodeUtf8 (Text.pack
+       "<?xml version=\"1.0\"?>\n<patch>\n\t<name>x</name>\n</patch>\n")))
 
 test_noteEmbeddedNul :: IO ()
 test_noteEmbeddedNul =
-  assertEqual "valid UTF-8 with an embedded NUL notes a non-text control"
-    [BPSMetadataNonConformant LabelBPS MetadataIsValidUTF8ButNonText (Length 9)]
-    (bpsMetadataNotes (bpsPatchWithMetadata
-       (TextEncoding.encodeUtf8 (Text.pack "text\NULmore"))))
+  assertEqual "a clean reading with an embedded NUL notes a non-text control"
+    [BPSMetadataNonConformant LabelBPS MetadataDecodedButNonText (Length 9)]
+    (notesOf (TextEncoding.encodeUtf8 (Text.pack "text\NULmore")))
 
-test_noteInvalidUTF8 :: IO ()
-test_noteInvalidUTF8 =
-  assertEqual "non-UTF-8 bytes note the not-UTF-8 divergence"
-    [BPSMetadataNonConformant LabelBPS MetadataIsNotUTF8 (Length 3)]
-    (bpsMetadataNotes (bpsPatchWithMetadata (ByteString.pack [0x80, 0xFE, 0xFF])))
+test_noteNonUtf8Count :: IO ()
+test_noteNonUtf8Count =
+  assertEqual "non-UTF-8 bytes note the substitution count"
+    [BPSMetadataNonConformant LabelBPS (MetadataBytesSubstituted (SubstitutionCount 3)) (Length 3)]
+    (notesOf (ByteString.pack [0x80, 0xFE, 0xFF]))

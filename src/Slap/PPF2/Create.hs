@@ -34,9 +34,9 @@ import Slap.PPF2.Types (PPF2ValidationBlock(..),
                         PPF2SourceSize, unPPF2SourceSize,
                         ppf2DescriptionLength)
 import Slap.Binary (replicateLength)
-import Slap.Measure (Offset(..), byteLength, minLength, subtractLength)
+import Slap.Measure (Offset(..), Length(..), byteLength, minLength, subtractLength)
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
-import Slap.Status (SlapAdvisory, CreateResult(..))
+import Slap.Status (SlapAdvisory(..), CreateResult(..))
 import Slap.Text (EncodedText, EncodingName(..),
                   encodedTextContent, encodeTextBounded, encodeTextLenient,
                   encodeLossAdvisories)
@@ -102,12 +102,14 @@ encodeFileIdDiz fid =
   let description = unPPF2FileId fid
       (content, notices) =
         encodeTextLenient EncodingUtf8 (encodedTextContent description)
+      nonAsciiCount = ByteString.length (ByteString.filter (>= 0x80) content)
       advisories = encodeLossAdvisories LabelPPF2 FieldFileIdDiz notices
+                ++ [FileIdDizNonASCII LabelPPF2 (Length (fromIntegral nonAsciiCount)) | nonAsciiCount > 0]
       trailer = LazyByteString.toStrict $ toLazyByteString $
                   byteString "@BEGIN_FILE_ID.DIZ"
                   <> byteString content
                   <> byteString "@END_FILE_ID.DIZ"
-                  -- 'narrowPPF2FileId' validated the encoded byte count fits
-                  -- 'Word32', so this 'fromIntegral' cannot truncate.
+                  -- 'narrowPPF2FileId' capped the content at 3072 bytes, well under 'Word32',
+                  -- so this 'fromIntegral' cannot truncate.
                   <> word32LE (fromIntegral (ByteString.length content))
   in (trailer, advisories)
