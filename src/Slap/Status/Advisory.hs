@@ -66,6 +66,9 @@ data SlapAdvisory
   | SourceMatchesAfterHeaderAdjustment HeaderAdjustment (NonEmpty ConsoleHeader) (NonEmpty DeclaredCheckKind)
   -- | The header rescue's empty hands, so the fiddling can stop: no arrangement reconciles the input with the patch.
   | NoHeaderAdjustmentMatches
+  -- | Warning: the input differed as handed and exactly one arrangement reconciles it,
+  -- so the run proceeded with the input reframed that way.
+  | InputReframedToMatchPatch HeaderAdjustment (NonEmpty ConsoleHeader) (NonEmpty DeclaredCheckKind)
 
   -- | A PPF patch's apply produced an output longer than the source; slap applies it and remarks.
   -- The 'FileSize' is the source's length; the 'Length' is the overshoot.
@@ -348,6 +351,8 @@ slapAdvisorySeverity advisory = case advisory of
   ApplyOOBBlocksSkipped{}              -> SeverityWarning
   DeclaredCheckMismatched{}            -> SeverityWarning
   VerificationOptedOutByCreator{}      -> SeverityWarning
+  -- Slap acted unasked, so the narration earns warning prominence even though the run succeeds.
+  InputReframedToMatchPatch{}          -> SeverityWarning
 
   -- Notes: informational — reported so the reader knows, not because anything needs fixing.
   EmptyPatch{}                         -> SeverityNote

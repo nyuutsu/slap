@@ -1,14 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | The pre-apply pipeline: 'reframeInput' carries out the header directive with its narrating note,
--- and the header rescue judges every arrangement through the weighing apply enforces —
--- width-sharing consoles surface together, and a checkless patch confirms nothing.
+-- | The pre-run pipeline: 'reframeInput' carries out the header directive with its narrating note,
+-- the header rescue judges every arrangement through the weighing apply enforces —
+-- width-sharing consoles surface together, and a checkless patch confirms nothing —
+-- the checks answer without acting, and 'prepareApplySource' carries out the one proven fix.
 module Props.Preflight (preflightTests) where
 
-import Slap.Preflight (HeaderRescueCandidate(..), headerRescueCandidates, reframeInput)
+import Slap.Preflight (HeaderRescueCandidate(..), headerRescueCandidates, reframeInput,
+                       SourceReport(..), checkApply, checkUndo,
+                       PreparedApplySource(..), prepareApplySource)
 import Slap.Convert (CreateFormat(..), DifferentialCreate(..), DirectCreate(..),
                      noMetadataRequested, noConstraintsRequested, noDialectsRequested, createPatch)
-import Slap.Verify (DeclaredCheckKind(..))
+import Slap.Verify (DeclaredCheckKind(..), VerificationPolicy(..), VerificationVerdict(..), verdictOnWeighing)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Header (ConsoleHeader(..), HeaderAdjustment(..), InputHeaderDirective(..))
 import Slap.SomePatch (SomePatch, parseSome)
@@ -105,4 +108,77 @@ preflightTests = testGroup "Preflight"
       case outcomeValue (reframeInput (RemoveHeader SNESHeader) "tiny") of
         Left (HeaderRemovalExceedsInput _ _) -> pure ()
         other -> assertFailure ("expected the removal refusal, got " ++ show other)
+
+  , testCase "checkApply answers a match with the kinds it rests on" $ do
+      parsed <- parsedPatchFrom (CreateDifferential CreateUPS) bareSource bareTarget
+      case checkApply parsed TakeInputAsIs bareSource of
+        Right (SourceReport (VerdictMatches heldKinds) []) ->
+          NonEmpty.toList heldKinds @?= [DeclaredFileSize, DeclaredCRC32]
+        other -> assertFailure ("expected a bare match, got " ++ show other)
+
+  , testCase "checkApply reports the differ and the find together" $ do
+      parsed <- parsedPatchFrom (CreateDifferential CreateUPS) bareSource bareTarget
+      case checkApply parsed TakeInputAsIs (ByteString.replicate 512 0x00 <> bareSource) of
+        Right (SourceReport (VerdictDiffers _) [HeaderRescueCandidate HeaderComesOff _ _]) -> pure ()
+        other -> assertFailure ("expected a differ with one comes-off find, got " ++ show other)
+
+  , testCase "checkApply under a typed directive answers for the reframed form, and never searches" $ do
+      parsed <- parsedPatchFrom (CreateDifferential CreateUPS) bareSource bareTarget
+      case checkApply parsed (RemoveHeader SNESHeader) (ByteString.replicate 512 0x00 <> bareSource) of
+        Right (SourceReport (VerdictMatches _) []) -> pure ()
+        other -> assertFailure ("expected a match under the directive, got " ++ show other)
+      case checkApply parsed (RemoveHeader SNESHeader) (ByteString.replicate 2048 0xEE) of
+        Right (SourceReport (VerdictDiffers _) rescue) -> rescue @?= []
+        other -> assertFailure ("expected an unsearched differ, got " ++ show other)
+
+  , testCase "prepareApplySource carries out the only find and narrates it" $ do
+      parsed <- parsedPatchFrom (CreateDifferential CreateUPS) bareSource bareTarget
+      case prepareApplySource EnforceVerification parsed TakeInputAsIs (ByteString.replicate 512 0x00 <> bareSource) of
+        Left preparationError -> assertFailureT (renderSlapError preparationError)
+        Right prepared -> do
+          preparedFramedInput prepared @?= bareSource
+          case verdictOnWeighing (preparedWeighing prepared) of
+            VerdictMatches _ -> pure ()
+            other -> assertFailure ("the reframed form should match, got " ++ show other)
+          case preparedAdvisories prepared of
+            [InputReframedToMatchPatch HeaderComesOff consoles heldKinds] -> do
+              NonEmpty.toList consoles @?= sharedWidth512
+              NonEmpty.toList heldKinds @?= [DeclaredFileSize, DeclaredCRC32]
+            other -> assertFailure ("expected the fix's own narration, got " ++ show other)
+          case sourceVerdict (preparedReport prepared) of
+            VerdictDiffers _ -> pure ()
+            other -> assertFailure ("the report should keep speaking about the handed bytes, got " ++ show other)
+
+  , testCase "prepareApplySource under --no-verify leaves the input alone" $ do
+      parsed <- parsedPatchFrom (CreateDifferential CreateUPS) bareSource bareTarget
+      let headeredCopy = ByteString.replicate 512 0x00 <> bareSource
+      case prepareApplySource SkipVerification parsed TakeInputAsIs headeredCopy of
+        Left preparationError -> assertFailureT (renderSlapError preparationError)
+        Right prepared -> do
+          preparedFramedInput prepared @?= headeredCopy
+          preparedAdvisories prepared @?= []
+
+  , testCase "prepareApplySource with empty hands changes nothing" $ do
+      parsed <- parsedPatchFrom (CreateDifferential CreateUPS) bareSource bareTarget
+      let unrelated = ByteString.replicate 2048 0xEE
+      case prepareApplySource EnforceVerification parsed TakeInputAsIs unrelated of
+        Left preparationError -> assertFailureT (renderSlapError preparationError)
+        Right prepared -> do
+          preparedFramedInput prepared @?= unrelated
+          sourceRescue (preparedReport prepared) @?= []
+
+  , testCase "prepareApplySource under a typed directive keeps the plain note" $ do
+      parsed <- parsedPatchFrom (CreateDifferential CreateUPS) bareSource bareTarget
+      case prepareApplySource EnforceVerification parsed (RemoveHeader SNESHeader) (ByteString.replicate 512 0x00 <> bareSource) of
+        Left preparationError -> assertFailureT (renderSlapError preparationError)
+        Right prepared -> preparedAdvisories prepared @?= [InputHeaderRemoved SNESHeader]
+
+  , testCase "checkUndo weighs the handed file crosswise" $ do
+      parsed <- parsedPatchFrom (CreateDifferential CreateUPS) bareSource bareTarget
+      case checkUndo parsed bareTarget of
+        VerdictMatches _ -> pure ()
+        other -> assertFailure ("the true target should match, got " ++ show other)
+      case checkUndo parsed bareSource of
+        VerdictDiffers _ -> pure ()
+        other -> assertFailure ("the source handed to undo should differ, got " ++ show other)
   ]

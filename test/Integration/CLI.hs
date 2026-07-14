@@ -167,17 +167,25 @@ xdelta1SourceLengthTests base xdelta1 =
           "xdelta1-length/--no-verify downgrades the gate" "applied"
   ]
 
--- | The rescue hint beside a source mismatch: the take-it-off find, and the kinder empty-handed line.
+-- | The header fix beside a source mismatch: one proven arrangement is carried out and narrated,
+-- empty hands still refuse with the kinder line, and neither a typed directive nor @--no-verify@ is overridden.
 headerRescueTests :: FilePath -> FilePath -> [TestTree]
 headerRescueTests base bps =
-  [ testCase "rescue/a headered input earns the take-it-off hint" $
+  [ testCase "rescue/a headered input is applied with the header set aside" $
       withTempFile "slap-headered" $ \headered ->
-      withTempFile "slap-out" $ \out -> do
+      withTempFile "slap-fixed"    $ \fixedOut ->
+      withTempFile "slap-direct"   $ \directOut -> do
         baseBytes <- ByteString.readFile base
         ByteString.writeFile headered (ByteString.replicate 512 0x00 <> baseBytes)
-        removeIfExists out
-        expectFail ["apply", bps, headered, "-o", out]
-          "rescue/headered input hint" "retry with --remove-header"
+        run <- runExternal SlapBinary ["apply", bps, headered, "-o", fixedOut, "--force"] Nothing ""
+        let combined = externalRunStdout run ++ externalRunStderr run
+        case externalRunExitCode run of
+          ExitSuccess   -> assertBool "the fix should narrate itself" (ciContains "set aside" combined)
+          ExitFailure _ -> assertFailure ("the fix should proceed: " ++ combined)
+        _ <- runExternal SlapBinary ["apply", bps, base, "-o", directOut, "--force"] Nothing ""
+        fixedSha  <- sha1Hex <$> ByteString.readFile fixedOut
+        directSha <- sha1Hex <$> ByteString.readFile directOut
+        assertEqual "the fixed apply should equal applying to the bare rom" directSha fixedSha
 
   , testCase "rescue/an unrelated input is told the kinder truth" $
       withTempFile "slap-unrelated" $ \unrelated ->
@@ -187,17 +195,18 @@ headerRescueTests base bps =
         expectFail ["apply", bps, unrelated, "-o", out]
           "rescue/unrelated input" "most likely a different rom"
 
-  , testCase "rescue/stays quiet when a header directive is already in play" $
+  , testCase "rescue/a typed directive is never second-guessed" $
       withTempFile "slap-headered" $ \headered ->
       withTempFile "slap-out" $ \out -> do
         baseBytes <- ByteString.readFile base
         ByteString.writeFile headered (ByteString.replicate 512 0x00 <> baseBytes)
         removeIfExists out
-        run <- runExternal SlapBinary ["apply", bps, headered, "-o", out, "--remove-header", "nes"] Nothing ""
-        assertBool "no rescue hint when a directive is given"
-          (not (ciContains "retry with" (externalRunStdout run ++ externalRunStderr run)))
+        run <- runExternal SlapBinary ["apply", bps, headered, "-o", out, "--remove-header", "snes"] Nothing ""
+        let combined = externalRunStdout run ++ externalRunStderr run
+        assertBool "the plain note should narrate the directive" (ciContains "removed the input's" combined)
+        assertBool "the fix should not speak under a directive" (not (ciContains "set aside" combined))
 
-  , testCase "rescue/stays quiet under --no-verify" $
+  , testCase "rescue/--no-verify applies to the bytes as handed" $
       withTempFile "slap-headered" $ \headered ->
       withTempFile "slap-out" $ \out -> do
         baseBytes <- ByteString.readFile base
@@ -205,8 +214,9 @@ headerRescueTests base bps =
         removeIfExists out
         run <- runExternal SlapBinary ["apply", bps, headered, "-o", out, "--no-verify"] Nothing ""
         let combined = externalRunStdout run ++ externalRunStderr run
-        assertBool "no rescue hint on a run that proceeds" (not (ciContains "retry with" combined))
-        assertBool "no empty-handed line on a run that proceeds" (not (ciContains "different rom" combined))
+        case externalRunExitCode run of
+          ExitSuccess   -> assertBool "no fix on a run the user unfastened" (not (ciContains "set aside" combined))
+          ExitFailure _ -> assertFailure ("--no-verify should proceed: " ++ combined)
   ]
 
 -- | The happy-path verification report. The undo case is the load-bearing one:

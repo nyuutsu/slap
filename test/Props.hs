@@ -39,10 +39,11 @@
 --                                  verdict, enforcement, and
 --                                  the report's sentences,
 --                                  projected from one pass.
---   * 'Props.Preflight'          — the pre-apply pipeline:
+--   * 'Props.Preflight'          — the pre-run pipeline:
 --                                  reframe narration and refusal,
 --                                  rescue finds, alias grouping,
---                                  and the vacuous-pass guards.
+--                                  the vacuous-pass guards,
+--                                  the checks, and the one unasked fix.
 --   * 'Props.Classify'           — the drop sorter and the identity projection.
 --   * 'Props.Surface'            — the metadata-field surface: flag tokens and control kinds.
 --

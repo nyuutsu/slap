@@ -65,6 +65,8 @@ Application can be modified in these ways:
 
 `--verbose` or `-v`: Have slap narrate each record it modifies as it applies the patch.
 
+Some patches exist the presence or absence of a rom header. In cases where the patch can check whether it is being applied to the right rom, this allows us to figure out for you whether to add or remove a header before patching. In those cases, it is done automatically. The following two flags are manual controls, for when automatic detection isn't available[^AUTOMATIC].
+
 `--add-header `: Before applying, put a temporary header's worth of bytes in front of the in-memory copy of the rom. The flavors of header it knows about: `nes`, `fds`, `gb`, `snes`, `pce`, `lynx`, `a78`, and `nes-ffe`. The last one is for Front Fareast's uniquely-sized header.
 
 `--remove-header`: Before applying, remove a header's worth of bytes from the front of the in-memory copy of the rom. The flavors of header it knows about: `nes`, `fds`, `gb`, `snes`, `pce`, `lynx`, `a78`, and `nes-ffe`. The last one is for Front Fareast's uniquely-sized header.
@@ -408,3 +410,5 @@ The per-test durations are logged to `test-results/`.
 [^XML]: This is per what the format *prefers* but does not require.
 
 [^DIZ]: The original tool allows inserting *whatever*. At the moment we also allow inserting *whatever*. I am ambivalent about this decision and it will probably change.
+
+[^AUTOMATIC]: Some formats don't store this information.

@@ -65,6 +65,15 @@ renderSlapAdvisory (SourceMatchesAfterHeaderAdjustment adjustment consoles heldK
 renderSlapAdvisory NoHeaderAdjustmentMatches =
   "no header arrangement reconciles the input with this patch; it is most likely a different ROM"
 
+renderSlapAdvisory (InputReframedToMatchPatch adjustment consoles heldKinds) =
+  "the input matches the patch's " <> proseList (map declaredCheckKindNoun (NonEmpty.toList heldKinds))
+  <> arrangementPhrase <> renderAsText (unLength (consoleHeaderLength (NonEmpty.head consoles))) <> "-byte "
+  <> slashedConsoleNames consoles <> " header " <> adjustmentPhrase <> ", and was applied that way; " <> outputRemark
+  where
+    (arrangementPhrase, adjustmentPhrase, outputRemark) = case adjustment of
+      HeaderComesOff -> (" with its ",     "set aside", "the output carries no header")
+      HeaderGoesOn   -> (" with a blank ", "put on",    "the output begins with that header")
+
 renderSlapAdvisory (PPFApplyGrewPastSource label (FileSize sourceSize) (Length overflow)) =
   formatLabelName label
   <> ": this patch makes the output longer than the input (input "

@@ -47,7 +47,8 @@ import Slap.Status (SlapError(..), SourceRequiredCause(..), ExtractionSubject(..
 import Slap.Normalize (NormalizedSource(..), normalizeApplySource, restoreStrippedContent)
 import Slap.Display.Glyph (spacePaddedRightwardsArrow)
 import Slap.Header (InputHeaderDirective(..))
-import Slap.Preflight (HeaderRescueCandidate(..), headerRescueCandidates, reframeInput)
+import Slap.Preflight (HeaderRescueCandidate(..), SourceReport(..),
+                       PreparedApplySource(..), prepareApplySource, weighUndoInput)
 
 import CLI
   ( Command(..)
@@ -308,36 +309,32 @@ doApply parsedCommand = do
 
       applyAndWriteTo outputPath = do
         handedBytes <- readMaybeUnwrap (applyFileReading parsedCommand) (applySource parsedCommand)
-        let reframeOutcome = reframeInput (applyHeaderDirective parsedCommand) handedBytes
-        emitAdvisories (outcomeAdvisories reframeOutcome)
-        reframedBytes <- orBail (outcomeValue reframeOutcome)
-        -- ROM-type normalization comes before the source hashes are taken, so they cover the bytes the patch's checksums were computed over;
-        -- what it sets aside returns to the output only after target verification, whose stored hash also describes the clean form.
-        let normalized = normalizeApplySource (patchSourceNormalization parsed) (InputFileContents reframedBytes)
-        emitAdvisories (normalizedSourceAdvisories normalized)
-        let source = normalizedSourceBytes normalized
-            sourceWeighing = weighSource verification source
+        prepared <- orBail (prepareApplySource verificationPolicy parsed (applyHeaderDirective parsedCommand) handedBytes)
+        emitAdvisories (preparedAdvisories prepared)
+        let source = normalizedSourceBytes (preparedSource prepared)
+            sourceWeighing = preparedWeighing prepared
             sourceOutcome = judgeWeighing verificationPolicy sourceWeighing
         emitAdvisories (outcomeAdvisories sourceOutcome)
         when (applyHeaderDirective parsedCommand == TakeInputAsIs && isLeft (outcomeValue sourceOutcome)) $
-          emitAdvisories (headerRescueAdvisories (headerRescueCandidates parsed handedBytes))
+          emitAdvisories (headerRescueAdvisories (sourceRescue (preparedReport prepared)))
         orBail (outcomeValue sourceOutcome)
         outcome <- orBail =<< runApply (patchApply parsed) source
         emitAdvisories (outcomeAdvisories outcome)
         let target = outcomeValue outcome
             targetWeighing = weighTarget verification target
         settleVerification (judgeWeighing verificationPolicy targetWeighing)
+        -- What normalization set aside returns to the output only after target verification, whose stored hash also describes the clean form.
         let (restoredTarget, restoreAdvisories) =
-              restoreStrippedContent (patchFormat parsed) (normalizedSourceRestore normalized) target
+              restoreStrippedContent (patchFormat parsed) (normalizedSourceRestore (preparedSource prepared)) target
         emitAdvisories restoreAdvisories
         writeFileAtomicallyOver outputPath (unOutputFileContents restoredTarget)
         TextIO.putStrLn (renderActionLine "applied" (patchInfo parsed) outputPath)
-        -- The report's nouns are the files on disk. When normalization or restore reshaped the bytes,
-        -- the weighed form is a different artifact — the advisories tell that story, and the report stays out of it.
-        let weighedFormsAreTheFilesOnDisk =
-              unInputFileContents source == reframedBytes
+        -- When normalization or restore reshaped the bytes, the weighed form is a different artifact —
+        -- the advisories tell that story, and the report stays out of it.
+        let weighedFormsAreTheFramedInputAndWrittenOutput =
+              unInputFileContents source == preparedFramedInput prepared
               && unOutputFileContents restoredTarget == unOutputFileContents target
-        when weighedFormsAreTheFilesOnDisk $
+        when weighedFormsAreTheFramedInputAndWrittenOutput $
           mapM_ TextIO.putStrLn (renderVerificationReport
             (InputSideVerdict (verdictOnWeighing sourceWeighing))
             (OutputSideVerdict (verdictOnWeighing targetWeighing)))
@@ -369,7 +366,7 @@ doUndo parsedCommand = do
 
       undoAndWriteTo undo outputPath = do
         modified <- readMaybeUnwrap (undoFileReading parsedCommand) (undoSource parsedCommand)
-        let patchedWeighing = flipSpokenSides (weighTarget verification (OutputFileContents modified))
+        let patchedWeighing = weighUndoInput parsed modified
         settleVerification (judgeWeighing verificationPolicy patchedWeighing)
         outcome <- orBail (runUndo undo (OutputFileContents modified))
         emitAdvisories (outcomeAdvisories outcome)
