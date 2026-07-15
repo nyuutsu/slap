@@ -140,6 +140,7 @@ data ConvertOutput
 data ConvertWithSource = ConvertWithSource
   { convertWithSourcePath   :: FilePath
   , convertWithVerification :: VerificationPolicy
+  , convertWithDirective    :: InputHeaderDirective
   }
   deriving (Show, Eq)
 
@@ -599,9 +600,9 @@ dialectsParser = do
     { requestedPPF1Origin = ppf1Origin
     }
 
--- | Parser for @--with INPUT@ plus its sub-flag @--no-verify@.
+-- | Parser for @--with INPUT@ plus its sub-flags @--no-verify@, @--add-header@, and @--remove-header@.
 -- The @--with@ option is required: if it is absent, the whole parser fails and the enclosing 'optional' falls back to 'Nothing'.
--- That leaves any stray @--no-verify@ for the top-level parser to reject — so @--no-verify@ is accepted only alongside @--with@.
+-- That leaves any stray sub-flag for the top-level parser to reject — so each is accepted only alongside @--with@.
 convertWithSourceParser :: Parser ConvertWithSource
 convertWithSourceParser = ConvertWithSource
   <$> pathOption (long "with" <> metavar "INPUT"
@@ -609,6 +610,7 @@ convertWithSourceParser = ConvertWithSource
   <*> flag EnforceVerification SkipVerification
         (long "no-verify"
           <> help "Skip input hash verification (requires --with INPUT; mismatches become warnings)")
+  <*> headerDirectiveParser
 
 -- | The output-format flag for @slap create@.
 -- Defaults to BPS, so the bare @slap create base mod out@ works without spelling out a format.

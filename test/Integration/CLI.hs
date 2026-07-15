@@ -80,6 +80,7 @@ cliTests tier = do
       , undoCliTests dm4yBase dm4yUps
       , xdelta1SourceLengthTests dm4yBase dm4yXdelta1
       , headerRescueTests dm4yBase dm4yBps
+      , withConvertIsApplyTests dm4yBase dm4yBps
       , verificationReportTests dm4yBase dm4yBps dm4yIps
       , headerFlagTests dm4yBase dm4yIps dm4yBps
       , onlyAtFull tier (forceTests dm4yBase dm4yUps)
@@ -1139,6 +1140,62 @@ metadataTextTests base bps =
   , testCase "metadata-text/convert does not offer the flag (it is create-only by design)" $
       expectFail ["convert", "no-such-patch.bps", "--to", "bps", "--metadata-text", "x", "-o", "out.bps"]
         "metadata-text/convert-absent" "invalid"
+  ]
+  where
+    withPatchedTarget :: (FilePath -> IO a) -> IO a
+    withPatchedTarget action =
+      withTempFile "slap-target" $ \target -> do
+        _ <- runExternal SlapBinary ["apply", bps, base, "-o", target, "--force"] Nothing ""
+        action target
+
+-- | Convert's @--with@ lane is apply — the same preparation and run — with the write swapped for a re-diff.
+-- These pin the inheritance: the rescue, the typed directive, and the metadata a source patch carries through the lane.
+withConvertIsApplyTests :: FilePath -> FilePath -> [TestTree]
+withConvertIsApplyTests base bps =
+  [ testCase "with-convert/the source patch's metadata survives apply-and-recreate" $
+      withPatchedTarget $ \target ->
+      withTempFile "slap-ppf3"   $ \ppf3Patch ->
+      withTempFile "slap-ppf2"   $ \ppf2Patch ->
+      withTempFile "slap-dizout" $ \dizOut -> do
+        expectOk ["create", "--format", "ppf3", base, target, ppf3Patch,
+                  "--description", "carried through the with lane", "--diz-text", "diz rides along", "--force"]
+          "with-convert/create" "wrote"
+        expectOk ["convert", ppf3Patch, "--to", "ppf2", "--with", base, "-o", ppf2Patch, "--force"]
+          "with-convert/convert" "converted to"
+        run <- runExternal SlapBinary ["info", ppf2Patch, "--extract-diz", dizOut, "--force"] Nothing ""
+        let combined = externalRunStdout run ++ externalRunStderr run
+        assertBool "the description should survive the with lane" (ciContains "carried through the with lane" combined)
+        extractedDiz <- ByteString.readFile dizOut
+        assertEqual "the FILE_ID.DIZ should survive the with lane, byte for byte"
+          (ByteString8.pack "diz rides along") extractedDiz
+
+  , testCase "with-convert/a headered input is converted with the header set aside" $
+      withTempFile "slap-headered" $ \headered ->
+      withTempFile "slap-fixed"    $ \fixedPatch ->
+      withTempFile "slap-direct"   $ \directPatch -> do
+        baseBytes <- ByteString.readFile base
+        ByteString.writeFile headered (ByteString.replicate 512 0x00 <> baseBytes)
+        run <- runExternal SlapBinary ["convert", bps, "--to", "ups", "--with", headered, "-o", fixedPatch, "--force"] Nothing ""
+        let combined = externalRunStdout run ++ externalRunStderr run
+        case externalRunExitCode run of
+          ExitSuccess   -> assertBool "the fix should narrate itself" (ciContains "set aside" combined)
+          ExitFailure _ -> assertFailure ("the fix should proceed: " ++ combined)
+        _ <- runExternal SlapBinary ["convert", bps, "--to", "ups", "--with", base, "-o", directPatch, "--force"] Nothing ""
+        fixedSha  <- sha1Hex <$> ByteString.readFile fixedPatch
+        directSha <- sha1Hex <$> ByteString.readFile directPatch
+        assertEqual "the fixed convert should equal converting with the bare rom" directSha fixedSha
+
+  , testCase "with-convert/a typed directive is honored, never second-guessed" $
+      withTempFile "slap-headered" $ \headered ->
+      withTempFile "slap-out" $ \out -> do
+        baseBytes <- ByteString.readFile base
+        ByteString.writeFile headered (ByteString.replicate 512 0x00 <> baseBytes)
+        removeIfExists out
+        run <- runExternal SlapBinary ["convert", bps, "--to", "ups", "--with", headered,
+                                       "--remove-header", "snes", "-o", out, "--force"] Nothing ""
+        let combined = externalRunStdout run ++ externalRunStderr run
+        assertBool "the plain note should narrate the directive" (ciContains "removed the input's" combined)
+        assertBool "the fix should not speak under a directive" (not (ciContains "set aside" combined))
   ]
   where
     withPatchedTarget :: (FilePath -> IO a) -> IO a

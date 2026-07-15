@@ -6,13 +6,12 @@ import Slap.SomePatch
   ( SomePatch(..)
   , PatchKind(..)
   , patchContentsOf
-  , ApplyStrategy(..)
   , UndoStrategy(..)
   , UndoAvailability(..)
   , parseSome
   )
-import Slap.Verify (verifySource, weighSource, weighTarget,
-                    flipSpokenSides, judgeWeighing, verdictOnWeighing)
+import Slap.Apply (PatchedRom(..), VerdictStanding(..), runPreparedApply)
+import Slap.Verify (weighSource, flipSpokenSides, judgeWeighing, verdictOnWeighing)
 import Slap.Display.Common (pathText)
 import Slap.Display.Info (renderPatchInfo, renderActionLine,
                           InputSideVerdict(..), OutputSideVerdict(..), renderVerificationReport)
@@ -45,11 +44,9 @@ import Slap.Archive.Types (detectArchive, EntryName(unEntryName))
 import Slap.Status (SlapError(..), SourceRequiredCause(..), ExtractionSubject(..),
                    CreateResult(..), Outcome(..),
                    emitAdvisories, bailError, orBail)
-import Slap.Normalize (NormalizedSource(..), normalizeApplySource, restoreStrippedContent)
+import Slap.Normalize (NormalizedSource(..), normalizeApplySource)
 import Slap.Display.Glyph (spacePaddedRightwardsArrow)
-import Slap.Header (InputHeaderDirective(..))
-import Slap.Preflight (SourceReport(..), PreparedApplySource(..),
-                       headerRescueAdvisories, prepareApplySource, weighUndoInput)
+import Slap.Preflight (PreparedApplySource(..), prepareApplySource, weighUndoInput)
 
 import CLI
   ( Command(..)
@@ -81,7 +78,6 @@ import CLI
 import Archive (unwrapArchive)
 
 import Data.ByteString (ByteString)
-import Data.Either (isLeft)
 import qualified Data.ByteString as ByteString
 import Control.Exception (try, bracketOnError)
 import Control.Monad (when)
@@ -305,40 +301,20 @@ doApply parsedCommand = do
   emitAdvisories (patchAdvisories parsed)
   emitVerboseAnalysis (applyVerbosity parsedCommand) parsed
 
-  let verification = patchVerification parsed
-      verificationPolicy = applyVerificationPolicy parsedCommand
+  let verificationPolicy = applyVerificationPolicy parsedCommand
 
       applyAndWriteTo outputPath = do
         handedBytes <- readMaybeUnwrap (applyFileReading parsedCommand) (applySource parsedCommand)
         prepared <- orBail (prepareApplySource verificationPolicy parsed (applyHeaderDirective parsedCommand) handedBytes)
         emitAdvisories (preparedAdvisories prepared)
-        let source = normalizedSourceBytes (preparedSource prepared)
-            sourceWeighing = preparedWeighing prepared
-            sourceOutcome = judgeWeighing verificationPolicy sourceWeighing
-        emitAdvisories (outcomeAdvisories sourceOutcome)
-        when (applyHeaderDirective parsedCommand == TakeInputAsIs && isLeft (outcomeValue sourceOutcome)) $
-          emitAdvisories (headerRescueAdvisories (sourceRescue (preparedReport prepared)))
-        orBail (outcomeValue sourceOutcome)
-        outcome <- orBail =<< runApply (patchApply parsed) source
-        emitAdvisories (outcomeAdvisories outcome)
-        let target = outcomeValue outcome
-            targetWeighing = weighTarget verification target
-        settleVerification (judgeWeighing verificationPolicy targetWeighing)
-        -- What normalization set aside returns to the output only after target verification, whose stored hash also describes the clean form.
-        let (restoredTarget, restoreAdvisories) =
-              restoreStrippedContent (patchFormat parsed) (normalizedSourceRestore (preparedSource prepared)) target
-        emitAdvisories restoreAdvisories
-        writeFileAtomicallyOver outputPath (unOutputFileContents restoredTarget)
+        runOutcome <- runPreparedApply verificationPolicy (applyHeaderDirective parsedCommand) parsed prepared
+        emitAdvisories (outcomeAdvisories runOutcome)
+        patched <- orBail (outcomeValue runOutcome)
+        writeFileAtomicallyOver outputPath (unOutputFileContents (patchedRomBytes patched))
         TextIO.putStrLn (renderActionLine "applied" (patchInfo parsed) outputPath)
-        -- When normalization or restore reshaped the bytes, the weighed form is a different artifact —
-        -- the advisories tell that story, and the report stays out of it.
-        let weighedFormsAreTheFramedInputAndWrittenOutput =
-              unInputFileContents source == preparedFramedInput prepared
-              && unOutputFileContents restoredTarget == unOutputFileContents target
-        when weighedFormsAreTheFramedInputAndWrittenOutput $
-          mapM_ TextIO.putStrLn (renderVerificationReport
-            (InputSideVerdict (verdictOnWeighing sourceWeighing))
-            (OutputSideVerdict (verdictOnWeighing targetWeighing)))
+        when (patchedRomVerdictStanding patched == VerdictsDescribeTheFiles) $
+          mapM_ TextIO.putStrLn
+            (renderVerificationReport (patchedRomInputVerdict patched) (patchedRomOutputVerdict patched))
 
   case applyOutput parsedCommand of
     ApplyToExplicitFile outputPath overwritePolicy -> do
@@ -489,22 +465,23 @@ doConvert parsedCommand = do
   case chooseConvertDispatch parsedCommand parsed of
     ApplyAndRecreate withSource -> do
       handedSourceBytes <- readMaybeUnwrap (convertFileReading parsedCommand) (convertWithSourcePath withSource)
-      -- The source patch's records run against its normalized input, and the restored output is the file an apply would really produce,
-      -- so the re-create diffs the handed bytes against that restored output — reproducing the end-to-end behavior.
-      let normalized = normalizeApplySource (patchSourceNormalization parsed) (InputFileContents handedSourceBytes)
-      emitAdvisories (normalizedSourceAdvisories normalized)
-      let source = normalizedSourceBytes normalized
-      settleVerification (verifySource (convertWithVerification withSource) (patchVerification parsed) source)
-      target <- applyForConvert parsed source
-      let (restoredTarget, restoreAdvisories) =
-            restoreStrippedContent (patchFormat parsed) (normalizedSourceRestore normalized) target
-      emitAdvisories restoreAdvisories
-      createResult <- orBail (createPatch (convertTo parsedCommand) resolvedXDelta1Names (InputFileContents handedSourceBytes) restoredTarget mergedMeta (patchContentsOf parsed) (convertConstraints parsedCommand) noDialectsRequested)
+      -- The @--with@ lane is apply — the same preparation and run 'doApply' uses, so every apply behavior is convert's too —
+      -- with the write swapped for a re-diff of the framed input against the restored output.
+      prepared <- orBail (prepareApplySource (convertWithVerification withSource) parsed (convertWithDirective withSource) handedSourceBytes)
+      emitAdvisories (preparedAdvisories prepared)
+      runOutcome <- runPreparedApply (convertWithVerification withSource) (convertWithDirective withSource) parsed prepared
+      emitAdvisories (outcomeAdvisories runOutcome)
+      patched <- orBail (outcomeValue runOutcome)
+      let framedInput = InputFileContents (preparedFramedInput prepared)
+      createResult <- orBail (createPatch (convertTo parsedCommand) resolvedXDelta1Names framedInput (patchedRomBytes patched) mergedMeta (patchContentsOf parsed) (convertConstraints parsedCommand) noDialectsRequested)
       emitAdvisories (patchSourceAdvisories parsed
-                        ++ createDefaultAdvisories (convertTo parsedCommand) mergedMeta (InputFileContents handedSourceBytes)
+                        ++ createDefaultAdvisories (convertTo parsedCommand) mergedMeta framedInput
                         ++ resultAdvisories createResult)
       writeOutputFile outputFile (unPatchFileContents (resultBytes createResult))
       TextIO.putStrLn ("converted to " <> formatName (convertTo parsedCommand) <> ": " <> pathText outputFile)
+      when (patchedRomVerdictStanding patched == VerdictsDescribeTheFiles) $
+        mapM_ TextIO.putStrLn
+          (renderVerificationReport (patchedRomInputVerdict patched) (patchedRomOutputVerdict patched))
     SourceLessConvert contents -> do
       convertResult <- orBail (convertDirect contents (convertTo parsedCommand) mergedMeta (convertConstraints parsedCommand) noDialectsRequested)
       emitAdvisories (patchSourceAdvisories parsed ++ resultAdvisories convertResult)
@@ -529,12 +506,6 @@ resolveConvertXDelta1Names parsedCommand parsed mergedMeta = case convertTo pars
       (fmap unXDelta1ToName   (requestedXDelta1ToName   mergedMeta))
       (patchFormat parsed)
   _ -> Right Nothing
-
-applyForConvert :: SomePatch -> InputFileContents -> IO OutputFileContents
-applyForConvert somePatch source = do
-  outcome <- orBail =<< runApply (patchApply somePatch) source
-  emitAdvisories (outcomeAdvisories outcome)
-  pure (outcomeValue outcome)
 
 ----------------------------------------------------------------------------
 -- Helpers
