@@ -26,8 +26,6 @@ module Slap.Verify
   , weighTarget
   , flipSpokenSides
   , judgeWeighing
-  , verifySource
-  , verifyTarget
     -- * The mismatches and their enforcement lanes
   , VerificationMismatch(..)
   , MismatchClass(..)
@@ -203,14 +201,6 @@ mismatchClass mismatch = case mismatch of
   VerificationPPFBlockMismatch {}    -> AdvisoryClass
   VerificationSourceBytesMismatch {} -> AdvisoryClass
 
--- | Weigh apply's input against everything the patch declared about its source, and judge it in one step.
-verifySource :: VerificationPolicy -> Verification -> InputFileContents -> Outcome (Either SlapError ())
-verifySource verificationPolicy verification = judgeWeighing verificationPolicy . weighSource verification
-
--- | Weigh apply's output against everything the patch declared about its target, and judge it in one step.
-verifyTarget :: VerificationPolicy -> Verification -> OutputFileContents -> Outcome (Either SlapError ())
-verifyTarget verificationPolicy verification = judgeWeighing verificationPolicy . weighTarget verification
-
 -- | Weigh apply's input against everything the patch declared about its source.
 -- The size check sorts ahead of the whole-file hashes: a wrong-size file mismatches both, and the size is the better first fact.
 -- Row order does double duty: it picks which fatal mismatch 'judgeWeighing' refuses with,
@@ -300,7 +290,7 @@ mismatchesInClass wantedClass weighedChecks =
 ----------------------------------------------------------------------------
 
 -- | Does this file agree with what the patch declares about it?
--- Keeps apart the two facts 'verifySource' conflates into @'Right' ()@: "every declared check held" and "there was nothing to check".
+-- Keeps apart the two facts 'judgeWeighing' conflates into @'Right' ()@: "every declared check held" and "there was nothing to check".
 data VerificationVerdict
   = VerdictMatches !(NonEmpty DeclaredCheckKind)
     -- ^ At least one check is declared, and every one of them held — the kinds say what that claim rests on.

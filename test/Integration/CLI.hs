@@ -1148,8 +1148,7 @@ metadataTextTests base bps =
         _ <- runExternal SlapBinary ["apply", bps, base, "-o", target, "--force"] Nothing ""
         action target
 
--- | Convert's @--with@ lane is apply — the same preparation and run — with the write swapped for a re-diff.
--- These pin the inheritance: the rescue, the typed directive, and the metadata a source patch carries through the lane.
+-- | Convert's @--with@ lane is apply — the same preparation and run — with the write swapped for a re-diff; these pin the inheritance.
 withConvertIsApplyTests :: FilePath -> FilePath -> [TestTree]
 withConvertIsApplyTests base bps =
   [ testCase "with-convert/the source patch's metadata survives apply-and-recreate" $

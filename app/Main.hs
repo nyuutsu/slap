@@ -465,15 +465,15 @@ doConvert parsedCommand = do
   case chooseConvertDispatch parsedCommand parsed of
     ApplyAndRecreate withSource -> do
       handedSourceBytes <- readMaybeUnwrap (convertFileReading parsedCommand) (convertWithSourcePath withSource)
-      -- The @--with@ lane is apply — the same preparation and run 'doApply' uses, so every apply behavior is convert's too —
-      -- with the write swapped for a re-diff of the framed input against the restored output.
+      -- Apply's own preparation and run, with the write swapped for a re-diff of the framed input against the restored output.
       prepared <- orBail (prepareApplySource (convertWithVerification withSource) parsed (convertWithDirective withSource) handedSourceBytes)
       emitAdvisories (preparedAdvisories prepared)
       runOutcome <- runPreparedApply (convertWithVerification withSource) (convertWithDirective withSource) parsed prepared
       emitAdvisories (outcomeAdvisories runOutcome)
       patched <- orBail (outcomeValue runOutcome)
       let framedInput = InputFileContents (preparedFramedInput prepared)
-      createResult <- orBail (createPatch (convertTo parsedCommand) resolvedXDelta1Names framedInput (patchedRomBytes patched) mergedMeta (patchContentsOf parsed) (convertConstraints parsedCommand) noDialectsRequested)
+      createResult <- orBail (createPatch (convertTo parsedCommand) resolvedXDelta1Names framedInput (patchedRomBytes patched)
+                                          mergedMeta (patchContentsOf parsed) (convertConstraints parsedCommand) noDialectsRequested)
       emitAdvisories (patchSourceAdvisories parsed
                         ++ createDefaultAdvisories (convertTo parsedCommand) mergedMeta framedInput
                         ++ resultAdvisories createResult)

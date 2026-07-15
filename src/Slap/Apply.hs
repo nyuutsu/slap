@@ -1,5 +1,5 @@
 -- | The run itself: everything between a prepared source and the patched file a frontend hands back.
--- One home, so whatever apply does — now and later — convert's @--with@ lane and every frontend inherit by construction.
+-- One home, so convert's @--with@ lane and every frontend inherit whatever apply does — now and later.
 module Slap.Apply
   ( PatchedRom(..)
   , VerdictStanding(..)
@@ -32,7 +32,7 @@ data VerdictStanding
   deriving (Eq, Show)
 
 -- | Run a prepared source through the whole of apply: judge the source, run the records, judge the target,
--- restore what normalization set aside. Narrates only what the run itself says —
+-- restore what normalization set aside. Narrates only the run's own story —
 -- the parse's and the preparation's advisories are the caller's to speak, at its own timing.
 -- The directive gates the rescue hints a refusal speaks beside itself:
 -- an empty rescue means "searched, found nothing" only when no directive was given, and the hints would lie under a typed one.

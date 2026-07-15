@@ -72,6 +72,7 @@ webTests = testGroup "Web"
       , testCase "an overlong explicit name gaps toward amendment"        test_xdelta1OverlongName
       , testCase "a sourceless convert emits the new format"              test_convertActSourceless
       , testCase "a with-source convert equals the direct create"         test_convertActWithSource
+      , testCase "the proven peel crosses convert too"                    test_convertActRescue
       , testCase "the convert act refuses exactly as its check"           test_convertActAgreement
       ]
   ]
@@ -359,6 +360,22 @@ test_convertActWithSource = do
   case converted of
     Left refusal  -> assertFailureT ("convert: " <> renderSlapError refusal)
     Right created -> createdPatchBytes created @?= directCreate
+
+test_convertActRescue :: Assertion
+test_convertActRescue = do
+  bpsPatch     <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
+  directCreate <- createdFixturePatch (CreateDifferential CreateUPS) noMetadataRequested
+  let request = (plainConvertRequest bpsPatch (CreateDifferential CreateUPS))
+        { convertSourceRom = Just (MatchedRom (InputFileContents headeredFixtureSource) TakeInputAsIs) }
+  Outcome converted advisories <- convertPatch request
+  case converted of
+    Left refusal  -> assertFailureT ("convert: " <> renderSlapError refusal)
+    Right created -> do
+      createdPatchBytes created @?= directCreate
+      assertBool "no reframe narration" (any isReframeNote advisories)
+  where
+    isReframeNote InputReframedToMatchPatch{} = True
+    isReframeNote _                           = False
 
 test_convertActAgreement :: Assertion
 test_convertActAgreement = do

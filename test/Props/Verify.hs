@@ -10,7 +10,7 @@ module Props.Verify (verifyTests) where
 import Slap.Verify (Verification(..), VerificationPolicy(..), VerificationVerdict(..),
                     VerificationMismatch(..), DeclaredCheckKind(..), noVerification, SourcePreHash(..),
                     ValidationBlock(..), FileSizeCheck(..), WindowCheck(..),
-                    verifySource, verifyTarget, verdictOnSource, verdictOnTarget)
+                    judgeWeighing, weighSource, weighTarget, verdictOnSource, verdictOnTarget)
 import Slap.Binary (md5, sha1)
 import Slap.Checksum (ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Display.Info (InputSideVerdict(..), OutputSideVerdict(..), renderVerificationReport)
@@ -57,7 +57,7 @@ verifyTests = testGroup "Verify"
   , testProperty "a file matches the checks computed from its own bytes" $
       forAll genNonEmptyByteString $ \originalBytes ->
         let verification = declaredFromOwnFacts originalBytes
-            enforced = verifySource EnforceVerification verification (InputFileContents originalBytes)
+            enforced = judgeWeighing EnforceVerification (weighSource verification (InputFileContents originalBytes))
         in verdictOnSource verification (InputFileContents originalBytes)
              === VerdictMatches (DeclaredFileSize :| [DeclaredCRC32, DeclaredMD5, DeclaredSHA1])
            .&&. property (isRight (outcomeValue enforced))
@@ -71,7 +71,7 @@ verifyTests = testGroup "Verify"
               differs = case verdictOnSource verification alteredBytes of
                 VerdictDiffers _ -> True
                 _                -> False
-              refused = case outcomeValue (verifySource EnforceVerification verification alteredBytes) of
+              refused = case outcomeValue (judgeWeighing EnforceVerification (weighSource verification alteredBytes)) of
                 Left (VerificationFatal _) -> True
                 _                          -> False
           in property differs .&&. property refused
@@ -89,7 +89,7 @@ verifyTests = testGroup "Verify"
   , testCase "an advisory-only disagreement differs without refusing" $ do
       let verification = noVerification { verifyPPFBlock = Just (ValidationBlock (Offset 0) "GOOD") }
           wrongBytes   = InputFileContents "EVIL bytes here"
-          enforced     = verifySource EnforceVerification verification wrongBytes
+          enforced     = judgeWeighing EnforceVerification (weighSource verification wrongBytes)
       case verdictOnSource verification wrongBytes of
         VerdictDiffers (VerificationPPFBlockMismatch _ :| []) -> pure ()
         other -> assertFailure ("expected exactly one validation-block mismatch, got " ++ show other)
@@ -115,13 +115,13 @@ verifyTests = testGroup "Verify"
       case verdictOnSource declaredRequired wrongLengthBytes of
         VerdictDiffers (VerificationFileSizeMismatch {} :| []) -> pure ()
         other -> assertFailure ("expected one required-size mismatch, got " ++ show other)
-      case outcomeValue (verifySource EnforceVerification declaredRequired wrongLengthBytes) of
+      case outcomeValue (judgeWeighing EnforceVerification (weighSource declaredRequired wrongLengthBytes)) of
         Left (VerificationFatal _) -> pure ()
         other -> assertFailure ("expected the required size to refuse, got " ++ show other)
       case verdictOnSource declaredAdvisory wrongLengthBytes of
         VerdictDiffers (VerificationFileSizeAdvisory {} :| []) -> pure ()
         other -> assertFailure ("expected one advisory-size mismatch, got " ++ show other)
-      let enforcedAdvisory = verifySource EnforceVerification declaredAdvisory wrongLengthBytes
+      let enforcedAdvisory = judgeWeighing EnforceVerification (weighSource declaredAdvisory wrongLengthBytes)
       outcomeValue enforcedAdvisory @?= Right ()
       case outcomeAdvisories enforcedAdvisory of
         [DeclaredCheckMismatched (VerificationFileSizeAdvisory {})] -> pure ()
@@ -139,7 +139,7 @@ verifyTests = testGroup "Verify"
 
   , testCase "skip verification never refuses, and the mismatch still rides as a warning" $ do
       let verification = noVerification { verifySourceCRC32 = Just (crc32 "one rom") }
-          skipped = verifySource SkipVerification verification (InputFileContents "two rom")
+          skipped = judgeWeighing SkipVerification (weighSource verification (InputFileContents "two rom"))
       outcomeValue skipped @?= Right ()
       case outcomeAdvisories skipped of
         [DeclaredCheckMismatched (VerificationCRCMismatch {})] -> pure ()
@@ -153,7 +153,7 @@ verifyTests = testGroup "Verify"
       case verdictOnTarget verification (OutputFileContents "not that target") of
         VerdictDiffers _ -> pure ()
         other -> assertFailure ("expected a differing target verdict, got " ++ show other)
-      case outcomeValue (verifyTarget EnforceVerification verification (OutputFileContents "not that target")) of
+      case outcomeValue (judgeWeighing EnforceVerification (weighTarget verification (OutputFileContents "not that target"))) of
         Left (VerificationFatal _) -> pure ()
         other -> assertFailure ("expected enforcement to refuse the differing target, got " ++ show other)
 

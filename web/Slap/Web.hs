@@ -38,7 +38,6 @@ module Slap.Web
   , convertPatch
   ) where
 
-import Data.ByteString (ByteString)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (catMaybes)
@@ -66,27 +65,25 @@ import Slap.FFI (crc32)
 import Slap.FieldName (FieldName(FieldXDelta1FromName, FieldXDelta1ToName))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents)
 import Slap.FormatLabel (FormatLabel)
-import Slap.Header (ConsoleHeader, InputHeaderDirective(TakeInputAsIs), consoleHeaderLength,
+import Slap.Header (ConsoleHeader, InputHeaderDirective, consoleHeaderLength,
                     consoleHeaderName, consoleHeaderToken)
+import Slap.Apply (PatchedRom(..), VerdictStanding(..), runPreparedApply)
 import Slap.Measure (FileSize, Length, byteFileSize)
 import Slap.MetadataField (MetadataField(..), requestField)
-import Slap.Normalize (NormalizedSource, normalizeApplySource, normalizedSourceAdvisories,
-                       normalizedSourceBytes, normalizedSourceRestore, restoreStrippedContent)
 import Slap.PatchField (PatchField)
 import qualified Slap.Preflight as Preflight
 import Slap.Preflight (HeaderRescueCandidate(..), PreparedApplySource(..), SourceReport(..),
-                       headerRescueAdvisories, prepareApplySource, reframeInput, weighUndoInput)
+                       prepareApplySource, weighUndoInput)
 import Slap.SomePatch (PatchIdentity(..), PatchKind(..), SomePatch, UndoAnswer(..),
-                       UndoAvailability(..), UndoStrategy, parseSome, patchAdvisories, patchApply,
+                       UndoAvailability(..), UndoStrategy, parseSome, patchAdvisories,
                        patchContentsOf, patchExtractedMeta, patchFormat, patchIdentity, patchKind,
-                       patchSourceAdvisories, patchSourceNormalization, patchUndo,
-                       patchVerification, runApply, runUndo)
+                       patchSourceAdvisories, patchUndo, patchVerification, runUndo)
 import Slap.Status (CreateResult(..), Outcome(..), SlapAdvisory, SlapError(..),
                     SourceRequiredCause(..))
 import Slap.Text (AdvertisedEncodingFamily, EncodingName(EncodingUtf8), advertisedEncodings)
 import Slap.VCDIFF.SecondaryCompression (secondaryCompressorTokens)
 import Slap.Verify (VerificationPolicy, VerificationVerdict, Weighing, flipSpokenSides,
-                    judgeWeighing, verdictOnWeighing, verifySource, weighSource, weighTarget)
+                    judgeWeighing, verdictOnWeighing, weighSource)
 import Slap.XDelta1.Types (ResolvedXDelta1FileNames, requireXDelta1FileNames,
                            resolveXDelta1FileNames, unXDelta1FromName, unXDelta1ToName)
 
@@ -218,14 +215,6 @@ checkUndo request = do
   parsed <- parseForRun (undoDialects request) (undoPatchBytes request)
   pure (Preflight.checkUndo parsed (unOutputFileContents (undoPatchedRom request)))
 
-data PatchedRom = PatchedRom
-  { patchedRomBytes           :: OutputFileContents
-  , patchedRomInputVerdict    :: InputSideVerdict
-  , patchedRomOutputVerdict   :: OutputSideVerdict
-  , patchedRomVerdictStanding :: VerdictStanding
-  }
-  deriving (Eq, Show)
-
 -- | No standing field: undo neither normalizes nor restores, so its verdicts always describe the files exchanged.
 data RevertedRom = RevertedRom
   { revertedRomBytes         :: InputFileContents
@@ -234,66 +223,19 @@ data RevertedRom = RevertedRom
   }
   deriving (Eq, Show)
 
--- | Whether the two verdicts describe the bytes handed in and written out.
--- Normalization or restore can make the weighed form a different artifact from the exchanged one;
--- the CLI withholds its report in exactly that case, and a page must too — the advisories tell the reshaping's story instead.
-data VerdictStanding
-  = VerdictsDescribeTheFiles
-  | VerdictsWithheldReshaped
-  deriving (Eq, Show)
-
 applyPatch :: ApplyRequest -> IO (Outcome (Either SlapError PatchedRom))
 applyPatch request = case parseForRun (applyDialects request) (applyPatchBytes request) of
   Left refusal -> pure (Outcome (Left refusal) [])
   Right parsed ->
     case prepareApplySource (applyVerificationPolicy request) parsed directive handedBytes of
       Left refusal   -> pure (Outcome (Left refusal) (patchAdvisories parsed))
-      Right prepared -> applyPrepared request parsed prepared
+      Right prepared -> do
+        runOutcome <- runPreparedApply (applyVerificationPolicy request) directive parsed prepared
+        pure runOutcome
+          { outcomeAdvisories = patchAdvisories parsed ++ preparedAdvisories prepared ++ outcomeAdvisories runOutcome }
   where
     directive   = matchedRomFraming (applySourceRom request)
     handedBytes = unInputFileContents (matchedRomBytes (applySourceRom request))
-
-applyPrepared :: ApplyRequest -> SomePatch -> PreparedApplySource -> IO (Outcome (Either SlapError PatchedRom))
-applyPrepared request parsed prepared = case outcomeValue sourceJudgment of
-  Left refusal -> pure (Outcome (Left refusal) (narrationBeforeRun ++ rescueHints))
-  Right () -> do
-    applied <- runApply (patchApply parsed) (normalizedSourceBytes (preparedSource prepared))
-    pure $ case applied of
-      Left applyRefusal  -> Outcome (Left applyRefusal) narrationBeforeRun
-      Right applyOutcome ->
-        judgeAppliedTarget request parsed prepared
-          (narrationBeforeRun ++ outcomeAdvisories applyOutcome) (outcomeValue applyOutcome)
-  where
-    sourceJudgment     = judgeWeighing (applyVerificationPolicy request) (preparedWeighing prepared)
-    narrationBeforeRun = patchAdvisories parsed ++ preparedAdvisories prepared ++ outcomeAdvisories sourceJudgment
-    rescueHints
-      | TakeInputAsIs <- matchedRomFraming (applySourceRom request) =
-          headerRescueAdvisories (sourceRescue (preparedReport prepared))
-      | otherwise = []
-
-judgeAppliedTarget
-  :: ApplyRequest -> SomePatch -> PreparedApplySource -> [SlapAdvisory] -> OutputFileContents
-  -> Outcome (Either SlapError PatchedRom)
-judgeAppliedTarget request parsed prepared narration target = case outcomeValue targetJudgment of
-  Left refusal -> Outcome (Left refusal) narrated
-  Right ()     -> Outcome (Right patchedRom) (narrated ++ restoreAdvisories)
-  where
-    -- The patch's stored target hash describes the pre-restore form, so the weighing covers 'target', never 'restoredTarget'.
-    targetWeighing = weighTarget (patchVerification parsed) target
-    targetJudgment = judgeWeighing (applyVerificationPolicy request) targetWeighing
-    narrated       = narration ++ outcomeAdvisories targetJudgment
-    (restoredTarget, restoreAdvisories) =
-      restoreStrippedContent (patchFormat parsed) (normalizedSourceRestore (preparedSource prepared)) target
-    patchedRom = PatchedRom
-      { patchedRomBytes           = restoredTarget
-      , patchedRomInputVerdict    = InputSideVerdict (verdictOnWeighing (preparedWeighing prepared))
-      , patchedRomOutputVerdict   = OutputSideVerdict (verdictOnWeighing targetWeighing)
-      , patchedRomVerdictStanding = standing
-      }
-    standing
-      | unInputFileContents (normalizedSourceBytes (preparedSource prepared)) == preparedFramedInput prepared
-          && restoredTarget == target = VerdictsDescribeTheFiles
-      | otherwise                     = VerdictsWithheldReshaped
 
 undoPatch :: UndoRequest -> Outcome (Either SlapError RevertedRom)
 undoPatch request = case parseForRun (undoDialects request) (undoPatchBytes request) of
@@ -582,8 +524,6 @@ createPatch request = case checkCreate request of
       createDefaultAdvisories (createTargetFormat request) (createMetadata request) (createOriginal request)
 
 -- | IO for the same reason 'applyPatch' is: the @--with@ lane applies the patch before re-diffing.
--- A handed source is reframed under its 'MatchedRom' directive first, narrated as ever;
--- the reframed form is what the records run against and what the new patch is diffed from.
 convertPatch :: ConvertRequest -> IO (Outcome (Either SlapError CreatedPatch))
 convertPatch request = case judgeConvert request of
   Left refusal -> pure (Outcome (Left refusal) [])
@@ -624,47 +564,35 @@ convertWithoutSource request judged = case patchKind parsed of
 convertApplyAndRecreate
   :: ConvertRequest -> JudgedConvert -> Maybe ResolvedXDelta1FileNames -> MatchedRom
   -> IO (Outcome (Either SlapError CreatedPatch))
-convertApplyAndRecreate request judged resolvedNames matchedRom = case outcomeValue reframeOutcome of
-  Left refusal -> pure (Outcome (Left refusal) (patchAdvisories parsed))
-  Right framedBytes -> do
-    let normalized     = normalizeApplySource (patchSourceNormalization parsed) (InputFileContents framedBytes)
-        sourceJudgment = verifySource (convertVerificationPolicy request) (patchVerification parsed)
-                                      (normalizedSourceBytes normalized)
-        narrationBeforeRun = patchAdvisories parsed ++ outcomeAdvisories reframeOutcome
-                             ++ normalizedSourceAdvisories normalized ++ outcomeAdvisories sourceJudgment
-    case outcomeValue sourceJudgment of
-      Left refusal -> pure (Outcome (Left refusal) narrationBeforeRun)
-      Right () -> do
-        applied <- runApply (patchApply parsed) (normalizedSourceBytes normalized)
-        pure $ case applied of
-          Left applyRefusal  -> Outcome (Left applyRefusal) narrationBeforeRun
-          Right applyOutcome ->
-            recreateFromApplied request judged resolvedNames framedBytes normalized
-              (narrationBeforeRun ++ outcomeAdvisories applyOutcome) (outcomeValue applyOutcome)
+convertApplyAndRecreate request judged resolvedNames matchedRom =
+  case prepareApplySource (convertVerificationPolicy request) parsed (matchedRomFraming matchedRom) handedBytes of
+    Left refusal   -> pure (Outcome (Left refusal) (patchAdvisories parsed))
+    Right prepared -> do
+      runOutcome <- runPreparedApply (convertVerificationPolicy request) (matchedRomFraming matchedRom) parsed prepared
+      let narration = patchAdvisories parsed ++ preparedAdvisories prepared ++ outcomeAdvisories runOutcome
+      pure $ case outcomeValue runOutcome of
+        Left refusal  -> Outcome (Left refusal) narration
+        Right patched -> recreateFromApplied request judged resolvedNames prepared patched narration
   where
-    parsed         = judgedPatch judged
-    reframeOutcome = reframeInput (matchedRomFraming matchedRom)
-                                  (unInputFileContents (matchedRomBytes matchedRom))
+    parsed      = judgedPatch judged
+    handedBytes = unInputFileContents (matchedRomBytes matchedRom)
 
--- | The re-create diffs the reframed source against the restored apply output,
+-- | The re-create diffs the framed source against the restored apply output,
 -- reproducing end to end what applying the source patch would really produce.
 recreateFromApplied
-  :: ConvertRequest -> JudgedConvert -> Maybe ResolvedXDelta1FileNames -> ByteString -> NormalizedSource
-  -> [SlapAdvisory] -> OutputFileContents
+  :: ConvertRequest -> JudgedConvert -> Maybe ResolvedXDelta1FileNames -> PreparedApplySource -> PatchedRom
+  -> [SlapAdvisory]
   -> Outcome (Either SlapError CreatedPatch)
-recreateFromApplied request judged resolvedNames framedBytes normalized narration target =
-  case Create.createPatch (convertTargetFormat request) resolvedNames (InputFileContents framedBytes)
-                          restoredTarget (judgedMergedMeta judged) (patchContentsOf parsed)
+recreateFromApplied request judged resolvedNames prepared patched narration =
+  case Create.createPatch (convertTargetFormat request) resolvedNames framedInput
+                          (patchedRomBytes patched) (judgedMergedMeta judged) (patchContentsOf parsed)
                           (convertConstraints request) noDialectsRequested of
-    Left refusal -> Outcome (Left refusal) narrated
+    Left refusal -> Outcome (Left refusal) narration
     Right (CreateResult patchBytes createAdvisories) ->
       Outcome (Right (CreatedPatch patchBytes (convertTargetFormat request)))
-              (narrated ++ patchSourceAdvisories parsed
-                        ++ createDefaultAdvisories (convertTargetFormat request) (judgedMergedMeta judged)
-                                                   (InputFileContents framedBytes)
-                        ++ createAdvisories)
+              (narration ++ patchSourceAdvisories parsed
+                         ++ createDefaultAdvisories (convertTargetFormat request) (judgedMergedMeta judged) framedInput
+                         ++ createAdvisories)
   where
-    parsed = judgedPatch judged
-    (restoredTarget, restoreAdvisories) =
-      restoreStrippedContent (patchFormat parsed) (normalizedSourceRestore normalized) target
-    narrated = narration ++ restoreAdvisories
+    parsed      = judgedPatch judged
+    framedInput = InputFileContents (preparedFramedInput prepared)
