@@ -47,7 +47,7 @@
 --   * 'Props.Classify'           — the drop sorter and the identity projection.
 --   * 'Props.Surface'            — the metadata-field surface: flag tokens and control kinds.
 --   * 'Props.Web'                — the slap-web boundary: the surface census,
---                                  and the identity projection crossing it.
+--                                  the identity projection crossing it, and the emit checks.
 --
 -- Shared generators, helpers, and predicates live in 'Props.Helpers'.
 module Main (main) where
