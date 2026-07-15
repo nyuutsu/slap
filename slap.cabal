@@ -177,6 +177,17 @@ library slap-internal
     , vector               >= 0.13 && < 0.14
     , vector-algorithms    >= 0.9  && < 0.10
 
+library slap-web
+  exposed-modules:  Slap.Web
+  hs-source-dirs:   web
+  default-language: GHC2024
+  ghc-options:      -Wall -Werror -Wname-shadowing -O2 -g3
+  build-depends:
+      base                 >= 4.20 && < 5
+    , containers           >= 0.6
+    , slap:slap-internal
+    , text                 >= 2.0
+
 executable slap
   main-is:          Main.hs
   other-modules:    CLI
@@ -224,6 +235,7 @@ test-suite props
                   , Props.Truncation
                   , Props.Undo
                   , Props.Verify
+                  , Props.Web
                   , Props.XDelta1Conformance
   hs-source-dirs:   test
   default-language: GHC2024
@@ -238,6 +250,7 @@ test-suite props
     , tasty-quickcheck     >= 0.10 && < 0.12
     , tasty-hunit          >= 0.10 && < 0.11
     , slap:slap-internal
+    , slap:slap-web
     , containers           >= 0.6
     , crypton              >= 0.31 && < 1.2
     , ram                  >= 0.21 && < 0.23

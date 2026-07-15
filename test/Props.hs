@@ -46,6 +46,8 @@
 --                                  the checks, and the one unasked fix.
 --   * 'Props.Classify'           — the drop sorter and the identity projection.
 --   * 'Props.Surface'            — the metadata-field surface: flag tokens and control kinds.
+--   * 'Props.Web'                — the slap-web boundary: the surface census,
+--                                  and the identity projection crossing it.
 --
 -- Shared generators, helpers, and predicates live in 'Props.Helpers'.
 module Main (main) where
@@ -72,6 +74,7 @@ import qualified Props.Text as Text
 import qualified Props.Truncation as Truncation
 import qualified Props.Undo as Undo
 import qualified Props.Verify as Verify
+import qualified Props.Web as Web
 import qualified Props.XDelta1Conformance as XDelta1Conformance
 
 import Test.Tasty
@@ -100,5 +103,6 @@ main = defaultMain $ testGroup "Properties"
   , Preflight.preflightTests
   , Classify.classifyTests
   , Surface.surfaceTests
+  , Web.webTests
   , XDelta1Conformance.xdelta1ConformanceTests
   ]
