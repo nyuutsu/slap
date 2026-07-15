@@ -15,6 +15,17 @@ module Slap.Web
   , describeRom
     -- * Ask, then do
   , MatchedRom(..)
+  , ApplyRequest(..)
+  , UndoRequest(..)
+  , SourceReport(..)
+  , HeaderRescueCandidate(..)
+  , checkApply
+  , checkUndo
+  , PatchedRom(..)
+  , RevertedRom(..)
+  , VerdictStanding(..)
+  , applyPatch
+  , undoPatch
   , CreateRequest(..)
   , ConvertRequest(..)
   , Verdict(..)
@@ -43,21 +54,29 @@ import Slap.Convert (CreateFormat(..), DifferentialCreate(CreateXDelta1), Reques
                      rejectUnencodableSecondaryCompressor, verdictOnDirectConversion)
 import Slap.Detect (DroppedFileClass(..), classifyDroppedFile)
 import Slap.Dialect (Dialect)
+import Slap.Display.Info (InputSideVerdict(..), OutputSideVerdict(..))
 import Slap.FFI (crc32)
 import Slap.FieldName (FieldName(FieldXDelta1FromName, FieldXDelta1ToName))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents)
 import Slap.FormatLabel (FormatLabel)
-import Slap.Header (ConsoleHeader, InputHeaderDirective, consoleHeaderLength, consoleHeaderName,
-                    consoleHeaderToken)
+import Slap.Header (ConsoleHeader, InputHeaderDirective(TakeInputAsIs), consoleHeaderLength,
+                    consoleHeaderName, consoleHeaderToken)
 import Slap.Measure (FileSize, Length, byteFileSize)
 import Slap.MetadataField (MetadataField(..), requestField)
+import Slap.Normalize (normalizedSourceBytes, normalizedSourceRestore, restoreStrippedContent)
 import Slap.PatchField (PatchField)
-import Slap.SomePatch (PatchIdentity(..), PatchKind(..), SomePatch, UndoAnswer(..), parseSome,
-                       patchExtractedMeta, patchFormat, patchIdentity, patchKind)
-import Slap.Status (SlapError(..), SourceRequiredCause(..))
-import Slap.Text (AdvertisedEncodingFamily, EncodingName, advertisedEncodings)
+import qualified Slap.Preflight as Preflight
+import Slap.Preflight (HeaderRescueCandidate(..), PreparedApplySource(..), SourceReport(..),
+                       headerRescueAdvisories, prepareApplySource, weighUndoInput)
+import Slap.SomePatch (PatchIdentity(..), PatchKind(..), SomePatch, UndoAnswer(..),
+                       UndoAvailability(..), UndoStrategy, parseSome, patchAdvisories, patchApply,
+                       patchExtractedMeta, patchFormat, patchIdentity, patchKind, patchUndo,
+                       patchVerification, runApply, runUndo)
+import Slap.Status (Outcome(..), SlapAdvisory, SlapError(..), SourceRequiredCause(..))
+import Slap.Text (AdvertisedEncodingFamily, EncodingName(EncodingUtf8), advertisedEncodings)
 import Slap.VCDIFF.SecondaryCompression (secondaryCompressorTokens)
-import Slap.Verify (VerificationPolicy)
+import Slap.Verify (VerificationPolicy, VerificationVerdict, Weighing, flipSpokenSides,
+                    judgeWeighing, verdictOnWeighing, weighSource, weighTarget)
 import Slap.XDelta1.Types (requireXDelta1FileNames, unXDelta1FromName, unXDelta1ToName)
 
 ----------------------------------------------------------------------------
@@ -141,13 +160,11 @@ describeRom (InputFileContents romBytes) = RomFacts
   }
 
 ----------------------------------------------------------------------------
--- Ask, then do — the emit checks
+-- Ask, then do — apply and undo
 ----------------------------------------------------------------------------
 
--- Only create and convert have a check, because only they can be teed up and still be impossible.
--- The check produces nothing and is safe to call on every input change; the act is what the button owns.
--- Every refusal the act can raise from the request's own content is judged here;
--- only a refusal derived from the bytes — sentinel collisions, offset overflow, a post-apply size pair — may surface first at the act.
+-- The acts answer in an 'Outcome' so a refusal keeps its narration:
+-- whatever the run said before refusing — the reframe's note, normalization's advisories, the rescue's hints — rides beside the 'Left'.
 
 -- | A ROM handed over to be matched against a patch's expectations. The header directive travels with the ROM, not the verb;
 -- create's ROMs define the patch rather than match one, so they are plain contents with no field for a directive to live in.
@@ -156,6 +173,162 @@ data MatchedRom = MatchedRom
   , matchedRomFraming :: InputHeaderDirective
   }
   deriving (Eq, Show)
+
+data ApplyRequest = ApplyRequest
+  { applyPatchBytes         :: PatchFileContents
+  , applySourceRom          :: MatchedRom
+  , applyVerificationPolicy :: VerificationPolicy
+  , applyDialects           :: RequestedDialects
+  }
+
+data UndoRequest = UndoRequest
+  { undoPatchBytes         :: PatchFileContents
+  , undoPatchedRom         :: OutputFileContents  -- ^ the file as handed; undo takes no framing directive
+  , undoVerificationPolicy :: VerificationPolicy
+  , undoDialects           :: RequestedDialects
+  }
+
+-- | Apply and undo parse under the run's fixed UTF-8 (neither renders metadata),
+-- and judge the same dialect coherence the CLI judges before either run.
+parseForRun :: RequestedDialects -> PatchFileContents -> Either SlapError SomePatch
+parseForRun dialects patchBytes = do
+  parsed <- parseSome dialects EncodingUtf8 patchBytes
+  rejectIncompatibleDialects (acceptedDialects (patchFormat parsed)) (patchFormat parsed) dialects
+  pure parsed
+
+checkApply :: ApplyRequest -> Either SlapError SourceReport
+checkApply request = do
+  parsed <- parseForRun (applyDialects request) (applyPatchBytes request)
+  Preflight.checkApply parsed (matchedRomFraming (applySourceRom request))
+                       (unInputFileContents (matchedRomBytes (applySourceRom request)))
+
+checkUndo :: UndoRequest -> Either SlapError VerificationVerdict
+checkUndo request = do
+  parsed <- parseForRun (undoDialects request) (undoPatchBytes request)
+  pure (Preflight.checkUndo parsed (unOutputFileContents (undoPatchedRom request)))
+
+data PatchedRom = PatchedRom
+  { patchedRomBytes           :: OutputFileContents
+  , patchedRomInputVerdict    :: InputSideVerdict
+  , patchedRomOutputVerdict   :: OutputSideVerdict
+  , patchedRomVerdictStanding :: VerdictStanding
+  }
+  deriving (Eq, Show)
+
+-- | No standing field: undo neither normalizes nor restores, so its verdicts always describe the files exchanged.
+data RevertedRom = RevertedRom
+  { revertedRomBytes         :: InputFileContents
+  , revertedRomInputVerdict  :: InputSideVerdict
+  , revertedRomOutputVerdict :: OutputSideVerdict
+  }
+  deriving (Eq, Show)
+
+-- | Whether the two verdicts describe the bytes handed in and written out.
+-- Normalization or restore can make the weighed form a different artifact from the exchanged one;
+-- the CLI withholds its report in exactly that case, and a page must too — the advisories tell the reshaping's story instead.
+data VerdictStanding
+  = VerdictsDescribeTheFiles
+  | VerdictsWithheldReshaped
+  deriving (Eq, Show)
+
+applyPatch :: ApplyRequest -> IO (Outcome (Either SlapError PatchedRom))
+applyPatch request = case parseForRun (applyDialects request) (applyPatchBytes request) of
+  Left refusal -> pure (Outcome (Left refusal) [])
+  Right parsed ->
+    case prepareApplySource (applyVerificationPolicy request) parsed directive handedBytes of
+      Left refusal   -> pure (Outcome (Left refusal) (patchAdvisories parsed))
+      Right prepared -> applyPrepared request parsed prepared
+  where
+    directive   = matchedRomFraming (applySourceRom request)
+    handedBytes = unInputFileContents (matchedRomBytes (applySourceRom request))
+
+applyPrepared :: ApplyRequest -> SomePatch -> PreparedApplySource -> IO (Outcome (Either SlapError PatchedRom))
+applyPrepared request parsed prepared = case outcomeValue sourceJudgment of
+  Left refusal -> pure (Outcome (Left refusal) (narrationBeforeRun ++ rescueHints))
+  Right () -> do
+    applied <- runApply (patchApply parsed) (normalizedSourceBytes (preparedSource prepared))
+    pure $ case applied of
+      Left applyRefusal  -> Outcome (Left applyRefusal) narrationBeforeRun
+      Right applyOutcome ->
+        judgeAppliedTarget request parsed prepared
+          (narrationBeforeRun ++ outcomeAdvisories applyOutcome) (outcomeValue applyOutcome)
+  where
+    sourceJudgment     = judgeWeighing (applyVerificationPolicy request) (preparedWeighing prepared)
+    narrationBeforeRun = patchAdvisories parsed ++ preparedAdvisories prepared ++ outcomeAdvisories sourceJudgment
+    rescueHints
+      | TakeInputAsIs <- matchedRomFraming (applySourceRom request) =
+          headerRescueAdvisories (sourceRescue (preparedReport prepared))
+      | otherwise = []
+
+judgeAppliedTarget
+  :: ApplyRequest -> SomePatch -> PreparedApplySource -> [SlapAdvisory] -> OutputFileContents
+  -> Outcome (Either SlapError PatchedRom)
+judgeAppliedTarget request parsed prepared narration target = case outcomeValue targetJudgment of
+  Left refusal -> Outcome (Left refusal) narrated
+  Right ()     -> Outcome (Right patchedRom) (narrated ++ restoreAdvisories)
+  where
+    -- The patch's stored target hash describes the pre-restore form, so the weighing covers 'target', never 'restoredTarget'.
+    targetWeighing = weighTarget (patchVerification parsed) target
+    targetJudgment = judgeWeighing (applyVerificationPolicy request) targetWeighing
+    narrated       = narration ++ outcomeAdvisories targetJudgment
+    (restoredTarget, restoreAdvisories) =
+      restoreStrippedContent (patchFormat parsed) (normalizedSourceRestore (preparedSource prepared)) target
+    patchedRom = PatchedRom
+      { patchedRomBytes           = restoredTarget
+      , patchedRomInputVerdict    = InputSideVerdict (verdictOnWeighing (preparedWeighing prepared))
+      , patchedRomOutputVerdict   = OutputSideVerdict (verdictOnWeighing targetWeighing)
+      , patchedRomVerdictStanding = standing
+      }
+    standing
+      | unInputFileContents (normalizedSourceBytes (preparedSource prepared)) == preparedFramedInput prepared
+          && restoredTarget == target = VerdictsDescribeTheFiles
+      | otherwise                     = VerdictsWithheldReshaped
+
+undoPatch :: UndoRequest -> Outcome (Either SlapError RevertedRom)
+undoPatch request = case parseForRun (undoDialects request) (undoPatchBytes request) of
+  Left refusal -> Outcome (Left refusal) []
+  Right parsed -> case patchUndo parsed of
+    UndoBySelfInversion undo -> undoUsing request parsed undo
+    UndoFromCarriedData undo -> undoUsing request parsed undo
+    UndoAbsentFromPatch      -> Outcome (Left (PatchCarriesNoUndoData (patchFormat parsed))) (patchAdvisories parsed)
+    UndoUnsupportedByFormat  -> Outcome (Left (NoUndoForFormat (patchFormat parsed))) (patchAdvisories parsed)
+
+undoUsing :: UndoRequest -> SomePatch -> UndoStrategy -> Outcome (Either SlapError RevertedRom)
+undoUsing request parsed undo = case outcomeValue handedJudgment of
+  Left refusal -> Outcome (Left refusal) narrationBeforeRun
+  Right () -> case runUndo undo (undoPatchedRom request) of
+    Left undoRefusal  -> Outcome (Left undoRefusal) narrationBeforeRun
+    Right undoOutcome -> judgeRevertedSource request parsed handedWeighing
+                           (narrationBeforeRun ++ outcomeAdvisories undoOutcome) (outcomeValue undoOutcome)
+  where
+    handedWeighing     = weighUndoInput parsed (unOutputFileContents (undoPatchedRom request))
+    handedJudgment     = judgeWeighing (undoVerificationPolicy request) handedWeighing
+    narrationBeforeRun = patchAdvisories parsed ++ outcomeAdvisories handedJudgment
+
+judgeRevertedSource
+  :: UndoRequest -> SomePatch -> Weighing -> [SlapAdvisory] -> InputFileContents
+  -> Outcome (Either SlapError RevertedRom)
+judgeRevertedSource request parsed handedWeighing narration revertedSource = case outcomeValue revertedJudgment of
+  Left refusal -> Outcome (Left refusal) narrated
+  Right ()     -> Outcome (Right reverted) narrated
+  where
+    revertedWeighing = flipSpokenSides (weighSource (patchVerification parsed) revertedSource)
+    revertedJudgment = judgeWeighing (undoVerificationPolicy request) revertedWeighing
+    narrated = narration ++ outcomeAdvisories revertedJudgment
+    reverted = RevertedRom
+      { revertedRomBytes         = revertedSource
+      , revertedRomInputVerdict  = InputSideVerdict (verdictOnWeighing handedWeighing)
+      , revertedRomOutputVerdict = OutputSideVerdict (verdictOnWeighing revertedWeighing)
+      }
+
+----------------------------------------------------------------------------
+-- Ask, then do — the emit checks
+----------------------------------------------------------------------------
+
+-- Only create and convert have a check, because only they can be teed up and still be impossible.
+-- The check produces nothing and is safe to call on every input change; the act is what the button owns.
+-- Every refusal the act can raise from the request's own content is judged here;
+-- only a refusal derived from the bytes — sentinel collisions, offset overflow, a post-apply size pair — may surface first at the act.
 
 data CreateRequest = CreateRequest
   { createTargetFormat :: CreateFormat

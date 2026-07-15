@@ -4,22 +4,24 @@
 module Props.Web (webTests) where
 
 import Slap.Convert (CreateFormat(..), DifferentialCreate(..), DirectCreate(..),
-                     RequestedDialects(..), RequestedPatchMetadata(..), advertisedCreateFormats,
-                     lookupCreateFormatToken, noConstraintsRequested, noDialectsRequested,
-                     noMetadataRequested)
+                     RequestedDialects(..), RequestedPatchMetadata(..), UndoInclusion(OmitUndoData),
+                     advertisedCreateFormats, lookupCreateFormatToken, noConstraintsRequested,
+                     noDialectsRequested, noMetadataRequested)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.Create (createPatch)
 import Slap.Dialect (Dialect(..))
+import Slap.Display.Info (InputSideVerdict(..), OutputSideVerdict(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Header (InputHeaderDirective(TakeInputAsIs))
+import Slap.Header (HeaderAdjustment(HeaderComesOff), InputHeaderDirective(TakeInputAsIs))
 import Slap.Measure (FileSize(..))
 import Slap.MetadataField (MetadataField(..), MetadataRequest(..))
 import Slap.PPF1.Types (PPF1Origin(PPF1OriginAmiga))
-import Slap.Status (CreateResult(..), SlapError(..), SourceRequiredCause(..), renderSlapError)
+import Slap.Status (CreateResult(..), Outcome(..), SlapAdvisory(..), SlapError(..),
+                    SourceRequiredCause(..), renderSlapError)
 import Slap.Text (EncodedText(..), EncodingName(EncodingUtf8))
 import Slap.VCDIFF.SecondaryCompression (secondaryCompressorTokens)
-import Slap.Verify (VerificationPolicy(EnforceVerification))
+import Slap.Verify (VerificationPolicy(EnforceVerification), VerificationVerdict(..))
 import Slap.Web
 
 import Data.ByteString (ByteString)
@@ -41,6 +43,16 @@ webTests = testGroup "Web"
   , testCase "a created BPS identifies across the boundary"        test_identifyCreatedBPS
   , testCase "unrecognized bytes refuse with the engine's own error" test_identifyUnrecognizedBytes
   , testCase "describeRom reproduces the published digests of a known input" test_describeRomKnownAnswers
+  , testGroup "apply and undo"
+      [ testCase "the right rom reports a match with no rescue"           test_checkApplyMatches
+      , testCase "applying to the right rom hands back the target"        test_applyRightRom
+      , testCase "a headered rom differs, and the rescue names the peel"  test_headeredRomRescue
+      , testCase "the proven peel is carried out, narrated"               test_provenPeelCarriedOut
+      , testCase "checkUndo weighs the handed file crosswise"             test_checkUndoCrosswise
+      , testCase "undo peels a UPS back to the original"                  test_undoPeelsUPS
+      , testCase "the two undo refusals arrive distinct"                  test_undoRefusalsDistinct
+      , testCase "a stale toggle refuses the act exactly as its check"    test_applyDialectAgreement
+      ]
   , testGroup "emit checks"
       [ testCase "a plain BPS create is Ready"                          test_checkCreateBPSReady
       , testCase "a title aimed at IPS gaps with its own drop"          test_checkCreateTitleOnIPS
@@ -77,7 +89,7 @@ test_consoleCensusCoversEveryHeader = do
 
 test_identifyCreatedBPS :: Assertion
 test_identifyCreatedBPS = do
-  bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS)
+  bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
   identifyPatch noDialectsRequested EncodingUtf8 bpsPatch
     @?= Right PatchIdentity { identifiedFormat   = LabelBPS
                             , applicableDialects = Set.empty
@@ -92,12 +104,105 @@ fixtureSourceBytes, fixtureTargetBytes :: ByteString
 fixtureSourceBytes = ByteString.pack [0 .. 63]
 fixtureTargetBytes = ByteString.pack ([0 .. 31] <> [0xAA] <> [33 .. 63])
 
-createdFixturePatch :: CreateFormat -> IO PatchFileContents
-createdFixturePatch format =
+createdFixturePatch :: CreateFormat -> RequestedPatchMetadata -> IO PatchFileContents
+createdFixturePatch format meta =
   case createPatch format Nothing (InputFileContents fixtureSourceBytes) (OutputFileContents fixtureTargetBytes)
-                    noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
+                    meta Nothing noConstraintsRequested noDialectsRequested of
     Left slapError -> assertFailureT ("create: " <> renderSlapError slapError)
     Right (CreateResult patchBytes _advisories) -> pure patchBytes
+
+plainApplyRequest :: PatchFileContents -> ByteString -> ApplyRequest
+plainApplyRequest patchBytes romBytes = ApplyRequest
+  { applyPatchBytes         = patchBytes
+  , applySourceRom          = MatchedRom (InputFileContents romBytes) TakeInputAsIs
+  , applyVerificationPolicy = EnforceVerification
+  , applyDialects           = noDialectsRequested
+  }
+
+plainUndoRequest :: PatchFileContents -> ByteString -> UndoRequest
+plainUndoRequest patchBytes handedBytes = UndoRequest
+  { undoPatchBytes         = patchBytes
+  , undoPatchedRom         = OutputFileContents handedBytes
+  , undoVerificationPolicy = EnforceVerification
+  , undoDialects           = noDialectsRequested
+  }
+
+test_checkApplyMatches :: Assertion
+test_checkApplyMatches = do
+  bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
+  case checkApply (plainApplyRequest bpsPatch fixtureSourceBytes) of
+    Right (SourceReport (VerdictMatches _) []) -> pure ()
+    other -> assertFailure ("unexpected report: " <> show other)
+
+test_applyRightRom :: Assertion
+test_applyRightRom = do
+  bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
+  Outcome applied _advisories <- applyPatch (plainApplyRequest bpsPatch fixtureSourceBytes)
+  case applied of
+    Left refusal -> assertFailureT ("apply: " <> renderSlapError refusal)
+    Right patched -> do
+      patchedRomBytes patched @?= OutputFileContents fixtureTargetBytes
+      patchedRomVerdictStanding patched @?= VerdictsDescribeTheFiles
+      case (patchedRomInputVerdict patched, patchedRomOutputVerdict patched) of
+        (InputSideVerdict (VerdictMatches _), OutputSideVerdict (VerdictMatches _)) -> pure ()
+        verdicts -> assertFailure ("unexpected verdicts: " <> show verdicts)
+
+test_headeredRomRescue :: Assertion
+test_headeredRomRescue = do
+  bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
+  case checkApply (plainApplyRequest bpsPatch headeredFixtureSource) of
+    Right (SourceReport (VerdictDiffers _) [candidate]) -> rescueAdjustment candidate @?= HeaderComesOff
+    other -> assertFailure ("unexpected report: " <> show other)
+
+test_provenPeelCarriedOut :: Assertion
+test_provenPeelCarriedOut = do
+  bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
+  Outcome applied advisories <- applyPatch (plainApplyRequest bpsPatch headeredFixtureSource)
+  case applied of
+    Left refusal -> assertFailureT ("apply: " <> renderSlapError refusal)
+    Right patched -> do
+      patchedRomBytes patched @?= OutputFileContents fixtureTargetBytes
+      assertBool "no reframe narration" (any isReframeNote advisories)
+  where
+    isReframeNote InputReframedToMatchPatch{} = True
+    isReframeNote _                           = False
+
+headeredFixtureSource :: ByteString
+headeredFixtureSource = ByteString.replicate 512 0x00 <> fixtureSourceBytes
+
+test_checkUndoCrosswise :: Assertion
+test_checkUndoCrosswise = do
+  upsPatch <- createdFixturePatch (CreateDifferential CreateUPS) noMetadataRequested
+  case checkUndo (plainUndoRequest upsPatch fixtureTargetBytes) of
+    Right (VerdictMatches _) -> pure ()
+    other -> assertFailure ("unexpected verdict: " <> show other)
+
+test_undoPeelsUPS :: Assertion
+test_undoPeelsUPS = do
+  upsPatch <- createdFixturePatch (CreateDifferential CreateUPS) noMetadataRequested
+  case outcomeValue (undoPatch (plainUndoRequest upsPatch fixtureTargetBytes)) of
+    Left refusal   -> assertFailureT ("undo: " <> renderSlapError refusal)
+    Right reverted -> revertedRomBytes reverted @?= InputFileContents fixtureSourceBytes
+
+test_undoRefusalsDistinct :: Assertion
+test_undoRefusalsDistinct = do
+  bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
+  outcomeValue (undoPatch (plainUndoRequest bpsPatch fixtureTargetBytes))
+    @?= Left (NoUndoForFormat LabelBPS)
+  ppf3Patch <- createdFixturePatch (CreateDirect CreatePPF3)
+                                   noMetadataRequested { requestedUndoInclusion = Just OmitUndoData }
+  outcomeValue (undoPatch (plainUndoRequest ppf3Patch fixtureTargetBytes))
+    @?= Left (PatchCarriesNoUndoData LabelPPF3)
+
+test_applyDialectAgreement :: Assertion
+test_applyDialectAgreement = do
+  bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
+  let request = (plainApplyRequest bpsPatch fixtureSourceBytes)
+        { applyDialects = RequestedDialects { requestedPPF1Origin = PPF1OriginAmiga } }
+  Outcome applied _advisories <- applyPatch request
+  case (checkApply request, applied) of
+    (Left checkRefusal, Left actRefusal) -> actRefusal @?= checkRefusal
+    other -> assertFailure ("expected two refusals: " <> show other)
 
 plainCreateRequest :: CreateFormat -> CreateRequest
 plainCreateRequest target = CreateRequest
@@ -147,27 +252,27 @@ test_checkCreatePPF1Grow =
 
 test_checkConvertIPSToBPSNeedsSource :: Assertion
 test_checkConvertIPSToBPSNeedsSource = do
-  ipsPatch <- createdFixturePatch (CreateDirect CreateIPS)
+  ipsPatch <- createdFixturePatch (CreateDirect CreateIPS) noMetadataRequested
   checkConvert (plainConvertRequest ipsPatch (CreateDifferential CreateBPS))
     @?= Right (Blocked (Gap (DiffRequiresSource LabelBPS) (ProvideSourceRom :| []) :| []))
 
 test_checkConvertIPSToBPSWithSource :: Assertion
 test_checkConvertIPSToBPSWithSource = do
-  ipsPatch <- createdFixturePatch (CreateDirect CreateIPS)
+  ipsPatch <- createdFixturePatch (CreateDirect CreateIPS) noMetadataRequested
   let request = (plainConvertRequest ipsPatch (CreateDifferential CreateBPS))
         { convertSourceRom = Just (MatchedRom (InputFileContents fixtureSourceBytes) TakeInputAsIs) }
   checkConvert request @?= Right Ready
 
 test_checkConvertBPSToIPSNeedsSource :: Assertion
 test_checkConvertBPSToIPSNeedsSource = do
-  bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS)
+  bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
   checkConvert (plainConvertRequest bpsPatch (CreateDirect CreateIPS))
     @?= Right (Blocked (Gap (ConvertRequiresSource LabelBPS SourcePatchIsDifferential)
                             (ProvideSourceRom :| []) :| []))
 
 test_checkConvertStaleAmigaToggle :: Assertion
 test_checkConvertStaleAmigaToggle = do
-  bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS)
+  bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
   let request = (plainConvertRequest bpsPatch (CreateDifferential CreateBPS))
         { convertSourceRom = Just (MatchedRom (InputFileContents fixtureSourceBytes) TakeInputAsIs)
         , convertDialects  = RequestedDialects { requestedPPF1Origin = PPF1OriginAmiga }

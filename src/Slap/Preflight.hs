@@ -5,6 +5,7 @@ module Slap.Preflight
   ( reframeInput
   , HeaderRescueCandidate(..)
   , headerRescueCandidates
+  , headerRescueAdvisories
   , SourceReport(..)
   , checkApply
   , checkUndo
@@ -77,6 +78,13 @@ headerRescueCandidates parsed handedBytes =
     candidateVerdict candidateBytes =
       let normalized = normalizeApplySource (patchSourceNormalization parsed) (InputFileContents candidateBytes)
       in verdictOnWeighing (weighSource (patchVerification parsed) (normalizedSourceBytes normalized))
+
+-- | The rescue's finds as advisories, spoken beside a refusal: each arrangement's hint, or the word that no arrangement helps.
+headerRescueAdvisories :: [HeaderRescueCandidate] -> [SlapAdvisory]
+headerRescueAdvisories [] = [NoHeaderAdjustmentMatches]
+headerRescueAdvisories candidates =
+  [ SourceMatchesAfterHeaderAdjustment (rescueAdjustment candidate) (rescueConsoles candidate) (rescueHeldKinds candidate)
+  | candidate <- candidates ]
 
 ----------------------------------------------------------------------------
 -- The check, and the source apply proceeds on

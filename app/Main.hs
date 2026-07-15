@@ -42,13 +42,13 @@ import Slap.Text (EncodingName(EncodingUtf8), EncodedText(..), decodeTextLenient
 import qualified Data.Text.IO as TextIO
 import Slap.Archive.Types (detectArchive, EntryName(unEntryName))
 import Slap.Status (SlapError(..), SourceRequiredCause(..), ExtractionSubject(..),
-                   SlapAdvisory(..), CreateResult(..), Outcome(..),
+                   CreateResult(..), Outcome(..),
                    emitAdvisories, bailError, orBail)
 import Slap.Normalize (NormalizedSource(..), normalizeApplySource, restoreStrippedContent)
 import Slap.Display.Glyph (spacePaddedRightwardsArrow)
 import Slap.Header (InputHeaderDirective(..))
-import Slap.Preflight (HeaderRescueCandidate(..), SourceReport(..),
-                       PreparedApplySource(..), prepareApplySource, weighUndoInput)
+import Slap.Preflight (SourceReport(..), PreparedApplySource(..),
+                       headerRescueAdvisories, prepareApplySource, weighUndoInput)
 
 import CLI
   ( Command(..)
@@ -579,12 +579,6 @@ settleVerification :: Outcome (Either SlapError ()) -> IO ()
 settleVerification verificationOutcome = do
   emitAdvisories (outcomeAdvisories verificationOutcome)
   orBail (outcomeValue verificationOutcome)
-
-headerRescueAdvisories :: [HeaderRescueCandidate] -> [SlapAdvisory]
-headerRescueAdvisories [] = [NoHeaderAdjustmentMatches]
-headerRescueAdvisories candidates =
-  [ SourceMatchesAfterHeaderAdjustment (rescueAdjustment candidate) (rescueConsoles candidate) (rescueHeldKinds candidate)
-  | candidate <- candidates ]
 
 -- | Render the full per-record analysis to stderr, gated on 'Verbose'.
 emitVerboseAnalysis :: Verbosity -> SomePatch -> IO ()
