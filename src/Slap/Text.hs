@@ -723,7 +723,8 @@ data AdvertisedEncodingFamily = AdvertisedEncodingFamily
   { advertisedFamilyLabel   :: !String
   , advertisedFamilyMembers :: ![String]
   }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically AdvertisedEncodingFamily
 
 -- | Every text encoding slap decodes, one canonical name per encoder, grouped for a legible @--encodings@ listing.
 -- This is the full set the bundled @encoding@ library provides as field encodings:

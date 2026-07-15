@@ -9,7 +9,7 @@ module Slap.UPS.Describe
 import Slap.UPS.Types (UPSPatch(..), UPSBlock(..), upsTerminatorByteLength)
 import Slap.Display.Analysis
     ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
-    , AnalysisPayload(..), AnalysisSummary(..)
+    , AnalysisPayload(..), XORDeltaBytes(..), AnalysisSummary(..)
     , SummaryInfo(..), Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Checksum (showCRC32)
@@ -46,6 +46,6 @@ makeUPSRegion position (UPSBlock skipLength xorData) =
       xorDataLength = byteLength xorData
       nextPosition = advance xorOffset (xorDataLength <> upsTerminatorByteLength)
   in ( nextPosition
-     , AnalysisRegion xorOffset xorDataLength "XOR  " (PayloadXOR (Just xorData))
+     , AnalysisRegion xorOffset xorDataLength "XOR  " (PayloadXOR (XORDeltaBytes xorData))
          (AnnotationAt AtOffset xorOffset [DetailSkip skipLength])
      )

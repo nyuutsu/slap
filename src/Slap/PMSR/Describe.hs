@@ -10,7 +10,7 @@ module Slap.PMSR.Describe
 import Slap.PMSR.Types (PMSRPatch(..), PMSRRecord(..))
 import Slap.Display.Analysis
     ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
-    , AnalysisPayload(..), AnalysisSummary(..)
+    , AnalysisPayload(..), LiteralWriteBytes(..), AnalysisSummary(..)
     , SummaryInfo(..)
     , Annotation(..), OffsetKind(..)
     )
@@ -52,7 +52,7 @@ pmsrRecordRegion record = AnalysisRegion
   { regionOffset     = pmsrOffset record
   , regionSize       = byteLength (pmsrData record)
   , regionLabel      = "Write  "
-  , regionPayload    = PayloadWrite (pmsrData record)
+  , regionPayload    = PayloadWrite (LiteralWriteBytes (pmsrData record))
   , regionAnnotation = AnnotationAt AtOffset (pmsrOffset record) []
   }
 

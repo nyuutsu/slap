@@ -28,6 +28,7 @@ newtype CRC32 = CRC32 { unCRC32 :: Word32 }
 
 newtype CRC16 = CRC16 { unCRC16 :: Word16 }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 newtype Adler32 = Adler32 { unAdler32 :: Word32 }
   deriving (Eq, Ord, Show)

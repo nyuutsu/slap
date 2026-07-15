@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | The slap-web boundary: the surface census, the identity projection crossing it, and the emit checks.
+-- | The slap-web boundary: native props over everything that crosses it.
 module Props.Web (webTests) where
 
 import Slap.Convert (CreateFormat(..), DifferentialCreate(..), DirectCreate(..),
@@ -21,7 +21,7 @@ import Slap.MetadataField (MetadataField(..), MetadataRequest(..))
 import Slap.PPF1.Types (PPF1Origin(PPF1OriginAmiga))
 import Slap.SomePatch (parseSome, patchAdvisories, patchAnalysis, patchInfo)
 import Slap.Status (CreateResult(..), Outcome(..), SlapAdvisory(..), SlapError(..),
-                    SourceRequiredCause(..), renderSlapAdvisory, renderSlapError)
+                    SourceRequiredCause(..), noAdvisories, renderSlapAdvisory, renderSlapError)
 import Slap.Text (EncodedText(..), EncodingName(..), resolveEncodingName)
 import Slap.VCDIFF.SecondaryCompression (secondaryCompressorTokens)
 import Slap.Verify (VerificationPolicy(EnforceVerification), VerificationVerdict(..))
@@ -97,6 +97,8 @@ webTests = testGroup "Web"
       , testCase "a refusal crosses spoken: its tag beside slap's sentence"  test_envelopeSpeaksRefusal
       , testCase "an advisory crosses with severity and sentence beside it"  test_envelopeSpeaksAdvisory
       , testCase "byte fields cross as base64"                               test_envelopeBytesAsBase64
+      , testCase "the surface crosses with the engine's own format census"   test_envelopeCarriesSurface
+      , testCase "the explanation crosses: info beside the structured walk"  test_envelopeCarriesExplanation
       ]
   ]
 
@@ -546,6 +548,25 @@ test_envelopeSpeaksAdvisory = do
 
 test_envelopeBytesAsBase64 :: Assertion
 test_envelopeBytesAsBase64 = Aeson.toJSON (ActualMagic "PATCH") @?= Aeson.String "UEFUQ0g="
+
+test_envelopeCarriesSurface :: Assertion
+test_envelopeCarriesSurface = do
+  envelope <- decodedEnvelope (noAdvisories (Right describeSurface))
+  crossedFormats <- jsonPath ["envelopeAnswer", "Right", "surfaceFormats"] envelope
+  case crossedFormats of
+    Aeson.Array rows -> Vector.length rows @?= length (surfaceFormats describeSurface)
+    other            -> assertFailure ("expected a format array: " <> show other)
+
+test_envelopeCarriesExplanation :: Assertion
+test_envelopeCarriesExplanation = do
+  bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
+  envelope <- decodedEnvelope (analyzePatch (plainAnalyzeRequest bpsPatch))
+  carriedLabel <- jsonPath ["envelopeAnswer", "Right", "explanationInfo", "infoFormat", "formatLabel"] envelope
+  carriedLabel @?= Aeson.String "LabelBPS"
+  crossedSections <- jsonPath ["envelopeAnswer", "Right", "explanationAnalysis", "analysisSections"] envelope
+  case crossedSections of
+    Aeson.Array sections -> assertBool "the walk crossed with no sections" (not (Vector.null sections))
+    other                -> assertFailure ("expected a section array: " <> show other)
 
 decodedEnvelope :: Aeson.ToJSON answer => Outcome (Either SlapError answer) -> IO Aeson.Value
 decodedEnvelope outcome =

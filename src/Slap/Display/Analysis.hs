@@ -1,11 +1,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DerivingVia #-}
 
 module Slap.Display.Analysis
   ( PatchAnalysis(..)
   , AnalysisSection(..)
   , AnalysisRegion(..)
   , AnalysisPayload(..)
+  , LiteralWriteBytes(..)
+  , XORDeltaBytes(..)
   , CopySource(..)
   , AnalysisSummary(..)
   , SummaryInfo(..)
@@ -18,6 +21,7 @@ module Slap.Display.Analysis
 
 import Slap.Binary (viewBytesInRange, zeroExtendedBlock)
 import Slap.Checksum (CRC16, showCRC16)
+import Slap.JSON.Bytes (BytesAsBase64(..))
 import Slap.Display.Common (InfoLine(..),
                              Tally(..), CountUnit, ByteCount,
                              renderCountUnit, renderByteCount,
@@ -30,6 +34,7 @@ import Slap.Measure (Offset(..), Length(..), Delta(..), SignedOffset(unSignedOff
                      byteLength,
                      OffsetRange(..), rangeLastByte, advance, distance)
 import Slap.Status (CursorKind, renderCursorKind)
+import Data.Aeson (ToJSON)
 import Data.Array (Array, Ix, accumArray, assocs, elems)
 import Data.Bits (xor)
 import Data.ByteString (ByteString)
@@ -43,78 +48,98 @@ import Data.Int (Int64)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Word (Word8)
+import GHC.Generics (Generic, Generically(..))
 
 ----------------------------------------------------------------------------
 -- Types
 ----------------------------------------------------------------------------
 
--- | The analytical-pass result: per-record breakdown and structured summary.
--- Populated by per-format @analyze\<Format\>@ functions (in each format's @Describe@ module).
--- Each walks the record stream into 'AnalysisSection' values.
---
--- Consumed by @slap explain@ (both verbosity modes), never by @slap info@ or @slap apply@ —
--- those read the cheaper 'Slap.Display.Info.PatchInfo' instead.
--- The cost of the analytical walk is deferred by the non-strict 'Slap.SomePatch.patchAnalysis' field;
--- see that field for the force discipline.
+-- | The analytical pass: what @explain@ shows beyond the cheaper 'Slap.Display.Info.PatchInfo'.
+-- Built by each format's @analyze\<Format\>@ in its @Describe@ module;
+-- the walk's cost is deferred by the non-strict 'Slap.SomePatch.patchAnalysis' field, which owns the force discipline.
 data PatchAnalysis = PatchAnalysis
   { analysisSections :: [AnalysisSection]
   , analysisSummary  :: AnalysisSummary
   }
+  deriving (Generic)
+  deriving (ToJSON) via Generically PatchAnalysis
 
 data AnalysisSection
-  = SectionRegions [AnalysisRegion]              -- flat numbered list
-  | SectionLabeled Text [InfoLine]               -- labeled block + kv pairs (VCDIFF)
-  | SectionText Text                             -- free text line
+  = SectionRegions [AnalysisRegion]
+  | SectionLabeled Text [InfoLine]
+  | SectionText Text
+  deriving (Generic)
+  deriving (ToJSON) via Generically AnalysisSection
 
 data AnalysisRegion = AnalysisRegion
-  { regionOffset     :: Offset             -- primary offset (output or target)
-  , regionSize       :: Length             -- bytes affected
-  , regionLabel      :: Text               -- operation label with trailing space
+  { regionOffset     :: Offset             -- in output or target coordinates, the format's walk decides which
+  , regionSize       :: Length
+  , regionLabel      :: Text               -- carries its own trailing space
   , regionPayload    :: AnalysisPayload
-  , regionAnnotation :: Annotation         -- structured trailing metadata
+  , regionAnnotation :: Annotation
   }
+  deriving (Generic)
+  deriving (ToJSON) via Generically AnalysisRegion
 
 data AnalysisPayload
-  = PayloadWrite ByteString            -- literal data (renderer hex dumps)
+  = PayloadWrite LiteralWriteBytes
   | PayloadFill !Word8 !Length         -- fill byte + repeat count
   | PayloadCopy CopySource
-  | PayloadXOR (Maybe ByteString)      -- XOR delta
-  | PayloadMeta ![InfoLine]            -- key-value details (BSDiff ctrl)
+  | PayloadXOR XORDeltaBytes
+  | PayloadMeta
+  deriving (Generic)
+  deriving (ToJSON) via Generically AnalysisPayload
+
+newtype LiteralWriteBytes = LiteralWriteBytes { unLiteralWriteBytes :: ByteString }
+  deriving (ToJSON) via BytesAsBase64
+
+newtype XORDeltaBytes = XORDeltaBytes { unXORDeltaBytes :: ByteString }
+  deriving (ToJSON) via BytesAsBase64
 
 data CopySource = FromSource | FromTarget | FromPatch
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically CopySource
 
 data AnalysisSummary
   = SummaryNone
   | Summary !SummaryInfo
+  deriving (Generic)
+  deriving (ToJSON) via Generically AnalysisSummary
 
 data SummaryInfo = SummaryInfo
   { summaryTally :: !Tally
   , summaryUnit  :: !CountUnit
   , summaryBytes :: !(Maybe ByteCount)
   }
+  deriving (Generic)
+  deriving (ToJSON) via Generically SummaryInfo
 
 data Annotation
   = AnnotationAt { annotationOffsetKind :: !OffsetKind
                  , annotationOffset     :: !Offset
                  , annotationDetails    :: ![AnnotDetail]
                  }
+  deriving (Generic)
+  deriving (ToJSON) via Generically Annotation
 
 data OffsetKind = AtOffset | AtOutput
+  deriving (Generic)
+  deriving (ToJSON) via Generically OffsetKind
 
 data AnnotDetail
-  = DetailRLE                   -- "(RLE)"
-  | DetailUndo                  -- "(undo data)"
-  | DetailDelta Delta           -- "(delta +N)"
-  | DetailSkip Length           -- "(skip N)"
-  | DetailAdd Length            -- "(add N)"   bsdiff: bytes summed with the source run
-  | DetailCopy Length           -- "(copy N)"  bsdiff: literal bytes from the extra block
-  | DetailSeek Delta            -- "(seek +N)" bsdiff: signed move of the source cursor
-  | DetailSource Offset         -- "(source 0xN)"
-  | DetailSourceIndex Int64     -- "from source N" (rendered before offset)
-  | DetailCRC16 CRC16 CRC16     -- "(src CRC16 0xN, tgt CRC16 0xN)"
+  = DetailRLE
+  | DetailUndo
+  | DetailDelta Delta
+  | DetailSkip Length
+  | DetailAdd Length            -- bsdiff: bytes summed with the source run
+  | DetailCopy Length           -- bsdiff: literal bytes from the extra block
+  | DetailSeek Delta            -- bsdiff: signed move of the source cursor
+  | DetailSource Offset
+  | DetailSourceIndex Int64
+  | DetailCRC16 CRC16 CRC16     -- source's, then target's
   | DetailCursorUnderflow CursorKind SignedOffset
-                                -- "*** <kind> cursor underflow: -N (patch invalid here) ***"
+  deriving (Generic)
+  deriving (ToJSON) via Generically AnnotDetail
 
 -- | Per-payload-type record counts, accumulated across regions.
 data PayloadCounts = PayloadCounts
@@ -153,7 +178,7 @@ renderAnalysisFull info analysis mSource = Text.unlines $ joinSections
     annotation = renderAnnotation . regionAnnotation
 
     renderRegion index region = case regionPayload region of
-      PayloadWrite writeData ->
+      PayloadWrite (LiteralWriteBytes writeData) ->
         padNum index <> "  " <> regionLabel region <> padRight 10 (renderAsText (unLength (regionSize region)) <> " B")
         <> annotation region
         <> "\n" <> hexDump writeData
@@ -165,15 +190,12 @@ renderAnalysisFull info analysis mSource = Text.unlines $ joinSections
         padNum index <> "  " <> regionLabel region <> padRight 10 (renderAsText (unLength (regionSize region)) <> " B")
         <> annotation region
         <> renderCopySource mSource region
-      PayloadXOR (Just deltaBytes) ->
+      PayloadXOR (XORDeltaBytes deltaBytes) ->
         padNum index <> "  " <> regionLabel region <> padRight 10 (renderAsText (unLength (regionSize region)) <> " B")
         <> annotation region
         <> "\n" <> labeledHexDump "delta" deltaBytes
         <> renderResolvedXOR mSource (regionOffset region) deltaBytes
-      PayloadXOR Nothing ->
-        padNum index <> "  " <> regionLabel region <> padRight 10 (renderAsText (unLength (regionSize region)) <> " B")
-        <> annotation region
-      PayloadMeta _ ->
+      PayloadMeta ->
         padNum index <> "  " <> regionLabel region <> annotation region
 
 -- | Stitch a list of section blocks into a single line stream with a
@@ -335,7 +357,7 @@ renderAnalysisSummary info analysis mSource = Text.unlines $ joinSections
       PayloadFill _ _ -> counts { fillCount  = fillCount  counts + 1 }
       PayloadCopy _   -> counts { copyCount  = copyCount  counts + 1 }
       PayloadXOR _    -> counts { xorCount   = xorCount   counts + 1 }
-      PayloadMeta _   -> counts { metaCount  = metaCount  counts + 1 }
+      PayloadMeta     -> counts { metaCount  = metaCount  counts + 1 }
     breakdownString =
       let parts = filter ((/= 0) . fst)
             [ (writeCount payloadCounts, "writes" :: Text)
@@ -514,7 +536,7 @@ renderAnalysisSummary info analysis mSource = Text.unlines $ joinSections
     capabilityNotes =
       let hasCopy = any (\region -> case regionPayload region of PayloadCopy _ -> True; _ -> False) allRegions
           hasXOR  = any (\region -> case regionPayload region of PayloadXOR _  -> True; _ -> False) allRegions
-          hasMeta = any (\region -> case regionPayload region of PayloadMeta _ -> True; _ -> False) allRegions
+          hasMeta = any (\region -> case regionPayload region of PayloadMeta -> True; _ -> False) allRegions
           hasDelta = hasCopy || hasXOR || hasMeta
       in case (hasDelta, mSource) of
            (True, Just _)  -> ["note: source file provided; use --records to see resolved content"]

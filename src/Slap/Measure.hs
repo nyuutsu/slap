@@ -118,7 +118,7 @@ import Slap.JSON.Bytes (BytesAsBase64(..))
 newtype Offset = Offset { unOffset :: Int64 } deriving (Eq, Ord, Show) deriving newtype (ToJSON)
 newtype Length   = Length   { unLength   :: Int64 } deriving (Eq, Ord, Show) deriving newtype (ToJSON)
 newtype FileSize = FileSize { unFileSize :: Int64 } deriving (Eq, Ord, Show) deriving newtype (ToJSON)
-newtype Delta    = Delta    { unDelta    :: Int64 } deriving (Eq, Ord, Show)
+newtype Delta    = Delta    { unDelta    :: Int64 } deriving (Eq, Ord, Show) deriving newtype (ToJSON)
 newtype Position = Position { unPosition :: Int } deriving (Eq, Ord, Show) deriving newtype (ToJSON)
 
 -- | A cursor position carrying the result of signed arithmetic.

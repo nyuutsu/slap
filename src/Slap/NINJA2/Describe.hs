@@ -12,7 +12,7 @@ import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), renderAsText
 import Slap.Display.Primitives (hexByteString)
 import Slap.Measure (FileSize(..), byteLength)
 import Slap.Display.Analysis (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
-                     AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),
+                     AnalysisPayload(..), XORDeltaBytes(..), AnalysisSummary(..), SummaryInfo(..),
                      Annotation(..), OffsetKind(..))
 import Slap.Text (encodedTextContent)
 
@@ -83,6 +83,6 @@ makeNINJA2Region (NINJA2Record recordOffset deltaBytes) = AnalysisRegion
   { regionOffset     = recordOffset
   , regionSize       = byteLength deltaBytes
   , regionLabel      = "XOR  "
-  , regionPayload    = PayloadXOR (Just deltaBytes)
+  , regionPayload    = PayloadXOR (XORDeltaBytes deltaBytes)
   , regionAnnotation = AnnotationAt AtOffset recordOffset []
   }

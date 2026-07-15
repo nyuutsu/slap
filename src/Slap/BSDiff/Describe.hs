@@ -60,7 +60,7 @@ makeBSDiffRegion outputPosition instruction =
        { regionOffset     = outputPosition
        , regionSize       = addLength <> copyLength
        , regionLabel      = ""
-       , regionPayload    = PayloadMeta []
+       , regionPayload    = PayloadMeta
        , regionAnnotation = AnnotationAt AtOutput outputPosition
                               [ DetailAdd addLength
                               , DetailCopy copyLength

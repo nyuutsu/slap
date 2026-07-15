@@ -28,7 +28,7 @@ import Slap.VCDIFF.AddressCache
   , unNearSlotCount, unSameBlockCount )
 import Slap.Display.Analysis
   ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
-  , AnalysisPayload(..), CopySource(..), AnalysisSummary(..)
+  , AnalysisPayload(..), LiteralWriteBytes(..), CopySource(..), AnalysisSummary(..)
   , SummaryInfo(..)
   , Annotation(..), OffsetKind(..), AnnotDetail(..) )
 import Slap.Display.Common
@@ -235,7 +235,7 @@ makeVCDIFFRegion maybeSegment outputPosition instruction = case instruction of
   Add literal ->
     let literalLength = byteLength literal
     in ( advance outputPosition literalLength
-       , AnalysisRegion outputPosition literalLength "Add  " (PayloadWrite literal)
+       , AnalysisRegion outputPosition literalLength "Add  " (PayloadWrite (LiteralWriteBytes literal))
            (AnnotationAt AtOutput outputPosition []) )
   Run count fillByte ->
     ( advance outputPosition count

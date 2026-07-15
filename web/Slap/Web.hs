@@ -1,3 +1,5 @@
+{-# LANGUAGE DerivingVia #-}
+
 -- | The boundary a browser front end talks to: what @app/Main.hs@ orchestrates, minus argv and the filesystem,
 -- handing structured answers up instead of rendered text. Glue only — every rule it appears to know, it is asking the engine for.
 module Slap.Web
@@ -46,12 +48,14 @@ module Slap.Web
   , analyzePatch
   ) where
 
+import Data.Aeson (ToJSON)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (catMaybes)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
+import GHC.Generics (Generic, Generically(..))
 
 import Slap.Binary (md5, sha1)
 import Slap.Checksum (CRC32, MD5Hash, SHA1Hash)
@@ -106,7 +110,8 @@ data Surface = Surface
   , surfaceEncodings      :: [AdvertisedEncodingFamily]
   , surfaceConsoleHeaders :: [ConsoleHeaderDescription]
   }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically Surface
 
 data FormatDescription = FormatDescription
   { formatCreateTarget     :: CreateFormat
@@ -117,7 +122,8 @@ data FormatDescription = FormatDescription
     -- ^ What @--compress-with@ can choose when this is the target; empty for a format without a secondary compressor.
     -- Per-format rather than one global vocabulary, so a second compressor-bearing format's own algorithms would have a home.
   }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically FormatDescription
 
 data ConsoleHeaderDescription = ConsoleHeaderDescription
   { describedConsoleHeader :: ConsoleHeader
@@ -125,7 +131,8 @@ data ConsoleHeaderDescription = ConsoleHeaderDescription
   , consoleName            :: Text
   , consoleWidth           :: Length
   }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically ConsoleHeaderDescription
 
 describeSurface :: Surface
 describeSurface = Surface
@@ -638,6 +645,8 @@ data PatchExplanation = PatchExplanation
   { explanationInfo     :: PatchInfo
   , explanationAnalysis :: PatchAnalysis
   }
+  deriving (Generic)
+  deriving (ToJSON) via Generically PatchExplanation
 
 -- | explain is info-plus: one parse yields both, so the page fills the screen with a single read.
 -- The structured analysis crosses, not rendered text — the terminal dump and the page's structure bar stay two renderers over one model.

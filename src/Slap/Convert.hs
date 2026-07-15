@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DerivingVia #-}
 
 module Slap.Convert
   ( PatchContents(..)
@@ -141,6 +142,7 @@ import Slap.Text (EncodedText(..), EncodingName(..),
                   encodedTextContent)
 
 import Control.Applicative ((<|>))
+import Data.Aeson (ToJSON)
 import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -152,6 +154,7 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
+import GHC.Generics (Generic, Generically(..))
 
 ----------------------------------------------------------------------------
 -- Types
@@ -203,27 +206,27 @@ data PatchContents = PatchContents
     -- ^ Arbitrary metadata blob (BPS). Most formats don't carry this.
   }
 
--- | Direct creation target.  Some format families have multiple creation
--- variants: IPS has three (IPS, IPS32, EBP) distinguished by offset width
--- and metadata.
+-- | Some format families have multiple creation variants: IPS has three (IPS, IPS32, EBP), distinguished by offset width and metadata.
 data DirectCreate
   = CreateIPS | CreateIPS32 | CreateEBP | CreatePPF1 | CreatePPF2 | CreatePPF3
   | CreatePPF4 | CreateNINJA1 | CreatePMSR | CreateAPSN64
-  deriving (Show, Eq, Enum, Bounded)
+  deriving (Show, Eq, Enum, Bounded, Generic)
+  deriving (ToJSON) via Generically DirectCreate
 
--- | Differential creation target: every differential format slap
--- parses, it also creates.
+-- | Every differential format slap parses, it also creates.
 data DifferentialCreate
   = CreateBPS | CreateUPS | CreateDPS | CreateNINJA2
   | CreateAPSGBA | CreateGDIFF | CreateBSDiff | CreateXDelta1
   | CreateRFCVCDIFF | CreateXDelta3
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (ToJSON) via Generically DifferentialCreate
 
 -- | Target format for patch creation or conversion.
 data CreateFormat
   = CreateDirect DirectCreate
   | CreateDifferential DifferentialCreate
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (ToJSON) via Generically CreateFormat
 
 -- | User intent about what metadata should end up in an emitted patch.
 -- Built from CLI flags in 'app/CLI.hs' (and from parsed source patches

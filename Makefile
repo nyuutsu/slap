@@ -78,11 +78,17 @@ wasm-parity-check: cabal wasm
 	 reactor="$$(. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal -v0 list-bin slap-web-reactor $(WASM_CABAL_FLAGS))"; \
 	 workdir="$$(mktemp -d)"; trap 'rm -rf "$$workdir"' EXIT; \
 	 printf 'not a patch' > "$$workdir/unrecognized"; \
+	 "$$probe" surface > "$$workdir/native.json"; \
+	 node web-reactor/envelope-host.mjs "$$reactor" surface > "$$workdir/wasm.json"; \
+	 cmp "$$workdir/native.json" "$$workdir/wasm.json" || { echo "envelope parity FAILED on surface"; exit 1; }; \
+	 echo "envelope parity holds on surface"; \
 	 for patch in test/data/dm4y/patch.* "$$workdir/unrecognized"; do \
-	   "$$probe" "$$patch" > "$$workdir/native.json"; \
-	   node web-reactor/inspect-host.mjs "$$reactor" "$$patch" > "$$workdir/wasm.json"; \
-	   cmp "$$workdir/native.json" "$$workdir/wasm.json" || { echo "envelope parity FAILED on $$patch"; exit 1; }; \
-	   echo "envelope parity holds on $$patch"; \
+	   for verb in inspect analyze; do \
+	     "$$probe" $$verb "$$patch" > "$$workdir/native.json"; \
+	     node web-reactor/envelope-host.mjs "$$reactor" $$verb "$$patch" > "$$workdir/wasm.json"; \
+	     cmp "$$workdir/native.json" "$$workdir/wasm.json" || { echo "envelope parity FAILED on $$verb $$patch"; exit 1; }; \
+	     echo "envelope parity holds on $$verb $$patch"; \
+	   done; \
 	 done
 
 # Scrub 🧼

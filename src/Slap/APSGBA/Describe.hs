@@ -8,7 +8,7 @@ module Slap.APSGBA.Describe
 
 import Slap.APSGBA.Types
 import Slap.Display.Analysis (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
-                     AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),
+                     AnalysisPayload(..), XORDeltaBytes(..), AnalysisSummary(..), SummaryInfo(..),
                      Annotation(..), OffsetKind(..), AnnotDetail(..))
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), renderAsText)
 import Slap.Measure (Length(..), FileSize(..))
@@ -30,7 +30,7 @@ makeGBARegion record = AnalysisRegion
   { regionOffset     = apsGbaOffset record
   , regionSize       = Length (fromIntegral apsGbaBlockSize)
   , regionLabel      = "XOR block  "
-  , regionPayload    = PayloadXOR (Just (apsGbaXorData record))
+  , regionPayload    = PayloadXOR (XORDeltaBytes (apsGbaXorData record))
   , regionAnnotation = AnnotationAt AtOffset (apsGbaOffset record)
       [DetailCRC16 (apsGbaSourceCRC record) (apsGbaTargetCRC record)]
   }

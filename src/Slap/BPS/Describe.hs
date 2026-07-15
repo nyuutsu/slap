@@ -13,7 +13,7 @@ module Slap.BPS.Describe
 import Slap.BPS.Types (BPSPatch(..), BPSAction(..), BPSMetadata(..))
 import Slap.Display.Analysis
     ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
-    , AnalysisPayload(..), CopySource(..), AnalysisSummary(..)
+    , AnalysisPayload(..), LiteralWriteBytes(..), CopySource(..), AnalysisSummary(..)
     , SummaryInfo(..)
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
@@ -108,7 +108,7 @@ makeBPSRegion state action = case action of
   TargetRead payload ->
     let payloadLength = byteLength payload
     in ( state { regionOutputPosition = advance (regionOutputPosition state) payloadLength }
-       , AnalysisRegion (regionOutputPosition state) payloadLength "TargetRead " (PayloadWrite payload)
+       , AnalysisRegion (regionOutputPosition state) payloadLength "TargetRead " (PayloadWrite (LiteralWriteBytes payload))
            (AnnotationAt AtOutput (regionOutputPosition state) [])
        )
   SourceCopy actionLength actionDelta ->

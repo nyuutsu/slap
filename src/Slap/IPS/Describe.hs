@@ -58,6 +58,7 @@ import Slap.Display.Analysis
   , AnalysisSection(..)
   , AnalysisRegion(..)
   , AnalysisPayload(..)
+  , LiteralWriteBytes(..)
   , AnalysisSummary(..)
   , SummaryInfo(..)
   , Annotation(..)
@@ -222,7 +223,7 @@ makeIPSRegion record = AnalysisRegion
     recordTargetOffset = ipsRecordOffset record
     (regionLabelString, regionPayloadValue, annotationDetails) = case record of
       IPSRecordCopy { ipsCopyPayload = payload } ->
-        ("Write  ", PayloadWrite payload, [])
+        ("Write  ", PayloadWrite (LiteralWriteBytes payload), [])
       IPSRecordRLE  { ipsRleCount = runLength
                     , ipsRleFill  = fillByte } ->
         ("Fill ",   PayloadFill fillByte runLength, [DetailRLE])

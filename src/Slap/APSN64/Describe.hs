@@ -8,7 +8,7 @@ module Slap.APSN64.Describe
 
 import Slap.APSN64.Types
 import Slap.Display.Analysis (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
-                     AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),
+                     AnalysisPayload(..), LiteralWriteBytes(..), AnalysisSummary(..), SummaryInfo(..),
                      Annotation(..), OffsetKind(..), AnnotDetail(..))
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), renderAsText)
 import Slap.Display.Primitives (hexByteString)
@@ -55,7 +55,7 @@ makeN64Region (APSN64Normal recordOffset recordPayload) = AnalysisRegion
   { regionOffset     = recordOffset
   , regionSize       = byteLength recordPayload
   , regionLabel      = "Write  "
-  , regionPayload    = PayloadWrite recordPayload
+  , regionPayload    = PayloadWrite (LiteralWriteBytes recordPayload)
   , regionAnnotation = AnnotationAt AtOffset recordOffset []
   }
 makeN64Region (APSN64RLE recordOffset fillValue fillCount) = AnalysisRegion

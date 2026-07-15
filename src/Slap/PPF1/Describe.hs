@@ -22,6 +22,7 @@ import Slap.Display.Analysis
   , AnalysisSection(SectionRegions)
   , AnalysisRegion(..)
   , AnalysisPayload(PayloadWrite)
+  , LiteralWriteBytes(..)
   , AnalysisSummary(Summary)
   , SummaryInfo(..)
   , Annotation(AnnotationAt)
@@ -49,7 +50,7 @@ analyzePPF1 patch = PatchAnalysis
       { regionOffset     = ppf1RecordOffset record
       , regionSize       = byteLength (ppf1RecordPayload record)
       , regionLabel      = "Write  "
-      , regionPayload    = PayloadWrite (ppf1RecordPayload record)
+      , regionPayload    = PayloadWrite (LiteralWriteBytes (ppf1RecordPayload record))
       , regionAnnotation = AnnotationAt AtOffset (ppf1RecordOffset record) []
       }
 

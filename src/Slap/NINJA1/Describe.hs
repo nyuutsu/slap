@@ -10,7 +10,7 @@ module Slap.NINJA1.Describe
 import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..),
                            romTypeName)
 import Slap.Display.Analysis (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
-                      AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),
+                      AnalysisPayload(..), LiteralWriteBytes(..), AnalysisSummary(..), SummaryInfo(..),
                       Annotation(..), OffsetKind(..))
 import Slap.Checksum (showCRC32, MD5Hash(..), SHA1Hash(..))
 import Slap.Display.Common (InfoLine(..),
@@ -57,7 +57,7 @@ makeNINJA1Region (NINJA1Record recordOffset recordPayload) = AnalysisRegion
   { regionOffset     = recordOffset
   , regionSize       = byteLength recordPayload
   , regionLabel      = "Write  "
-  , regionPayload    = PayloadWrite recordPayload
+  , regionPayload    = PayloadWrite (LiteralWriteBytes recordPayload)
   , regionAnnotation = AnnotationAt AtOffset recordOffset []
   }
 

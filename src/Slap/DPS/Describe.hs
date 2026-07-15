@@ -10,7 +10,7 @@ import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), DPSStability(..),
                        dpsSourceSizeAsFileSize)
 import Slap.Display.Analysis
     ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
-    , AnalysisPayload(..), CopySource(..), AnalysisSummary(..)
+    , AnalysisPayload(..), LiteralWriteBytes(..), CopySource(..), AnalysisSummary(..)
     , SummaryInfo(..)
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
@@ -73,7 +73,7 @@ makeDPSRegion (DPSEnclosedData outputOffset payload) = AnalysisRegion
   { regionOffset     = outputOffset
   , regionSize       = byteLength payload
   , regionLabel      = "Data   "
-  , regionPayload    = PayloadWrite payload
+  , regionPayload    = PayloadWrite (LiteralWriteBytes payload)
   , regionAnnotation = AnnotationAt AtOffset outputOffset []
   }
 makeDPSRegion (DPSCopyFromROM outputOffset sourceOffset copyLength) = AnalysisRegion

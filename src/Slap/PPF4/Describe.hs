@@ -15,6 +15,7 @@ import Slap.Display.Analysis
   , AnalysisSection(SectionRegions)
   , AnalysisRegion(..)
   , AnalysisPayload(PayloadWrite)
+  , LiteralWriteBytes(..)
   , AnalysisSummary(Summary)
   , SummaryInfo(..)
   , Annotation(AnnotationAt)
@@ -69,7 +70,7 @@ replaceRegion replace = AnalysisRegion
   { regionOffset     = replaceOffset replace
   , regionSize       = byteLength (replaceData replace)
   , regionLabel      = "Write  "
-  , regionPayload    = PayloadWrite (replaceData replace)
+  , regionPayload    = PayloadWrite (LiteralWriteBytes (replaceData replace))
   , regionAnnotation = AnnotationAt AtOffset (replaceOffset replace) []
   }
 
@@ -78,7 +79,7 @@ appendRegion displayOffset (PPF4Append payloadBytes) = AnalysisRegion
   { regionOffset     = displayOffset
   , regionSize       = byteLength payloadBytes
   , regionLabel      = "Append "
-  , regionPayload    = PayloadWrite payloadBytes
+  , regionPayload    = PayloadWrite (LiteralWriteBytes payloadBytes)
   , regionAnnotation = AnnotationAt AtOffset displayOffset []
   }
 

@@ -18,8 +18,10 @@ import System.Exit (die)
 import Slap.Checksum (CRC32(unCRC32))
 import Slap.Convert (noDialectsRequested)
 import Slap.FileContents (InputFileContents(InputFileContents), PatchFileContents(PatchFileContents))
+import Slap.Status (noAdvisories)
 import Slap.Text (EncodingName(EncodingUtf8))
-import Slap.Web (InspectRequest(..), RomFacts(romCRC32), describeRom, inspectPatch)
+import Slap.Web (AnalyzeRequest(..), InspectRequest(..), RomFacts(romCRC32),
+                 analyzePatch, describeRom, describeSurface, inspectPatch)
 import Slap.Web.Envelope (encodeEnvelope)
 
 foreign export ccall "slap_web_link_check" slapWebLinkCheck :: IO Word32
@@ -46,6 +48,11 @@ foreign export ccall "slap_web_free" slapWebFree :: Ptr Word8 -> IO ()
 slapWebFree :: Ptr Word8 -> IO ()
 slapWebFree = free
 
+foreign export ccall "slap_web_describe_surface" slapWebDescribeSurface :: IO (Ptr Word8)
+
+slapWebDescribeSurface :: IO (Ptr Word8)
+slapWebDescribeSurface = lengthPrefixedBuffer surfaceEnvelope
+
 foreign export ccall "slap_web_inspect_patch" slapWebInspectPatch :: Ptr Word8 -> Int -> IO (Ptr Word8)
 
 slapWebInspectPatch :: Ptr Word8 -> Int -> IO (Ptr Word8)
@@ -53,12 +60,31 @@ slapWebInspectPatch patchPointer patchLength = do
   patchBytes <- ByteString.packCStringLen (castPtr patchPointer, patchLength)
   lengthPrefixedBuffer (inspectEnvelope patchBytes)
 
--- | The one envelope both targets speak: parse under UTF-8 with no dialect toggles, the read verbs' defaults.
+foreign export ccall "slap_web_analyze_patch" slapWebAnalyzePatch :: Ptr Word8 -> Int -> IO (Ptr Word8)
+
+slapWebAnalyzePatch :: Ptr Word8 -> Int -> IO (Ptr Word8)
+slapWebAnalyzePatch patchPointer patchLength = do
+  patchBytes <- ByteString.packCStringLen (castPtr patchPointer, patchLength)
+  lengthPrefixedBuffer (analyzeEnvelope patchBytes)
+
+-- | The surface cannot refuse and raises nothing; it rides the envelope anyway so the page reads one wire shape everywhere.
+surfaceEnvelope :: ByteString
+surfaceEnvelope = encodeEnvelope (noAdvisories (Right describeSurface))
+
+-- Both reads parse under UTF-8 with no dialect toggles, the read verbs' defaults.
+
 inspectEnvelope :: ByteString -> ByteString
 inspectEnvelope patchBytes = encodeEnvelope $ inspectPatch InspectRequest
   { inspectPatchBytes       = PatchFileContents patchBytes
   , inspectMetadataEncoding = EncodingUtf8
   , inspectDialects         = noDialectsRequested
+  }
+
+analyzeEnvelope :: ByteString -> ByteString
+analyzeEnvelope patchBytes = encodeEnvelope $ analyzePatch AnalyzeRequest
+  { analyzePatchBytes       = PatchFileContents patchBytes
+  , analyzeMetadataEncoding = EncodingUtf8
+  , analyzeDialects         = noDialectsRequested
   }
 
 lengthPrefixedBuffer :: ByteString -> IO (Ptr Word8)
@@ -73,5 +99,7 @@ main :: IO ()
 main = do
   arguments <- getArgs
   case arguments of
-    [patchPath] -> ByteString.putStr . inspectEnvelope =<< ByteString.readFile patchPath
-    _           -> die "usage: slap-web-reactor PATCH  (writes the inspect envelope to stdout)"
+    ["surface"]            -> ByteString.putStr surfaceEnvelope
+    ["inspect", patchPath] -> ByteString.putStr . inspectEnvelope =<< ByteString.readFile patchPath
+    ["analyze", patchPath] -> ByteString.putStr . analyzeEnvelope =<< ByteString.readFile patchPath
+    _                      -> die "usage: slap-web-reactor surface | inspect PATCH | analyze PATCH  (writes the verb's envelope to stdout)"

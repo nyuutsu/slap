@@ -9,7 +9,7 @@ module Slap.GDIFF.Describe
 import Slap.GDIFF.Types (GDiffPatch(..), GDiffCommand(..))
 import Slap.Display.Analysis
     ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
-    , AnalysisPayload(..), CopySource(..), AnalysisSummary(..)
+    , AnalysisPayload(..), LiteralWriteBytes(..), CopySource(..), AnalysisSummary(..)
     , SummaryInfo(..), Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), renderAsText)
@@ -44,7 +44,7 @@ makeGDIFFRegion outputPosition command = case command of
   GDiffCommandData { gdiffDataPayload = payload } ->
     let payloadLength = byteLength payload
     in ( advance outputPosition payloadLength
-       , AnalysisRegion outputPosition payloadLength "DATA  " (PayloadWrite payload)
+       , AnalysisRegion outputPosition payloadLength "DATA  " (PayloadWrite (LiteralWriteBytes payload))
            (AnnotationAt AtOutput outputPosition [])
        )
   GDiffCommandCopy { gdiffCopyOffset = sourceOffset, gdiffCopyLength = copyLength } ->
