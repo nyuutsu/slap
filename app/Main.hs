@@ -5,6 +5,7 @@ module Main (main) where
 import Slap.SomePatch
   ( SomePatch(..)
   , PatchKind(..)
+  , patchContentsOf
   , ApplyStrategy(..)
   , UndoStrategy(..)
   , UndoAvailability(..)
@@ -462,12 +463,6 @@ chooseConvertDispatch parsedCommand parsed =
       Direct (Just contents) -> SourceLessConvert contents
       Direct Nothing         -> SourceRequiredToConvert SourcePatchNotReencodable
       Differential           -> SourceRequiredToConvert SourcePatchIsDifferential
-
--- | Project the optional 'PatchContents' bag out of a 'SomePatch'.
-patchContentsOf :: SomePatch -> Maybe PatchContents
-patchContentsOf parsed = case patchKind parsed of
-  Direct optionalContents -> optionalContents
-  Differential            -> Nothing
 
 doConvert :: ConvertCommand -> IO ()
 doConvert parsedCommand = do

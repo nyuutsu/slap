@@ -8,7 +8,7 @@ import Slap.Convert (CreateFormat(..), DifferentialCreate(..), DirectCreate(..),
                      advertisedCreateFormats, lookupCreateFormatToken, noConstraintsRequested,
                      noDialectsRequested, noMetadataRequested)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
-import Slap.Create (createPatch)
+import qualified Slap.Create as Create
 import Slap.Dialect (Dialect(..))
 import Slap.Display.Info (InputSideVerdict(..), OutputSideVerdict(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
@@ -23,12 +23,14 @@ import Slap.Text (EncodedText(..), EncodingName(EncodingUtf8))
 import Slap.VCDIFF.SecondaryCompression (secondaryCompressorTokens)
 import Slap.Verify (VerificationPolicy(EnforceVerification), VerificationVerdict(..))
 import Slap.Web
+import Slap.XDelta1.Types (XDelta1FromName(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.List (nub)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.Set as Set
+import qualified Data.Text as Text
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -62,6 +64,15 @@ webTests = testGroup "Web"
       , testCase "a differential source without a source rom asks too"  test_checkConvertBPSToIPSNeedsSource
       , testCase "a stale Amiga toggle gaps with its own drop"          test_checkConvertStaleAmigaToggle
       , testCase "an unparseable patch is the Left, not a gap"          test_checkConvertUnrecognized
+      ]
+  , testGroup "emit acts"
+      [ testCase "the create act mirrors the engine create byte for byte" test_createActMirrorsEngine
+      , testCase "the create act refuses exactly as its check"            test_createActAgreement
+      , testCase "xdelta1 create falls back to the dropped files' names"  test_xdelta1NameFallback
+      , testCase "an overlong explicit name gaps toward amendment"        test_xdelta1OverlongName
+      , testCase "a sourceless convert emits the new format"              test_convertActSourceless
+      , testCase "a with-source convert equals the direct create"         test_convertActWithSource
+      , testCase "the convert act refuses exactly as its check"           test_convertActAgreement
       ]
   ]
 
@@ -106,8 +117,8 @@ fixtureTargetBytes = ByteString.pack ([0 .. 31] <> [0xAA] <> [33 .. 63])
 
 createdFixturePatch :: CreateFormat -> RequestedPatchMetadata -> IO PatchFileContents
 createdFixturePatch format meta =
-  case createPatch format Nothing (InputFileContents fixtureSourceBytes) (OutputFileContents fixtureTargetBytes)
-                    meta Nothing noConstraintsRequested noDialectsRequested of
+  case Create.createPatch format Nothing (InputFileContents fixtureSourceBytes) (OutputFileContents fixtureTargetBytes)
+                          meta Nothing noConstraintsRequested noDialectsRequested of
     Left slapError -> assertFailureT ("create: " <> renderSlapError slapError)
     Right (CreateResult patchBytes _advisories) -> pure patchBytes
 
@@ -209,6 +220,8 @@ plainCreateRequest target = CreateRequest
   { createTargetFormat = target
   , createOriginal     = InputFileContents fixtureSourceBytes
   , createModified     = OutputFileContents fixtureTargetBytes
+  , createOriginalName = "fixture-source.bin"
+  , createModifiedName = "fixture-target.bin"
   , createMetadata     = noMetadataRequested
   , createConstraints  = noConstraintsRequested
   }
@@ -285,6 +298,76 @@ test_checkConvertUnrecognized :: Assertion
 test_checkConvertUnrecognized =
   checkConvert (plainConvertRequest (PatchFileContents "this file is nobody's patch") (CreateDifferential CreateBPS))
     @?= Left UnrecognizedFormat
+
+test_createActMirrorsEngine :: Assertion
+test_createActMirrorsEngine = do
+  fixturePatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
+  case outcomeValue (createPatch (plainCreateRequest (CreateDifferential CreateBPS))) of
+    Left refusal  -> assertFailureT ("create: " <> renderSlapError refusal)
+    Right created -> do
+      createdPatchBytes created @?= fixturePatch
+      createdPatchFormat created @?= CreateDifferential CreateBPS
+
+test_createActAgreement :: Assertion
+test_createActAgreement =
+  case (checkCreate request, outcomeValue (createPatch request)) of
+    (Blocked (gap :| _), Left refusal) -> refusal @?= gapReason gap
+    other -> assertFailure ("expected a blocked check and a refusing act: " <> show other)
+  where
+    request = (plainCreateRequest (CreateDirect CreateIPS))
+      { createMetadata = noMetadataRequested { requestedTitle = Just (EncodedText EncodingUtf8 "title") } }
+
+test_xdelta1NameFallback :: Assertion
+test_xdelta1NameFallback = do
+  let request = plainCreateRequest (CreateDifferential CreateXDelta1)
+  checkCreate request @?= Ready
+  case outcomeValue (createPatch request) of
+    Left refusal  -> assertFailureT ("create: " <> renderSlapError refusal)
+    Right created -> identifyPatch noDialectsRequested EncodingUtf8 (createdPatchBytes created)
+                       @?= Right PatchIdentity { identifiedFormat   = LabelXDelta1
+                                               , applicableDialects = Set.empty
+                                               , identifiedUndo     = FormatHasNoUndo }
+
+test_xdelta1OverlongName :: Assertion
+test_xdelta1OverlongName =
+  case checkCreate request of
+    Blocked (Gap (FieldTooLong _ _ _ _) resolutions :| []) ->
+      resolutions @?= AmendMetadataField MetadataXDelta1FromName :| []
+    other -> assertFailure ("unexpected verdict: " <> show other)
+  where
+    request = (plainCreateRequest (CreateDifferential CreateXDelta1))
+      { createMetadata = noMetadataRequested
+          { requestedXDelta1FromName =
+              Just (XDelta1FromName (EncodedText EncodingUtf8 (Text.replicate 70000 "a"))) } }
+
+test_convertActSourceless :: Assertion
+test_convertActSourceless = do
+  ipsPatch <- createdFixturePatch (CreateDirect CreateIPS) noMetadataRequested
+  Outcome converted _advisories <- convertPatch (plainConvertRequest ipsPatch (CreateDirect CreateIPS32))
+  case converted of
+    Left refusal  -> assertFailureT ("convert: " <> renderSlapError refusal)
+    Right created -> fmap identifiedFormat (identifyPatch noDialectsRequested EncodingUtf8 (createdPatchBytes created))
+                       @?= Right LabelIPS32
+
+test_convertActWithSource :: Assertion
+test_convertActWithSource = do
+  ipsPatch     <- createdFixturePatch (CreateDirect CreateIPS) noMetadataRequested
+  directCreate <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
+  let request = (plainConvertRequest ipsPatch (CreateDifferential CreateBPS))
+        { convertSourceRom = Just (MatchedRom (InputFileContents fixtureSourceBytes) TakeInputAsIs) }
+  Outcome converted _advisories <- convertPatch request
+  case converted of
+    Left refusal  -> assertFailureT ("convert: " <> renderSlapError refusal)
+    Right created -> createdPatchBytes created @?= directCreate
+
+test_convertActAgreement :: Assertion
+test_convertActAgreement = do
+  bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
+  let request = plainConvertRequest bpsPatch (CreateDirect CreateIPS)
+  Outcome converted _advisories <- convertPatch request
+  case (checkConvert request, converted) of
+    (Right (Blocked (gap :| _)), Left refusal) -> refusal @?= gapReason gap
+    other -> assertFailure ("expected a blocked check and a refusing act: " <> show other)
 
 -- | The nine digits are the CRC catalogs' standard check input; every digest below is the published one.
 -- The field newtypes already forbid swapping one hash for another; this catches hashing the wrong bytes.

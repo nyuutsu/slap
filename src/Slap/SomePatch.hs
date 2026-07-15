@@ -3,6 +3,7 @@
 module Slap.SomePatch
   ( SomePatch(..)
   , PatchKind(..)
+  , patchContentsOf
   , ApplyStrategy(..)
   , UndoStrategy(..)
   , UndoAvailability(..)
@@ -246,6 +247,11 @@ patchIdentity parsed = PatchIdentity
   , applicableDialects = acceptedDialects (patchFormat parsed)
   , identifiedUndo     = undoAnswerFor (patchUndo parsed)
   }
+
+patchContentsOf :: SomePatch -> Maybe PatchContents
+patchContentsOf parsed = case patchKind parsed of
+  Direct optionalContents -> optionalContents
+  Differential            -> Nothing
 
 ----------------------------------------------------------------------------
 -- Helpers

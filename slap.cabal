@@ -184,6 +184,7 @@ library slap-web
   ghc-options:      -Wall -Werror -Wname-shadowing -O2 -g3
   build-depends:
       base                 >= 4.20 && < 5
+    , bytestring           >= 0.11
     , containers           >= 0.6
     , slap:slap-internal
     , text                 >= 2.0

@@ -33,8 +33,12 @@ module Slap.Web
   , Resolution(..)
   , checkCreate
   , checkConvert
+  , CreatedPatch(..)
+  , createPatch
+  , convertPatch
   ) where
 
+import Data.ByteString (ByteString)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (catMaybes)
@@ -45,13 +49,16 @@ import Data.Text (Text)
 import Slap.Binary (md5, sha1)
 import Slap.Checksum (CRC32, MD5Hash, SHA1Hash)
 import Slap.Constraint (Constraint)
-import Slap.Convert (CreateFormat(..), DifferentialCreate(CreateXDelta1), RequestedConstraints,
-                     RequestedDialects, RequestedPatchMetadata(..), TokenVisibility(Canonical),
-                     acceptedConstraints, acceptedDialects, acceptedMetadataFields, createFormatTokens,
-                     mergeRequestedMetadata, metadataRequests, rejectCrossPlatformRomTypeRetag,
+import Slap.Convert (CreateFormat(..), DifferentialCreate(CreateXDelta1),
+                     RequestedConstraints, RequestedDialects, RequestedPatchMetadata(..),
+                     TokenVisibility(Canonical), acceptedConstraints, acceptedDialects,
+                     acceptedMetadataFields, convertDirect, createDefaultAdvisories,
+                     createFormatTokens, mergeRequestedMetadata, metadataRequests,
+                     noDialectsRequested, rejectCrossPlatformRomTypeRetag,
                      rejectIncompatibleConstraints, rejectIncompatibleDialects,
                      rejectIncompatibleMetadataRequests, rejectIncompatibleSizeChange,
                      rejectUnencodableSecondaryCompressor, verdictOnDirectConversion)
+import qualified Slap.Create as Create
 import Slap.Detect (DroppedFileClass(..), classifyDroppedFile)
 import Slap.Dialect (Dialect)
 import Slap.Display.Info (InputSideVerdict(..), OutputSideVerdict(..))
@@ -63,21 +70,25 @@ import Slap.Header (ConsoleHeader, InputHeaderDirective(TakeInputAsIs), consoleH
                     consoleHeaderName, consoleHeaderToken)
 import Slap.Measure (FileSize, Length, byteFileSize)
 import Slap.MetadataField (MetadataField(..), requestField)
-import Slap.Normalize (normalizedSourceBytes, normalizedSourceRestore, restoreStrippedContent)
+import Slap.Normalize (NormalizedSource, normalizeApplySource, normalizedSourceAdvisories,
+                       normalizedSourceBytes, normalizedSourceRestore, restoreStrippedContent)
 import Slap.PatchField (PatchField)
 import qualified Slap.Preflight as Preflight
 import Slap.Preflight (HeaderRescueCandidate(..), PreparedApplySource(..), SourceReport(..),
-                       headerRescueAdvisories, prepareApplySource, weighUndoInput)
+                       headerRescueAdvisories, prepareApplySource, reframeInput, weighUndoInput)
 import Slap.SomePatch (PatchIdentity(..), PatchKind(..), SomePatch, UndoAnswer(..),
                        UndoAvailability(..), UndoStrategy, parseSome, patchAdvisories, patchApply,
-                       patchExtractedMeta, patchFormat, patchIdentity, patchKind, patchUndo,
+                       patchContentsOf, patchExtractedMeta, patchFormat, patchIdentity, patchKind,
+                       patchSourceAdvisories, patchSourceNormalization, patchUndo,
                        patchVerification, runApply, runUndo)
-import Slap.Status (Outcome(..), SlapAdvisory, SlapError(..), SourceRequiredCause(..))
+import Slap.Status (CreateResult(..), Outcome(..), SlapAdvisory, SlapError(..),
+                    SourceRequiredCause(..))
 import Slap.Text (AdvertisedEncodingFamily, EncodingName(EncodingUtf8), advertisedEncodings)
 import Slap.VCDIFF.SecondaryCompression (secondaryCompressorTokens)
 import Slap.Verify (VerificationPolicy, VerificationVerdict, Weighing, flipSpokenSides,
-                    judgeWeighing, verdictOnWeighing, weighSource, weighTarget)
-import Slap.XDelta1.Types (requireXDelta1FileNames, unXDelta1FromName, unXDelta1ToName)
+                    judgeWeighing, verdictOnWeighing, verifySource, weighSource, weighTarget)
+import Slap.XDelta1.Types (ResolvedXDelta1FileNames, requireXDelta1FileNames,
+                           resolveXDelta1FileNames, unXDelta1FromName, unXDelta1ToName)
 
 ----------------------------------------------------------------------------
 -- What exists
@@ -334,6 +345,10 @@ data CreateRequest = CreateRequest
   { createTargetFormat :: CreateFormat
   , createOriginal     :: InputFileContents
   , createModified     :: OutputFileContents
+  , createOriginalName :: FilePath
+    -- ^ The dropped files' own names. xdelta1 embeds a name pair and defaults to these,
+    -- as the CLI defaults to its paths' basenames.
+  , createModifiedName :: FilePath
   , createMetadata     :: RequestedPatchMetadata
   , createConstraints  :: RequestedConstraints
   }
@@ -381,31 +396,44 @@ data Resolution
     -- ^ The field is supplied and refused as given (a name past its wire field's ceiling); a different value closes the gap.
   deriving (Eq, Show)
 
--- | The one request-content judgment not made here is xdelta1's file-name pair,
--- whose create-side resolution falls back to file names this request does not carry.
 checkCreate :: CreateRequest -> Verdict
 checkCreate request = verdictOf $ catMaybes
   [ metadataRequestsGap    (createTargetFormat request) (createMetadata request)
   , secondaryCompressorGap (createTargetFormat request) (createMetadata request)
   , constraintsGap         (createTargetFormat request) (createConstraints request)
   , sizeChangeGap          (createTargetFormat request) (createOriginal request) (createModified request)
+  , xdelta1CreateNamesGap  request
   ]
 
 -- | A parse failure is the 'Left', never a 'Gap': a gap means the named emit would be incorrect and the request can be amended toward it;
 -- a refused parse means no emit was ever named, so there is nothing to negotiate. A source ROM in hand clears the conversion-path gaps.
 checkConvert :: ConvertRequest -> Either SlapError Verdict
-checkConvert request = do
+checkConvert = fmap judgedVerdict . judgeConvert
+
+-- | What convert's check learns, kept for the act.
+data JudgedConvert = JudgedConvert
+  { judgedPatch      :: SomePatch
+  , judgedMergedMeta :: RequestedPatchMetadata
+  , judgedVerdict    :: Verdict
+  }
+
+judgeConvert :: ConvertRequest -> Either SlapError JudgedConvert
+judgeConvert request = do
   parsed <- parseSome (convertDialects request) (convertMetadataEncoding request) (convertPatchBytes request)
   let mergedMeta = mergeRequestedMetadata (convertMetadata request) (patchExtractedMeta parsed)
-  pure . verdictOf $ catMaybes
-    [ metadataRequestsGap    (convertTargetFormat request) (convertMetadata request)
-    , secondaryCompressorGap (convertTargetFormat request) (convertMetadata request)
-    , constraintsGap         (convertTargetFormat request) (convertConstraints request)
-    , dialectsGap            (patchFormat parsed) (convertDialects request)
-    , romTypeRetagGap        (convertMetadata request) (patchExtractedMeta parsed)
-    , xdelta1NamesGap        (convertTargetFormat request) (patchFormat parsed) mergedMeta
-    , conversionPathGap      request parsed mergedMeta
-    ]
+  pure JudgedConvert
+    { judgedPatch      = parsed
+    , judgedMergedMeta = mergedMeta
+    , judgedVerdict    = verdictOf $ catMaybes
+        [ metadataRequestsGap    (convertTargetFormat request) (convertMetadata request)
+        , secondaryCompressorGap (convertTargetFormat request) (convertMetadata request)
+        , constraintsGap         (convertTargetFormat request) (convertConstraints request)
+        , dialectsGap            (patchFormat parsed) (convertDialects request)
+        , romTypeRetagGap        (convertMetadata request) (patchExtractedMeta parsed)
+        , xdelta1NamesGap        (convertTargetFormat request) (patchFormat parsed) mergedMeta
+        , conversionPathGap      request parsed mergedMeta
+        ]
+    }
 
 verdictOf :: [Gap] -> Verdict
 verdictOf = maybe Ready Blocked . NonEmpty.nonEmpty
@@ -481,6 +509,25 @@ xdelta1NamesGap (CreateDifferential CreateXDelta1) sourceFormat mergedMeta =
       (Just _,  Just _)  -> error "Slap.Web: requireXDelta1FileNames demanded names that are both present"
 xdelta1NamesGap _ _ _ = Nothing
 
+xdelta1CreateNamesGap :: CreateRequest -> Maybe Gap
+xdelta1CreateNamesGap request = case resolveCreateXDelta1Names request of
+  Right _ -> Nothing
+  Left refusal@(FieldTooLong _ FieldXDelta1FromName _ _) ->
+    Just (Gap refusal (AmendMetadataField MetadataXDelta1FromName :| []))
+  Left refusal@(FieldTooLong _ FieldXDelta1ToName _ _) ->
+    Just (Gap refusal (AmendMetadataField MetadataXDelta1ToName :| []))
+  Left foreignRefusal -> refusalOutsideJudgmentVocabulary foreignRefusal
+
+resolveCreateXDelta1Names :: CreateRequest -> Either SlapError (Maybe ResolvedXDelta1FileNames)
+resolveCreateXDelta1Names request = case createTargetFormat request of
+  CreateDifferential CreateXDelta1 -> fmap Just $
+    resolveXDelta1FileNames
+      (unXDelta1FromName <$> requestedXDelta1FromName (createMetadata request))
+      (unXDelta1ToName   <$> requestedXDelta1ToName   (createMetadata request))
+      (createOriginalName request)
+      (createModifiedName request)
+  _ -> Right Nothing
+
 conversionPathGap :: ConvertRequest -> SomePatch -> RequestedPatchMetadata -> Maybe Gap
 conversionPathGap request parsed mergedMeta = case convertSourceRom request of
   Just _  -> Nothing
@@ -505,3 +552,119 @@ directConversionResolutions refusal = case refusal of
       [ChooseTargetPreserving field preservers | (field, preservers) <- droppedPairs]
       (ProvideSourceRom :| [])
   _ -> refusalOutsideJudgmentVocabulary refusal
+
+----------------------------------------------------------------------------
+-- Ask, then do — the emit acts
+----------------------------------------------------------------------------
+
+data CreatedPatch = CreatedPatch
+  { createdPatchBytes  :: PatchFileContents
+  , createdPatchFormat :: CreateFormat  -- ^ so the browser can name the download
+  }
+  deriving (Eq, Show)
+
+-- | Proceeds only on its own check's 'Ready', so the act and the check cannot disagree.
+createPatch :: CreateRequest -> Outcome (Either SlapError CreatedPatch)
+createPatch request = case checkCreate request of
+  Blocked (gap :| _) -> Outcome (Left (gapReason gap)) []
+  Ready -> case resolveCreateXDelta1Names request of
+    Left refusal -> Outcome (Left refusal) []
+    Right resolvedNames ->
+      case Create.createPatch (createTargetFormat request) resolvedNames (createOriginal request)
+                              (createModified request) (createMetadata request) Nothing
+                              (createConstraints request) noDialectsRequested of
+        Left refusal -> Outcome (Left refusal) defaultAdvisories
+        Right (CreateResult patchBytes createAdvisories) ->
+          Outcome (Right (CreatedPatch patchBytes (createTargetFormat request)))
+                  (defaultAdvisories ++ createAdvisories)
+  where
+    defaultAdvisories =
+      createDefaultAdvisories (createTargetFormat request) (createMetadata request) (createOriginal request)
+
+-- | IO for the same reason 'applyPatch' is: the @--with@ lane applies the patch before re-diffing.
+-- A handed source is reframed under its 'MatchedRom' directive first, narrated as ever;
+-- the reframed form is what the records run against and what the new patch is diffed from.
+convertPatch :: ConvertRequest -> IO (Outcome (Either SlapError CreatedPatch))
+convertPatch request = case judgeConvert request of
+  Left refusal -> pure (Outcome (Left refusal) [])
+  Right judged -> case judgedVerdict judged of
+    Blocked (gap :| _) -> pure (Outcome (Left (gapReason gap)) [])
+    Ready -> case resolveConvertXDelta1Names request judged of
+      Left refusal -> pure (Outcome (Left refusal) [])
+      Right resolvedNames -> case convertSourceRom request of
+        Nothing         -> pure (convertWithoutSource request judged)
+        Just matchedRom -> convertApplyAndRecreate request judged resolvedNames matchedRom
+
+resolveConvertXDelta1Names :: ConvertRequest -> JudgedConvert -> Either SlapError (Maybe ResolvedXDelta1FileNames)
+resolveConvertXDelta1Names request judged = case convertTargetFormat request of
+  CreateDifferential CreateXDelta1 -> fmap Just $
+    requireXDelta1FileNames
+      (unXDelta1FromName <$> requestedXDelta1FromName (judgedMergedMeta judged))
+      (unXDelta1ToName   <$> requestedXDelta1ToName   (judgedMergedMeta judged))
+      (patchFormat (judgedPatch judged))
+  _ -> Right Nothing
+
+convertWithoutSource :: ConvertRequest -> JudgedConvert -> Outcome (Either SlapError CreatedPatch)
+convertWithoutSource request judged = case patchKind parsed of
+  Direct (Just contents) ->
+    case convertDirect contents (convertTargetFormat request) (judgedMergedMeta judged)
+                       (convertConstraints request) noDialectsRequested of
+      Left refusal -> Outcome (Left refusal) narration
+      Right (CreateResult patchBytes convertAdvisories) ->
+        Outcome (Right (CreatedPatch patchBytes (convertTargetFormat request)))
+                (narration ++ patchSourceAdvisories parsed ++ convertAdvisories)
+  Direct Nothing -> refuseNeedingSource SourcePatchNotReencodable
+  Differential   -> refuseNeedingSource SourcePatchIsDifferential
+  where
+    parsed    = judgedPatch judged
+    narration = patchAdvisories parsed
+    refuseNeedingSource cause =
+      Outcome (Left (ConvertRequiresSource (patchFormat parsed) cause)) narration
+
+convertApplyAndRecreate
+  :: ConvertRequest -> JudgedConvert -> Maybe ResolvedXDelta1FileNames -> MatchedRom
+  -> IO (Outcome (Either SlapError CreatedPatch))
+convertApplyAndRecreate request judged resolvedNames matchedRom = case outcomeValue reframeOutcome of
+  Left refusal -> pure (Outcome (Left refusal) (patchAdvisories parsed))
+  Right framedBytes -> do
+    let normalized     = normalizeApplySource (patchSourceNormalization parsed) (InputFileContents framedBytes)
+        sourceJudgment = verifySource (convertVerificationPolicy request) (patchVerification parsed)
+                                      (normalizedSourceBytes normalized)
+        narrationBeforeRun = patchAdvisories parsed ++ outcomeAdvisories reframeOutcome
+                             ++ normalizedSourceAdvisories normalized ++ outcomeAdvisories sourceJudgment
+    case outcomeValue sourceJudgment of
+      Left refusal -> pure (Outcome (Left refusal) narrationBeforeRun)
+      Right () -> do
+        applied <- runApply (patchApply parsed) (normalizedSourceBytes normalized)
+        pure $ case applied of
+          Left applyRefusal  -> Outcome (Left applyRefusal) narrationBeforeRun
+          Right applyOutcome ->
+            recreateFromApplied request judged resolvedNames framedBytes normalized
+              (narrationBeforeRun ++ outcomeAdvisories applyOutcome) (outcomeValue applyOutcome)
+  where
+    parsed         = judgedPatch judged
+    reframeOutcome = reframeInput (matchedRomFraming matchedRom)
+                                  (unInputFileContents (matchedRomBytes matchedRom))
+
+-- | The re-create diffs the reframed source against the restored apply output,
+-- reproducing end to end what applying the source patch would really produce.
+recreateFromApplied
+  :: ConvertRequest -> JudgedConvert -> Maybe ResolvedXDelta1FileNames -> ByteString -> NormalizedSource
+  -> [SlapAdvisory] -> OutputFileContents
+  -> Outcome (Either SlapError CreatedPatch)
+recreateFromApplied request judged resolvedNames framedBytes normalized narration target =
+  case Create.createPatch (convertTargetFormat request) resolvedNames (InputFileContents framedBytes)
+                          restoredTarget (judgedMergedMeta judged) (patchContentsOf parsed)
+                          (convertConstraints request) noDialectsRequested of
+    Left refusal -> Outcome (Left refusal) narrated
+    Right (CreateResult patchBytes createAdvisories) ->
+      Outcome (Right (CreatedPatch patchBytes (convertTargetFormat request)))
+              (narrated ++ patchSourceAdvisories parsed
+                        ++ createDefaultAdvisories (convertTargetFormat request) (judgedMergedMeta judged)
+                                                   (InputFileContents framedBytes)
+                        ++ createAdvisories)
+  where
+    parsed = judgedPatch judged
+    (restoredTarget, restoreAdvisories) =
+      restoreStrippedContent (patchFormat parsed) (normalizedSourceRestore normalized) target
+    narrated = narration ++ restoreAdvisories
