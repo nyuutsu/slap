@@ -189,6 +189,24 @@ library slap-web
     , slap:slap-internal
     , text                 >= 2.0
 
+-- The wasm reactor over slap-web. wasm-only: native builds have no reactor to produce, and -no-hs-main is
+-- meaningless off the wasm backend, so the stanza switches itself off there.
+executable slap-web-reactor
+  main-is:          Main.hs
+  hs-source-dirs:   web-reactor
+  default-language: GHC2024
+  ghc-options:      -Wall -Werror -Wname-shadowing -O2 -g3
+  build-depends:
+      base                 >= 4.20 && < 5
+    , bytestring           >= 0.11
+    , slap:slap-internal
+    , slap:slap-web
+  if arch(wasm32)
+    ghc-options: -no-hs-main "-optl-mexec-model=reactor"
+                 "-optl-Wl,--export=hs_init" "-optl-Wl,--export=slap_web_link_check"
+  else
+    buildable: False
+
 executable slap
   main-is:          Main.hs
   other-modules:    CLI

@@ -5,7 +5,7 @@ PREFIX    ?= $(HOME)/.local
 # Match system make.conf: compile Rust for the host CPU, so crc32fast picks up CLMUL/PCLMULQDQ at compile time.
 export RUSTFLAGS += -C target-cpu=native
 
-.PHONY: all rusty-slap cabal install test haddock wasm rusty-slap-wasm clean
+.PHONY: all rusty-slap cabal install test haddock wasm wasm-link-check rusty-slap-wasm clean
 
 all: rusty-slap cabal
 
@@ -64,6 +64,11 @@ wasm: rusty-slap-wasm
 	  rm -rf dist-newstyle-wasm; touch .rusty-wasm-stamp; \
 	fi
 	. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal build slap-internal $(WASM_CABAL_FLAGS)
+
+# Link the reactor over slap-web and prove one value survives the crossing: the JS host checks the CRC-32 of "123456789".
+wasm-link-check: wasm
+	. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal build slap-web-reactor $(WASM_CABAL_FLAGS)
+	. $(HOME)/.ghc-wasm/env && node web-reactor/host.mjs "$$(wasm32-wasi-cabal -v0 list-bin slap-web-reactor $(WASM_CABAL_FLAGS))"
 
 # Scrub 🧼
 clean:
