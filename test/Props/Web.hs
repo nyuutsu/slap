@@ -4,12 +4,14 @@
 module Props.Web (webTests) where
 
 import Slap.Convert (CreateFormat(..), DifferentialCreate(..), DirectCreate(..),
-                     RequestedDialects(..), RequestedPatchMetadata(..), UndoInclusion(OmitUndoData),
+                     EmbeddedBlobRequest(SetEmbeddedBlob), RequestedDialects(..),
+                     RequestedPatchMetadata(..), UndoInclusion(OmitUndoData),
                      advertisedCreateFormats, lookupCreateFormatToken, noConstraintsRequested,
                      noDialectsRequested, noMetadataRequested)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import qualified Slap.Create as Create
 import Slap.Dialect (Dialect(..))
+import Slap.Display.Analysis (renderAnalysisFull)
 import Slap.Display.Info (InputSideVerdict(..), OutputSideVerdict(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -17,9 +19,10 @@ import Slap.Header (HeaderAdjustment(HeaderComesOff), InputHeaderDirective(TakeI
 import Slap.Measure (FileSize(..))
 import Slap.MetadataField (MetadataField(..), MetadataRequest(..))
 import Slap.PPF1.Types (PPF1Origin(PPF1OriginAmiga))
+import Slap.SomePatch (parseSome, patchAdvisories, patchAnalysis, patchInfo)
 import Slap.Status (CreateResult(..), Outcome(..), SlapAdvisory(..), SlapError(..),
                     SourceRequiredCause(..), renderSlapError)
-import Slap.Text (EncodedText(..), EncodingName(EncodingUtf8))
+import Slap.Text (EncodedText(..), EncodingName(..), resolveEncodingName)
 import Slap.VCDIFF.SecondaryCompression (secondaryCompressorTokens)
 import Slap.Verify (VerificationPolicy(EnforceVerification), VerificationVerdict(..))
 import Slap.Web
@@ -74,6 +77,15 @@ webTests = testGroup "Web"
       , testCase "a with-source convert equals the direct create"         test_convertActWithSource
       , testCase "the proven peel crosses convert too"                    test_convertActRescue
       , testCase "the convert act refuses exactly as its check"           test_convertActAgreement
+      ]
+  , testGroup "read"
+      [ testCase "inspect hands back the engine's own info"          test_inspectMirrorsEngineInfo
+      , testCase "both reads carry the parse's advisories across"    test_readsCarryAdvisories
+      , testCase "the two reads agree on the info from one parse"    test_readsAgreeOnInfo
+      , testCase "analyze's structure renders as the engine's own"   test_analyzeMirrorsEngineAnalysis
+      , testCase "the chosen encoding reaches the reading"           test_inspectThreadsEncoding
+      , testCase "an unparseable patch is the Left on both reads"    test_readsRefuseUnrecognized
+      , testCase "a stale dialect refuses both reads, as the CLI"    test_readsRefuseStaleDialect
       ]
   ]
 
@@ -385,6 +397,89 @@ test_convertActAgreement = do
   case (checkConvert request, converted) of
     (Right (Blocked (gap :| _)), Left refusal) -> refusal @?= gapReason gap
     other -> assertFailure ("expected a blocked check and a refusing act: " <> show other)
+
+plainInspectRequest :: PatchFileContents -> InspectRequest
+plainInspectRequest patchBytes = InspectRequest
+  { inspectPatchBytes       = patchBytes
+  , inspectMetadataEncoding = EncodingUtf8
+  , inspectDialects         = noDialectsRequested
+  }
+
+plainAnalyzeRequest :: PatchFileContents -> AnalyzeRequest
+plainAnalyzeRequest patchBytes = AnalyzeRequest
+  { analyzePatchBytes       = patchBytes
+  , analyzeMetadataEncoding = EncodingUtf8
+  , analyzeDialects         = noDialectsRequested
+  }
+
+test_inspectMirrorsEngineInfo :: Assertion
+test_inspectMirrorsEngineInfo = do
+  bpsPatch    <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
+  engineParse <- either (assertFailureT . renderSlapError) pure (parseSome noDialectsRequested EncodingUtf8 bpsPatch)
+  outcomeValue (inspectPatch (plainInspectRequest bpsPatch)) @?= Right (patchInfo engineParse)
+
+test_readsCarryAdvisories :: Assertion
+test_readsCarryAdvisories = do
+  ips32Patch <- createdFixturePatch (CreateDirect CreateIPS32) noMetadataRequested
+  let PatchFileContents ips32Bytes = ips32Patch
+      withJunk = PatchFileContents (ips32Bytes <> ByteString.replicate 16 0x7A)
+      engineAdvisories = either (const []) patchAdvisories (parseSome noDialectsRequested EncodingUtf8 withJunk)
+      Outcome _ inspectAdvisories = inspectPatch (plainInspectRequest withJunk)
+      Outcome _ analyzeAdvisories = analyzePatch (plainAnalyzeRequest withJunk)
+  assertBool "the trailing junk raised nothing to carry" (not (null engineAdvisories))
+  inspectAdvisories @?= engineAdvisories
+  analyzeAdvisories @?= engineAdvisories
+
+test_readsAgreeOnInfo :: Assertion
+test_readsAgreeOnInfo = do
+  bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
+  let inspected = outcomeValue (inspectPatch (plainInspectRequest bpsPatch))
+  case outcomeValue (analyzePatch (plainAnalyzeRequest bpsPatch)) of
+    Left refusal      -> assertFailureT ("analyze: " <> renderSlapError refusal)
+    Right explanation -> Right (explanationInfo explanation) @?= inspected
+
+test_analyzeMirrorsEngineAnalysis :: Assertion
+test_analyzeMirrorsEngineAnalysis = do
+  bpsPatch    <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
+  engineParse <- either (assertFailureT . renderSlapError) pure (parseSome noDialectsRequested EncodingUtf8 bpsPatch)
+  case outcomeValue (analyzePatch (plainAnalyzeRequest bpsPatch)) of
+    Left refusal      -> assertFailureT ("analyze: " <> renderSlapError refusal)
+    Right explanation ->
+      renderAnalysisFull (explanationInfo explanation) (explanationAnalysis explanation) Nothing
+        @?= renderAnalysisFull (patchInfo engineParse) (patchAnalysis engineParse) Nothing
+
+-- | A verbatim blob of 0xA9 reads as U+FFFD under UTF-8 and as "©" under Latin-1,
+-- so a read that ignored the chosen encoding would return the same info both ways — that it differs is the encoding reaching the reading.
+test_inspectThreadsEncoding :: Assertion
+test_inspectThreadsEncoding = do
+  bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS)
+                                  noMetadataRequested { requestedEmbeddedBlob = SetEmbeddedBlob (ByteString.pack [0xA9]) }
+  let underUtf8   = outcomeValue (inspectPatch (plainInspectRequest bpsPatch))
+      underLatin1 = outcomeValue (inspectPatch (plainInspectRequest bpsPatch) { inspectMetadataEncoding = latin1 })
+  assertBool "the two encodings read the blob the same, so the encoding never reached the reading" (underUtf8 /= underLatin1)
+  where
+    latin1 = either (const (error "iso-8859-1 is advertised")) EncodingNamed (resolveEncodingName "iso-8859-1")
+
+test_readsRefuseUnrecognized :: Assertion
+test_readsRefuseUnrecognized = do
+  outcomeValue (inspectPatch (plainInspectRequest nobodysPatch)) @?= Left UnrecognizedFormat
+  case outcomeValue (analyzePatch (plainAnalyzeRequest nobodysPatch)) of
+    Left refusal -> refusal @?= UnrecognizedFormat
+    Right _      -> assertFailure "analyze accepted a file that is nobody's patch"
+  where
+    nobodysPatch = PatchFileContents "this file is nobody's patch"
+
+-- | The reads route their dialect judgment through 'parseUnderEncoding', so a read refuses a stale toggle.
+test_readsRefuseStaleDialect :: Assertion
+test_readsRefuseStaleDialect = do
+  bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
+  let staleDialects = RequestedDialects { requestedPPF1Origin = PPF1OriginAmiga }
+      staleRefusal   = DialectNotSupported (PPF1OriginAxis :| []) LabelBPS
+  outcomeValue (inspectPatch (plainInspectRequest bpsPatch) { inspectDialects = staleDialects })
+    @?= Left staleRefusal
+  case outcomeValue (analyzePatch (plainAnalyzeRequest bpsPatch) { analyzeDialects = staleDialects }) of
+    Left refusal -> refusal @?= staleRefusal
+    Right _      -> assertFailure "analyze accepted a stale dialect"
 
 -- | The nine digits are the CRC catalogs' standard check input; every digest below is the published one.
 -- The field newtypes already forbid swapping one hash for another; this catches hashing the wrong bytes.

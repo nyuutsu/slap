@@ -36,6 +36,14 @@ module Slap.Web
   , CreatedPatch(..)
   , createPatch
   , convertPatch
+    -- * Read
+  , InspectRequest(..)
+  , PatchInfo
+  , inspectPatch
+  , AnalyzeRequest(..)
+  , PatchExplanation(..)
+  , PatchAnalysis
+  , analyzePatch
   ) where
 
 import Data.List.NonEmpty (NonEmpty(..))
@@ -60,7 +68,8 @@ import Slap.Convert (CreateFormat(..), DifferentialCreate(CreateXDelta1),
 import qualified Slap.Create as Create
 import Slap.Detect (DroppedFileClass(..), classifyDroppedFile)
 import Slap.Dialect (Dialect)
-import Slap.Display.Info (InputSideVerdict(..), OutputSideVerdict(..))
+import Slap.Display.Analysis (PatchAnalysis)
+import Slap.Display.Info (InputSideVerdict(..), OutputSideVerdict(..), PatchInfo)
 import Slap.FFI (crc32)
 import Slap.FieldName (FieldName(FieldXDelta1FromName, FieldXDelta1ToName))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents)
@@ -76,8 +85,8 @@ import Slap.Preflight (HeaderRescueCandidate(..), PreparedApplySource(..), Sourc
                        prepareApplySource, weighUndoInput)
 import Slap.SomePatch (PatchIdentity(..), PatchKind(..), SomePatch, UndoAnswer(..),
                        UndoAvailability(..), UndoStrategy, parseSome, patchAdvisories,
-                       patchContentsOf, patchExtractedMeta, patchFormat, patchIdentity, patchKind,
-                       patchSourceAdvisories, patchUndo, patchVerification, runUndo)
+                       patchAnalysis, patchContentsOf, patchExtractedMeta, patchFormat, patchIdentity,
+                       patchInfo, patchKind, patchSourceAdvisories, patchUndo, patchVerification, runUndo)
 import Slap.Status (CreateResult(..), Outcome(..), SlapAdvisory, SlapError(..),
                     SourceRequiredCause(..))
 import Slap.Text (AdvertisedEncodingFamily, EncodingName(EncodingUtf8), advertisedEncodings)
@@ -196,13 +205,16 @@ data UndoRequest = UndoRequest
   , undoDialects           :: RequestedDialects
   }
 
--- | Apply and undo parse under the run's fixed UTF-8 (neither renders metadata),
--- and judge the same dialect coherence the CLI judges before either run.
-parseForRun :: RequestedDialects -> PatchFileContents -> Either SlapError SomePatch
-parseForRun dialects patchBytes = do
-  parsed <- parseSome dialects EncodingUtf8 patchBytes
+-- | Parse under the caller's metadata encoding, then judge the same dialect coherence the CLI judges before it does anything else.
+-- info and explain carry a chosen encoding because they render metadata; apply and undo render none, so 'parseForRun' pins UTF-8.
+parseUnderEncoding :: RequestedDialects -> EncodingName -> PatchFileContents -> Either SlapError SomePatch
+parseUnderEncoding dialects metadataEncoding patchBytes = do
+  parsed <- parseSome dialects metadataEncoding patchBytes
   rejectIncompatibleDialects (acceptedDialects (patchFormat parsed)) (patchFormat parsed) dialects
   pure parsed
+
+parseForRun :: RequestedDialects -> PatchFileContents -> Either SlapError SomePatch
+parseForRun dialects = parseUnderEncoding dialects EncodingUtf8
 
 checkApply :: ApplyRequest -> Either SlapError SourceReport
 checkApply request = do
@@ -596,3 +608,41 @@ recreateFromApplied request judged resolvedNames prepared patched narration =
   where
     parsed      = judgedPatch judged
     framedInput = InputFileContents (preparedFramedInput prepared)
+
+----------------------------------------------------------------------------
+-- Read
+----------------------------------------------------------------------------
+
+-- Neither read has a check: reading is not an emit and cannot be underspecified.
+-- A read answers in 'Outcome' rather than a bare 'Either' because a parse can succeed and still warn, and that narration must survive.
+
+data InspectRequest = InspectRequest
+  { inspectPatchBytes       :: PatchFileContents
+  , inspectMetadataEncoding :: EncodingName
+  , inspectDialects         :: RequestedDialects
+  }
+
+inspectPatch :: InspectRequest -> Outcome (Either SlapError PatchInfo)
+inspectPatch request =
+  case parseUnderEncoding (inspectDialects request) (inspectMetadataEncoding request) (inspectPatchBytes request) of
+    Left refusal -> Outcome (Left refusal) []
+    Right parsed -> Outcome (Right (patchInfo parsed)) (patchAdvisories parsed)
+
+data AnalyzeRequest = AnalyzeRequest
+  { analyzePatchBytes       :: PatchFileContents
+  , analyzeMetadataEncoding :: EncodingName
+  , analyzeDialects         :: RequestedDialects
+  }
+
+data PatchExplanation = PatchExplanation
+  { explanationInfo     :: PatchInfo
+  , explanationAnalysis :: PatchAnalysis
+  }
+
+-- | explain is info-plus: one parse yields both, so the page fills the screen with a single read.
+-- The structured analysis crosses, not rendered text — the terminal dump and the page's structure bar stay two renderers over one model.
+analyzePatch :: AnalyzeRequest -> Outcome (Either SlapError PatchExplanation)
+analyzePatch request =
+  case parseUnderEncoding (analyzeDialects request) (analyzeMetadataEncoding request) (analyzePatchBytes request) of
+    Left refusal -> Outcome (Left refusal) []
+    Right parsed -> Outcome (Right (PatchExplanation (patchInfo parsed) (patchAnalysis parsed))) (patchAdvisories parsed)
