@@ -23,7 +23,6 @@ module Slap.IPS.Create
   , encodeIPSRecord
   , encodeOffset
   , encodeTruncationMarker
-  , buildEBPMetadataJSON
     -- * Optimizer pass-through (re-exported for callers and tests)
   , optimalIPSRecords
   ) where
@@ -36,15 +35,15 @@ import Slap.FileContents
   , unPatchFileContents
   )
 import Slap.FormatLabel (FormatLabel(..))
+import Slap.IPS.EBPMetadata (buildEBPMetadataJSON)
 import Slap.IPS.Optimize (optimalIPSRecords)
 import Slap.IPS.Types
   ( IPSVariant(..)
   , OffsetWidth(..)
   , IPSVariantSpec(..)
-  , EBPMetadata(..)
+  , EBPMetadata
   , variantSpec
   )
-import Slap.Text (encodedTextContent)
 import Slap.Measure
   ( Offset(..)
   , Length(..)
@@ -81,9 +80,6 @@ import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Int (Int64)
 import Data.Maybe (listToMaybe)
 import Data.Word (Word8)
-import qualified Data.Aeson as Aeson
-import Data.Aeson ((.=))
-import qualified Data.Aeson.Encoding as AesonEncoding
 
 ----------------------------------------------------------------------------
 -- Parameterized wire encoder
@@ -317,26 +313,3 @@ resolveSentinelCollisions label sentinel (InputFileContents source) records =
       where
         recordOffset  = splitOffset record
         recordPayload = splitPayload record
-
--- | The four-key shape matches what EBPatcher and every long-standing community tool emits;
--- each field is emitted only when 'Just'.
---
--- EBP metadata is JSON, so the emitter goes through @aeson@: the
--- field values arrive as 'EncodedText' (each tagged with whichever
--- encoding it came in under — CLI-locale or JSON-extracted UTF-8),
--- and the 'Text' content lands in the JSON string slots verbatim.
--- @aeson@'s 'Aeson.pairs' builds an 'Encoding' in declared order, so
--- the four-key sequence reaches the wire as
--- @{patcher,title,author,description}@ when all four are present.
-buildEBPMetadataJSON :: EBPMetadata -> ByteString
-buildEBPMetadataJSON metadata =
-  LazyByteString.toStrict (AesonEncoding.encodingToLazyByteString jsonEncoding)
-  where
-    jsonEncoding = Aeson.pairs
-      (  optionalField "patcher"     (ebpMetadataPatcher     metadata)
-      <> optionalField "title"       (ebpMetadataTitle       metadata)
-      <> optionalField "author"      (ebpMetadataAuthor      metadata)
-      <> optionalField "description" (ebpMetadataDescription metadata)
-      )
-    optionalField _       Nothing      = mempty
-    optionalField keyName (Just value) = keyName .= encodedTextContent value

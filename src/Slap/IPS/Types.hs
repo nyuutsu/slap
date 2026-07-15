@@ -202,7 +202,7 @@ data IPSPatch = IPSPatch
   } deriving (Show)
 
 -- | The JSON metadata trailer an EBP patch carries after its IPS records:
--- four optional text fields, decoded at the parse layer by 'Slap.JSON.parseEBPMetadata'.
+-- four optional text fields, decoded at the parse layer by 'Slap.IPS.EBPMetadata.parseEBPMetadata'.
 data EBPMetadata = EBPMetadata
   { ebpMetadataTitle       :: !(Maybe EncodedText)
   , ebpMetadataAuthor      :: !(Maybe EncodedText)
@@ -211,7 +211,7 @@ data EBPMetadata = EBPMetadata
   } deriving (Show, Eq)
 
 -- | An 'EBPMetadata' value with every field set to 'Nothing'. The
--- shape produced by 'Slap.JSON.parseEBPMetadata' on malformed input,
+-- shape produced by 'Slap.IPS.EBPMetadata.parseEBPMetadata' on malformed input,
 -- and the natural starting point on the create side when no metadata
 -- has been supplied yet.
 emptyEBPMetadata :: EBPMetadata

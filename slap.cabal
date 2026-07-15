@@ -84,10 +84,11 @@ library slap-internal
     , Slap.GDIFF.FFI
     , Slap.GDIFF.Parse
     , Slap.GDIFF.Types
-    , Slap.JSON
+    , Slap.JSON.Bytes
     , Slap.IPS.Apply
     , Slap.IPS.Create
     , Slap.IPS.Describe
+    , Slap.IPS.EBPMetadata
     , Slap.IPS.Optimize
     , Slap.IPS.Parse
     , Slap.IPS.Types
@@ -165,8 +166,9 @@ library slap-internal
   extra-libraries:  rusty_slap
   build-depends:
       base                 >= 4.20 && < 5
-    , aeson                >= 2.0  && < 2.3
+    , aeson                >= 2.1  && < 2.3
     , array                >= 0.5
+    , base64-bytestring    >= 1.2  && < 1.3
     , bytestring           >= 0.11
     , containers           >= 0.6
     , encoding             >= 0.10 && < 0.11
@@ -180,17 +182,20 @@ library slap-internal
 
 library slap-web
   exposed-modules:  Slap.Web
+                  , Slap.Web.Envelope
   hs-source-dirs:   web
   default-language: GHC2024
   ghc-options:      -Wall -Werror -Wname-shadowing -O2 -g3
   build-depends:
       base                 >= 4.20 && < 5
+    , aeson                >= 2.1  && < 2.3
+    , bytestring           >= 0.11
     , containers           >= 0.6
     , slap:slap-internal
     , text                 >= 2.0
 
--- The wasm reactor over slap-web. wasm-only: native builds have no reactor to produce, and -no-hs-main is
--- meaningless off the wasm backend, so the stanza switches itself off there.
+-- The reactor over slap-web. Under wasm it is the browser-facing artifact: -no-hs-main, exports only.
+-- Built natively it is the parity check's probe; Main.hs holds that story.
 executable slap-web-reactor
   main-is:          Main.hs
   hs-source-dirs:   web-reactor
@@ -204,8 +209,8 @@ executable slap-web-reactor
   if arch(wasm32)
     ghc-options: -no-hs-main "-optl-mexec-model=reactor"
                  "-optl-Wl,--export=hs_init" "-optl-Wl,--export=slap_web_link_check"
-  else
-    buildable: False
+                 "-optl-Wl,--export=slap_web_alloc" "-optl-Wl,--export=slap_web_free"
+                 "-optl-Wl,--export=slap_web_inspect_patch"
 
 executable slap
   main-is:          Main.hs
@@ -236,10 +241,10 @@ test-suite props
                   , Props.ClassifyTargetCopy
                   , Props.Contracts
                   , Props.Detection
+                  , Props.EBPMetadata
                   , Props.Helpers
                   , Props.Identity
                   , Props.IPSMarkerPolicy
-                  , Props.JSON
                   , Props.Measure
                   , Props.Narrow
                   , Props.NegativeWireValues
@@ -261,6 +266,7 @@ test-suite props
   ghc-options:      -Wall -Werror -Wname-shadowing -threaded -rtsopts "-with-rtsopts=-N"
   build-depends:
       base                 >= 4.20 && < 5
+    , aeson                >= 2.1  && < 2.3
     , array                >= 0.5
     , bytestring           >= 0.11
     , directory            >= 1.3

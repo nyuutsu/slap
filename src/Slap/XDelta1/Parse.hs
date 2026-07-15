@@ -47,7 +47,7 @@ import Slap.Status (SlapError(..), DecompressionFailure(..), Parsed(..),
                     ByteParserError(ByteParserXDelta1UnexpectedControlTypeTag),
                     XDelta1KnownUnsupportedVersion(..),
                     XDelta1ShapeViolation(..), XDelta1SourceListShape(..),
-                    XDelta1SourceFlag(..))
+                    XDelta1SourceFlag(..), XDelta1DataRecordNameAsRead(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -354,7 +354,7 @@ parseControl metadataEncoding noVerifyFlag compressionPosture controlSegment dat
           dataNameNotices = case maybeDataRecord of
             Just dataRecord
               | parsedSourceName dataRecord /= xdelta1DataRecordName ->
-                  [XDelta1DataRecordNameDiverges (parsedSourceName dataRecord)]
+                  [XDelta1DataRecordNameDiverges (XDelta1DataRecordNameAsRead (parsedSourceName dataRecord))]
             _ -> []
           postureWarnings = case verificationPosture of
             VerifyAgainstStoredMD5s _      -> []

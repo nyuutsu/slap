@@ -1057,11 +1057,9 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     resolvedRaw <- resolveIPSSentinel LabelEBP StandardIPS
                      (splitHunks ipsMaxRecordPayload (contentsRecords contents))
     records <- narrow (splitHunks ipsMaxRecordPayload resolvedRaw)
-    -- Rebuild the canonical EBP metadata from the typed values here
-    -- and hand it to the encoder, which serializes via
-    -- 'IPS.buildEBPMetadataJSON'. The source patch's wire bytes no
-    -- longer flow through; 'resolveEBPField' / 'resolveDescription'
-    -- pull the resolved content out of 'contentsEBPMetadata'.
+    -- The canonical EBP metadata is rebuilt from typed values, never the source patch's wire bytes:
+    -- 'resolveEBPField' / 'resolveDescription' pull the resolved content out of 'contentsEBPMetadata',
+    -- and 'Slap.IPS.EBPMetadata.buildEBPMetadataJSON' serializes it.
     let metadata = EBPMetadata
           { ebpMetadataTitle       = Just ebpTitle
           , ebpMetadataAuthor      = Just ebpAuthor
@@ -1408,7 +1406,8 @@ resolveDescription sources
 
 -- | Resolve a single EBP field: the CLI flag wins, then the value from the EBP metadata view, then the empty string.
 -- The two callers feed in the title and author fields.
--- Every arm is 'EncodedText' tagged 'EncodingUtf8', matching the JSON the consumer ('IPS.buildEBPMetadataJSON') emits (JSON is UTF-8 by spec).
+-- Every arm is 'EncodedText' tagged 'EncodingUtf8', matching the JSON the consumer ('Slap.IPS.EBPMetadata.buildEBPMetadataJSON') emits
+-- (JSON is UTF-8 by spec).
 resolveEBPField :: Maybe EncodedText -> Maybe EncodedText -> EncodedText
 resolveEBPField cliValue ebpValue
   | Just provided <- cliValue  = provided

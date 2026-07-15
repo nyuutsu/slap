@@ -20,7 +20,7 @@
 -- already been validated by 'Slap.IPS.Parse', so there are no error
 -- paths here — only rendering. EBP metadata reaches Describe as a
 -- structured 'EBPMetadata' record: the JSON parsing happens in
--- 'Slap.IPS.Parse' (via 'Slap.JSON.parseEBPMetadata') so every
+-- 'Slap.IPS.Parse' (via 'Slap.IPS.EBPMetadata.parseEBPMetadata') so every
 -- consumer reads the four fields directly. Describe then renders
 -- whichever fields are present — and surfaces a single placeholder
 -- line when none are, the shape an all-absent malformed-metadata
@@ -121,7 +121,7 @@ truncationInfoLine (Just truncatedTargetSize) =
 -- @description@, @patcher@, in that declared order.
 -- Absent fields produce no line.
 --
--- The all-'Nothing' shape is also what 'Slap.JSON.parseEBPMetadata'
+-- The all-'Nothing' shape is also what 'Slap.IPS.EBPMetadata.parseEBPMetadata'
 -- returns when the wire metadata bytes were malformed; in that case
 -- a single @metadata@ line surfaces the absence directly. The
 -- companion 'EBPMetadataMalformed' advisory has already told the

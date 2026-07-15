@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Wire-format configuration the user supplies that affects how a
@@ -18,7 +19,9 @@ module Slap.Dialect
   , dialectFlagName
   ) where
 
+import Data.Aeson (ToJSON)
 import Data.Text (Text)
+import GHC.Generics (Generic, Generically(..))
 
 data Dialect
   = PPF1OriginAxis
@@ -34,7 +37,8 @@ data Dialect
     -- The general dialect plumbing can still carry a write-affecting axis; this particular one just doesn't.
     --
     -- Per @docs/ppf/spec.md@ §"Offset size and endianness".
-  deriving (Show, Eq, Ord)
+  deriving (Show, Eq, Ord, Generic)
+  deriving (ToJSON) via Generically Dialect
 
 -- | Display name for prose contexts in error and help messages.
 dialectName :: Dialect -> Text

@@ -29,7 +29,7 @@ import Slap.Status.Vocabulary (emptyUnitLabel, renderDroppedValue, directionVerb
                                NINJA1SubformatConversion(..),
                                NormalizationStep(..), SNESInterleaveLayout(..),
                                normalizedImageRoleLabel, NormalizationSkipReason(..), RestoredContent(..))
-import Slap.Status.XDelta1 (XDelta1SourcelessShape(..))
+import Slap.Status.XDelta1 (XDelta1DataRecordNameAsRead(..), XDelta1SourcelessShape(..))
 
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
@@ -218,7 +218,7 @@ renderSlapAdvisory (XDelta1InputFileNotConsulted sourcelessShape) =
     OutputIsEmpty ->
       ": the patch names no source file and its target is empty; the input was not consulted"
 
-renderSlapAdvisory (XDelta1DataRecordNameDiverges observedName) =
+renderSlapAdvisory (XDelta1DataRecordNameDiverges (XDelta1DataRecordNameAsRead observedName)) =
   formatLabelName LabelXDelta1
   <> ": data-record name is " <> renderAsText observedName
   <> " (canonical xdelta writes \"(patch data)\"; the field is a display label only, so slap proceeds normally)"

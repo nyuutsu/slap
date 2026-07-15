@@ -1,3 +1,5 @@
+{-# LANGUAGE DerivingVia #-}
+
 module Slap.Binary
   ( -- * Little-endian readers
     getWord16LE
@@ -59,6 +61,7 @@ module Slap.Binary
   ) where
 
 import Control.Monad (when)
+import Data.Aeson (ToJSON)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Internal as Internal
@@ -71,6 +74,7 @@ import Data.Word (Word8, Word16, Word32, Word64)
 import Foreign.Marshal.Utils (copyBytes, fillBytes, moveBytes)
 import Foreign.Ptr (Ptr, castPtr)
 import Foreign.Storable (pokeByteOff)
+import GHC.Generics (Generic, Generically(..))
 import qualified Crypto.Hash as Hash
 import qualified Data.ByteArray as ByteArray
 import Slap.Checksum (CRC16(..), MD5Hash(..), SHA1Hash(..))
@@ -156,7 +160,8 @@ data VarintReadFailure
   -- value with the plain 'VarintTooManyContinuationBytes', byuu's varint
   -- drawing no signed/unsigned distinction at this magnitude.
   | VarintExceedsSignedButFitsUnsigned
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically VarintReadFailure
 
 -- | A decoded variable-length integer: its value, and how many bytes it consumed.
 data VarintResult = VarintResult

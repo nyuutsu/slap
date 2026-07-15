@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE StrictData #-}
 
 -- | 'SlapAdvisory': everything slap remarks on without halting, and the envelopes that carry advisories beside a value.
@@ -31,13 +32,14 @@ import Slap.Status.Vocabulary (EmptyUnit, DroppedValue, OverlapCount, ClippedRec
                                ExpectedAdler32, ActualAdler32, ByteCheckLabel,
                                NINJA1SubformatConversion,
                                NormalizationStep, NormalizedImageRole, NormalizationSkipReason, RestoredContent)
-import Slap.Status.XDelta1 (XDelta1SourcelessShape)
+import Slap.Status.XDelta1 (XDelta1DataRecordNameAsRead, XDelta1SourcelessShape)
 
-import Data.ByteString (ByteString)
+import Data.Aeson (ToJSON)
 import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Text (Text)
 import Data.Word (Word8)
+import GHC.Generics (Generic, Generically(..))
 
 -- | How a BPS patch's metadata blob diverged from UTF-8, the encoding the spec recommends.
 -- Both arms leave the blob shown and carried byte-exact; they name what a lenient UTF-8 decode found.
@@ -46,7 +48,8 @@ data BPSMetadataDivergence
     -- ^ That many byte sequences are not valid UTF-8; each decoded to U+FFFD.
   | MetadataDecodedButNonText
     -- ^ Valid UTF-8, but carrying control codepoints — not the plain text the field is meant to hold.
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically BPSMetadataDivergence
 
 -- | A non-halting status item — warning-severity ("you may want to know") or note-severity ("informational"),
 -- projected per constructor by 'slapAdvisorySeverity'.
@@ -185,8 +188,8 @@ data SlapAdvisory
 
   -- | An xdelta 1.1.x data-record's @name@ field is not the canonical @"(patch data)"@ ('Slap.XDelta1.Types.xdelta1DataRecordName').
   -- The data-record names the patch's inline literal bytes, not an external file, so the field is purely a display label;
-  -- slap honors the wire bytes and notes the non-canonical producer. The 'ByteString' is what was read.
-  | XDelta1DataRecordNameDiverges !ByteString
+  -- slap honors the wire bytes and notes the non-canonical producer.
+  | XDelta1DataRecordNameDiverges !XDelta1DataRecordNameAsRead
 
   -- Conversion: dropped fields
   | FieldDropped PatchField DroppedValue
@@ -293,7 +296,8 @@ data SlapAdvisory
   -- the warning reports that nothing attests the output matches the creator's intent.
   | VerificationOptedOutByCreator !FormatLabel
 
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (ToJSON) via Generically SlapAdvisory
 
 -- | One declared check that did not hold against the file it describes: the payload of a differing 'Slap.Verify.VerificationVerdict',
 -- of the 'Slap.Status.VerificationFatal' refusal, and of the 'DeclaredCheckMismatched' warnings.
@@ -309,7 +313,8 @@ data VerificationMismatch
   | VerificationSourceBytesMismatch ByteCheckLabel Offset
     -- | The source ROM's byte order does not match the image format an APS-N64 Type-1 patch declares.
   | APSN64ImageFormatMismatch
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (ToJSON) via Generically VerificationMismatch
 
 data CreateResult = CreateResult
   { resultBytes      :: !PatchFileContents

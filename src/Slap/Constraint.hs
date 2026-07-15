@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | User-opt-in refuse-gates that slap honors at create or convert
@@ -18,11 +19,14 @@ module Slap.Constraint
   , constraintFlagName
   ) where
 
+import Data.Aeson (ToJSON)
 import Data.Text (Text)
+import GHC.Generics (Generic, Generically(..))
 
 data Constraint
   = SMCShapeConstraint
-  deriving (Show, Eq, Ord)
+  deriving (Show, Eq, Ord, Generic)
+  deriving (ToJSON) via Generically Constraint
 
 -- | Used by 'Slap.Status' renderers.
 constraintName :: Constraint -> Text

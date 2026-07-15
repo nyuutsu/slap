@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Slap.FormatLabel
@@ -5,7 +6,9 @@ module Slap.FormatLabel
   , formatLabelName
   ) where
 
+import Data.Aeson (ToJSON)
 import Data.Text (Text)
+import GHC.Generics (Generic, Generically(..))
 
 data FormatLabel
   = LabelIPS
@@ -27,7 +30,8 @@ data FormatLabel
   | LabelXDelta1
   | LabelDPS
   | LabelPMSR
-  deriving (Show, Eq, Enum, Bounded)
+  deriving (Show, Eq, Enum, Bounded, Generic)
+  deriving (ToJSON) via Generically FormatLabel
 
 formatLabelName :: FormatLabel -> Text
 formatLabelName LabelIPS     = "IPS"

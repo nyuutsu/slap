@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
@@ -17,10 +18,12 @@ import Slap.Measure (Length(..), Position(..), ActionIndex(unActionIndex),
                      RequestedLength(..), RemainingLength(..),
                      RequiredLength(..), ActualLength(..))
 
+import Data.Aeson (ToJSON)
 import Data.Int (Int64)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Word (Word8, Word32)
+import GHC.Generics (Generic, Generically(..))
 import Numeric (showHex)
 
 -- | Which primitive of 'Slap.ByteParser' surfaced an underflow, for 'ByteParserUnderflow'.
@@ -29,7 +32,8 @@ data ByteParserOperation
   | SkipOperation
   | FixedWidthReadOperation
   | VarintReadOperation
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically ByteParserOperation
 
 -- | The structured failure type for 'Slap.ByteParser.ByteParser',
 -- lifted into 'Slap.Status.SlapError' via 'Slap.Status.ParseError' with the wrapping format's 'Slap.FormatLabel.FormatLabel'.
@@ -92,7 +96,8 @@ data ByteParserError
   -- Reaching this arm means slap has a bug, not that the wire input was malformed.
   | ByteParserUnexpectedDoPatternFailure String
 
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically ByteParserError
 
 byteParserOperationNounPhrase :: ByteParserOperation -> Text
 byteParserOperationNounPhrase GetBytesOperation        = "a read"

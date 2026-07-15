@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Slap.MetadataField
@@ -15,7 +16,9 @@ module Slap.MetadataField
   , requestField
   ) where
 
+import Data.Aeson (ToJSON)
 import Data.Text (Text)
+import GHC.Generics (Generic, Generically(..))
 
 -- | The user-requestable metadata concepts a patch format may consume
 -- at creation time.  Independent of 'Slap.PatchField.PatchField',
@@ -46,7 +49,8 @@ data MetadataField
   | MetadataXDelta1FromName
   | MetadataXDelta1ToName
   | MetadataWindowSize
-  deriving (Eq, Ord, Show, Enum, Bounded)
+  deriving (Eq, Ord, Show, Enum, Bounded, Generic)
+  deriving (ToJSON) via Generically MetadataField
 
 -- | Human-readable name for prose contexts in error and help messages.
 metadataFieldName :: MetadataField -> Text
@@ -101,7 +105,8 @@ metadataFieldFlagName MetadataWindowSize          = "window-size"
 data DroppableField
   = DroppableFileIdDiz
   | DroppableEmbeddedBlob
-  deriving (Eq, Show, Enum, Bounded)
+  deriving (Eq, Show, Enum, Bounded, Generic)
+  deriving (ToJSON) via Generically DroppableField
 
 droppableField :: DroppableField -> MetadataField
 droppableField DroppableFileIdDiz    = MetadataFileIdDiz
@@ -116,7 +121,8 @@ dropFlagName DroppableEmbeddedBlob = "drop-metadata"
 data TypedTextField
   = TypedTextEmbeddedBlob
   | TypedTextFileIdDiz
-  deriving (Eq, Show, Enum, Bounded)
+  deriving (Eq, Show, Enum, Bounded, Generic)
+  deriving (ToJSON) via Generically TypedTextField
 
 typedTextField :: TypedTextField -> MetadataField
 typedTextField TypedTextEmbeddedBlob = MetadataEmbeddedBlob
@@ -132,7 +138,8 @@ data MetadataRequest
   = SetField MetadataField
   | SetFieldFromText TypedTextField
   | DropField DroppableField
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically MetadataRequest
 
 -- | The flag a request arrived on.
 requestFlagName :: MetadataRequest -> Text

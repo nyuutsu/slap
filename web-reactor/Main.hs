@@ -1,12 +1,26 @@
 -- | The reactor a browser instantiates: foreign exports over 'Slap.Web', each callable only after the host runs @wasi.initialize@ then @hs_init@.
+-- The same executable builds natively, where 'main' — which the reactor never runs — is the parity probe:
+-- it writes the envelope the wasm export returns, so the parity check can hold the two targets' bytes against each other.
 module Main (main) where
 
+import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as Char8
-import Data.Word (Word32)
+import Data.ByteString (ByteString)
+import qualified Data.ByteString.Unsafe as UnsafeByteString
+import Data.Word (Word8, Word32)
+import Foreign.Marshal.Alloc (free, mallocBytes)
+import Foreign.Marshal.Utils (copyBytes)
+import Foreign.Ptr (Ptr, castPtr, plusPtr)
+import Foreign.Storable (pokeByteOff)
+import System.Environment (getArgs)
+import System.Exit (die)
 
 import Slap.Checksum (CRC32(unCRC32))
-import Slap.FileContents (InputFileContents(InputFileContents))
-import Slap.Web (RomFacts(romCRC32), describeRom)
+import Slap.Convert (noDialectsRequested)
+import Slap.FileContents (InputFileContents(InputFileContents), PatchFileContents(PatchFileContents))
+import Slap.Text (EncodingName(EncodingUtf8))
+import Slap.Web (InspectRequest(..), RomFacts(romCRC32), describeRom, inspectPatch)
+import Slap.Web.Envelope (encodeEnvelope)
 
 foreign export ccall "slap_web_link_check" slapWebLinkCheck :: IO Word32
 
@@ -19,6 +33,45 @@ slapWebLinkCheck = pure (unCRC32 (romCRC32 (describeRom fixedInput)))
   where
     fixedInput = InputFileContents (Char8.pack "123456789")
 
--- cabal's executable component requires module Main to export a 'main'; the reactor never runs it — the host calls the exports after hs_init.
+-- The buffer protocol: the host allocates with 'slap_web_alloc' and copies its bytes in; an export answers with a buffer
+-- whose first four bytes are the payload length (little-endian, wasm's own byte order); the host frees both sides with 'slap_web_free'.
+
+foreign export ccall "slap_web_alloc" slapWebAlloc :: Int -> IO (Ptr Word8)
+
+slapWebAlloc :: Int -> IO (Ptr Word8)
+slapWebAlloc = mallocBytes
+
+foreign export ccall "slap_web_free" slapWebFree :: Ptr Word8 -> IO ()
+
+slapWebFree :: Ptr Word8 -> IO ()
+slapWebFree = free
+
+foreign export ccall "slap_web_inspect_patch" slapWebInspectPatch :: Ptr Word8 -> Int -> IO (Ptr Word8)
+
+slapWebInspectPatch :: Ptr Word8 -> Int -> IO (Ptr Word8)
+slapWebInspectPatch patchPointer patchLength = do
+  patchBytes <- ByteString.packCStringLen (castPtr patchPointer, patchLength)
+  lengthPrefixedBuffer (inspectEnvelope patchBytes)
+
+-- | The one envelope both targets speak: parse under UTF-8 with no dialect toggles, the read verbs' defaults.
+inspectEnvelope :: ByteString -> ByteString
+inspectEnvelope patchBytes = encodeEnvelope $ inspectPatch InspectRequest
+  { inspectPatchBytes       = PatchFileContents patchBytes
+  , inspectMetadataEncoding = EncodingUtf8
+  , inspectDialects         = noDialectsRequested
+  }
+
+lengthPrefixedBuffer :: ByteString -> IO (Ptr Word8)
+lengthPrefixedBuffer payload = do
+  buffer <- mallocBytes (4 + ByteString.length payload)
+  pokeByteOff buffer 0 (fromIntegral (ByteString.length payload) :: Word32)
+  UnsafeByteString.unsafeUseAsCStringLen payload $ \(source, sourceLength) ->
+    copyBytes (buffer `plusPtr` 4) (castPtr source) sourceLength
+  pure buffer
+
 main :: IO ()
-main = pure ()
+main = do
+  arguments <- getArgs
+  case arguments of
+    [patchPath] -> ByteString.putStr . inspectEnvelope =<< ByteString.readFile patchPath
+    _           -> die "usage: slap-web-reactor PATCH  (writes the inspect envelope to stdout)"

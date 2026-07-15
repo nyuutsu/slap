@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE StrictData #-}
 
 -- | 'SlapError': everything that halts slap.
@@ -36,14 +37,16 @@ import Slap.Status.VCDIFF (VCDIFFShapeViolation, VCDIFFCodeTableMalformation,
                            VCDIFFIndicatorKind, ReservedBitsSet, VCDIFFMalformation,
                            VCDIFFRFCFeature, VCDIFFXDelta3Feature)
 import Slap.Status.Vocabulary (ExtractionSubject, CompressionAlgorithm,
-                               BSDiffHeaderMalformation, APSN64HeaderMalformation, NINJA1Malformation)
+                               BSDiffHeaderMalformation, APSN64HeaderMalformation,
+                               NINJA1Malformation, NINJA1SubformatIdentifier)
 import Slap.Status.XDelta1 (XDelta1KnownUnsupportedVersion, XDelta1ShapeViolation,
                             XDelta1SourceListShape, XDelta1SourceFlag, XDelta1GzipStreamInputs)
 
-import Data.ByteString (ByteString)
+import Data.Aeson (ToJSON)
 import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Word (Word8)
+import GHC.Generics (Generic, Generically(..))
 
 -- | Why a (source, target) pair cannot be encoded in some format. Carried by 'UnencodeablePair'.
 data UnencodeabilityReason
@@ -64,7 +67,8 @@ data UnencodeabilityReason
     -- a size past that maximum has no representation.
     -- Without the refusal, the encoder would mask the size to its low bits and emit a patch that applies to a wrongly-sized file,
     -- in a format with no checksum to notice.
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically UnencodeabilityReason
 
 data SlapError
 
@@ -104,7 +108,7 @@ data SlapError
   | UnsupportedXDelta1Subformat XDelta1KnownUnsupportedVersion
   -- | NINJA1's two-byte @subFormatIdentifier@ names a wire shape slap does not implement.
   -- Canonical NINJA1 emits only @"B "@, @"BZ"@, @"T\\n"@, and @"TZ"@; any other pair is off-spec or from a newer revision.
-  | UnsupportedNINJA1Subformat ByteString
+  | UnsupportedNINJA1Subformat NINJA1SubformatIdentifier
   | NegativeSize FormatLabel FieldName ParsedSizeValue
   | DecompressionFailed DecompressionFailure
 
@@ -349,7 +353,8 @@ data SlapError
   -- Only fatal-class mismatches are promoted here, per 'Slap.Verify.mismatchClass'.
   | VerificationFatal VerificationMismatch
 
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (ToJSON) via Generically SlapError
 
 -- | Why converting from a patch needs the original ROM.
 data SourceRequiredCause
@@ -357,4 +362,5 @@ data SourceRequiredCause
     -- ^ Its records say what to change in an input, not what the result should be.
   | SourcePatchNotReencodable
     -- ^ Direct, but carrying records only an apply can place (PPF4's Appends, which have no offset until a source gives them one).
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (ToJSON) via Generically SourceRequiredCause

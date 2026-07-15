@@ -48,7 +48,7 @@ import Slap.Status.Vocabulary (ExtractionSubject(..), compressionAlgorithmName,
                                slapAddressableCeiling,
                                ControlSectionSize(..), DiffSectionSize(..), TargetSectionSize(..),
                                BSDiffHeaderMalformation(..), APSN64HeaderMalformation(..),
-                               NINJA1Malformation(..),
+                               NINJA1Malformation(..), NINJA1SubformatIdentifier(..),
                                LineText(..), OffsetTokenText(..), ChecksumTokenText(..))
 import Slap.Status.XDelta1 (XDelta1KnownUnsupportedVersion(..), XDelta1ShapeViolation(..),
                             XDelta1SourceListShape(..), XDelta1SourceFlag(..),
@@ -160,7 +160,7 @@ renderSlapError (UnsupportedXDelta1Subformat version) =
         XDelta1_0_14  -> "version 0.14")
   <> " subformat, which slap does not read"
 
-renderSlapError (UnsupportedNINJA1Subformat subformatBytes) =
+renderSlapError (UnsupportedNINJA1Subformat (NINJA1SubformatIdentifier subformatBytes)) =
   formatLabelName LabelNINJA1 <> ": this patch declares subformat "
   <> renderAsText subformatBytes <> ", which slap does not read"
 

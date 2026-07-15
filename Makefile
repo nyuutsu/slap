@@ -5,7 +5,7 @@ PREFIX    ?= $(HOME)/.local
 # Match system make.conf: compile Rust for the host CPU, so crc32fast picks up CLMUL/PCLMULQDQ at compile time.
 export RUSTFLAGS += -C target-cpu=native
 
-.PHONY: all rusty-slap cabal install test haddock wasm wasm-link-check rusty-slap-wasm clean
+.PHONY: all rusty-slap cabal install test haddock wasm wasm-link-check wasm-parity-check rusty-slap-wasm clean
 
 all: rusty-slap cabal
 
@@ -69,6 +69,21 @@ wasm: rusty-slap-wasm
 wasm-link-check: wasm
 	. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal build slap-web-reactor $(WASM_CABAL_FLAGS)
 	. $(HOME)/.ghc-wasm/env && node web-reactor/host.mjs "$$(wasm32-wasi-cabal -v0 list-bin slap-web-reactor $(WASM_CABAL_FLAGS))"
+
+# Native and wasm inspect the same patches and must speak byte-identical envelopes; cmp judges.
+# Sweeps every dm4y fixture (one patch per format) plus a non-patch, so a refusal envelope crosses too.
+wasm-parity-check: cabal wasm
+	. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal build slap-web-reactor $(WASM_CABAL_FLAGS)
+	@probe="$$(cabal -v0 list-bin slap-web-reactor)"; \
+	 reactor="$$(. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal -v0 list-bin slap-web-reactor $(WASM_CABAL_FLAGS))"; \
+	 workdir="$$(mktemp -d)"; trap 'rm -rf "$$workdir"' EXIT; \
+	 printf 'not a patch' > "$$workdir/unrecognized"; \
+	 for patch in test/data/dm4y/patch.* "$$workdir/unrecognized"; do \
+	   "$$probe" "$$patch" > "$$workdir/native.json"; \
+	   node web-reactor/inspect-host.mjs "$$reactor" "$$patch" > "$$workdir/wasm.json"; \
+	   cmp "$$workdir/native.json" "$$workdir/wasm.json" || { echo "envelope parity FAILED on $$patch"; exit 1; }; \
+	   echo "envelope parity holds on $$patch"; \
+	 done
 
 # Scrub 🧼
 clean:

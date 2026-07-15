@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE StrictData #-}
 
 -- | The narrowing layer: validate 'SplitHunk's and 'SplitUndoHunk's against per-format offset bounds,
@@ -23,8 +24,10 @@ module Slap.Narrow
   , narrowToWord16
   ) where
 
+import Data.Aeson (ToJSON)
 import Data.ByteString (ByteString)
 import Data.Word (Word16, Word32)
+import GHC.Generics (Generic, Generically(..))
 
 import Slap.FieldName (FieldName)
 import Slap.FormatLabel (FormatLabel)
@@ -66,7 +69,8 @@ data NarrowingFailure
     -- wire-format width of the field. The two 'Integer's are the
     -- actual value and the field's maximum (kept as 'Integer' so any
     -- 'Word' width fits without further wrapping).
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (ToJSON) via Generically NarrowingFailure
 
 -- | Narrow an integer to 'Word32', producing 'FieldValueExceedsBound'
 -- if the value is negative or exceeds @0xFFFFFFFF@. Used by per-format

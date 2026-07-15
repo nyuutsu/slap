@@ -1,23 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
--- | Tests for slap's EBP-metadata JSON layer. The bulk exercises
--- 'Slap.JSON.parseEBPMetadata', the aeson-backed parser: things the
--- previous hand-rolled scanner got wrong (escaped Unicode, nested
--- objects, non-string siblings, malformed input), plus the
--- case-insensitive lookup that real-world EBP producers depend on.
--- A final group covers the build/parse round-trip through
--- 'Slap.IPS.Create.buildEBPMetadataJSON' — the other half of slap's
--- JSON surface — with non-ASCII content, since that's where the
--- type-level UTF-8 contract earns its keep.
---
--- Under the parse-finishes-its-job restructure, 'parseEBPMetadata'
--- returns @(EBPMetadata, [SlapAdvisory])@: the four-field record
--- on the value side, the advisory channel on the diagnostic side.
--- A malformed input surfaces the all-'Nothing' record paired with
--- @['EBPMetadataMalformed' 'LabelEBP']@.
-module Props.JSON (jsonTests) where
+-- | The EBP metadata blob, both directions: 'parseEBPMetadata' across the shapes real producers emit
+-- (case-insensitive keys, escaped Unicode, nested and non-string siblings, malformed input),
+-- and the build/parse round-trip through 'buildEBPMetadataJSON' with non-ASCII content,
+-- where the type-level UTF-8 contract earns its keep.
+module Props.EBPMetadata (ebpMetadataTests) where
 
-import Slap.JSON (parseEBPMetadata)
-import qualified Slap.IPS.Create as IPS
+import Slap.IPS.EBPMetadata (buildEBPMetadataJSON, parseEBPMetadata)
 import Slap.IPS.Types (EBPMetadata(..), emptyEBPMetadata)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Status (SlapAdvisory(..))
@@ -28,15 +16,12 @@ import qualified Data.Text as Text
 import Test.Tasty
 import Test.Tasty.HUnit
 
--- | Wrap a literal for an EBP metadata field. JSON values come out
--- of @aeson@ tagged 'EncodingUtf8', so test expectations carry the
--- same tag — the helper keeps the test bodies focused on the value
--- and not on the wrapping ceremony.
+-- | Wrap a literal for an EBP metadata field: JSON values come out of aeson tagged 'EncodingUtf8', so expectations carry the same tag.
 asUtf8 :: String -> EncodedText
 asUtf8 = EncodedText EncodingUtf8 . Text.pack
 
-jsonTests :: TestTree
-jsonTests = testGroup "Slap.JSON"
+ebpMetadataTests :: TestTree
+ebpMetadataTests = testGroup "EBP metadata"
   [ testGroup "EBPatcher-style (lowercase keys)"
       [ testCase "all four fields extracted"
           test_lowercaseAllFour
@@ -49,7 +34,7 @@ jsonTests = testGroup "Slap.JSON"
       , testCase "missing fields tolerated (writer skips empties)"
           test_capitalisedSomeFieldsMissing
       ]
-  , testGroup "Spec corners the scanner mishandled"
+  , testGroup "Spec corners"
       [ testCase "escaped Unicode \\u00e9 decodes to é"
           test_escapedUnicode
       , testCase "nested object value does not abort top-level scan"
@@ -57,7 +42,7 @@ jsonTests = testGroup "Slap.JSON"
       , testCase "numeric / boolean / null siblings are skipped, not crashed on"
           test_nonStringSiblings
       ]
-  , testGroup "Honest failure on bad input"
+  , testGroup "Malformed input"
       [ testCase "malformed JSON yields all-Nothing + EBPMetadataMalformed"
           test_malformedReturnsAdvisory
       , testCase "JSON array (non-object root) yields all-Nothing + EBPMetadataMalformed"
@@ -122,10 +107,8 @@ test_capitalisedKeysMatched =
 
 test_capitalisedSomeFieldsMissing :: Assertion
 test_capitalisedSomeFieldsMissing =
-  -- RomPatcher.js's writer skips empty fields entirely. A patch
-  -- where the user left author and description blank arrives with
-  -- only Title and patcher present; the missing fields land as
-  -- Nothing rather than as some sentinel "" or a parse failure.
+  -- RomPatcher.js's writer skips empty fields entirely, so blank author and description never reach the wire;
+  -- the missing fields land as 'Nothing', not a sentinel @""@ or a parse failure.
   parseEBPMetadata
     "{\"Title\":\"FE6\",\"patcher\":\"romp.js\"}"
     @?= ( EBPMetadata
@@ -138,14 +121,11 @@ test_capitalisedSomeFieldsMissing =
         )
 
 ----------------------------------------------------------------------------
--- Spec corners the scanner mishandled
+-- Spec corners
 ----------------------------------------------------------------------------
 
 test_escapedUnicode :: Assertion
 test_escapedUnicode =
-  -- The previous scanner stripped the backslash and emitted the
-  -- literal four characters @u00e9@. aeson decodes the escape
-  -- sequence to U+00E9 (é), which is what the file actually means.
   let blob :: ByteString
       blob = "{\"title\":\"caf\\u00e9\"}"
       (metadata, advisories) = parseEBPMetadata blob
@@ -155,9 +135,6 @@ test_escapedUnicode =
 
 test_nestedObjectSibling :: Assertion
 test_nestedObjectSibling =
-  -- The previous scanner gave up the moment it saw a nested @{@,
-  -- losing every field that appeared after one. aeson sees through
-  -- the nesting and the top-level title is still extractable.
   let blob :: ByteString
       blob = "{\"extra\":{\"deep\":\"value\"},\"title\":\"FE6\"}"
       (metadata, advisories) = parseEBPMetadata blob
@@ -167,10 +144,6 @@ test_nestedObjectSibling =
 
 test_nonStringSiblings :: Assertion
 test_nonStringSiblings =
-  -- Numbers, booleans, nulls sitting at the top level alongside the
-  -- four EBP fields. The previous scanner skipped them quietly;
-  -- aeson parses them and we then drop them at extraction
-  -- because they aren't strings. The four EBP fields still land.
   let blob :: ByteString
       blob = "{\"version\":2,\"verified\":true,\"checksum\":null,\
              \\"title\":\"FE6\",\"author\":\"nyuu\"}"
@@ -181,7 +154,7 @@ test_nonStringSiblings =
     ebpMetadataAuthor metadata @?= Just (asUtf8 "nyuu")
 
 ----------------------------------------------------------------------------
--- Honest failure on bad input
+-- Malformed input
 ----------------------------------------------------------------------------
 
 test_malformedReturnsAdvisory :: Assertion
@@ -191,9 +164,7 @@ test_malformedReturnsAdvisory =
 
 test_arrayRootReturnsAdvisory :: Assertion
 test_arrayRootReturnsAdvisory =
-  -- Valid JSON, but not an object. There's no EBP metadata to
-  -- extract here so the honest answer is the empty record plus the
-  -- malformed-trailer advisory.
+  -- Valid JSON is still not EBP metadata unless its root is an object.
   parseEBPMetadata "[\"title\",\"FE6\"]"
     @?= (emptyEBPMetadata, [EBPMetadataMalformed LabelEBP])
 
@@ -208,20 +179,16 @@ test_emptyReturnsAdvisory =
 
 test_nonAsciiRoundTrip :: Assertion
 test_nonAsciiRoundTrip =
-  -- A Japanese title and a Cyrillic author and description. The
-  -- builder emits via aeson, which escapes nothing that isn't
-  -- mandated by RFC 8259 — non-ASCII codepoints land verbatim as
-  -- UTF-8 in the output bytes. The parser pulls them back as
-  -- EncodingUtf8-tagged 'EncodedText'. Equality on EncodedText then
-  -- includes tag equality, which catches a regression where the
-  -- builder lost provenance (e.g. by re-encoding via latin1).
+  -- aeson escapes nothing RFC 8259 doesn't mandate, so the Japanese and Cyrillic codepoints land verbatim as UTF-8,
+  -- and the parser pulls them back as 'EncodingUtf8'-tagged 'EncodedText' — equality includes the tag,
+  -- catching a builder that lost provenance (say, by re-encoding via latin1).
   let metadata = EBPMetadata
         { ebpMetadataTitle       = Just (asUtf8 "\12486\12473\12488\12497\12483\12481")
         , ebpMetadataAuthor      = Just (asUtf8 "\1085\1102\1091")
         , ebpMetadataDescription = Just (asUtf8 "\26085\26412\35486\12486\12473\12488")
         , ebpMetadataPatcher     = Just (asUtf8 "slap")
         }
-      blob = IPS.buildEBPMetadataJSON metadata
+      blob = buildEBPMetadataJSON metadata
       (parsed, advisories) = parseEBPMetadata blob
   in do
     advisories @?= []

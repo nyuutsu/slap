@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Add a fake header, or, remove a real header!
@@ -13,8 +14,10 @@ module Slap.Header
   , HeaderAdjustment(..)
   ) where
 
+import Data.Aeson (ToJSON)
 import Data.ByteString (ByteString)
 import Data.Text (Text)
+import GHC.Generics (Generic, Generically(..))
 import Slap.Binary (dropLength, replicateLength)
 import Slap.Measure (Length(..), byteLength)
 
@@ -27,7 +30,8 @@ data ConsoleHeader
   | PCEngineHeader      -- ^ Magic Super Griffin copier.
   | LynxHeader          -- ^ LNX.
   | Atari7800Header     -- ^ A78.
-  deriving (Eq, Show, Enum, Bounded)
+  deriving (Eq, Show, Enum, Bounded, Generic)
+  deriving (ToJSON) via Generically ConsoleHeader
 
 -- | The name messages call the console.
 consoleHeaderName :: ConsoleHeader -> Text
@@ -90,4 +94,5 @@ data InputHeaderDirective
 
 -- | An arrangement's direction without a chosen console; 'InputHeaderDirective' is the flag-side shape that has picked one.
 data HeaderAdjustment = HeaderComesOff | HeaderGoesOn
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically HeaderAdjustment

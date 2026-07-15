@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
@@ -18,12 +19,15 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      RequestedLength(..), RemainingLength(..),
                      ExpectedSize(..))
 
+import Data.Aeson (ToJSON)
 import Data.Text (Text)
+import GHC.Generics (Generic, Generically(..))
 
 -- | Which of BPS's two independent relative cursors underflowed:
 -- the source cursor ('SourceCopy' reads) or the target cursor ('TargetCopy' reads).
 data CursorKind = SourceCursor | TargetCursor
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (ToJSON) via Generically CursorKind
 
 -- | Format-agnostic errors from patch application, paired with a 'Slap.FormatLabel.FormatLabel' via 'Slap.Status.ApplyFailed'.
 -- Most variants carry the 'ActionIndex' of the action that triggered them.
@@ -79,7 +83,8 @@ data ApplyError
   -- unlike 'ApplyWritesPastTarget', whose forward-walking cursor always sits within the buffer.
   | ApplyAbsoluteWritePastTarget ActionIndex Offset RequestedLength FileSize
 
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (ToJSON) via Generically ApplyError
 
 renderCursorKind :: CursorKind -> Text
 renderCursorKind SourceCursor = "source-relative"

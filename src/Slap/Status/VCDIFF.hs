@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
@@ -25,15 +26,18 @@ import Slap.Measure (Length, ActionIndex, ActualOffset,
                      ExpectedSize, ActualSize, ActualLength)
 import Slap.Status.Vocabulary (CompressionAlgorithm)
 
+import Data.Aeson (ToJSON)
 import Data.Text (Text)
 import Data.Word (Word8)
+import GHC.Generics (Generic, Generically(..))
 
 -- | The one off-spec wire shape 'Slap.Status.UnsupportedVCDIFFShape' carries: a custom code table's inner delta declaring a custom table of its own.
 -- RFC 3284 §7c requires the inner delta to use the default table; 'Slap.VCDIFF.Parse' decodes it with custom tables forbidden,
 -- so the refusal points at the header's table declaration, not the inner body.
 data VCDIFFShapeViolation
   = VCDIFFNestedCustomCodeTable
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically VCDIFFShapeViolation
 
 -- | The structural failures of decoding a VCDIFF custom code table, validated outside the byte parser.
 -- Most are decidable from the 1536-byte image alone and surface from 'Slap.VCDIFF.CodeTable.deserializeCodeTable';
@@ -55,11 +59,13 @@ data VCDIFFCodeTableMalformation
   -- the band 'Slap.VCDIFF.Parse.classifyAddressMode' admits. Checked once at table-build, used or not —
   -- damage evidence on the same reasoning as 'VCDIFFCodeTableUnusedFieldSet'.
   | VCDIFFCodeTableCopyModeOutOfRange !Word8 !Word8
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically VCDIFFCodeTableMalformation
 
 -- | Which per-template byte of the serialized code-table image a malformation names: the size byte or the mode byte.
 data VCDIFFCodeTableField = CodeTableSizeField | CodeTableModeField
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically VCDIFFCodeTableField
 
 codeTableFieldName :: VCDIFFCodeTableField -> Text
 codeTableFieldName CodeTableSizeField = "size"
@@ -68,7 +74,8 @@ codeTableFieldName CodeTableModeField = "mode"
 -- | The instruction type of the template whose unused byte held a value.
 -- COPY has no place here: its templates carry both a size and a mode, so neither byte is ever unused.
 data VCDIFFCodeTableTemplateKind = CodeTableNoopTemplate | CodeTableAddTemplate | CodeTableRunTemplate
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically VCDIFFCodeTableTemplateKind
 
 -- | The template kind as the message speaks of it, article included.
 codeTableTemplateKindPhrase :: VCDIFFCodeTableTemplateKind -> Text
@@ -80,7 +87,8 @@ codeTableTemplateKindPhrase CodeTableRunTemplate  = "a RUN"
 data VCDIFFRFCFeature
   = RFCFeatureTargetWindow    -- ^ Win_Indicator VCD_TARGET: a window copying earlier target output.
   | RFCFeatureCustomCodeTable -- ^ Hdr_Indicator VCD_CODETABLE: a custom code table.
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically VCDIFFRFCFeature
 
 -- | The xdelta3-extension half of 'Slap.Status.VCDIFFRFCFeatureWithXDelta3Feature'.
 -- When a patch carries several, the classifier reports whichever it met first: compressor, then header, then checksum.
@@ -88,7 +96,8 @@ data VCDIFFXDelta3Feature
   = XDelta3FeatureSecondaryCompressor  -- ^ a declared secondary compressor (VCD_DECOMPRESS).
   | XDelta3FeatureApplicationHeader    -- ^ an application header (VCD_APPHEADER).
   | XDelta3FeatureWindowChecksum       -- ^ a per-window Adler32 (VCD_ADLER32).
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically VCDIFFXDelta3Feature
 
 -- | A semantics failure in a VCDIFF patch that parsed at the byte level, carried by 'Slap.Status.MalformedVCDIFF' —
 -- the loud refusals the core invariants demand (docs/vcdiff/core/spec.md "Core invariants").
@@ -143,25 +152,30 @@ data VCDIFFMalformation
   -- the 'ExpectedSize' is the declared size (the sections' sum for LZMA's gathered kind, the one section's own for DJW),
   -- the 'ActualSize' what the decoder produced.
   | VCDIFFSecondaryStreamOutputSizeMismatch !VCDIFFSection !CompressionAlgorithm !ExpectedSize !ActualSize
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically VCDIFFMalformation
 
 -- | Which of a VCDIFF patch's three indicator bytes carried a reserved bit, for 'Slap.Status.VCDIFFReservedIndicatorBits'.
 data VCDIFFIndicatorKind = HeaderIndicator | WindowIndicator | DeltaIndicator
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically VCDIFFIndicatorKind
 
 -- | An indicator byte's set reserved bits, masked free of the defined ones, for 'Slap.Status.VCDIFFReservedIndicatorBits'.
 newtype ReservedBitsSet = ReservedBitsSet Word8
   deriving (Eq, Show)
+  deriving newtype (ToJSON)
 
 -- | One of a VCDIFF window's three data sections — and, since sections of one kind form a continuous secondary stream across windows,
 -- also the name of that kind in the secondary-compression arms above.
 data VCDIFFSection = VCDIFFDataSection | VCDIFFInstructionSection | VCDIFFAddressSection
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically VCDIFFSection
 
 -- | The two sections instructions pull from on demand, and so the two a finished walk can leave unconsumed.
 -- The instruction section has no place here: it drives the walk, which ends exactly when it is spent.
 data VCDIFFOnDemandSection = OnDemandDataSection | OnDemandAddressSection
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically VCDIFFOnDemandSection
 
 indicatorKindName :: VCDIFFIndicatorKind -> Text
 indicatorKindName HeaderIndicator = "header indicator"

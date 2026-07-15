@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | The cheap-path display carrier: 'PatchInfo'.
@@ -15,11 +16,13 @@ module Slap.Display.Info
   , renderVerificationReport
   ) where
 
+import Data.Aeson (ToJSON)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import qualified Data.Text as Text
+import GHC.Generics (Generic, Generically(..))
 import Slap.Display.Common (InfoLine(..), renderInfoLine, Tally(..), CountUnit, ByteCount,
                              FormatHeader, renderFormatHeader,
                              renderCountUnit, pluralCountUnit,
@@ -45,7 +48,8 @@ data PatchInfo = PatchInfo
   , infoUnit     :: !CountUnit
   , infoBytes    :: !(Maybe ByteCount)
   , infoRange    :: !(Maybe OffsetRange)
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
+    deriving (ToJSON) via Generically PatchInfo
 
 -- | 'SizeOnly' is the @slap info@ glance;
 -- 'WithPayload' opens each embedded field's content beneath its size line — the extra @slap explain@ shows.

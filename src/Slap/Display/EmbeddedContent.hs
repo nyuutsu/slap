@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Content a patch carries embedded in one of its fields:
@@ -13,6 +14,7 @@
 module Slap.Display.EmbeddedContent
   ( EmbeddedContent(..)
   , EmbeddedField(..)
+  , EmbeddedWireBytes(..)
   , readEmbeddedContent
   , EmbeddedDepth(..)
   , renderEmbedded
@@ -20,19 +22,28 @@ module Slap.Display.EmbeddedContent
 
 import Slap.Display.Common (InfoLine(..), renderInfoLine, renderAsText)
 import Slap.Display.Primitives (renderEscapingNonPrintable)
+import Slap.JSON.Bytes (BytesAsBase64(..))
 import Slap.Text (EncodingName, EncodedText, encodedTextContent, decodeTextLenient, substitutionCount)
 import Slap.Measure (SubstitutionCount(..))
 
+import Data.Aeson (ToJSON)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import GHC.Generics (Generic, Generically(..))
 
 data EmbeddedContent = EmbeddedContent
   { embeddedLabel :: !Text
   , embeddedField :: !EmbeddedField
   }
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically EmbeddedContent
+
+-- | An embedded field's bytes exactly as they sat on the wire, kept so an extraction is byte-exact.
+newtype EmbeddedWireBytes = EmbeddedWireBytes { unEmbeddedWireBytes :: ByteString }
   deriving (Eq, Show)
+  deriving (ToJSON) via BytesAsBase64
 
 -- | 'FieldAbsent' and 'FieldEmpty' part ways only where a format can tell them apart:
 -- the xdelta3 appheader's presence bit makes "declared but empty" a different fact from "never declared."
@@ -40,17 +51,18 @@ data EmbeddedContent = EmbeddedContent
 data EmbeddedField
   = FieldAbsent
   | FieldEmpty
-  | FieldContent !ByteString !EncodedText !SubstitutionCount
-    -- ^ The wire bytes (kept so an extraction is byte-exact), the reading a lenient decode made of them,
-    -- and how many sequences it substituted — the count is what the size glance reads to tell characters from bytes.
-  deriving (Eq, Show)
+  | FieldContent !EmbeddedWireBytes !EncodedText !SubstitutionCount
+    -- ^ The reading a lenient decode made of the wire bytes, and how many sequences it substituted —
+    -- the count is what the size glance reads to tell characters from bytes.
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically EmbeddedField
 
 -- | Decode a field's wire bytes into its content — always a 'FieldContent'.
 -- A caller with empty or absent bytes reaches for 'FieldEmpty' \/ 'FieldAbsent' itself.
 readEmbeddedContent :: EncodingName -> ByteString -> EmbeddedField
 readEmbeddedContent encoding bytes =
   let (reading, notices) = decodeTextLenient encoding bytes
-  in FieldContent bytes reading (substitutionCount notices)
+  in FieldContent (EmbeddedWireBytes bytes) reading (substitutionCount notices)
 
 -- | How far a view opens the content:
 -- the size glance alone, or the glance with the payload tucked beneath it.
@@ -71,7 +83,7 @@ renderEmbedded depth content =
 sizeGlance :: EmbeddedField -> Text
 sizeGlance FieldAbsent = "(none)"
 sizeGlance FieldEmpty  = "(empty)"
-sizeGlance (FieldContent bytes reading (SubstitutionCount substituted))
+sizeGlance (FieldContent (EmbeddedWireBytes bytes) reading (SubstitutionCount substituted))
   | substituted == 0 = renderAsText (Text.length (encodedTextContent reading)) <> " characters"
   | otherwise        = renderAsText (ByteString.length bytes) <> " bytes"
 

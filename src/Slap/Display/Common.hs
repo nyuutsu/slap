@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Display-layer vocabulary shared by 'Slap.Display.Info' (cheap-path) and 'Slap.Display.Analysis' (analytical-path):
@@ -28,10 +29,12 @@ module Slap.Display.Common
   , pathText
   ) where
 
+import Data.Aeson (ToJSON)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Word (Word64)
+import GHC.Generics (Generic, Generically(..))
 import Numeric (showHex)
 import Slap.Display.Primitives (padHex)
 import Slap.FormatLabel (FormatLabel, formatLabelName)
@@ -50,7 +53,8 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
 data InfoLine = InfoLine
   { infoLineLabel :: !Text
   , infoLineValue :: !Text
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
+    deriving (ToJSON) via Generically InfoLine
 
 -- | Render an 'InfoLine' with column-13 alignment.
 renderInfoLine :: InfoLine -> Text
@@ -67,6 +71,7 @@ renderInfoLine (InfoLine label value) =
 -- counted.
 newtype Tally = Tally { unTally :: Int }
   deriving (Eq, Show)
+  deriving newtype (ToJSON)
 
 -- | The closed set of unit labels used in display-layer counts.
 -- Each format's helper picks the unit that matches what the format counts ('Records' for IPS, 'Actions' for BPS, 'Windows' for VCDIFF, etc.).
@@ -79,7 +84,8 @@ data CountUnit
   | Instructions
   | Entries
   | EnabledEntries
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically CountUnit
 
 -- | Render a 'CountUnit' inflected by count: 1 returns the singular
 -- form, anything else returns the plural. Used as the suffix in the
@@ -136,7 +142,8 @@ pluralCountUnit EnabledEntries = "enabled entries"
 data ByteCount
   = TotalOutputBytes  !FileSize
   | TotalPayloadBytes !Length
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically ByteCount
 
 renderByteCount :: ByteCount -> Text
 renderByteCount (TotalOutputBytes (FileSize n)) =
@@ -177,7 +184,8 @@ renderOffsetAsHex offset = "0x" <> renderHexAsText (fromIntegral (unOffset offse
 data FormatHeader = FormatHeader
   { formatLabel :: !FormatLabel
   , formatExtra :: !(Maybe Text)
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
+    deriving (ToJSON) via Generically FormatHeader
 
 renderFormatHeader :: FormatHeader -> Text
 renderFormatHeader (FormatHeader label extra) =

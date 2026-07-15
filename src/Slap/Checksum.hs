@@ -1,3 +1,5 @@
+{-# LANGUAGE DerivingVia #-}
+
 module Slap.Checksum
   ( CRC32(..)
   , CRC16(..)
@@ -11,34 +13,43 @@ module Slap.Checksum
   , showAdler32
   ) where
 
+import Data.Aeson (ToJSON)
 import Data.ByteString (ByteString)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Word (Word16, Word32, Word64)
 import Numeric (showHex)
 
+import Slap.JSON.Bytes (BytesAsBase64(..))
+
 newtype CRC32 = CRC32 { unCRC32 :: Word32 }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 newtype CRC16 = CRC16 { unCRC16 :: Word16 }
   deriving (Eq, Ord, Show)
 
 newtype Adler32 = Adler32 { unAdler32 :: Word32 }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 newtype MD5Hash = MD5Hash { unMD5Hash :: ByteString }
   deriving (Eq, Ord, Show)
+  deriving (ToJSON) via BytesAsBase64
 
 newtype SHA1Hash = SHA1Hash { unSHA1Hash :: ByteString }
   deriving (Eq, Ord, Show)
+  deriving (ToJSON) via BytesAsBase64
 
 -- | A CRC32 value that a patch declared or stored.
 newtype ExpectedCRC32 = ExpectedCRC32 { unExpectedCRC32 :: CRC32 }
   deriving (Eq, Show)
+  deriving newtype (ToJSON)
 
 -- | A CRC32 value that was computed from the actual data.
 newtype ActualCRC32 = ActualCRC32 { unActualCRC32 :: CRC32 }
   deriving (Eq, Show)
+  deriving newtype (ToJSON)
 
 -- | A 'Word64' as zero-padded lowercase hex of the given digit width.
 showZeroPaddedHex :: Int -> Word64 -> Text

@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE StrictData #-}
 
 module Slap.Measure
@@ -91,12 +92,16 @@ module Slap.Measure
   , ips32Sentinel
   ) where
 
+import Data.Aeson (ToJSON)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Int (Int64)
 import Data.Word (Word8, Word32)
 import Foreign.Ptr (Ptr, plusPtr)
+import GHC.Generics (Generic, Generically(..))
 import System.IO (Handle, SeekMode(AbsoluteSeek), hSeek)
+
+import Slap.JSON.Bytes (BytesAsBase64(..))
 
 ----------------------------------------------------------------------------
 -- Newtypes
@@ -110,11 +115,11 @@ import System.IO (Handle, SeekMode(AbsoluteSeek), hSeek)
 -- PPF3's offset field is signed 64-bit, IPS32's addressable ceiling is 0xFFFFFFFF —
 -- and must not shrink on a host whose 'Int' is narrower.
 -- 'Position' alone stays 'Int', because it cursors an in-memory 'ByteString', whose length is an 'Int' already.
-newtype Offset = Offset { unOffset :: Int64 } deriving (Eq, Ord, Show)
-newtype Length   = Length   { unLength   :: Int64 } deriving (Eq, Ord, Show)
-newtype FileSize = FileSize { unFileSize :: Int64 } deriving (Eq, Ord, Show)
+newtype Offset = Offset { unOffset :: Int64 } deriving (Eq, Ord, Show) deriving newtype (ToJSON)
+newtype Length   = Length   { unLength   :: Int64 } deriving (Eq, Ord, Show) deriving newtype (ToJSON)
+newtype FileSize = FileSize { unFileSize :: Int64 } deriving (Eq, Ord, Show) deriving newtype (ToJSON)
 newtype Delta    = Delta    { unDelta    :: Int64 } deriving (Eq, Ord, Show)
-newtype Position = Position { unPosition :: Int } deriving (Eq, Ord, Show)
+newtype Position = Position { unPosition :: Int } deriving (Eq, Ord, Show) deriving newtype (ToJSON)
 
 -- | A cursor position carrying the result of signed arithmetic.
 -- BPS apply's @SourceCopy@ and @TargetCopy@ actions advance their
@@ -126,9 +131,11 @@ newtype Position = Position { unPosition :: Int } deriving (Eq, Ord, Show)
 -- 'Offset' instead.
 newtype SignedOffset = SignedOffset { unSignedOffset :: Int64 }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 newtype ActionIndex = ActionIndex { unActionIndex :: Int }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 ----------------------------------------------------------------------------
 -- Apply-time role newtypes
@@ -140,6 +147,7 @@ newtype ActionIndex = ActionIndex { unActionIndex :: Int }
 -- contexts at the failure site.
 newtype ReadOffset = ReadOffset { unReadOffset :: Offset }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 -- | The current write position in a buffer being populated. Used
 -- as the working type in apply paths where a bare 'Offset' would
@@ -147,43 +155,51 @@ newtype ReadOffset = ReadOffset { unReadOffset :: Offset }
 -- error contexts at the failure site.
 newtype WritePosition = WritePosition { unWritePosition :: Offset }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 -- | A length an action requested to copy or write. Used in error
 -- contexts where a bare 'Length' would be ambiguous with another
 -- length-valued field.
 newtype RequestedLength = RequestedLength { unRequestedLength :: Length }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 -- | The length of space remaining in a buffer being populated.
 -- Used in error contexts where a bare 'Length' would be ambiguous
 -- with another length-valued field.
 newtype RemainingLength = RemainingLength { unRemainingLength :: Length }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 -- | The actual size achieved by a partial or completed operation.
 -- Used in error contexts where a bare 'FileSize' would be
 -- ambiguous with another size-valued field.
 newtype ActualSize = ActualSize { unActualSize :: FileSize }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 -- | The expected or declared size of something. Used in error
 -- contexts where a bare 'FileSize' would be ambiguous with another
 -- size-valued field.
 newtype ExpectedSize = ExpectedSize { unExpectedSize :: FileSize }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 -- | The maximum size slap can address, given that offsets and lengths flow through 'Int64': 'maxBound' :: 'Int64'.
 newtype MaxAddressableSize = MaxAddressableSize { unMaxAddressableSize :: FileSize }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 -- | The byte size of a differ's source (input) file.
 -- Paired with 'TargetFileSize' where a refusal carries both and bare 'FileSize's would transpose silently.
 newtype SourceFileSize = SourceFileSize { unSourceFileSize :: FileSize }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 -- | The byte size of a differ's target (output) file; see 'SourceFileSize'.
 newtype TargetFileSize = TargetFileSize { unTargetFileSize :: FileSize }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 -- | A target file size declared explicitly by something in the
 -- patch — a header field, a trailer marker, or similar. Distinct
@@ -195,6 +211,7 @@ newtype TargetFileSize = TargetFileSize { unTargetFileSize :: FileSize }
 newtype DeclaredTargetSize = DeclaredTargetSize
   { unDeclaredTargetSize :: FileSize }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 -- | A target file size derived from operation inputs alone: the
 -- source size and the maximum write end across the patch's records,
@@ -205,6 +222,7 @@ newtype DeclaredTargetSize = DeclaredTargetSize
 newtype NaturalTargetSize = NaturalTargetSize
   { unNaturalTargetSize :: FileSize }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 ----------------------------------------------------------------------------
 -- Parse/create-error role newtypes
@@ -213,27 +231,33 @@ newtype NaturalTargetSize = NaturalTargetSize
 -- | The minimum length a parser requires before it can proceed.
 newtype RequiredLength = RequiredLength { unRequiredLength :: Length }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 -- | The actual length available when a parser found it insufficient.
 newtype ActualLength = ActualLength { unActualLength :: Length }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 -- | The encoded byte length of a field that exceeded its format's
 -- maximum.
 newtype EncodedLength = EncodedLength { unEncodedLength :: Length }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 -- | The maximum byte length a format allows for a given field.
 newtype MaxLength = MaxLength { unMaxLength :: Length }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 -- | The original byte length of a field before truncation.
 newtype OriginalLength = OriginalLength { unOriginalLength :: Length }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 -- | The byte length of a field after truncation to fit its format.
 newtype TruncatedLength = TruncatedLength { unTruncatedLength :: Length }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 -- | How many codepoints were replaced by a substitution character
 -- during a lenient text decode or encode. Each event corresponds to
@@ -242,16 +266,19 @@ newtype TruncatedLength = TruncatedLength { unTruncatedLength :: Length }
 -- the running tally a format-level advisory surfaces to the user.
 newtype SubstitutionCount = SubstitutionCount { unSubstitutionCount :: Int }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 -- | An offset that a hunk or record actually carried, used in
 -- encode-error contexts where a bare 'Offset' would be ambiguous.
 newtype ActualOffset = ActualOffset { unActualOffset :: Offset }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 -- | The maximum offset a format allows, used in encode-error
 -- contexts where a bare 'Offset' would be ambiguous.
 newtype MaxOffset = MaxOffset { unMaxOffset :: Offset }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 -- | The offset at which a format's trailer sentinel sits: the
 -- big-endian encoding of this offset collides with the format's
@@ -263,14 +290,17 @@ newtype MaxOffset = MaxOffset { unMaxOffset :: Offset }
 -- offset, and vice versa.
 newtype SentinelOffset = SentinelOffset { unSentinelOffset :: Offset }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 -- | The magic bytes a parser expected to find.
 newtype ExpectedMagic = ExpectedMagic { unExpectedMagic :: ByteString }
   deriving (Eq, Show)
+  deriving (ToJSON) via BytesAsBase64
 
 -- | The magic bytes a parser actually found.
 newtype ActualMagic = ActualMagic { unActualMagic :: ByteString }
   deriving (Eq, Show)
+  deriving (ToJSON) via BytesAsBase64
 
 -- | The trailer-marker bytes a parser was looking for when it
 -- encountered unrecognized post-trailer content. The IPS family's
@@ -282,23 +312,28 @@ newtype ActualMagic = ActualMagic { unActualMagic :: ByteString }
 -- whether they print as ASCII or hex is the renderer's problem.
 newtype TrailerMarker = TrailerMarker { unTrailerMarker :: ByteString }
   deriving (Eq, Show)
+  deriving (ToJSON) via BytesAsBase64
 
 -- | A size field whose decoded value was negative (an 'Int64' that
 -- should have been non-negative).
 newtype ParsedSizeValue = ParsedSizeValue { unParsedSizeValue :: Int64 }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 -- | A version byte the parser did not recognize.
 newtype FoundVersion = FoundVersion { unFoundVersion :: Word8 }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 -- | A flag byte the parser did not recognize.
 newtype RawFlagByte = RawFlagByte { unRawFlagByte :: Word8 }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 -- | An encoding-method byte the parser did not recognize.
 newtype EncodingMethodByte = EncodingMethodByte { unEncodingMethodByte :: Word8 }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 ----------------------------------------------------------------------------
 -- Records
@@ -352,7 +387,8 @@ data SplitUndoHunk = SplitUndoHunk
 data OffsetRange = OffsetRange
   { rangeStart  :: !Offset
   , rangeLength :: !Length
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
+    deriving (ToJSON) via Generically OffsetRange
 
 -- | The exclusive end of an 'OffsetRange': @start + length@. Suitable
 -- for half-open intervals (read-bound checks, end-pointer arithmetic).

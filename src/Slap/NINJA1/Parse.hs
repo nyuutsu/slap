@@ -26,7 +26,7 @@ import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..), NINJA1TextHeader(..
                            ninja1MagicBytes,
                            ninja1BinaryEOFMarkerBytes, ninja1BinaryEOFMarkerWidth)
 import Slap.Status (SlapError(..), DecompressionFailure(..), Parsed(..),
-                    NINJA1Malformation(..), ByteParserError(..),
+                    NINJA1Malformation(..), NINJA1SubformatIdentifier(..), ByteParserError(..),
                     LineText(..), OffsetTokenText(..), ChecksumTokenText(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
@@ -53,7 +53,7 @@ parseNINJA1 (PatchFileContents input)
   | ByteString.length input < 8                 = Left (InputTooShort LabelNINJA1 (RequiredLength (Length 8)) (ActualLength (byteLength input)))
   | ByteString.take 6 input /= ninja1MagicBytes = Left (BadMagic LabelNINJA1 (ActualMagic (ByteString.take 6 input)))
   | otherwise = case toNINJA1SubFormat subFormatIdentifier of
-      Nothing                       -> Left (UnsupportedNINJA1Subformat subFormatIdentifier)
+      Nothing                       -> Left (UnsupportedNINJA1Subformat (NINJA1SubformatIdentifier subFormatIdentifier))
       Just NINJA1Binary             -> wrapParsed (parseBinary NINJA1Binary           (PatchFileContents payload))
       Just NINJA1BinaryCompressed   -> wrapParsed (zlibDecompress payload >>= (parseBinary NINJA1BinaryCompressed . PatchFileContents))
       Just NINJA1Text               -> wrapParsed (parseText   NINJA1Text             (PatchFileContents payload))

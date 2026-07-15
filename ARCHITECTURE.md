@@ -8,7 +8,7 @@ CLAUDE.md describes the values; this document covers the shape. If the document 
 
 Four layers, dependencies flowing strictly downward.
 
-1. **Foundation.** No format-specific knowledge: `Measure`, `FileContents`, `FFI`, `Binary`, `ByteParser`, `PatchFormat`, `Compression.Stream`, `FormatLabel`, `Checksum`, `Status`, `Text`, `FieldName`, `JSON`, `PatchField`, `MetadataField`, `MetadataInclusion`, `Constraint`, `Dialect`, `Narrow`, `Platform`, `PlatformType`, `Normalize` (the NINJA ROM-image canonicalization procedures, keyed by platform, which know ROM layouts rather than patch formats).
+1. **Foundation.** No format-specific knowledge: `Measure`, `FileContents`, `FFI`, `Binary`, `ByteParser`, `PatchFormat`, `Compression.Stream`, `FormatLabel`, `Checksum`, `Status`, `Text`, `FieldName`, `JSON.Bytes`, `PatchField`, `MetadataField`, `MetadataInclusion`, `Constraint`, `Dialect`, `Narrow`, `Platform`, `PlatformType`, `Normalize` (the NINJA ROM-image canonicalization procedures, keyed by platform, which know ROM layouts rather than patch formats).
 
 2. **Format modules.** Each `Slap/Foo/` directory owns one format, decomposed into `Types`, `Parse`, `Apply`, `Describe`, `Create`. Additional format-specific modules are allowed where the work earns its own home — `Slap.IPS.Optimize` hosts the DP partitioner that decides which copy and RLE records IPS create should emit, and the differential formats whose diff runs in Rust each keep an `FFI` sibling. No format module imports another format module; siblings share only the foundation.
 

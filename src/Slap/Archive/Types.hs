@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | The pure vocabulary of archive unwrapping: which container formats
@@ -21,15 +22,18 @@ module Slap.Archive.Types
   , UnwrapError(..)
   ) where
 
+import Data.Aeson (ToJSON)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Text (Text)
+import GHC.Generics (Generic, Generically(..))
 
 -- | A container format slap can unwrap. These are genuine archives — an
 -- entry table, chaff to filter, a single file to pick out — not stream
 -- compressors.
 data ArchiveFormat = ArchiveZIP | ArchiveRAR | Archive7z
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (ToJSON) via Generically ArchiveFormat
 
 -- | Recognize a container by its magic bytes (ZIP: 4 bytes, RAR and 7z:
 -- 6 bytes each).
@@ -62,24 +66,29 @@ toolsFor Archive7z  = [ToolName "7z"]
 -- | The name of an external archive tool as looked up on @PATH@.
 newtype ToolName = ToolName { unToolName :: Text }
   deriving (Show, Eq)
+  deriving newtype (ToJSON)
 
 -- | A tool's own diagnostic output (its stderr), carried verbatim and
 -- opaque — peer in spirit to 'Slap.Status.DecompressionCause'.
 newtype ToolDiagnostic = ToolDiagnostic { unToolDiagnostic :: Text }
   deriving (Show, Eq)
+  deriving newtype (ToJSON)
 
 -- | The path of an entry within an archive.
 newtype EntryName = EntryName { unEntryName :: Text }
   deriving (Show, Eq)
+  deriving newtype (ToJSON)
 
 -- | How many entries an archive held when none survived chaff filtering.
 newtype SeenEntryCount = SeenEntryCount { unSeenEntryCount :: Int }
   deriving (Show, Eq)
+  deriving newtype (ToJSON)
 
 -- | Why a container could not be read (corrupt, encrypted, an unsupported
 -- codec).
 newtype UnreadableReason = UnreadableReason { unUnreadableReason :: Text }
   deriving (Show, Eq)
+  deriving newtype (ToJSON)
 
 -- | The closed set of ways unwrapping a recognized archive can fail. The
 -- offending file and its format live on the
@@ -105,4 +114,5 @@ data UnwrapError
     ExtractedEntryMissing EntryName
   | -- | slap's reader could not read the container.
     ArchiveUnreadable UnreadableReason
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (ToJSON) via Generically UnwrapError

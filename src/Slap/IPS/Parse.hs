@@ -23,7 +23,7 @@ import Slap.IPS.Types
   , ipsRleFillByteLength
   , offsetWidthByteCount
   )
-import Slap.JSON (parseEBPMetadata)
+import Slap.IPS.EBPMetadata (parseEBPMetadata)
 import Slap.Binary (getWord24BE, takeLength, dropLength)
 import Slap.Status (SlapError(..), SlapAdvisory(..), Parsed(..), OverlapCount(..))
 import Slap.FileContents (PatchFileContents(..))

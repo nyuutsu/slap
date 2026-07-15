@@ -31,10 +31,10 @@
 --   * 'Props.ParseWarnings'      — IPS parse-time structural warnings:
 --                                  zero-count RLE, overlap, unsorted,
 --                                  IPS32 trailing bytes.
---   * 'Props.JSON'               — aeson-backed EBP metadata parser:
+--   * 'Props.EBPMetadata'        — the EBP metadata blob, both ways:
 --                                  case-insensitive lookup, escaped
 --                                  Unicode, nested-object tolerance,
---                                  honest failure on malformed input.
+--                                  malformed input, the round-trip.
 --   * 'Props.Verify'             — the verification weighing:
 --                                  verdict, enforcement, and
 --                                  the report's sentences,
@@ -57,9 +57,9 @@ import qualified Props.Classify as Classify
 import qualified Props.ClassifyTargetCopy as ClassifyTargetCopy
 import qualified Props.Contracts as Contracts
 import qualified Props.Detection as Detection
+import qualified Props.EBPMetadata as EBPMetadata
 import qualified Props.Identity as Identity
 import qualified Props.IPSMarkerPolicy as IPSMarkerPolicy
-import qualified Props.JSON as JSON
 import qualified Props.Measure as Measure
 import qualified Props.Narrow as Narrow
 import qualified Props.NegativeWireValues as NegativeWireValues
@@ -94,7 +94,7 @@ main = defaultMain $ testGroup "Properties"
   , ResolveCopyAddress.resolveCopyAddressTests
   , ParseWarnings.parseWarningsTests
   , IPSMarkerPolicy.ipsMarkerPolicyTests
-  , JSON.jsonTests
+  , EBPMetadata.ebpMetadataTests
   , Measure.measureTests
   , Narrow.narrowTests
   , NegativeWireValues.negativeWireValuesTests

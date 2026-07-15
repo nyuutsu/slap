@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
@@ -11,7 +12,9 @@ module Slap.FieldName
   , fieldNameLabel
   ) where
 
+import Data.Aeson (ToJSON)
 import Data.Text (Text)
+import GHC.Generics (Generic, Generically(..))
 
 data FieldName
   -- Metadata fields
@@ -69,7 +72,8 @@ data FieldName
   | FieldXDelta1SourceLength
   | FieldXDelta1InstructionOffset
   | FieldXDelta1InstructionLength
-  deriving (Show, Eq, Enum, Bounded)
+  deriving (Show, Eq, Enum, Bounded, Generic)
+  deriving (ToJSON) via Generically FieldName
 
 fieldNameLabel :: FieldName -> Text
 fieldNameLabel FieldTitle            = "title"

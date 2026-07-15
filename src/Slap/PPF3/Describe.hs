@@ -32,7 +32,7 @@ import Slap.Display.Analysis
   , OffsetKind(AtOffset)
   , AnnotDetail(DetailUndo)
   )
-import Slap.Display.EmbeddedContent (EmbeddedContent(..), EmbeddedField(..))
+import Slap.Display.EmbeddedContent (EmbeddedContent(..), EmbeddedField(..), EmbeddedWireBytes(..))
 import Slap.Text (encodedTextContent)
 
 import qualified Data.ByteString as ByteString
@@ -58,7 +58,7 @@ ppf3EmbeddedContent :: PPF3Patch -> [EmbeddedContent]
 ppf3EmbeddedContent patch = case ppf3FileId patch of
   Nothing        -> []
   Just fileIdDiz -> [EmbeddedContent "file_id.diz"
-                       (FieldContent (ppf3CarriedFileIdBytes fileIdDiz)
+                       (FieldContent (EmbeddedWireBytes (ppf3CarriedFileIdBytes fileIdDiz))
                                      (ppf3CarriedFileIdText fileIdDiz)
                                      (ppf3CarriedFileIdSubstitutions fileIdDiz))]
 

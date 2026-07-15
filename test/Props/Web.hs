@@ -16,24 +16,29 @@ import Slap.Display.Info (InputSideVerdict(..), OutputSideVerdict(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Header (HeaderAdjustment(HeaderComesOff), InputHeaderDirective(TakeInputAsIs))
-import Slap.Measure (FileSize(..))
+import Slap.Measure (ActualMagic(..), FileSize(..))
 import Slap.MetadataField (MetadataField(..), MetadataRequest(..))
 import Slap.PPF1.Types (PPF1Origin(PPF1OriginAmiga))
 import Slap.SomePatch (parseSome, patchAdvisories, patchAnalysis, patchInfo)
 import Slap.Status (CreateResult(..), Outcome(..), SlapAdvisory(..), SlapError(..),
-                    SourceRequiredCause(..), renderSlapError)
+                    SourceRequiredCause(..), renderSlapAdvisory, renderSlapError)
 import Slap.Text (EncodedText(..), EncodingName(..), resolveEncodingName)
 import Slap.VCDIFF.SecondaryCompression (secondaryCompressorTokens)
 import Slap.Verify (VerificationPolicy(EnforceVerification), VerificationVerdict(..))
 import Slap.Web
+import Slap.Web.Envelope (encodeEnvelope)
 import Slap.XDelta1.Types (XDelta1FromName(..))
 
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as AesonKey
+import qualified Data.Aeson.KeyMap as AesonKeyMap
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.List (nub)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.Set as Set
 import qualified Data.Text as Text
+import qualified Data.Vector as Vector
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -86,6 +91,12 @@ webTests = testGroup "Web"
       , testCase "the chosen encoding reaches the reading"           test_inspectThreadsEncoding
       , testCase "an unparseable patch is the Left on both reads"    test_readsRefuseUnrecognized
       , testCase "a stale dialect refuses both reads, as the CLI"    test_readsRefuseStaleDialect
+      ]
+  , testGroup "envelope"
+      [ testCase "the info crosses as structure under Right"                 test_envelopeCarriesInfo
+      , testCase "a refusal crosses spoken: its tag beside slap's sentence"  test_envelopeSpeaksRefusal
+      , testCase "an advisory crosses with severity and sentence beside it"  test_envelopeSpeaksAdvisory
+      , testCase "byte fields cross as base64"                               test_envelopeBytesAsBase64
       ]
   ]
 
@@ -494,3 +505,56 @@ test_describeRomKnownAnswers =
           , romSHA1  = SHA1Hash (ByteString.pack [ 0xf7, 0xc3, 0xbc, 0x1d, 0x80, 0x8e, 0x04, 0x73, 0x2a, 0xdf
                                                  , 0x67, 0x99, 0x65, 0xcc, 0xc3, 0x4c, 0xa7, 0xae, 0x34, 0x41 ])
           }
+
+test_envelopeCarriesInfo :: Assertion
+test_envelopeCarriesInfo = do
+  bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
+  envelope <- decodedEnvelope (inspectPatch (plainInspectRequest bpsPatch))
+  carriedLabel <- jsonPath ["envelopeAnswer", "Right", "infoFormat", "formatLabel"] envelope
+  carriedLabel @?= Aeson.String "LabelBPS"
+
+test_envelopeSpeaksRefusal :: Assertion
+test_envelopeSpeaksRefusal = do
+  envelope <- decodedEnvelope (inspectPatch (plainInspectRequest (PatchFileContents "this file is nobody's patch")))
+  carriedTag      <- jsonPath ["envelopeAnswer", "Left", "spokenError", "tag"] envelope
+  carriedSentence <- jsonPath ["envelopeAnswer", "Left", "spokenErrorSentence"] envelope
+  carriedTag      @?= Aeson.String "UnrecognizedFormat"
+  carriedSentence @?= Aeson.String (renderSlapError UnrecognizedFormat)
+
+test_envelopeSpeaksAdvisory :: Assertion
+test_envelopeSpeaksAdvisory = do
+  ips32Patch <- createdFixturePatch (CreateDirect CreateIPS32) noMetadataRequested
+  let PatchFileContents ips32Bytes = ips32Patch
+      withJunk = PatchFileContents (ips32Bytes <> ByteString.replicate 16 0x7A)
+      outcome  = inspectPatch (plainInspectRequest withJunk)
+  spokenFirst <- case outcomeAdvisories outcome of
+    firstAdvisory : _ -> pure firstAdvisory
+    []                -> assertFailure "the trailing junk raised nothing to carry"
+  envelope <- decodedEnvelope outcome
+  crossings <- jsonPath ["envelopeAdvisories"] envelope
+  firstCrossing <- case crossings of
+    Aeson.Array elements -> case Vector.toList elements of
+      firstElement : _ -> pure firstElement
+      []               -> assertFailure "the envelope carries no advisories"
+    other -> assertFailure ("expected an advisory array: " <> show other)
+  carriedTag      <- jsonPath ["spokenAdvisory", "tag"] firstCrossing
+  carriedSeverity <- jsonPath ["spokenAdvisorySeverity"] firstCrossing
+  carriedSentence <- jsonPath ["spokenAdvisorySentence"] firstCrossing
+  carriedTag      @?= Aeson.String "IPS32TrailingBytes"
+  carriedSeverity @?= Aeson.String "SeverityWarning"
+  carriedSentence @?= Aeson.String (renderSlapAdvisory spokenFirst)
+
+test_envelopeBytesAsBase64 :: Assertion
+test_envelopeBytesAsBase64 = Aeson.toJSON (ActualMagic "PATCH") @?= Aeson.String "UEFUQ0g="
+
+decodedEnvelope :: Aeson.ToJSON answer => Outcome (Either SlapError answer) -> IO Aeson.Value
+decodedEnvelope outcome =
+  maybe (assertFailure "the envelope is not readable JSON") pure (Aeson.decodeStrict (encodeEnvelope outcome))
+
+jsonPath :: [String] -> Aeson.Value -> IO Aeson.Value
+jsonPath [] value = pure value
+jsonPath (name : deeper) (Aeson.Object object) =
+  case AesonKeyMap.lookup (AesonKey.fromString name) object of
+    Just inner -> jsonPath deeper inner
+    Nothing    -> assertFailure ("no field " <> name <> " in " <> show (AesonKeyMap.keys object))
+jsonPath (name : _) other = assertFailure ("looked for " <> name <> " in a non-object: " <> show other)

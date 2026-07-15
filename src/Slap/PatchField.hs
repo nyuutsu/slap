@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Slap.PatchField
@@ -6,7 +7,9 @@ module Slap.PatchField
   , affectsApplyOutput
   ) where
 
+import Data.Aeson (ToJSON)
 import Data.Text (Text)
+import GHC.Generics (Generic, Generically(..))
 
 -- | Fields a patch format can provide or require.
 data PatchField
@@ -24,7 +27,8 @@ data PatchField
   | FieldImageType
   | FieldFileIdDiz
   | FieldMetadata
-  deriving (Eq, Ord, Enum, Bounded, Show)
+  deriving (Eq, Ord, Enum, Bounded, Show, Generic)
+  deriving (ToJSON) via Generically PatchField
 
 fieldName :: PatchField -> Text
 fieldName FieldRecords         = "records"

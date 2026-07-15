@@ -1,3 +1,5 @@
+{-# LANGUAGE DerivingVia #-}
+
 -- | Typed text values that carry their own encoding.
 -- The encoding decision lives in the value itself, not in which function the call site happens to reach for.
 --
@@ -82,6 +84,7 @@ module Slap.Text
   ) where
 
 import Control.Applicative ((<|>))
+import Data.Aeson (ToJSON(..))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Char (toLower, toUpper)
@@ -92,6 +95,7 @@ import Data.Maybe (mapMaybe)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
+import GHC.Generics (Generic, Generically(..))
 import Slap.FieldName (FieldName)
 import Slap.FormatLabel (FormatLabel)
 import Slap.Measure (Length(..), OriginalLength(..), TruncatedLength(..),
@@ -143,6 +147,11 @@ encodingDisplayName :: EncodingName -> Text
 encodingDisplayName EncodingUtf8          = Text.pack "utf8"
 encodingDisplayName (EncodingNamed named) = displayNamedEncoding named
 
+-- | Crosses a JSON boundary as its display name: the encoder half of a 'NamedEncoding' is a resolved dictionary, not data.
+instance ToJSON EncodingName where
+  toJSON     = toJSON . encodingDisplayName
+  toEncoding = toEncoding . encodingDisplayName
+
 -- | The resolved @encoding@-library encoder a 'NamedEncoding' carries.
 useNamedEncoding :: NamedEncoding -> DynEncoding
 useNamedEncoding = namedEncodingResolved
@@ -166,7 +175,8 @@ useNamedEncoding = namedEncodingResolved
 data EncodedText = EncodedText
   { encodedTextEncoding :: !EncodingName
   , encodedTextContent  :: !Text
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
+    deriving (ToJSON) via Generically EncodedText
 
 ----------------------------------------------------------------------------
 -- Errors
@@ -724,9 +734,12 @@ data AdvertisedEncodingFamily = AdvertisedEncodingFamily
 advertisedEncodings :: [AdvertisedEncodingFamily]
 advertisedEncodings =
   [ AdvertisedEncodingFamily "Unicode"   ["utf-8", "utf-16", "utf-32"]
-  , AdvertisedEncodingFamily "ISO 8859"  ["iso-8859-1", "iso-8859-2", "iso-8859-3", "iso-8859-4", "iso-8859-5", "iso-8859-6", "iso-8859-7", "iso-8859-8", "iso-8859-9", "iso-8859-10", "iso-8859-11", "iso-8859-13", "iso-8859-14", "iso-8859-15", "iso-8859-16"]
+  , AdvertisedEncodingFamily "ISO 8859"  ["iso-8859-1", "iso-8859-2", "iso-8859-3", "iso-8859-4", "iso-8859-5",
+                                          "iso-8859-6", "iso-8859-7", "iso-8859-8", "iso-8859-9", "iso-8859-10",
+                                          "iso-8859-11", "iso-8859-13", "iso-8859-14", "iso-8859-15", "iso-8859-16"]
   , AdvertisedEncodingFamily "Windows"   ["cp1250", "cp1251", "cp1252", "cp1253", "cp1254", "cp1255", "cp1256", "cp1257", "cp1258"]
-  , AdvertisedEncodingFamily "DOS / OEM" ["cp437", "cp737", "cp775", "cp850", "cp852", "cp855", "cp857", "cp860", "cp861", "cp862", "cp863", "cp864", "cp865", "cp866", "cp869", "cp874"]
+  , AdvertisedEncodingFamily "DOS / OEM" ["cp437", "cp737", "cp775", "cp850", "cp852", "cp855", "cp857", "cp860",
+                                          "cp861", "cp862", "cp863", "cp864", "cp865", "cp866", "cp869", "cp874"]
   , AdvertisedEncodingFamily "Japanese"  ["shift-jis", "cp932", "iso-2022-jp"]
   , AdvertisedEncodingFamily "Chinese"   ["gb18030"]
   , AdvertisedEncodingFamily "Cyrillic"  ["koi8-r", "koi8-u"]

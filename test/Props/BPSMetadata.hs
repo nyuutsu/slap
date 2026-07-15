@@ -6,7 +6,7 @@ module Props.BPSMetadata (bpsMetadataTests) where
 
 import Slap.BPS.Types (BPSPatch(..), BPSMetadata(..))
 import Slap.BPS.Describe (bpsEmbeddedContent, bpsMetadataNotes)
-import Slap.Display.EmbeddedContent (EmbeddedContent(..), EmbeddedField(..))
+import Slap.Display.EmbeddedContent (EmbeddedContent(..), EmbeddedField(..), EmbeddedWireBytes(..))
 import Slap.Display.Primitives (renderEscapingNonPrintable)
 import Slap.Text (EncodingName(EncodingUtf8), encodedTextContent)
 import Slap.Status (SlapAdvisory(..), BPSMetadataDivergence(..))
@@ -111,7 +111,7 @@ test_fieldMultibyte = case fieldOf (unBPSMetadata (utf8Meta "\x65E5\x672C\x8A9E"
 -- but the wire bytes ride through byte-exact for extraction.
 test_fieldNonUtf8 :: IO ()
 test_fieldNonUtf8 = case fieldOf (ByteString.pack [0x80, 0xFE, 0xFF]) of
-  FieldContent bytes _ (SubstitutionCount substituted) -> do
+  FieldContent (EmbeddedWireBytes bytes) _ (SubstitutionCount substituted) -> do
     assertBool "the reading substituted" (substituted > 0)
     assertEqual "the wire bytes are kept" (ByteString.pack [0x80, 0xFE, 0xFF]) bytes
   other -> assertFailure ("expected FieldContent, got " ++ show other)

@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
@@ -20,7 +21,9 @@ module Slap.Status.Decompression
 import Slap.Status.VCDIFF (VCDIFFSection, vcdiffSectionName)
 import Slap.Status.Vocabulary (CompressionAlgorithm(..), compressionAlgorithmName)
 
+import Data.Aeson (ToJSON)
 import Data.Text (Text)
+import GHC.Generics (Generic, Generically(..))
 
 -- | One constructor per decompression site, each carrying only the axes that vary there.
 -- 'VCDIFFSectionFailed' is the one site whose algorithm varies — a secondary stream is decoded
@@ -31,31 +34,37 @@ data DecompressionFailure
   | XDelta1Failed                           DecompressionCause
   | BSDiffSectionFailed   BSDiffSection     DecompressionCause
   | VCDIFFSectionFailed   VCDIFFSection CompressionAlgorithm DecompressionCause
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (ToJSON) via Generically DecompressionFailure
 
 -- | BSDiff's three bzip2-compressed sections.
 data BSDiffSection = BSDiffControl | BSDiffDiff | BSDiffExtra
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (ToJSON) via Generically BSDiffSection
 
 -- | The decompressor's own diagnostic, relayed verbatim (flate2, bzip2-rs, lzma-rs, or slap's Yay0).
 -- Decoded as UTF-8 at the FFI seam ('Slap.FFI.readText').
 newtype DecompressionCause = DecompressionCause { unDecompressionCause :: Text }
   deriving (Show, Eq)
+  deriving newtype (ToJSON)
 
 -- | The xdelta1 differ's failure cause, in the Rust side's own words —
 -- an allocation refusal while building the source index, or an internal-invariant violation surfaced rather than panicked.
 newtype XDelta1DiffCause = XDelta1DiffCause { unXDelta1DiffCause :: Text }
   deriving (Show, Eq)
+  deriving newtype (ToJSON)
 
 -- | The bsdiff differ's counterpart of 'XDelta1DiffCause' — always an invariant violation:
 -- bsdiff's 64-bit wire fields outreach any input buffer, so there is no size refusal to relay.
 newtype BSDiffDifferCause = BSDiffDifferCause { unBSDiffDifferCause :: Text }
   deriving (Show, Eq)
+  deriving newtype (ToJSON)
 
 -- | The GDIFF differ's failure cause — always an invariant violation:
 -- GDIFF's 64-bit copy offsets outreach any input buffer, and the differ's index widens with the source rather than refusing one.
 newtype GDIFFDiffCause = GDIFFDiffCause { unGDIFFDiffCause :: Text }
   deriving (Show, Eq)
+  deriving newtype (ToJSON)
 
 -- | The compression algorithm in flight at a given failure site.
 decompressionAlgorithm :: DecompressionFailure -> CompressionAlgorithm
