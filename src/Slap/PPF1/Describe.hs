@@ -12,7 +12,7 @@ module Slap.PPF1.Describe
   ) where
 
 import Slap.PPF1.Types (PPF1Patch(..), PPF1Record(..))
-import Slap.Measure (Length(..), OffsetRange(..),
+import Slap.Measure (OffsetRange(..),
                      advance, byteLength, distance)
 import Slap.Display.Common (InfoLine(..),
                             Tally(..), CountUnit(Records),
@@ -30,7 +30,6 @@ import Slap.Display.Analysis
   )
 import Slap.Text (encodedTextContent)
 
-import qualified Data.ByteString as ByteString
 import qualified Data.Text as Text
 
 ppf1Meta :: PPF1Patch -> [InfoLine]
@@ -41,11 +40,11 @@ ppf1Meta patch =
 analyzePPF1 :: PPF1Patch -> PatchAnalysis
 analyzePPF1 patch = PatchAnalysis
   { analysisSections = [SectionRegions (map makeRegion (ppf1Records patch))]
-  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes (Length (fromIntegral totalBytes)))))
+  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes totalBytes)))
   }
   where
     recordCount = length (ppf1Records patch)
-    totalBytes = sum (map (ByteString.length . ppf1RecordPayload) (ppf1Records patch))
+    totalBytes = foldMap (byteLength . ppf1RecordPayload) (ppf1Records patch)
     makeRegion record = AnalysisRegion
       { regionOffset     = ppf1RecordOffset record
       , regionSize       = byteLength (ppf1RecordPayload record)

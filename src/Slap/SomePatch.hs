@@ -28,7 +28,7 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import Slap.Binary (replicateLength)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Hunk(..),
-                     Cursor(..), splitUndoHunkFromParsed)
+                     Cursor(..), byteLength, splitUndoHunkFromParsed)
 import qualified Slap.PPF1.Apply as PPF1
 import qualified Slap.PPF1.Describe as PPF1
 import qualified Slap.PPF1.Parse as PPF1
@@ -303,8 +303,8 @@ parseSomePatchFromPPF1 (Parsed patch parseAdvisories) =
           , infoEmbedded = []
           , infoTally    = Tally (length records)
           , infoUnit     = Records
-          , infoBytes    = Just (TotalPayloadBytes (Length
-              (fromIntegral (sum (map (ByteString.length . PPF1.ppf1RecordPayload) records)))))
+          , infoBytes    = Just (TotalPayloadBytes
+              (foldMap (byteLength . PPF1.ppf1RecordPayload) records))
           , infoRange    = PPF1.ppf1RecordsRange records
           }
   in Right (bareSomePatch LabelPPF1 (PPF1.analyzePPF1 patch) kind applyStrategy advisories info)
@@ -341,8 +341,8 @@ parseSomePatchFromPPF2 (Parsed patch parseAdvisories) =
           , infoEmbedded = PPF2.ppf2EmbeddedContent patch
           , infoTally    = Tally (length records)
           , infoUnit     = Records
-          , infoBytes    = Just (TotalPayloadBytes (Length
-              (fromIntegral (sum (map (ByteString.length . PPF2.ppf2RecordPayload) records)))))
+          , infoBytes    = Just (TotalPayloadBytes
+              (foldMap (byteLength . PPF2.ppf2RecordPayload) records))
           , infoRange    = PPF2.ppf2RecordsRange records
           }
   in Right (bareSomePatch LabelPPF2 (PPF2.analyzePPF2 patch) kind applyStrategy advisories info)
@@ -391,8 +391,8 @@ parseSomePatchFromPPF3 (Parsed patch parseAdvisories) =
           , infoEmbedded = PPF3.ppf3EmbeddedContent patch
           , infoTally    = Tally (length records)
           , infoUnit     = Records
-          , infoBytes    = Just (TotalPayloadBytes (Length
-              (fromIntegral (sum (map (ByteString.length . PPF3.ppf3RecordPayload) records)))))
+          , infoBytes    = Just (TotalPayloadBytes
+              (foldMap (byteLength . PPF3.ppf3RecordPayload) records))
           , infoRange    = PPF3.ppf3RecordsRange records
           }
   in Right (bareSomePatch LabelPPF3 (PPF3.analyzePPF3 patch) kind applyStrategy advisories info)
@@ -436,9 +436,9 @@ parseSomePatchFromPPF4 metadataEncoding patchContents = do
           , infoEmbedded = []
           , infoTally    = Tally totalRecords
           , infoUnit     = Records
-          , infoBytes    = Just (TotalPayloadBytes (Length
-              (fromIntegral ( sum (map (ByteString.length . PPF4.replaceData) replaces)
-                            + sum (map (ByteString.length . PPF4.appendData) appends) ))))
+          , infoBytes    = Just (TotalPayloadBytes
+              (foldMap (byteLength . PPF4.replaceData) replaces
+                <> foldMap (byteLength . PPF4.appendData) appends))
           , infoRange    = PPF4.ppf4ReplacesRange replaces
           }
   Right (bareSomePatch LabelPPF4 (PPF4.analyzePPF4 patch) (Direct directContents) applyStrategy advisories info)
@@ -815,8 +815,8 @@ parseSomePatchFromNINJA1 patchContents = do
         , infoEmbedded = []
         , infoTally    = Tally (length records)
         , infoUnit     = Records
-        , infoBytes    = Just (TotalPayloadBytes (Length
-            (fromIntegral (sum (map (ByteString.length . NINJA1.ninja1RecordData) records)))))
+        , infoBytes    = Just (TotalPayloadBytes
+            (foldMap (byteLength . NINJA1.ninja1RecordData) records))
         , infoRange    = NINJA1.ninja1RecordsRange records
         }
   Right (bareSomePatch LabelNINJA1 (NINJA1.analyzeNINJA1 patch) kind applyStrategy warnings info)
@@ -940,9 +940,8 @@ parseSomePatchFromPMSR patchContents = do
         , infoEmbedded = []
         , infoTally    = Tally (Vector.length records)
         , infoUnit     = Records
-        , infoBytes    = Just (TotalPayloadBytes (Length
-            (fromIntegral (Vector.foldl' (\runningTotal record ->
-                              runningTotal + ByteString.length (PMSR.pmsrData record)) 0 records))))
+        , infoBytes    = Just (TotalPayloadBytes
+            (foldMap (byteLength . PMSR.pmsrData) records))
         , infoRange    = PMSR.pmsrRecordsRange records
         }
   Right (bareSomePatch LabelPMSR (PMSR.analyzePMSR patch) kind applyStrategy advisories info)

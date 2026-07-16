@@ -404,12 +404,11 @@ encodeTextBounded encodingName cap text =
       substitutionNotes  = mapMaybe snd taken
       truncationNotes    = case remaining of
         [] -> []
-        _  -> let writtenBytes  = ByteString.length takenBytes
-                  originalBytes = writtenBytes
-                                + sum (map (ByteString.length . fst) remaining)
+        _  -> let writtenLength  = byteLength takenBytes
+                  originalLength = writtenLength <> foldMap (byteLength . fst) remaining
               in [TruncatedToFitBound
-                    (OriginalLength  (Length (fromIntegral originalBytes)))
-                    (TruncatedLength (Length (fromIntegral writtenBytes)))]
+                    (OriginalLength  originalLength)
+                    (TruncatedLength writtenLength)]
   in (takenBytes, substitutionNotes ++ truncationNotes)
 
 -- | Encode a single codepoint, with the bytes and a substitution notice if the target encoding can't represent it.

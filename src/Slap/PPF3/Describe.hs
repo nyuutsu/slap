@@ -16,7 +16,7 @@ import Slap.PPF3.Types (PPF3Patch(..), PPF3Record(..),
                         PPF3ValidationBlock(..),
                         PPF3CarriedFileId(..),
                         ppf3ValidationOffset)
-import Slap.Measure (Length(..), OffsetRange(..),
+import Slap.Measure (OffsetRange(..),
                      advance, byteLength, distance)
 import Slap.Display.Common (InfoLine(..),
                             Tally(..), CountUnit(Records),
@@ -66,11 +66,11 @@ ppf3EmbeddedContent patch = case ppf3FileId patch of
 analyzePPF3 :: PPF3Patch -> PatchAnalysis
 analyzePPF3 patch = PatchAnalysis
   { analysisSections = [SectionRegions (map makeRegion (ppf3Records patch))]
-  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes (Length (fromIntegral totalBytes)))))
+  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes totalBytes)))
   }
   where
     recordCount = length (ppf3Records patch)
-    totalBytes = sum (map (ByteString.length . ppf3RecordPayload) (ppf3Records patch))
+    totalBytes = foldMap (byteLength . ppf3RecordPayload) (ppf3Records patch)
     makeRegion record = AnalysisRegion
       { regionOffset     = ppf3RecordOffset record
       , regionSize       = byteLength (ppf3RecordPayload record)

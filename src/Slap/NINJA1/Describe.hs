@@ -16,10 +16,7 @@ import Slap.Checksum (showCRC32, MD5Hash(..), SHA1Hash(..))
 import Slap.Display.Common (InfoLine(..),
                      Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Display.Primitives (hexByteString)
-import Slap.Measure (Length(..),
-                     OffsetRange(..), advance, byteLength, distance)
-
-import qualified Data.ByteString as ByteString
+import Slap.Measure (OffsetRange(..), advance, byteLength, distance)
 
 ----------------------------------------------------------------------------
 -- Info
@@ -46,11 +43,11 @@ ninja1Meta patch = concat
 analyzeNINJA1 :: NINJA1Patch -> PatchAnalysis
 analyzeNINJA1 patch = PatchAnalysis
   { analysisSections = [SectionRegions (map makeNINJA1Region (ninja1Records patch))]
-  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes (Length (fromIntegral totalBytes)))))
+  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes totalBytes)))
   }
   where
     recordCount = length (ninja1Records patch)
-    totalBytes = sum (map (ByteString.length . ninja1RecordData) (ninja1Records patch))
+    totalBytes = foldMap (byteLength . ninja1RecordData) (ninja1Records patch)
 
 makeNINJA1Region :: NINJA1Record -> AnalysisRegion
 makeNINJA1Region (NINJA1Record recordOffset recordPayload) = AnalysisRegion

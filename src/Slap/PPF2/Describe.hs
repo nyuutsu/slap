@@ -15,8 +15,7 @@ import Slap.PPF2.Types (PPF2Patch(..), PPF2Record(..),
                         PPF2CarriedFileId(..),
                         unPPF2SourceSize,
                         ppf2ValidationOffset)
-import Slap.Measure (Length(..),
-                     OffsetRange(..), advance, byteLength, distance)
+import Slap.Measure (OffsetRange(..), advance, byteLength, distance)
 import Slap.Display.Common (InfoLine(..),
                             Tally(..), CountUnit(Records),
                             ByteCount(TotalPayloadBytes), renderAsText, renderOffsetAsHex)
@@ -62,11 +61,11 @@ ppf2EmbeddedContent patch = case ppf2FileId patch of
 analyzePPF2 :: PPF2Patch -> PatchAnalysis
 analyzePPF2 patch = PatchAnalysis
   { analysisSections = [SectionRegions (map makeRegion (ppf2Records patch))]
-  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes (Length (fromIntegral totalBytes)))))
+  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes totalBytes)))
   }
   where
     recordCount = length (ppf2Records patch)
-    totalBytes = sum (map (ByteString.length . ppf2RecordPayload) (ppf2Records patch))
+    totalBytes = foldMap (byteLength . ppf2RecordPayload) (ppf2Records patch)
     makeRegion record = AnalysisRegion
       { regionOffset     = ppf2RecordOffset record
       , regionSize       = byteLength (ppf2RecordPayload record)

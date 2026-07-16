@@ -15,11 +15,9 @@ import Slap.Display.Analysis
     , Annotation(..), OffsetKind(..)
     )
 import Slap.Display.Common (InfoLine, Tally(..), CountUnit(..), ByteCount(..))
-import Slap.Measure (Length(..),
-                     OffsetRange(..), advance, byteLength, distance)
+import Slap.Measure (OffsetRange(..), advance, byteLength, distance)
 import Data.Vector (Vector)
 
-import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 
 ----------------------------------------------------------------------------
@@ -37,15 +35,12 @@ pmsrMeta _ = []
 analyzePMSR :: PMSRPatch -> PatchAnalysis
 analyzePMSR patch = PatchAnalysis
   { analysisSections = [SectionRegions (map pmsrRecordRegion (Vector.toList records))]
-  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes (Length (fromIntegral totalBytes)))))
+  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes totalBytes)))
   }
   where
     records      = pmsrRecords patch
     recordCount  = Vector.length records
-    totalBytes   = Vector.foldl' addPayloadBytes 0 records
-
-    addPayloadBytes runningTotal record =
-      runningTotal + ByteString.length (pmsrData record)
+    totalBytes   = foldMap (byteLength . pmsrData) records
 
 pmsrRecordRegion :: PMSRRecord -> AnalysisRegion
 pmsrRecordRegion record = AnalysisRegion

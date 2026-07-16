@@ -24,7 +24,6 @@ import Slap.Display.Analysis
 
 import Slap.Text (encodedTextContent)
 
-import qualified Data.ByteString as ByteString
 import qualified Data.Text as Text
 
 -- | All key-value metadata carried by a PPF4 patch header. PPF4 has
@@ -35,10 +34,10 @@ ppf4Meta patch =
   let description = encodedTextContent (ppf4Description patch)
   in [InfoLine "description" description | not (Text.null description)]
 
-totalPayloadBytes :: PPF4Patch -> Int
+totalPayloadBytes :: PPF4Patch -> Length
 totalPayloadBytes patch =
-  sum (map (ByteString.length . replaceData) (ppf4Replaces patch))
-  + sum (map (ByteString.length . appendData) (ppf4Appends patch))
+  foldMap (byteLength . replaceData) (ppf4Replaces patch)
+  <> foldMap (byteLength . appendData) (ppf4Appends patch)
 
 ----------------------------------------------------------------------------
 -- Analyze
@@ -50,7 +49,7 @@ analyzePPF4 patch = PatchAnalysis
       [ SectionRegions (map replaceRegion (ppf4Replaces patch)
                         ++ zipWith appendRegion appendDisplayOffsets (ppf4Appends patch)) ]
   , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records
-                                  (Just (TotalPayloadBytes (Length (fromIntegral totalBytes)))))
+                                  (Just (TotalPayloadBytes totalBytes)))
   }
   where
     recordCount = length (ppf4Replaces patch) + length (ppf4Appends patch)
