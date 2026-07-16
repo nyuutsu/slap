@@ -1,3 +1,5 @@
+{-# LANGUAGE DerivingVia #-}
+
 -- | The run itself: everything between a prepared source and the patched file a frontend hands back.
 -- One home, so convert's @--with@ lane and every frontend inherit whatever apply does — now and later.
 module Slap.Apply
@@ -6,6 +8,8 @@ module Slap.Apply
   , runPreparedApply
   ) where
 
+import Data.Aeson (ToJSON)
+import GHC.Generics (Generic, Generically(..))
 import Slap.Display.Info (InputSideVerdict(..), OutputSideVerdict(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents)
 import Slap.Header (InputHeaderDirective(TakeInputAsIs))
@@ -29,7 +33,8 @@ data PatchedRom = PatchedRom
 data VerdictStanding
   = VerdictsDescribeTheFiles
   | VerdictsWithheldReshaped
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically VerdictStanding
 
 -- | Run a prepared source through the whole of apply: judge the source, run the records, judge the target,
 -- restore what normalization set aside. Narrates only the run's own story —

@@ -88,10 +88,12 @@ renderActionLine actionVerb info outputPath =
 -- | The verdict on the file the user handed in.
 newtype InputSideVerdict = InputSideVerdict VerificationVerdict
   deriving (Eq, Show)
+  deriving newtype (ToJSON)
 
 -- | The verdict on the file slap produced; 'InputSideVerdict''s counterpart.
 newtype OutputSideVerdict = OutputSideVerdict VerificationVerdict
   deriving (Eq, Show)
+  deriving newtype (ToJSON)
 
 -- | The happy-path answer to "did the files agree with the patch?" — one line per side,
 -- collapsed to one line when the patch declares nothing at all, each match naming the kinds of check it rests on.

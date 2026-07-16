@@ -87,12 +87,20 @@ wasm-parity-check: cabal wasm
 	   agree inspect "$$patch"; \
 	   agree analyze "$$patch"; \
 	 done; \
-	 agree check-apply   test/data/dm4y/patch.bps test/data/dm4y/base.gbc  test/data/web/check-apply.json; \
-	 agree check-undo    test/data/dm4y/patch.bps test/data/dm4y/base.gbc  test/data/web/check-undo.json; \
-	 agree check-create  test/data/dm4y/base.gbc  test/data/dm4y/patch.bps test/data/web/check-create.json; \
-	 agree check-convert test/data/dm4y/patch.bps test/data/web/check-convert.json; \
-	 agree check-convert test/data/dm4y/patch.ips test/data/web/check-convert.json; \
-	 agree check-convert test/data/dm4y/patch.bps test/data/web/check-convert-with-source.json test/data/dm4y/base.gbc
+	 agree check-apply   test/data/dm4y/patch.bps test/data/dm4y/base.gbc  test/data/web/apply.json; \
+	 agree check-undo    test/data/dm4y/patch.bps test/data/dm4y/base.gbc  test/data/web/undo.json; \
+	 agree check-create  test/data/dm4y/base.gbc  test/data/dm4y/patch.bps test/data/web/create.json; \
+	 agree check-convert test/data/dm4y/patch.bps test/data/web/convert.json; \
+	 agree check-convert test/data/dm4y/patch.ips test/data/web/convert.json; \
+	 agree check-convert test/data/dm4y/patch.bps test/data/web/convert-with-source.json test/data/dm4y/base.gbc; \
+	 agree apply   test/data/dm4y/patch.bps test/data/dm4y/base.gbc  test/data/web/apply.json; \
+	 agree undo    test/data/dm4y/patch.bps test/data/dm4y/base.gbc  test/data/web/undo.json; \
+	 "$$(cabal -v0 list-bin slap)" apply test/data/dm4y/patch.ups test/data/dm4y/base.gbc -o "$$workdir/patched-by-ups.gbc" > /dev/null; \
+	 agree undo    test/data/dm4y/patch.ups "$$workdir/patched-by-ups.gbc" test/data/web/undo.json; \
+	 agree create  test/data/dm4y/patch.ips test/data/dm4y/patch.ups test/data/web/create.json; \
+	 agree convert test/data/dm4y/patch.bps test/data/web/convert.json; \
+	 agree convert test/data/dm4y/patch.ips test/data/web/convert.json; \
+	 agree convert test/data/dm4y/patch.bps test/data/web/convert-with-source.json test/data/dm4y/base.gbc
 
 # Scrub 🧼
 clean:

@@ -14,6 +14,10 @@ const shapes = {
   'check-undo':    { export: 'slap_web_check_undo',       buffers: ([patch, patched, declaration]) => [patch, patched, declaration] },
   'check-create':  { export: 'slap_web_check_create',     buffers: ([original, modified, declaration]) => [original, modified, declaration] },
   'check-convert': { export: 'slap_web_check_convert',    buffers: ([patch, declaration, source]) => [patch, source ?? null, declaration] },
+  apply:           { export: 'slap_web_apply_patch',      buffers: ([patch, rom, declaration]) => [patch, rom, declaration] },
+  undo:            { export: 'slap_web_undo_patch',       buffers: ([patch, patched, declaration]) => [patch, patched, declaration] },
+  create:          { export: 'slap_web_create_patch',     buffers: ([original, modified, declaration]) => [original, modified, declaration] },
+  convert:         { export: 'slap_web_convert_patch',    buffers: ([patch, declaration, source]) => [patch, source ?? null, declaration] },
 };
 
 const [reactorPath, verb, ...verbArgs] = process.argv.slice(2);

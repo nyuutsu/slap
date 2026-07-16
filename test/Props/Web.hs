@@ -27,7 +27,8 @@ import Slap.VCDIFF.SecondaryCompression (secondaryCompressorTokens)
 import Slap.Verify (VerificationPolicy(EnforceVerification), VerificationVerdict(..))
 import Slap.Web
 import Slap.Web.Declaration (applyRequestOf, createRequestOf)
-import Slap.Web.Envelope (encodeEnvelope)
+import Slap.Web.Envelope (encodeEnvelope, encodeEnvelopeAndTail,
+                          speakCreatedPatch, speakPatchedRom, speakRevertedRom)
 import Slap.XDelta1.Types (XDelta1FromName(..))
 
 import qualified Data.Aeson as Aeson
@@ -106,6 +107,11 @@ webTests = testGroup "Web"
       , testCase "omitted Maybe fields decode as unrequested metadata"        test_declarationTerseMetadata
       , testCase "an encoding name arrives resolved, as the CLI resolves it"  test_declarationEncodingName
       , testCase "blob bytes arrive through base64"                           test_declarationBlobBase64
+      ]
+  , testGroup "tail"
+      [ testCase "an act's output bytes ride the tail, spoken for in the envelope"  test_tailCarriesThePatchedRom
+      , testCase "a refusal's tail is empty, its envelope still narrated"           test_tailEmptyOnRefusal
+      , testCase "a created patch's tail identifies as its own format"              test_tailIdentifiesCreatedPatch
       ]
   ]
 
@@ -610,6 +616,34 @@ test_declarationBlobBase64 = do
 
 decodedFromJSON :: Aeson.FromJSON value => ByteString -> IO value
 decodedFromJSON json = either (assertFailure . ("did not decode: " <>)) pure (Aeson.eitherDecodeStrict json)
+
+test_tailCarriesThePatchedRom :: Assertion
+test_tailCarriesThePatchedRom = do
+  bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
+  outcome  <- applyPatch (plainApplyRequest bpsPatch fixtureSourceBytes)
+  let (envelopeBytes, tailBytes) = encodeEnvelopeAndTail speakPatchedRom outcome
+  tailBytes @?= fixtureTargetBytes
+  envelope <- maybe (assertFailure "the envelope is not readable JSON") pure (Aeson.decodeStrict envelopeBytes)
+  carriedStanding <- jsonPath ["envelopeAnswer", "Right", "spokenPatchedRomStanding"] envelope
+  carriedStanding @?= Aeson.String "VerdictsDescribeTheFiles"
+
+test_tailEmptyOnRefusal :: Assertion
+test_tailEmptyOnRefusal = do
+  bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
+  let (envelopeBytes, tailBytes) = encodeEnvelopeAndTail speakRevertedRom (undoPatch (plainUndoRequest bpsPatch fixtureSourceBytes))
+  tailBytes @?= ByteString.empty
+  envelope <- maybe (assertFailure "the envelope is not readable JSON") pure (Aeson.decodeStrict envelopeBytes)
+  carriedTag <- jsonPath ["envelopeAnswer", "Left", "spokenError", "tag"] envelope
+  carriedTag @?= Aeson.String "NoUndoForFormat"
+
+test_tailIdentifiesCreatedPatch :: Assertion
+test_tailIdentifiesCreatedPatch = do
+  created <- case outcomeValue (createPatch (plainCreateRequest (CreateDifferential CreateBPS))) of
+    Left refusal  -> assertFailureT ("create: " <> renderSlapError refusal)
+    Right created -> pure created
+  let (_envelopeBytes, tailBytes) = encodeEnvelopeAndTail speakCreatedPatch (noAdvisories (Right created))
+  identifiedFormat <$> identifyPatch noDialectsRequested EncodingUtf8 (PatchFileContents tailBytes)
+    @?= Right LabelBPS
 
 decodedEnvelope :: Aeson.ToJSON answer => Outcome (Either SlapError answer) -> IO Aeson.Value
 decodedEnvelope outcome =

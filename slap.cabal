@@ -216,6 +216,8 @@ executable slap-web-reactor
                  "-optl-Wl,--export=slap_web_inspect_patch" "-optl-Wl,--export=slap_web_analyze_patch"
                  "-optl-Wl,--export=slap_web_check_apply" "-optl-Wl,--export=slap_web_check_undo"
                  "-optl-Wl,--export=slap_web_check_create" "-optl-Wl,--export=slap_web_check_convert"
+                 "-optl-Wl,--export=slap_web_apply_patch" "-optl-Wl,--export=slap_web_undo_patch"
+                 "-optl-Wl,--export=slap_web_create_patch" "-optl-Wl,--export=slap_web_convert_patch"
 
 executable slap
   main-is:          Main.hs
