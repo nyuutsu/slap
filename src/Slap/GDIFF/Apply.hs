@@ -1,12 +1,14 @@
 module Slap.GDIFF.Apply
   ( applyGDIFF
+    -- * Pre-flight (exported for testing)
+  , validateCommands
   ) where
 
 import Slap.GDIFF.Types (GDiffPatch(..), GDiffCommand(..))
 import Slap.Binary (copyRegion, filledBufferOfSize)
 import Slap.Measure
-  ( Offset(..), Length(..), FileSize(..), ActionIndex
-  , advance, byteLength, firstAction, nextAction, fitsWithin, lengthToFileSize, byteFileSize
+  ( Offset(..), FileSize(..), ActionIndex
+  , advance, byteLength, firstAction, nextAction, fitsWithin, offsetToFileSize, boundedWriteEnd, byteFileSize
   )
 import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -50,20 +52,16 @@ applyGDIFF patch (InputFileContents source) =
 -- | Pre-flight bounds check on a GDIFF command stream.
 -- Walks it once, returning the total output size 'applyGDIFF' allocates, or the first 'ApplyError'.
 validateCommands :: FileSize -> [GDiffCommand] -> Either ApplyError FileSize
-validateCommands sourceSize = validateCommandStream firstAction (Length 0)
+validateCommands sourceSize = validateCommandStream firstAction (Offset 0)
   where
     validateCommandStream
-      :: ActionIndex -> Length -> [GDiffCommand] -> Either ApplyError FileSize
-    validateCommandStream _actionIndex accumulatedOutput [] =
-      Right (lengthToFileSize accumulatedOutput)
-    validateCommandStream !actionIndex !accumulatedOutput (command : remainingCommands) =
+      :: ActionIndex -> Offset -> [GDiffCommand] -> Either ApplyError FileSize
+    validateCommandStream _actionIndex outputEnd [] =
+      Right (offsetToFileSize outputEnd)
+    validateCommandStream !actionIndex !outputEnd (command : remainingCommands) =
       case command of
         GDiffCommandData { gdiffDataPayload = payload } ->
-          let payloadLength = byteLength payload
-          in validateCommandStream
-               (nextAction actionIndex)
-               (accumulatedOutput <> payloadLength)
-               remainingCommands
+          extendOutput (byteLength payload)
         GDiffCommandCopy { gdiffCopyOffset = sourceOffset, gdiffCopyLength = copyLength }
           -- Opcode 255's offset is a signed int64BE; the other COPY opcodes read unsigned 16/32-bit fields,
           -- so only a 255 command can present a negative offset.
@@ -73,7 +71,12 @@ validateCommands sourceSize = validateCommandStream firstAction (Length 0)
               Left (ApplySourceReadOutOfBounds actionIndex
                       (advance sourceOffset copyLength) sourceSize)
           | otherwise ->
-              validateCommandStream
-                (nextAction actionIndex)
-                (accumulatedOutput <> copyLength)
-                remainingCommands
+              extendOutput copyLength
+      where
+        -- The output grows through 'boundedWriteEnd', so a command whose length carries the
+        -- running total past 'Int64' is refused as 'ApplyOutputExceedsAddressableRange' rather
+        -- than wrapping the buffer 'applyGDIFF' then sizes to it.
+        extendOutput producedLength =
+          case boundedWriteEnd outputEnd producedLength of
+            Nothing      -> Left (ApplyOutputExceedsAddressableRange actionIndex outputEnd producedLength)
+            Just nextEnd -> validateCommandStream (nextAction actionIndex) nextEnd remainingCommands

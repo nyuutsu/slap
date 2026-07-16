@@ -21,15 +21,13 @@
 -- as a decompression failure; sequential comparison keeps the verdict
 -- a header verdict naming the block.
 --
--- A separate apply-time shape is the absolute write whose start already
--- sits past the target's end: an APSN64 record against its declared
--- destination, or a PPF3 undo run against the wrong modified file. The
--- forward-cursor refusal 'ApplyWritesPastTarget' would describe it as
--- remaining space — target size minus offset — but that subtraction
--- throws when the offset is the larger, so these sites carry offset and
--- size raw in 'ApplyAbsoluteWritePastTarget'. The tests force the whole
--- rendered message, because the field is lazy: the wrong constructor
--- would carry the throwing subtraction unforced and blow up only here.
+-- The absolute-write refusal 'ApplyAbsoluteWritePastTarget' carries its offset and size raw,
+-- where 'ApplyWritesPastTarget' carries a remaining-length whose subtraction throws when the offset is the larger.
+-- That is the APSN64 and PPF3-undo case; the field is lazy, so the tests force the whole rendered message, where the crash lived.
+--
+-- Two formats size their output by summing independent declared sizes — VCDIFF's windows laid end to end, GDIFF's commands —
+-- where every other sizes by a single field or a max-fold, so these two alone can carry a running total past 'Int64'.
+-- Both fold 'boundedWriteEnd' to refuse the overrun rather than wrap a short buffer the write walk would run past.
 module Props.NegativeWireValues (negativeWireValuesTests) where
 
 import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffInstruction(..), bsdiffMagicBytes)
@@ -44,9 +42,13 @@ import Slap.APSN64.Types (APSN64Patch(..), APSN64Header(..), APSN64Record(..),
 import Slap.APSN64.Apply (applyAPSN64)
 import Slap.PPF3.Types (PPF3Patch(..), PPF3Record(..), PPF3ImageType(..))
 import Slap.PPF3.Apply (undoPPF3)
+import Slap.VCDIFF.Types (VCDIFFPatch(..), Window(..))
+import Slap.VCDIFF.Apply (applyVCDIFF)
+import Slap.GDIFF.Types (GDiffCommand(..))
+import Slap.GDIFF.Apply (validateCommands)
 import Slap.Create (createNINJA2)
 import Slap.Status (SlapError(..), ApplyError(..), CreateResult(..),
-                    BSDiffHeaderMalformation(..), Parsed(..), renderSlapError)
+                    BSDiffHeaderMalformation(..), Parsed(..), renderSlapError, renderApplyError)
 import Control.Exception (evaluate)
 import qualified Data.Text as Text
 import Slap.FormatLabel (FormatLabel(..))
@@ -81,11 +83,56 @@ negativeWireValuesTests = testGroup "hostile wire values are named, not mislabel
       apsn64AbsoluteWritePastTarget
   , testCase "PPF3 undo: a record starting past the modified file renders, not crashes"
       ppf3UndoAbsoluteWritePastTarget
+  , testCase "VCDIFF: window target sizes summing past Int64 are refused, not wrapped"
+      vcdiffSummedTargetSizeWraps
+  , testCase "GDIFF: command outputs summing past Int64 are refused, not wrapped"
+      gdiffSummedOutputExtentWraps
   ]
 
--- | An APS-N64 patch whose destination is 10 bytes and whose single
--- record writes 5 bytes at offset 100 — the start alone is 90 past the
--- end. Apply must refuse with 'ApplyAbsoluteWritePastTarget'.
+-- | Two windows each declaring 2^62 target bytes: laid end to end the total reaches 2^63, one past 'Int64',
+-- where a bare sum wraps negative. The refusal lands in the size fold before any window is walked, so the bodies are left empty.
+vcdiffSummedTargetSizeWraps :: Assertion
+vcdiffSummedTargetSizeWraps =
+  let hugeWindow = Window Nothing (FileSize 0x4000000000000000) Vector.empty
+      patch      = PatchCoreOnly (Vector.fromList [hugeWindow, hugeWindow])
+  in assertOutputExceedsAddressable "VCDIFF" $
+       applyVCDIFF patch (InputFileContents ByteString.empty)
+
+-- | Two COPY commands each reading 2^62 bytes from a source large enough that each read is in bounds alone,
+-- so the walk clears the source-range check and reaches the output-extent fold, where the two sum past 'Int64'.
+-- Driven through 'validateCommands' directly — through 'applyGDIFF' it would need a 2^63-byte source on disk.
+gdiffSummedOutputExtentWraps :: Assertion
+gdiffSummedOutputExtentWraps =
+  case validateCommands sourceCoveringEachCopy [hugeCopy, hugeCopy] of
+    Left ApplyOutputExceedsAddressableRange{} -> pure ()
+    Left other -> assertFailureT
+      ("GDIFF: expected an addressable-range refusal, got: " <> renderApplyError other)
+    Right _ -> assertFailure
+      "GDIFF: expected the summed output extent to be refused, but it succeeded"
+  where
+    hugeCopy               = GDiffCommandCopy { gdiffCopyOffset = Offset 0
+                                              , gdiffCopyLength = Length 0x4000000000000000 }
+    sourceCoveringEachCopy = FileSize maxBound
+
+-- | As 'assertAbsoluteWritePastTarget', for the addressable-range refusal.
+assertOutputExceedsAddressable :: Text.Text -> Either SlapError a -> Assertion
+assertOutputExceedsAddressable label result =
+  case result of
+    Left err | isOutputExceedsAddressable err -> do
+      rendered <- evaluate (renderSlapError err)
+      _        <- evaluate (Text.length rendered)
+      assertBool (Text.unpack label <> ": rendered refusal is empty")
+                 (not (Text.null rendered))
+    Left other -> assertFailureT
+      (label <> ": expected an addressable-range refusal, got: " <> renderSlapError other)
+    Right _ -> assertFailureT
+      (label <> ": expected the summed extent to be refused, but it succeeded")
+
+isOutputExceedsAddressable :: SlapError -> Bool
+isOutputExceedsAddressable (ApplyFailed _ ApplyOutputExceedsAddressableRange{}) = True
+isOutputExceedsAddressable _                                                    = False
+
+-- | Destination 10 bytes, one record writing 5 bytes at offset 100 — the start alone sits 90 past the end.
 apsn64AbsoluteWritePastTarget :: Assertion
 apsn64AbsoluteWritePastTarget =
   assertAbsoluteWritePastTarget "APSN64" $
@@ -105,10 +152,8 @@ apsn64OutOfBoundsPatch = APSN64Patch header (Vector.singleton record)
       }
     record = APSN64Normal (Offset 100) (ByteString.pack [1, 2, 3, 4, 5])
 
--- | A PPF3 patch carrying undo data whose one record's undo write lands
--- at offset 100, run against a 10-byte modified file: the everyday
--- undo-against-the-wrong-file mistake. Undo must refuse with
--- 'ApplyAbsoluteWritePastTarget'.
+-- | Undo data writing at offset 100 against a 10-byte modified file — the everyday
+-- undo-against-the-wrong-file mistake.
 ppf3UndoAbsoluteWritePastTarget :: Assertion
 ppf3UndoAbsoluteWritePastTarget =
   assertAbsoluteWritePastTarget "PPF3 undo" $
@@ -126,10 +171,7 @@ ppf3OutOfBoundsUndoPatch = PPF3Patch
   where
     payload = ByteString.pack [1, 2, 3, 4, 5]
 
--- | Match the absolute-write refusal and force the whole rendered
--- message. Forcing is the point: the pre-fix 'ApplyWritesPastTarget'
--- carried a throwing remaining-length subtraction that a lazy field
--- left unforced until render.
+-- | Match the refusal and force its whole rendered text.
 assertAbsoluteWritePastTarget :: Text.Text -> Either SlapError a -> Assertion
 assertAbsoluteWritePastTarget label result =
   case result of

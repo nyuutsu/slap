@@ -21,7 +21,7 @@ import Slap.Measure
   ( Offset(..), Length(..), FileSize(..)
   , ReadOffset(..), WritePosition(..)
   , ActionIndex, firstAction, nextAction
-  , Cursor(..), fitsWithin, offsetToFileSize
+  , Cursor(..), fitsWithin, offsetToFileSize, boundedWriteEnd, fileSizeToLength
   , byteFileSize, byteLength, plusOffset )
 
 import qualified Data.ByteString as ByteString
@@ -95,23 +95,37 @@ resolveCopyAddress maybeSegment writeContext copyLength copyAddress =
 ----------------------------------------------------------------------------
 
 applyVCDIFF :: VCDIFFPatch -> InputFileContents -> Either SlapError OutputFileContents
-applyVCDIFF patch (InputFileContents source)
-  | unFileSize totalTargetSize == 0 =
-      Right (OutputFileContents ByteString.empty)
-  | otherwise = unsafePerformIO $ do
-      (result, maybeError) <- fillNewBuffer totalTargetSize runApply
-      pure $ case maybeError of
-        Just applyError -> Left (ApplyFailed LabelVCDIFF applyError)
-        Nothing         -> Right (OutputFileContents result)
+applyVCDIFF patch (InputFileContents source) =
+  case checkedTargetSize firstAction (Offset 0) (Vector.toList windows) of
+    Left overflowError -> Left (ApplyFailed LabelVCDIFF overflowError)
+    Right totalTargetSize
+      | unFileSize totalTargetSize == 0 ->
+          Right (OutputFileContents ByteString.empty)
+      | otherwise -> unsafePerformIO $ do
+          (result, maybeError) <- fillNewBuffer totalTargetSize runApply
+          pure $ case maybeError of
+            Just applyError -> Left (ApplyFailed LabelVCDIFF applyError)
+            Nothing         -> Right (OutputFileContents result)
   where
     windows = case patch of
       PatchCoreOnly windowVector        -> windowVector
       PatchRFC      _ windowVector      -> windowVector
       PatchXDelta3  _ xdelta3Windows    -> fmap xdelta3WindowBody xdelta3Windows
 
-    sourceSize      = byteFileSize source
-    totalTargetSize =
-      FileSize (Vector.sum (Vector.map (unFileSize . windowTargetSize) windows))
+    sourceSize = byteFileSize source
+
+    -- | The output size is the windows' target sizes laid end to end.
+    -- Folded through 'boundedWriteEnd' so a running total past 'Int64' is refused as
+    -- 'ApplyOutputExceedsAddressableRange' naming the window that overran, rather than
+    -- wrapping to a short buffer the window walk would then write past.
+    checkedTargetSize :: ActionIndex -> Offset -> [Window] -> Either ApplyError FileSize
+    checkedTargetSize _ runningEnd [] = Right (offsetToFileSize runningEnd)
+    checkedTargetSize windowIndex runningEnd (window : rest) =
+      case boundedWriteEnd runningEnd windowLength of
+        Nothing      -> Left (ApplyOutputExceedsAddressableRange windowIndex runningEnd windowLength)
+        Just nextEnd -> checkedTargetSize (nextAction windowIndex) nextEnd rest
+      where
+        windowLength = fileSizeToLength (windowTargetSize window)
 
     -- | The source-segment check is the only thing apply can reject.
     runApply :: Ptr Word8 -> IO (Maybe ApplyError)
