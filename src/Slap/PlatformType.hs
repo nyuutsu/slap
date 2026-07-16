@@ -8,7 +8,7 @@ module Slap.PlatformType
   , RequestedRomType(..)
   ) where
 
-import Data.Aeson (ToJSON)
+import Data.Aeson (FromJSON, ToJSON)
 import Data.Text (Text)
 import GHC.Generics (Generic, Generically(..))
 
@@ -42,7 +42,7 @@ data PlatformType
   | PlatformJaguar           -- NINJA1 only
   | PlatformGP32             -- NINJA1 only
   deriving (Show, Eq, Generic)
-  deriving (ToJSON) via Generically PlatformType
+  deriving (ToJSON, FromJSON) via Generically PlatformType
 
 -- | The ROM type a source patch already declares, paired with 'RequestedRomType'
 -- in the 'Slap.Status.RomTypeRetagRejected' refusal so the two platforms cannot transpose.

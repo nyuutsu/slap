@@ -182,6 +182,7 @@ library slap-internal
 
 library slap-web
   exposed-modules:  Slap.Web
+                  , Slap.Web.Declaration
                   , Slap.Web.Envelope
   hs-source-dirs:   web
   default-language: GHC2024
@@ -203,6 +204,7 @@ executable slap-web-reactor
   ghc-options:      -Wall -Werror -Wname-shadowing -O2 -g3
   build-depends:
       base                 >= 4.20 && < 5
+    , aeson                >= 2.1  && < 2.3
     , bytestring           >= 0.11
     , slap:slap-internal
     , slap:slap-web
@@ -212,6 +214,8 @@ executable slap-web-reactor
                  "-optl-Wl,--export=slap_web_alloc" "-optl-Wl,--export=slap_web_free"
                  "-optl-Wl,--export=slap_web_describe_surface"
                  "-optl-Wl,--export=slap_web_inspect_patch" "-optl-Wl,--export=slap_web_analyze_patch"
+                 "-optl-Wl,--export=slap_web_check_apply" "-optl-Wl,--export=slap_web_check_undo"
+                 "-optl-Wl,--export=slap_web_check_create" "-optl-Wl,--export=slap_web_check_convert"
 
 executable slap
   main-is:          Main.hs

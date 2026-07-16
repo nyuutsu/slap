@@ -14,7 +14,7 @@ module Slap.Header
   , HeaderAdjustment(..)
   ) where
 
-import Data.Aeson (ToJSON)
+import Data.Aeson (FromJSON, ToJSON)
 import Data.ByteString (ByteString)
 import Data.Text (Text)
 import GHC.Generics (Generic, Generically(..))
@@ -31,7 +31,7 @@ data ConsoleHeader
   | LynxHeader          -- ^ LNX.
   | Atari7800Header     -- ^ A78.
   deriving (Eq, Show, Enum, Bounded, Generic)
-  deriving (ToJSON) via Generically ConsoleHeader
+  deriving (ToJSON, FromJSON) via Generically ConsoleHeader
 
 -- | The name messages call the console.
 consoleHeaderName :: ConsoleHeader -> Text
@@ -90,7 +90,8 @@ data InputHeaderDirective
     -- ^ @--add-header CONSOLE@: the patch expects a headered input and this one is bare.
   | RemoveHeader ConsoleHeader
     -- ^ @--remove-header CONSOLE@: the input wears a header and the patch expects the bytes beneath.
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (FromJSON) via Generically InputHeaderDirective
 
 -- | An arrangement's direction without a chosen console; 'InputHeaderDirective' is the flag-side shape that has picked one.
 data HeaderAdjustment = HeaderComesOff | HeaderGoesOn

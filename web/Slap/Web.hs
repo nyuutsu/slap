@@ -330,7 +330,8 @@ data ConvertRequest = ConvertRequest
 data Verdict
   = Ready
   | Blocked (NonEmpty Gap)  -- ^ @Blocked []@ would be representable and meaningless; the 'NonEmpty' closes it
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically Verdict
 
 -- | A reason the emit would be incorrect, beside the amendments that would close it.
 -- A gap can close more than one way: handing over the source ROM can dissolve a requirement rather than satisfy it by typing.
@@ -338,7 +339,8 @@ data Gap = Gap
   { gapReason      :: SlapError            -- ^ slap's own words; the UI composes no sentence of its own
   , gapResolutions :: NonEmpty Resolution  -- ^ computed, not guessed
   }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically Gap
 
 data Resolution
   = ProvideSourceRom
@@ -355,7 +357,8 @@ data Resolution
     -- ^ A field only the person can supply: xdelta1's name pair, converting from a source that carries none.
   | AmendMetadataField MetadataField
     -- ^ The field is supplied and refused as given (a name past its wire field's ceiling); a different value closes the gap.
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically Resolution
 
 checkCreate :: CreateRequest -> Verdict
 checkCreate request = verdictOf $ catMaybes

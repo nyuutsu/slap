@@ -31,7 +31,7 @@ import Slap.Convert (CreateFormat(..), DifferentialCreate(..),
                      rejectCrossPlatformRomTypeRetag,
                      createDefaultAdvisories, convertDirect,
                      mergeRequestedMetadata, rejectIncompatibleMetadataRequests,
-                     EmbeddedBlobRequest(..),
+                     EmbeddedBlobContents(..), EmbeddedBlobRequest(..),
                      formatExtension, formatName)
 import Slap.XDelta1.Types (ResolvedXDelta1FileNames,
                            resolveXDelta1FileNames,
@@ -197,7 +197,7 @@ resolveCreateMetadata :: CreateMetadataInputs -> IO RequestedPatchMetadata
 resolveCreateMetadata inputs = do
   embeddedBlob <- case createEmbeddedBlobSource inputs of
     NoEmbeddedBlob                  -> pure InheritEmbeddedBlob
-    EmbeddedBlobFromFile path       -> SetEmbeddedBlob <$> readInputFile path
+    EmbeddedBlobFromFile path       -> SetEmbeddedBlob . EmbeddedBlobContents <$> readInputFile path
     EmbeddedBlobFromTypedText typed -> pure (SetEmbeddedTypedText typed)
   fileIdDiz    <- resolveCreateFileIdDiz (createDizSource inputs)
   pure (createParsedMetadata inputs)
@@ -217,7 +217,7 @@ resolveCreateFileIdDiz (FileIdDizFromText typed) =
 resolveConvertMetadata :: EncodingName -> ConvertMetadataInputs -> IO RequestedPatchMetadata
 resolveConvertMetadata metadataEncoding inputs = do
   embeddedBlob <- case convertEmbeddedBlobIntent inputs of
-    SetBlobFromFile path -> SetEmbeddedBlob <$> readInputFile path
+    SetBlobFromFile path -> SetEmbeddedBlob . EmbeddedBlobContents <$> readInputFile path
     DropBlob             -> pure DropEmbeddedBlob
     CarryBlob            -> pure InheritEmbeddedBlob
   fileIdDiz <- case convertDizIntent inputs of

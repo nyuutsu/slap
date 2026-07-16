@@ -4,7 +4,7 @@
 module Props.Web (webTests) where
 
 import Slap.Convert (CreateFormat(..), DifferentialCreate(..), DirectCreate(..),
-                     EmbeddedBlobRequest(SetEmbeddedBlob), RequestedDialects(..),
+                     EmbeddedBlobContents(..), EmbeddedBlobRequest(SetEmbeddedBlob), RequestedDialects(..),
                      RequestedPatchMetadata(..), UndoInclusion(OmitUndoData),
                      advertisedCreateFormats, lookupCreateFormatToken, noConstraintsRequested,
                      noDialectsRequested, noMetadataRequested)
@@ -26,6 +26,7 @@ import Slap.Text (EncodedText(..), EncodingName(..), resolveEncodingName)
 import Slap.VCDIFF.SecondaryCompression (secondaryCompressorTokens)
 import Slap.Verify (VerificationPolicy(EnforceVerification), VerificationVerdict(..))
 import Slap.Web
+import Slap.Web.Declaration (applyRequestOf, createRequestOf)
 import Slap.Web.Envelope (encodeEnvelope)
 import Slap.XDelta1.Types (XDelta1FromName(..))
 
@@ -99,6 +100,12 @@ webTests = testGroup "Web"
       , testCase "byte fields cross as base64"                               test_envelopeBytesAsBase64
       , testCase "the surface crosses with the engine's own format census"   test_envelopeCarriesSurface
       , testCase "the explanation crosses: info beside the structured walk"  test_envelopeCarriesExplanation
+      ]
+  , testGroup "declaration"
+      [ testCase "a declaration beside handed bytes drives the same check"    test_declarationDrivesCheckApply
+      , testCase "omitted Maybe fields decode as unrequested metadata"        test_declarationTerseMetadata
+      , testCase "an encoding name arrives resolved, as the CLI resolves it"  test_declarationEncodingName
+      , testCase "blob bytes arrive through base64"                           test_declarationBlobBase64
       ]
   ]
 
@@ -466,7 +473,7 @@ test_analyzeMirrorsEngineAnalysis = do
 test_inspectThreadsEncoding :: Assertion
 test_inspectThreadsEncoding = do
   bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS)
-                                  noMetadataRequested { requestedEmbeddedBlob = SetEmbeddedBlob (ByteString.pack [0xA9]) }
+                                  noMetadataRequested { requestedEmbeddedBlob = SetEmbeddedBlob (EmbeddedBlobContents (ByteString.pack [0xA9])) }
   let underUtf8   = outcomeValue (inspectPatch (plainInspectRequest bpsPatch))
       underLatin1 = outcomeValue (inspectPatch (plainInspectRequest bpsPatch) { inspectMetadataEncoding = latin1 })
   assertBool "the two encodings read the blob the same, so the encoding never reached the reading" (underUtf8 /= underLatin1)
@@ -567,6 +574,42 @@ test_envelopeCarriesExplanation = do
   case crossedSections of
     Aeson.Array sections -> assertBool "the walk crossed with no sections" (not (Vector.null sections))
     other                -> assertFailure ("expected a section array: " <> show other)
+
+test_declarationDrivesCheckApply :: Assertion
+test_declarationDrivesCheckApply = do
+  bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
+  declared <- decodedFromJSON "{\"declaredApplyFraming\":{\"tag\":\"TakeInputAsIs\"},\"declaredApplyVerificationPolicy\":\"EnforceVerification\",\
+                              \\"declaredApplyDialects\":{\"requestedPPF1Origin\":\"PPF1OriginPC\"}}"
+  checkApply (applyRequestOf declared bpsPatch (InputFileContents fixtureSourceBytes))
+    @?= checkApply (plainApplyRequest bpsPatch fixtureSourceBytes)
+
+test_declarationTerseMetadata :: Assertion
+test_declarationTerseMetadata = do
+  declared <- decodedFromJSON "{\"declaredCreateTargetFormat\":{\"tag\":\"CreateDifferential\",\"contents\":\"CreateBPS\"},\
+                              \\"declaredCreateOriginalName\":\"original.gbc\",\"declaredCreateModifiedName\":\"modified.gbc\",\
+                              \\"declaredCreateMetadata\":{\"requestedFileIdDiz\":{\"tag\":\"InheritFileIdDiz\"},\
+                                                          \\"requestedEmbeddedBlob\":{\"tag\":\"InheritEmbeddedBlob\"}},\
+                              \\"declaredCreateConstraints\":{\"requestedSMCShape\":\"AllowAnyTruncationShape\"}}"
+  let request = createRequestOf declared (InputFileContents fixtureSourceBytes) (OutputFileContents fixtureTargetBytes)
+  requestedTitle (createMetadata request)      @?= Nothing
+  requestedWindowSize (createMetadata request) @?= Nothing
+  checkCreate request                          @?= Ready
+
+test_declarationEncodingName :: Assertion
+test_declarationEncodingName = do
+  decoded  <- decodedFromJSON "\"shift-jis\""
+  expected <- case resolveEncodingName "shift-jis" of
+    Right named -> pure (EncodingNamed named)
+    Left _      -> assertFailure "shift-jis did not resolve"
+  decoded @?= (expected :: EncodingName)
+
+test_declarationBlobBase64 :: Assertion
+test_declarationBlobBase64 = do
+  decoded <- decodedFromJSON "{\"tag\":\"SetEmbeddedBlob\",\"contents\":\"qg==\"}"
+  decoded @?= SetEmbeddedBlob (EmbeddedBlobContents (ByteString.pack [0xAA]))
+
+decodedFromJSON :: Aeson.FromJSON value => ByteString -> IO value
+decodedFromJSON json = either (assertFailure . ("did not decode: " <>)) pure (Aeson.eitherDecodeStrict json)
 
 decodedEnvelope :: Aeson.ToJSON answer => Outcome (Either SlapError answer) -> IO Aeson.Value
 decodedEnvelope outcome =

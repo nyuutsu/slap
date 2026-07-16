@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DerivingVia #-}
 
 -- | Reading a parsed patch's declared expectations against actual bytes.
 --
@@ -51,10 +52,12 @@ import Slap.Status (SlapError(..), SlapAdvisory(..), VerificationMismatch(..), O
                     ExpectedAdler32(..), ActualAdler32(..), ByteCheckLabel(..))
 import qualified Slap.NINJA1.Create as NINJA1
 
+import Data.Aeson (FromJSON, ToJSON)
 import Data.ByteString (ByteString)
 import Data.List (nub)
 import Data.List.NonEmpty (NonEmpty(..))
 import Data.Text (Text)
+import GHC.Generics (Generic, Generically(..))
 
 ----------------------------------------------------------------------------
 -- The user's posture
@@ -70,7 +73,8 @@ import Data.Text (Text)
 data VerificationPolicy
   = EnforceVerification
   | SkipVerification
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (FromJSON) via Generically VerificationPolicy
 
 ----------------------------------------------------------------------------
 -- What a patch declares
@@ -299,7 +303,8 @@ data VerificationVerdict
     -- a wider net than 'EnforceVerification', which refuses only over fatal-class mismatches.
   | VerdictUncheckable
     -- ^ The patch declares nothing about this file, so slap cannot say whether it is the right one.
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically VerificationVerdict
 
 -- | The verdict on apply's input: weigh and take the verdict in one step.
 verdictOnSource :: Verification -> InputFileContents -> VerificationVerdict

@@ -7,6 +7,7 @@ import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as Char8
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Unsafe as UnsafeByteString
+import Data.Maybe (listToMaybe)
 import Data.Word (Word8, Word32)
 import Foreign.Marshal.Alloc (free, mallocBytes)
 import Foreign.Marshal.Utils (copyBytes)
@@ -15,13 +16,21 @@ import Foreign.Storable (pokeByteOff)
 import System.Environment (getArgs)
 import System.Exit (die)
 
+import Data.Aeson (FromJSON)
+
 import Slap.Checksum (CRC32(unCRC32))
 import Slap.Convert (noDialectsRequested)
-import Slap.FileContents (InputFileContents(InputFileContents), PatchFileContents(PatchFileContents))
+import Slap.FileContents (InputFileContents(InputFileContents), OutputFileContents(OutputFileContents),
+                          PatchFileContents(PatchFileContents))
 import Slap.Status (noAdvisories)
 import Slap.Text (EncodingName(EncodingUtf8))
 import Slap.Web (AnalyzeRequest(..), InspectRequest(..), RomFacts(romCRC32),
-                 analyzePatch, describeRom, describeSurface, inspectPatch)
+                 analyzePatch, checkApply, checkConvert, checkCreate, checkUndo,
+                 describeRom, describeSurface, inspectPatch)
+import Slap.Web.Declaration (DeclaredApplyRequest, DeclaredConvertRequest(declaredConvertSourceFraming),
+                             DeclaredCreateRequest, DeclaredUndoRequest,
+                             applyRequestOf, convertRequestOf, createRequestOf,
+                             decodedDeclaration, undoRequestOf)
 import Slap.Web.Envelope (encodeEnvelope)
 
 foreign export ccall "slap_web_link_check" slapWebLinkCheck :: IO Word32
@@ -57,15 +66,61 @@ foreign export ccall "slap_web_inspect_patch" slapWebInspectPatch :: Ptr Word8 -
 
 slapWebInspectPatch :: Ptr Word8 -> Int -> IO (Ptr Word8)
 slapWebInspectPatch patchPointer patchLength = do
-  patchBytes <- ByteString.packCStringLen (castPtr patchPointer, patchLength)
+  patchBytes <- packBuffer patchPointer patchLength
   lengthPrefixedBuffer (inspectEnvelope patchBytes)
 
 foreign export ccall "slap_web_analyze_patch" slapWebAnalyzePatch :: Ptr Word8 -> Int -> IO (Ptr Word8)
 
 slapWebAnalyzePatch :: Ptr Word8 -> Int -> IO (Ptr Word8)
 slapWebAnalyzePatch patchPointer patchLength = do
-  patchBytes <- ByteString.packCStringLen (castPtr patchPointer, patchLength)
+  patchBytes <- packBuffer patchPointer patchLength
   lengthPrefixedBuffer (analyzeEnvelope patchBytes)
+
+foreign export ccall "slap_web_check_apply" slapWebCheckApply
+  :: Ptr Word8 -> Int -> Ptr Word8 -> Int -> Ptr Word8 -> Int -> IO (Ptr Word8)
+
+slapWebCheckApply :: Ptr Word8 -> Int -> Ptr Word8 -> Int -> Ptr Word8 -> Int -> IO (Ptr Word8)
+slapWebCheckApply patchPointer patchLength romPointer romLength declarationPointer declarationLength = do
+  declared   <- decodedDeclaration <$> packBuffer declarationPointer declarationLength
+  patchBytes <- PatchFileContents <$> packBuffer patchPointer patchLength
+  romBytes   <- InputFileContents <$> packBuffer romPointer romLength
+  lengthPrefixedBuffer (checkApplyEnvelope declared patchBytes romBytes)
+
+foreign export ccall "slap_web_check_undo" slapWebCheckUndo
+  :: Ptr Word8 -> Int -> Ptr Word8 -> Int -> Ptr Word8 -> Int -> IO (Ptr Word8)
+
+slapWebCheckUndo :: Ptr Word8 -> Int -> Ptr Word8 -> Int -> Ptr Word8 -> Int -> IO (Ptr Word8)
+slapWebCheckUndo patchPointer patchLength patchedPointer patchedLength declarationPointer declarationLength = do
+  declared     <- decodedDeclaration <$> packBuffer declarationPointer declarationLength
+  patchBytes   <- PatchFileContents <$> packBuffer patchPointer patchLength
+  patchedBytes <- OutputFileContents <$> packBuffer patchedPointer patchedLength
+  lengthPrefixedBuffer (checkUndoEnvelope declared patchBytes patchedBytes)
+
+foreign export ccall "slap_web_check_create" slapWebCheckCreate
+  :: Ptr Word8 -> Int -> Ptr Word8 -> Int -> Ptr Word8 -> Int -> IO (Ptr Word8)
+
+slapWebCheckCreate :: Ptr Word8 -> Int -> Ptr Word8 -> Int -> Ptr Word8 -> Int -> IO (Ptr Word8)
+slapWebCheckCreate originalPointer originalLength modifiedPointer modifiedLength declarationPointer declarationLength = do
+  declared      <- decodedDeclaration <$> packBuffer declarationPointer declarationLength
+  originalBytes <- InputFileContents <$> packBuffer originalPointer originalLength
+  modifiedBytes <- OutputFileContents <$> packBuffer modifiedPointer modifiedLength
+  lengthPrefixedBuffer (checkCreateEnvelope declared originalBytes modifiedBytes)
+
+-- | The source pair is read only when the declaration speaks of a source; a host with none to hand passes null and zero.
+foreign export ccall "slap_web_check_convert" slapWebCheckConvert
+  :: Ptr Word8 -> Int -> Ptr Word8 -> Int -> Ptr Word8 -> Int -> IO (Ptr Word8)
+
+slapWebCheckConvert :: Ptr Word8 -> Int -> Ptr Word8 -> Int -> Ptr Word8 -> Int -> IO (Ptr Word8)
+slapWebCheckConvert patchPointer patchLength sourcePointer sourceLength declarationPointer declarationLength = do
+  declared    <- decodedDeclaration <$> packBuffer declarationPointer declarationLength
+  patchBytes  <- PatchFileContents <$> packBuffer patchPointer patchLength
+  handedSource <- case declaredConvertSourceFraming declared of
+    Nothing -> pure Nothing
+    Just _  -> Just . InputFileContents <$> packBuffer sourcePointer sourceLength
+  lengthPrefixedBuffer (checkConvertEnvelope declared patchBytes handedSource)
+
+packBuffer :: Ptr Word8 -> Int -> IO ByteString
+packBuffer pointer bufferLength = ByteString.packCStringLen (castPtr pointer, bufferLength)
 
 -- | The surface cannot refuse and raises nothing; it rides the envelope anyway so the page reads one wire shape everywhere.
 surfaceEnvelope :: ByteString
@@ -87,6 +142,22 @@ analyzeEnvelope patchBytes = encodeEnvelope $ analyzePatch AnalyzeRequest
   , analyzeDialects         = noDialectsRequested
   }
 
+checkApplyEnvelope :: DeclaredApplyRequest -> PatchFileContents -> InputFileContents -> ByteString
+checkApplyEnvelope declared patchBytes romBytes =
+  encodeEnvelope (noAdvisories (checkApply (applyRequestOf declared patchBytes romBytes)))
+
+checkUndoEnvelope :: DeclaredUndoRequest -> PatchFileContents -> OutputFileContents -> ByteString
+checkUndoEnvelope declared patchBytes patchedBytes =
+  encodeEnvelope (noAdvisories (checkUndo (undoRequestOf declared patchBytes patchedBytes)))
+
+checkCreateEnvelope :: DeclaredCreateRequest -> InputFileContents -> OutputFileContents -> ByteString
+checkCreateEnvelope declared originalBytes modifiedBytes =
+  encodeEnvelope (noAdvisories (Right (checkCreate (createRequestOf declared originalBytes modifiedBytes))))
+
+checkConvertEnvelope :: DeclaredConvertRequest -> PatchFileContents -> Maybe InputFileContents -> ByteString
+checkConvertEnvelope declared patchBytes handedSource =
+  encodeEnvelope (noAdvisories (checkConvert (convertRequestOf declared patchBytes handedSource)))
+
 lengthPrefixedBuffer :: ByteString -> IO (Ptr Word8)
 lengthPrefixedBuffer payload = do
   buffer <- mallocBytes (4 + ByteString.length payload)
@@ -102,4 +173,30 @@ main = do
     ["surface"]            -> ByteString.putStr surfaceEnvelope
     ["inspect", patchPath] -> ByteString.putStr . inspectEnvelope =<< ByteString.readFile patchPath
     ["analyze", patchPath] -> ByteString.putStr . analyzeEnvelope =<< ByteString.readFile patchPath
-    _                      -> die "usage: slap-web-reactor surface | inspect PATCH | analyze PATCH  (writes the verb's envelope to stdout)"
+    ["check-apply", patchPath, romPath, declarationPath] -> do
+      declared   <- declarationFrom declarationPath
+      patchBytes <- PatchFileContents <$> ByteString.readFile patchPath
+      romBytes   <- InputFileContents <$> ByteString.readFile romPath
+      ByteString.putStr (checkApplyEnvelope declared patchBytes romBytes)
+    ["check-undo", patchPath, patchedPath, declarationPath] -> do
+      declared     <- declarationFrom declarationPath
+      patchBytes   <- PatchFileContents <$> ByteString.readFile patchPath
+      patchedBytes <- OutputFileContents <$> ByteString.readFile patchedPath
+      ByteString.putStr (checkUndoEnvelope declared patchBytes patchedBytes)
+    ["check-create", originalPath, modifiedPath, declarationPath] -> do
+      declared      <- declarationFrom declarationPath
+      originalBytes <- InputFileContents <$> ByteString.readFile originalPath
+      modifiedBytes <- OutputFileContents <$> ByteString.readFile modifiedPath
+      ByteString.putStr (checkCreateEnvelope declared originalBytes modifiedBytes)
+    "check-convert" : patchPath : declarationPath : maybeSourcePath | length maybeSourcePath <= 1 -> do
+      declared     <- declarationFrom declarationPath
+      patchBytes   <- PatchFileContents <$> ByteString.readFile patchPath
+      handedSource <- traverse (fmap InputFileContents . ByteString.readFile) (listToMaybe maybeSourcePath)
+      ByteString.putStr (checkConvertEnvelope declared patchBytes handedSource)
+    _ -> die ("usage: slap-web-reactor VERB...  (writes the verb's envelope to stdout)\n"
+           ++ "  surface | inspect PATCH | analyze PATCH\n"
+           ++ "  check-apply PATCH ROM DECLARATION | check-undo PATCH PATCHED DECLARATION\n"
+           ++ "  check-create ORIGINAL MODIFIED DECLARATION | check-convert PATCH DECLARATION [SOURCE]")
+
+declarationFrom :: FromJSON declaration => FilePath -> IO declaration
+declarationFrom path = decodedDeclaration <$> ByteString.readFile path

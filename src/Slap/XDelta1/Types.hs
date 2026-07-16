@@ -37,6 +37,7 @@ module Slap.XDelta1.Types
   , xdelta1ControlAllocationBound
   ) where
 
+import Data.Aeson (FromJSON)
 import Data.Bits (shiftL)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -142,6 +143,7 @@ instructionTargetWireIndex roster target = case (roster, target) of
 newtype XDelta1FromName = XDelta1FromName
   { unXDelta1FromName :: EncodedText
   } deriving (Eq, Show)
+    deriving newtype (FromJSON)
 
 -- | The to-name an xdelta 1.1.x patch carries in its header — the
 -- display label for the target file at create time. See
@@ -150,6 +152,7 @@ newtype XDelta1FromName = XDelta1FromName
 newtype XDelta1ToName = XDelta1ToName
   { unXDelta1ToName :: EncodedText
   } deriving (Eq, Show)
+    deriving newtype (FromJSON)
 
 -- | The two file-name fields an xdelta 1.1.x patch carries (the
 -- source file's display label and the target file's display label),

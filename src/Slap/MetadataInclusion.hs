@@ -1,3 +1,5 @@
+{-# LANGUAGE DerivingVia #-}
+
 -- | The "should the output patch carry this optional channel?"
 -- choices the porcelain threads through 'Slap.Convert.RequestedPatchMetadata'.
 -- Lives in its own module so format-level encoders ("Slap.XDelta1.Create"
@@ -9,6 +11,9 @@ module Slap.MetadataInclusion
   , CompressionInclusion(..)
   ) where
 
+import Data.Aeson (FromJSON)
+import GHC.Generics (Generic, Generically(..))
+
 -- | Whether the output patch should carry undo data, when the format supports it.
 --
 -- PPF3 is the primary consumer: its patch format has an optional trailing undo
@@ -17,7 +22,8 @@ module Slap.MetadataInclusion
 data UndoInclusion
   = IncludeUndoData
   | OmitUndoData
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (FromJSON) via Generically UndoInclusion
 
 -- | Whether the output patch should carry source-integrity-checking
 -- data, when the format supports embedding such data.
@@ -38,7 +44,8 @@ data UndoInclusion
 data VerificationInclusion
   = IncludeVerification
   | OmitVerification
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (FromJSON) via Generically VerificationInclusion
 
 -- | Whether the output patch's payload should be compressed, when the
 -- format has a compressed form. Set by @--no-compress@ on 'slap create'
@@ -54,4 +61,5 @@ data VerificationInclusion
 data CompressionInclusion
   = IncludeCompression
   | OmitCompression
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (FromJSON) via Generically CompressionInclusion

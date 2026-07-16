@@ -1,3 +1,5 @@
+{-# LANGUAGE DerivingVia #-}
+
 -- | What slap does with the input before a run: 'reframeInput' carries out the user's header directive,
 -- the header rescue searches every console header arrangement for one the patch agrees with,
 -- and 'checkApply' / 'checkUndo' answer whether the handed file is the one the patch expects.
@@ -24,9 +26,11 @@ import Slap.Status (SlapError(..), SlapAdvisory(..), Outcome(..), DeclaredCheckK
 import Slap.Verify (VerificationPolicy(..), VerificationVerdict(..), Weighing,
                     flipSpokenSides, verdictOnWeighing, weighSource, weighTarget)
 
+import Data.Aeson (ToJSON)
 import Data.ByteString (ByteString)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
+import GHC.Generics (Generic, Generically(..))
 
 -- | Carry out the user's @--add-header@ / @--remove-header@ instruction on the handed input.
 -- The reframe never happens silently: a successful adjustment carries its narrating note.
@@ -51,7 +55,8 @@ data HeaderRescueCandidate = HeaderRescueCandidate
     -- 'NonEmpty.groupAllWith' 'consoleHeaderLength' is what gathers them.
   , rescueHeldKinds  :: !(NonEmpty DeclaredCheckKind)
   }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically HeaderRescueCandidate
 
 -- | Try the input under every console header arrangement and keep the ones the patch agrees with.
 -- Nothing here parses or detects a header: 'addHeader' puts zeros on, 'removeHeader' takes bytes off,
@@ -98,7 +103,8 @@ data SourceReport = SourceReport
     -- ^ Searched only when the verdict differs and no header directive was given:
     -- a user who typed @--remove-header snes@ is never second-guessed.
   }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically SourceReport
 
 -- | Is this the file the patch expects? Answered through the same reframe-normalize-weigh pipeline
 -- the apply itself runs, so the answer and the act cannot disagree.

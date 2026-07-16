@@ -21,7 +21,7 @@ import Slap.Dialect (Dialect)
 import Slap.Convert (PatchContents(..), emptyContents, RequestedPatchMetadata(..),
                      UndoInclusion(..), VerificationInclusion(..), CompressionInclusion(..), PatchStability(..),
                      RequestedDialects(..), NINJA1Compression(..),
-                     EmbeddedBlobRequest(..),
+                     EmbeddedBlobContents(..), EmbeddedBlobRequest(..),
                      noMetadataRequested, acceptedDialects)
 import Slap.Text (EncodedText, EncodingName, encodedTextContent)
 import Data.Text (Text)
@@ -543,7 +543,7 @@ parseSomePatchFromBPS metadataEncoding patchContents = do
         }
     , patchMetadata      = bpsMetaBlob
     , patchExtractedMeta = noMetadataRequested
-        { requestedEmbeddedBlob = maybe InheritEmbeddedBlob SetEmbeddedBlob bpsMetaBlob }
+        { requestedEmbeddedBlob = maybe InheritEmbeddedBlob (SetEmbeddedBlob . EmbeddedBlobContents) bpsMetaBlob }
     }
 
 parseSomePatchFromUPS :: PatchFileContents -> Either SlapError SomePatch
@@ -614,7 +614,7 @@ parseSomePatchFromVCDIFF metadataEncoding patchContents = do
         { verifyWindowAdler32 = vcdiffWindowChecks patch }
     , patchMetadata      = appHeaderBlob
     , patchExtractedMeta = noMetadataRequested
-        { requestedEmbeddedBlob        = maybe InheritEmbeddedBlob SetEmbeddedBlob appHeaderBlob
+        { requestedEmbeddedBlob        = maybe InheritEmbeddedBlob (SetEmbeddedBlob . EmbeddedBlobContents) appHeaderBlob
         , requestedSecondaryCompressor = inheritedCompressor
         }
     }

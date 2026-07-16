@@ -30,7 +30,7 @@ import Integration.Skip
   )
 import Slap.Convert
   (CreateFormat(..), DifferentialCreate(..), RequestedPatchMetadata(..),
-   EmbeddedBlobRequest(..),
+   EmbeddedBlobContents(..), EmbeddedBlobRequest(..),
    noMetadataRequested, noConstraintsRequested, noDialectsRequested)
 import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor(..))
 import Slap.VCDIFF.Types (emissionWindowSizeOfBytes)
@@ -121,7 +121,7 @@ appHeaderRowTest getTargets basePath bootPath =
     let targetBytes = lookupBootstrapTarget bootstrapTargets basePath bootPath
         headerText  = "made with slap"
         headerMeta  = noMetadataRequested
-          { requestedEmbeddedBlob = SetEmbeddedBlob (ByteString8.pack headerText) }
+          { requestedEmbeddedBlob = SetEmbeddedBlob (EmbeddedBlobContents (ByteString8.pack headerText)) }
     case createPatch (CreateDifferential CreateXDelta3) Nothing
            (InputFileContents baseBytes)
            (OutputFileContents targetBytes)

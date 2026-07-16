@@ -1,3 +1,5 @@
+{-# LANGUAGE DerivingVia #-}
+
 -- | xdelta3's secondary compression: the compressor-id catalog, the per-compressor
 -- decode paths that turn compressed sections back into plain bytes, and the emission
 -- paths that produce such sections
@@ -40,6 +42,7 @@ import Slap.Status
   , DecompressionFailure(..), CompressionAlgorithm(..) )
 
 import Control.Monad (when)
+import Data.Aeson (FromJSON)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Builder (toLazyByteString)
@@ -48,6 +51,7 @@ import Data.List (mapAccumL)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Word (Word8)
+import GHC.Generics (Generic, Generically(..))
 
 ----------------------------------------------------------------------------
 -- The catalog
@@ -59,7 +63,8 @@ data XDelta3SecondaryCompressor
   = SecondaryDJW   -- ^ xdelta3's own static multi-table Huffman.
   | SecondaryLZMA  -- ^ xz\/LZMA2 as liblzma emits it.
   | SecondaryFGK   -- ^ Adaptive Huffman; xd3's own demonstration codec.
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (FromJSON) via Generically XDelta3SecondaryCompressor
 
 -- | Maps a compressor id to its algorithm (docs/vcdiff/xdelta3/secondary-compression.md "Catalog").
 -- The ids are registered nowhere but here, so an unknown id is 'Nothing' —

@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DerivingVia #-}
 
 -- | Types for PPF1 patches. PPF1 is the original Paradox patch format,
 -- specified in @docs/ppf/upstream/pdx-ppf1/ppf-doc.txt@: a 56-byte
@@ -22,7 +23,9 @@ module Slap.PPF1.Types
   , ppf1RejectIncompatibleSizeChange
   ) where
 
+import Data.Aeson (FromJSON)
 import Data.ByteString (ByteString)
+import GHC.Generics (Generic, Generically(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Length(..), Offset(..),
                      FileSize, ActualSize(..), ExpectedSize(..))
@@ -62,7 +65,8 @@ data PPF1Patch = PPF1Patch
 -- (the symmetric branch on offset writes). Apply consumes 'PPF1Patch''s
 -- canonical 'Offset' values and is dialect-blind.
 data PPF1Origin = PPF1OriginPC | PPF1OriginAmiga
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (FromJSON) via Generically PPF1Origin
 
 -- | Wire-format magic prefix.
 ppf1MagicBytes :: ByteString

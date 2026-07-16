@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DerivingVia #-}
 
 -- | Types for PPF3 patches. PPF3 introduces optional patch-time
 -- features that PPF1/PPF2 lack — a per-record undo trail (lets a
@@ -37,8 +38,10 @@ module Slap.PPF3.Types
   , ppf3RejectIncompatibleSizeChange
   ) where
 
+import Data.Aeson (FromJSON)
 import Data.ByteString (ByteString)
 import Data.Word (Word8)
+import GHC.Generics (Generic, Generically(..))
 import Slap.Status (SlapError(..), UnencodeabilityReason(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -55,7 +58,8 @@ import Slap.Text (EncodedText, EncodingName(..),
 -- GameCube ISO images (which don't have a Mode-2 sector header
 -- offset where the BIN sampling would land in valid data).
 data PPF3ImageType = BIN | GI
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (FromJSON) via Generically PPF3ImageType
 
 fromImageType :: PPF3ImageType -> Word8
 fromImageType BIN = 0x00

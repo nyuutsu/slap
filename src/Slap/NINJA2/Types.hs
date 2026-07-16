@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
+{-# LANGUAGE DerivingVia #-}
 
 module Slap.NINJA2.Types
   ( NINJA2Patch(..)
@@ -56,6 +57,7 @@ import Slap.Measure (Length(..), Offset(..), FileSize(..))
 import Slap.PlatformType (PlatformType)
 import Slap.Text (EncodedText)
 
+import Data.Aeson (FromJSON)
 import Data.ByteString (ByteString)
 import Data.ByteString.Builder (Builder, word8)
 import Data.Bits ((.&.), shiftR)
@@ -63,6 +65,7 @@ import Data.Int (Int64)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Word (Word8)
+import GHC.Generics (Generic, Generically(..))
 
 ----------------------------------------------------------------------------
 -- Types
@@ -95,7 +98,8 @@ fromOverflowMode OverflowTruncate = 0x4D  -- 'M'
 data TextMode
   = TextModeUTF8
   | TextModeUndeclared
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (FromJSON) via Generically TextMode
 
 -- | Resolve a raw PATCH_ENC byte;
 -- 'Left' carries the unrecognized byte for the 'NINJA2UnrecognizedTextMode' rejection.

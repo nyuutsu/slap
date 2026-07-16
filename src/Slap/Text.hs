@@ -84,7 +84,7 @@ module Slap.Text
   ) where
 
 import Control.Applicative ((<|>))
-import Data.Aeson (ToJSON(..))
+import Data.Aeson (FromJSON(..), ToJSON(..), withText)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Char (toLower, toUpper)
@@ -152,6 +152,14 @@ instance ToJSON EncodingName where
   toJSON     = toJSON . encodingDisplayName
   toEncoding = toEncoding . encodingDisplayName
 
+-- | Reads back the way the CLI reads @--metadata-encoding@: any name 'resolveEncodingName' places arrives as 'EncodingNamed',
+-- and a name it can't place fails the parse naming the value.
+instance FromJSON EncodingName where
+  parseJSON = withText "encoding name" $ \name ->
+    case resolveEncodingName name of
+      Right named -> pure (EncodingNamed named)
+      Left _      -> fail ("unrecognized encoding " <> show name)
+
 -- | The resolved @encoding@-library encoder a 'NamedEncoding' carries.
 useNamedEncoding :: NamedEncoding -> DynEncoding
 useNamedEncoding = namedEncodingResolved
@@ -176,7 +184,7 @@ data EncodedText = EncodedText
   { encodedTextEncoding :: !EncodingName
   , encodedTextContent  :: !Text
   } deriving (Eq, Show, Generic)
-    deriving (ToJSON) via Generically EncodedText
+    deriving (ToJSON, FromJSON) via Generically EncodedText
 
 ----------------------------------------------------------------------------
 -- Errors

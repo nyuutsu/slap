@@ -7,7 +7,7 @@ import Slap.MetadataField (DroppableField, MetadataField, TypedTextField,
                            dropFlagName, metadataFieldFlagName, typedTextFlagName, requestFlagName)
 import Slap.Surface (MetadataFieldKind(..), metadataFieldKind, romTypeTokens)
 import Slap.Convert (metadataRequests, noMetadataRequested,
-                     RequestedPatchMetadata(..), EmbeddedBlobRequest(..))
+                     RequestedPatchMetadata(..), EmbeddedBlobContents(..), EmbeddedBlobRequest(..))
 
 import Data.Char (isUpper)
 import Data.List (nub)
@@ -55,7 +55,7 @@ test_embeddedBlobRequestFlag = do
   assertEqual "typed text names --metadata-text"
     ["metadata-text"] (flagsFor (SetEmbeddedTypedText "x"))
   assertEqual "a file blob names --metadata"
-    ["metadata"] (flagsFor (SetEmbeddedBlob "x"))
+    ["metadata"] (flagsFor (SetEmbeddedBlob (EmbeddedBlobContents "x")))
   where
     flagsFor blobRequest =
       map requestFlagName (metadataRequests noMetadataRequested { requestedEmbeddedBlob = blobRequest })

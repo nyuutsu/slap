@@ -1,3 +1,5 @@
+{-# LANGUAGE DerivingVia #-}
+
 module Slap.IPS.Types
   ( IPSVariant(..)
   , OffsetWidth(..)
@@ -45,8 +47,10 @@ module Slap.IPS.Types
   , ebpRejectIncompatibleSizeChange
   ) where
 
+import Data.Aeson (FromJSON)
 import Data.Bits ((.&.))
 import Data.ByteString (ByteString)
+import GHC.Generics (Generic, Generically(..))
 import qualified Data.ByteString.Char8 as ByteString8
 import Data.Vector (Vector)
 import Data.Word (Word8)
@@ -562,7 +566,8 @@ effectiveTargetSize (MarkerIgnored  _declared natural)  = unNaturalTargetSize  n
 data SMCShapeRequirement
   = AllowAnyTruncationShape
   | RequireSMCShapedTruncation
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (FromJSON) via Generically SMCShapeRequirement
 
 -- | Predicate matching SNESTool's truncation-marker size filter,
 -- transcribed from SNESTL12.EXE at image offset 0xB6F-0xB77:

@@ -10,6 +10,7 @@ module Slap.Convert
   , RequestedPatchMetadata(..)
   , FileIdDizRequest(..)
   , EmbeddedBlobRequest(..)
+  , EmbeddedBlobContents(..)
   , embeddedBlobContentBytes
   , UndoInclusion(..)
   , VerificationInclusion(..)
@@ -142,7 +143,7 @@ import Slap.Text (EncodedText(..), EncodingName(..),
                   encodedTextContent)
 
 import Control.Applicative ((<|>))
-import Data.Aeson (ToJSON)
+import Data.Aeson (FromJSON, ToJSON)
 import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -155,6 +156,7 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
 import GHC.Generics (Generic, Generically(..))
+import Slap.JSON.Bytes (BytesAsBase64(..))
 
 ----------------------------------------------------------------------------
 -- Types
@@ -211,7 +213,7 @@ data DirectCreate
   = CreateIPS | CreateIPS32 | CreateEBP | CreatePPF1 | CreatePPF2 | CreatePPF3
   | CreatePPF4 | CreateNINJA1 | CreatePMSR | CreateAPSN64
   deriving (Show, Eq, Enum, Bounded, Generic)
-  deriving (ToJSON) via Generically DirectCreate
+  deriving (ToJSON, FromJSON) via Generically DirectCreate
 
 -- | Every differential format slap parses, it also creates.
 data DifferentialCreate
@@ -219,14 +221,14 @@ data DifferentialCreate
   | CreateAPSGBA | CreateGDIFF | CreateBSDiff | CreateXDelta1
   | CreateRFCVCDIFF | CreateXDelta3
   deriving (Show, Eq, Generic)
-  deriving (ToJSON) via Generically DifferentialCreate
+  deriving (ToJSON, FromJSON) via Generically DifferentialCreate
 
 -- | Target format for patch creation or conversion.
 data CreateFormat
   = CreateDirect DirectCreate
   | CreateDifferential DifferentialCreate
   deriving (Show, Eq, Generic)
-  deriving (ToJSON) via Generically CreateFormat
+  deriving (ToJSON, FromJSON) via Generically CreateFormat
 
 -- | User intent about what metadata should end up in an emitted patch.
 -- Built from CLI flags in 'app/CLI.hs' (and from parsed source patches
@@ -295,6 +297,8 @@ data RequestedPatchMetadata = RequestedPatchMetadata
     -- a compressor is one declared wire fact, while a source patch declares no window size —
     -- its windows each carry their own, so there is no single fact to carry, and extraction leaves this 'Nothing'.
   }
+  deriving (Generic)
+  deriving (FromJSON) via Generically RequestedPatchMetadata
 
 -- | What to do with a PPF2/PPF3 FILE_ID.DIZ on create or convert: inherit the source's, replace it, or drop it.
 -- The two set arms — from a file, from text typed at the flag — carry and emit identically; they part only on the flag a refusal names.
@@ -303,24 +307,30 @@ data FileIdDizRequest
   | SetFileIdDiz EncodedText
   | SetFileIdDizFromText EncodedText
   | DropFileIdDiz
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (FromJSON) via Generically FileIdDizRequest
 
 -- | What to do with the embedded metadata blob on create or convert:
 -- keep whatever the source carried, replace it, or drop it.
 data EmbeddedBlobRequest
   = InheritEmbeddedBlob
-  | SetEmbeddedBlob ByteString
+  | SetEmbeddedBlob EmbeddedBlobContents
   | SetEmbeddedTypedText Text
     -- ^ The person's content, not markup; each emit dresses it per its target's own convention.
   | DropEmbeddedBlob
+  deriving (Eq, Show, Generic)
+  deriving (FromJSON) via Generically EmbeddedBlobRequest
+
+newtype EmbeddedBlobContents = EmbeddedBlobContents { unEmbeddedBlobContents :: ByteString }
   deriving (Eq, Show)
+  deriving (FromJSON) via BytesAsBase64
 
 -- | The content bytes a request carries, typed text as its UTF-8 encoding, before any format's own dressing
 -- — which is why the xdelta3 emit takes exactly this: its application header is a plain string field.
 -- An 'InheritEmbeddedBlob' that reaches an emit found nothing to inherit:
 -- create has no source patch, and convert's merge has already substituted any blob the source carried.
 embeddedBlobContentBytes :: EmbeddedBlobRequest -> Maybe ByteString
-embeddedBlobContentBytes (SetEmbeddedBlob blob)       = Just blob
+embeddedBlobContentBytes (SetEmbeddedBlob blob)       = Just (unEmbeddedBlobContents blob)
 embeddedBlobContentBytes (SetEmbeddedTypedText typed) = Just (TextEncoding.encodeUtf8 typed)
 embeddedBlobContentBytes InheritEmbeddedBlob          = Nothing
 embeddedBlobContentBytes DropEmbeddedBlob             = Nothing
@@ -339,7 +349,8 @@ bpsMetadataBlobBytes request = fromMaybe ByteString.empty (embeddedBlobContentBy
 data PatchStability
   = StablePatch
   | UnstablePatch
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (FromJSON) via Generically PatchStability
 
 stabilityToDPS :: PatchStability -> DPS.DPSStability
 stabilityToDPS UnstablePatch = DPS.DPSUnstable
@@ -654,7 +665,8 @@ rejectUnencodableSecondaryCompressor _ _ = Right ()
 data RequestedConstraints = RequestedConstraints
   { requestedSMCShape :: SMCShapeRequirement
   }
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (FromJSON) via Generically RequestedConstraints
 
 noConstraintsRequested :: RequestedConstraints
 noConstraintsRequested = RequestedConstraints
@@ -757,7 +769,8 @@ acceptsAnySizeChange _sourceSize _targetSize = Right ()
 data RequestedDialects = RequestedDialects
   { requestedPPF1Origin :: PPF1Origin
   }
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+  deriving (FromJSON) via Generically RequestedDialects
 
 noDialectsRequested :: RequestedDialects
 noDialectsRequested = RequestedDialects
