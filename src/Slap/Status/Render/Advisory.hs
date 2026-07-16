@@ -87,18 +87,20 @@ renderSlapAdvisory (PPFApplyGrewPastSource label (FileSize sourceSize) (Length o
 
 renderSlapAdvisory (ZeroCountRLERecord label actionIndex) =
   formatLabelName label
-  <> ": zero-count RLE record at position " <> renderAsText (unActionIndex actionIndex)
-  <> " (accepted as no-op)"
+  <> ": record " <> renderAsText (unActionIndex actionIndex)
+  <> " is a run-length record that repeats its byte zero times, so it writes nothing;"
+  <> " slap accepts it and moves on."
 
 renderSlapAdvisory NegativeZeroInBPS =
   formatLabelName LabelBPS
-  <> ": signed-delta varint encoded zero as 0x81 (non-canonical;"
-  <> " 0x80 is the canonical form)"
+  <> ": a zero in this patch is written as 0x81 rather than the usual 0x80"
+  <> " (BPS numbers carry a sign, so zero has two forms; this is the negative one)"
 
 renderSlapAdvisory (NonCanonicalVCDIFFVarint value) =
   formatLabelName LabelVCDIFF
-  <> ": varint for " <> renderAsText value
-  <> " was encoded overlong (leading zero-groups; canonical form is shorter)"
+  <> ": the number " <> renderAsText value
+  <> " is stored in more bytes than it needs"
+  <> " (its variable-length encoding carries extra leading bytes that add nothing to the value)"
 
 renderSlapAdvisory (OverlappingRecords label (OverlapCount pairCount)) =
   formatLabelName label
@@ -125,9 +127,9 @@ renderSlapAdvisory (VCDIFFTrailingRemnant (Length remnantLength)) =
 
 renderSlapAdvisory (VCDIFFEmptyTargetWindowSegment windowIndex) =
   formatLabelName LabelVCDIFF
-  <> ": VCD_TARGET window " <> renderAsText (unActionIndex windowIndex)
-  <> " declares an empty source segment; it draws nothing from the"
-  <> " produced target"
+  <> ": window " <> renderAsText (unActionIndex windowIndex)
+  <> " is a VCD_TARGET window (copying from the output built so far),"
+  <> " but declares an empty source segment, so it draws nothing from there"
 
 renderSlapAdvisory VCDIFFEmptyApplicationHeader =
   formatLabelName LabelVCDIFF
@@ -187,9 +189,10 @@ renderSlapAdvisory (BPSMetadataNonConformant label divergence (Length byteCount)
 renderSlapAdvisory (IPSTruncationMarkerHonored label
     (DeclaredTargetSize declared) (NaturalTargetSize natural)) =
   formatLabelName label
-  <> " apply: honored truncation marker (declared "
-  <> renderAsText (unFileSize declared) <> " bytes, natural "
-  <> renderAsText (unFileSize natural) <> " bytes)"
+  <> " apply: the patch asks the output be trimmed to "
+  <> renderAsText (unFileSize declared) <> " bytes, below the "
+  <> renderAsText (unFileSize natural)
+  <> " the records alone would produce; slap trimmed the output to that size."
 
 renderSlapAdvisory (IPSRecordsClippedByMarker label
     (ClippedRecordCount count) firstIndex (MarkerOvershootBytes overshoot)) =
@@ -204,12 +207,17 @@ renderSlapAdvisory (IPSRecordsClippedByMarker label
 renderSlapAdvisory (IPSTruncationMarkerIgnored label
     (DeclaredTargetSize declared) (NaturalTargetSize natural)) =
   formatLabelName label
-  <> " apply: ignored truncation marker (declared "
-  <> renderAsText (unFileSize declared) <> " bytes, natural "
-  <> renderAsText (unFileSize natural) <> " bytes; declared > natural means the marker would grow the output, which slap does not honor)"
+  <> " apply: the patch's trailing size marker asks for "
+  <> renderAsText (unFileSize declared) <> " bytes, larger than the "
+  <> renderAsText (unFileSize natural)
+  <> " the records produce; a marker meant for trimming can't grow the output,"
+  <> " so slap ignored it and kept the records' size."
 
 renderSlapAdvisory XDelta1NoVerifyWithDivergentSentinel =
-  "xdelta1: FLAG_NO_VERIFY is set but stored MD5s are not the canonical empty-input sentinel (non-canonical producer or transit corruption)"
+  "xdelta1: this patch has verification turned off, yet its stored checksums aren't"
+  <> " the placeholder xdelta writes when it skips verification; they hold some other value"
+  <> " (an unusual producer, or corruption in transit)."
+  <> " slap applies without verifying, as the patch's flag asks."
 
 renderSlapAdvisory (XDelta1InputFileNotConsulted sourcelessShape) =
   formatLabelName LabelXDelta1 <> case sourcelessShape of
@@ -281,9 +289,10 @@ renderSlapAdvisory (FieldEncodedSubstituted label name (SubstitutionCount count)
 
 renderSlapAdvisory (FieldContentPastEnd label name (Length dropped)) =
   formatLabelName label <> " "
-  <> fieldNameLabel name <> ": "
+  <> fieldNameLabel name
+  <> ": a zero byte marks where this field's text ends, and slap drops the "
   <> renderAsText dropped <> plural dropped " character" " characters"
-  <> " past a NUL terminator (dropped on re-encode)"
+  <> " past that byte when it writes the field back out"
 
 renderSlapAdvisory (PlatformNotAvailable label platform) =
   formatLabelName label <> " has no type for " <> platformName platform

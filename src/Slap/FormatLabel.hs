@@ -4,6 +4,7 @@
 module Slap.FormatLabel
   ( FormatLabel(..)
   , formatLabelName
+  , formatLabelWithIndefiniteArticle
   ) where
 
 import Data.Aeson (ToJSON)
@@ -53,3 +54,13 @@ formatLabelName LabelGDIFF   = "GDIFF"
 formatLabelName LabelXDelta1 = "xdelta1"
 formatLabelName LabelDPS     = "DPS"
 formatLabelName LabelPMSR    = "PMSR"
+
+-- | The format's name with its indefinite article, for prose like "an IPS patch" or "a PPF2 patch".
+-- The article follows the spoken name, so the vowel-sounded ones take "an".
+formatLabelWithIndefiniteArticle :: FormatLabel -> Text
+formatLabelWithIndefiniteArticle label
+  | label `elem` vowelSoundedLabels = "an " <> formatLabelName label
+  | otherwise                       = "a "  <> formatLabelName label
+  where
+    vowelSoundedLabels =
+      [LabelIPS, LabelIPS32, LabelEBP, LabelAPSN64, LabelAPSGBA, LabelXDelta1]

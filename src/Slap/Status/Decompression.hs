@@ -116,4 +116,4 @@ renderDecompressionFailure failure = case failure of
     ("VCDIFF " <> secondaryStreamPossessive sec algorithm) cause
   where
     render siteName (DecompressionCause msg) =
-      siteName <> ": decompression failed: " <> msg
+      "slap couldn't unpack the " <> siteName <> " (" <> msg <> ")"

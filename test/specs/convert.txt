@@ -12,7 +12,7 @@
 # ============================================================================
 #
 # Offset overflow (>16 MB offsets → IPS)
-ppf3       | ips     | test/data/stadium2/fair-heavy/patch.ppf     |                                 |          | reject:exceeds maximum offset      |  |
+ppf3       | ips     | test/data/stadium2/fair-heavy/patch.ppf     |                                 |          | reject:past the format's reach      |  |
 # Differential format without --with
 bps        | ips     | test/data/stadium2/fair-heavy/patch.bps     |                                 |          | reject:requires the original ROM   |  |
 #
@@ -47,7 +47,7 @@ bps        | rfc-vcdiff | test/data/dm4y/patch.bps                | test/data/dm
 # ============================================================================
 # Size-change via --with (stadium2, 64→128 MB)
 # ============================================================================
-bps        | ips     | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     |          | reject:exceeds maximum offset    |  | --with
+bps        | ips     | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     |          | reject:past the format's reach    |  | --with
 bps        | ips32   | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     | 1155bbd39201617638aab3f3b1087d3a11413b08 | accept |  | --with
 bps        | bps     | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     | 1155bbd39201617638aab3f3b1087d3a11413b08 | accept |  | --with
-bps        | ppf3    | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     |          | reject:won't produce a patch for this input |  | --with --no-undo --omit-verification
+bps        | ppf3    | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     |          | reject:can't encode this input and output as a patch |  | --with --no-undo --omit-verification

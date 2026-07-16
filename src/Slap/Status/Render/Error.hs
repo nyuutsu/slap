@@ -16,7 +16,7 @@ import Slap.Dialect (dialectFlagName, dialectName)
 import Slap.Display.Common (renderAsText, renderHexAsText, pathText)
 import Slap.Display.Primitives (hexByteString, padHex, renderPrintableASCIIOrHex)
 import Slap.FieldName (fieldNameLabel)
-import Slap.FormatLabel (FormatLabel(..), formatLabelName)
+import Slap.FormatLabel (FormatLabel(..), formatLabelName, formatLabelWithIndefiniteArticle)
 import Slap.Header (consoleHeaderName, consoleHeaderLength)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), ActionIndex(unActionIndex),
                      ActualSize(..), ExpectedSize(..), MaxAddressableSize(..),
@@ -249,26 +249,32 @@ renderSlapError (ParseError label parserError) =
   formatLabelName label <> ": " <> renderByteParserError parserError
 
 renderSlapError (UnsupportedXDelta1Shape violation) =
-  formatLabelName LabelXDelta1
-  <> ": source list is " <> describeViolation violation
-  <> ", a shape canonical xdelta cannot emit"
-  <> " (it writes the data segment and the from-file source, dropping whichever its"
-  <> " instructions never cite, so [data, file], [data], [file], and [] are the only"
-  <> " source lists a patch can carry)"
-  where
-    describeViolation XDelta1TwoDataSources        = "[data, data]"
-    describeViolation XDelta1ReversedDataFileOrder = "[file, data]"
-    describeViolation XDelta1TwoFileSources        = "[file, file]"
-    describeViolation (XDelta1TooManySources n)    = renderAsText n <> " sources"
+  formatLabelName LabelXDelta1 <> ": " <> case violation of
+    XDelta1TwoDataSources ->
+      "this patch lists its own bundled data twice, but it carries only one block of data,"
+      <> " so the two entries can't both describe it"
+      <> " (an xdelta1 patch copies from its own data and at most one input file)"
+    XDelta1ReversedDataFileOrder ->
+      "this patch lists the input file before its own bundled data, but xdelta1 fixes the order"
+      <> " the other way: the patch's data first, then the input file."
+      <> " A source list in the reverse order isn't one the format allows"
+    XDelta1TwoFileSources ->
+      "this patch lists two input files, but an xdelta1 patch reads from only one,"
+      <> " alongside the patch's own bundled data. The format has no place for a second input"
+    XDelta1TooManySources sourceCount ->
+      "this patch lists " <> renderAsText sourceCount
+      <> " sources, but an xdelta1 patch reads from at most two:"
+      <> " its own bundled data and one input file"
 
 renderSlapError (XDelta1NonBooleanSourceFlag flag byteValue) =
-  formatLabelName LabelXDelta1 <> ": " <> case flag of
+  formatLabelName LabelXDelta1
+  <> ": one of the patch's sources has a yes/no flag set to neither; " <> case flag of
     XDelta1SourceKindFlag ->
-      "isdata is 0x" <> padHex 2 byteValue
-      <> " (0 marks a file source, 1 marks patch data; nothing defines 0x" <> padHex 2 byteValue <> ")"
+      "the byte for whether the source is the patch's own data or an external file reads 0x" <> padHex 2 byteValue
+      <> ", where only 0 (an external file) and 1 (the patch's own data) mean anything"
     XDelta1SourceOffsetModeFlag ->
-      "sequential is 0x" <> padHex 2 byteValue
-      <> " (0 marks absolute offsets, 1 marks sequential offsets; nothing defines 0x" <> padHex 2 byteValue <> ")"
+      "the byte for whether its copy offsets are absolute or run in sequence reads 0x" <> padHex 2 byteValue
+      <> ", where only 0 (absolute) and 1 (sequential) mean anything"
 
 renderSlapError (UnsupportedVCDIFFShape violation) =
   formatLabelName LabelVCDIFF <> ": " <> case violation of
@@ -471,43 +477,45 @@ renderSlapError (PPF4ReplaceAfterAppend recordIndex) =
 
 renderSlapError (XDelta1UnknownInstructionTarget listShape wireIndex) =
   formatLabelName LabelXDelta1
-  <> ": instruction references source index " <> renderAsText wireIndex
-  <> "; " <> case listShape of
+  <> ": an instruction copies from a source the patch doesn't have; it asks for source "
+  <> renderAsText wireIndex <> ", but " <> case listShape of
        SourceListDataAndFile ->
-         "the patch's source list is [data segment, file source], so the valid indices are 0 and 1"
+         "the patch lists only two: 0 (its own data) and 1 (the input file)"
        SourceListDataOnly ->
-         "the patch's source list holds only the data segment, at index 0"
+         "the patch lists only one: 0 (its own data)"
        SourceListFileOnly ->
-         "the patch's source list holds only the file source, at index 0"
+         "the patch lists only one: 0 (the input file)"
        SourceListEmpty ->
-         "the patch's source list is empty, so no instruction may reference a source"
+         "the patch lists none (its declared target is empty, so no instruction should reference a source at all)"
 
 renderSlapError (XDelta1DanglingDataSegment (ActualSize segmentSize)) =
   formatLabelName LabelXDelta1
-  <> ": the patch carries " <> renderAsText (unFileSize segmentSize)
-  <> " bytes of literal data, but its source list has no data record to name them;"
-  <> " no instruction could ever read those bytes"
+  <> ": this patch carries " <> renderAsText (unFileSize segmentSize)
+  <> " bytes of its own data, but nothing in its source list points to them,"
+  <> " so no instruction can read those bytes."
+  <> " data left unreferenced means the patch's control and data segments no longer describe"
+  <> " the same thing, a sign it was truncated or corrupted"
 
 renderSlapError (XDelta1DataRecordLengthMismatch (ExpectedSize declared) (ActualSize actual)) =
   formatLabelName LabelXDelta1
-  <> ": data-record declares length " <> renderAsText (unFileSize declared)
-  <> " bytes but the patch's data segment is " <> renderAsText (unFileSize actual)
-  <> " bytes (structural inconsistency; the two fields describe the same bytes and slap cannot pick a winner)"
+  <> ": the patch disagrees with itself about how much data it carries;"
+  <> " the header for its own data says " <> renderAsText (unFileSize declared)
+  <> " bytes, but the data that follows measures " <> renderAsText (unFileSize actual)
+  <> " (both describe the same bytes, so slap can't tell which to trust)"
 
 renderSlapError (XDelta1DataRecordMD5Mismatch declared computed) =
   formatLabelName LabelXDelta1
-  <> ": data-record declares MD5 " <> hexByteString (unMD5Hash declared)
-  <> " but the patch's data segment hashes to " <> hexByteString (unMD5Hash computed)
-  <> " (structural inconsistency; the two values describe the same bytes and slap cannot pick a winner)"
+  <> ": the patch's header records a checksum for its own bundled data that the data doesn't match"
+  <> " (header MD5 " <> hexByteString (unMD5Hash declared)
+  <> "; the data hashes to " <> hexByteString (unMD5Hash computed)
+  <> "). both describe the same bytes, so slap can't tell which to trust"
 
 renderSlapError (XDelta1InputPreCompressionUnsupported sides) =
   formatLabelName LabelXDelta1
-  <> ": apply refused — patch expects " <> describeSides sides
-  <> " to be a gzip stream at apply time, which slap doesn't currently"
-  <> " implement (canonical xdelta-1.x decompresses gzip-magic inputs"
-  <> " transparently before delta and recompresses after apply; this"
-  <> " patch's FROM_COMPRESSED / TO_COMPRESSED header bits record"
-  <> " that the original delta did so)"
+  <> ": slap can't apply this patch; it was built expecting " <> describeSides sides
+  <> " to arrive gzip-compressed and be unpacked on the fly, which slap doesn't do yet"
+  <> " (xdelta 1.x quietly unzips gzip-compressed inputs before diffing and re-zips after applying;"
+  <> " this patch's FROM_COMPRESSED / TO_COMPRESSED header bits record that it did)"
   where
     describeSides OnlyFromFileWasGzipStream = "the source (from) file"
     describeSides OnlyToFileWasGzipStream   = "the target (to) file"
@@ -532,7 +540,7 @@ renderSlapError (NoUndoForFormat label) =
   "no undo for " <> formatLabelName label <> " patches"
 
 renderSlapError (UnencodeablePair label reason) =
-  formatLabelName label <> ": won't produce a patch for this input→output: "
+  formatLabelName label <> ": can't encode this input and output as a patch: "
   <> renderUnencodeabilityReason label reason
 
 renderSlapError (NarrowingError nf) = renderNarrowingFailure nf
@@ -543,19 +551,22 @@ renderSlapError (FileExceedsAddressableRange label (ActualSize actualSize) (MaxA
   <> renderAsText (unFileSize maxSize) <> "-byte addressable range"
 
 renderSlapError (VCDIFFPairExceedsAddressableRange
-                   (SourceFileSize sourceSize) (TargetFileSize targetSize) (MaxAddressableSize maxSize)) =
-  formatLabelName LabelVCDIFF <> ": the matcher indexes input and output as one string, spanning "
+                   (SourceFileSize sourceSize) (TargetFileSize targetSize) (MaxAddressableSize _maxSize)) =
+  formatLabelName LabelVCDIFF
+  <> ": to build this diff, slap lays the input and output end to end and indexes the whole span; here it comes to "
   <> renderAsText (unFileSize sourceSize) <> " + " <> renderAsText (unFileSize targetSize)
-  <> " bytes plus two sentinels, reaching "
+  <> " bytes plus two separator bytes, reaching "
   <> renderAsText (toInteger (unFileSize sourceSize) + toInteger (unFileSize targetSize) + 2)
-  <> " — past the " <> renderAsText (unFileSize maxSize)
-  <> "-byte limit slap can address"
+  <> ", past " <> slapAddressableCeiling <> ", the largest span slap can address"
 
 renderSlapError (SentinelCollisionUnfixable label (SentinelOffset sentinel)) =
-  formatLabelName label <> ": hunk offset 0x"
+  formatLabelName label <> ": a record writes at offset 0x"
   <> renderHexAsText (unOffset sentinel)
-  <> " collides with trailer sentinel and cannot be shifted"
-  <> " (no preceding source byte available to prepend)"
+  <> ", which on the wire is the exact byte pattern of the marker that ends "
+  <> formatLabelWithIndefiniteArticle label
+  <> " patch; a reader would stop there and drop everything after it."
+  <> " slap normally nudges such a record one byte earlier to sidestep the clash,"
+  <> " but here there's no earlier source byte to borrow, so it can't."
 
 renderSlapError (SourceTooSmallForPPF2Validation label
                                                  (ActualSize sourceSize)
@@ -673,27 +684,33 @@ renderSlapError (XDelta3CompressorEncodingUnsupported algorithm) =
 
 renderSlapError (TruncationViolatesSMCShape size) =
   "--" <> constraintFlagName SMCShapeConstraint
-  <> ": output size " <> renderAsText (unFileSize size)
-  <> " bytes does not satisfy (size & 0xFFF) == 0x200; "
-  <> "the resulting IPS patch's truncation marker would be rejected by SNESTool"
+  <> ": this flag asks for a patch SNESTool can apply, but SNESTool won't accept a "
+  <> renderAsText (unFileSize size) <> "-byte truncation;"
+  <> " it only takes sizes shaped like a copier-headered SNES ROM,"
+  <> " a multiple of 4096 plus 512 (size & 0xFFF == 0x200)."
 
 renderSlapError (VerificationFatal mismatch) =
   renderVerificationMismatch mismatch <> "\n  use --no-verify to proceed anyway"
 
 renderNarrowingFailure :: NarrowingFailure -> Text
 renderNarrowingFailure (OffsetExceedsBound label (ActualOffset actual) (MaxOffset maxOffset)) =
-  formatLabelName label <> ": hunk offset 0x"
+  formatLabelName label <> ": a record writes at offset 0x"
   <> renderHexAsText (unOffset actual)
-  <> " exceeds maximum offset 0x"
+  <> ", but " <> formatLabelWithIndefiniteArticle label
+  <> " patch can only address up to 0x"
   <> renderHexAsText (unOffset maxOffset)
+  <> "; that write is past the format's reach"
 renderNarrowingFailure (NegativeOffset label (ActualOffset actual)) =
-  formatLabelName label <> ": record offset " <> renderAsText (unOffset actual)
-  <> " is negative; the wire format addresses only non-negative positions"
+  formatLabelName label <> ": a record sits at a negative offset ("
+  <> renderAsText (unOffset actual)
+  <> "), but " <> formatLabelWithIndefiniteArticle label
+  <> " patch can only address positions from 0 onward; there's nowhere to put this write"
 renderNarrowingFailure (FieldValueExceedsBound label field actual maxValue) =
-  formatLabelName label
-  <> " " <> fieldNameLabel field
-  <> " field value " <> renderAsText actual
-  <> " exceeds the wire-format maximum of " <> renderAsText maxValue
+  formatLabelName label <> ": the " <> fieldNameLabel field
+  <> " is " <> renderAsText actual
+  <> ", but " <> formatLabelWithIndefiniteArticle label <> " patch's "
+  <> fieldNameLabel field <> " field holds at most " <> renderAsText maxValue
+  <> ", so it doesn't fit"
 
 -- | Render the reason a (source, target) pair was refused.
 -- The 'FormatLabel' lets an arm vary its wording per format; arms with one wording ignore it.
@@ -715,11 +732,10 @@ renderUnencodeabilityReason _label
   <> " bytes); this format does not represent shrinking"
 renderUnencodeabilityReason _label
   (TruncationTargetUnrepresentable (DeclaredTargetSize targetSize) (MaxOffset markerMaximum)) =
-  "the output is smaller than the input, so the patch needs a"
-  <> " truncation marker, and the marker cannot name a size of 0x"
-  <> renderHexAsText (unFileSize targetSize)
-  <> " bytes — its field caps at 0x"
-  <> renderHexAsText (unOffset markerMaximum)
+  "the output is smaller than the input, so the patch would need a truncation marker"
+  <> " to record the trimmed size, and that marker's field is only 24 bits:"
+  <> " it can't name 0x" <> renderHexAsText (unFileSize targetSize)
+  <> " bytes, past its 0x" <> renderHexAsText (unOffset markerMaximum) <> " ceiling"
 
 -- | The markers in the wild are ASCII-printable (@"EOF"@, @"EEOF"@), so the common case is the literal string;
 -- a marker with a non-printable byte falls back to hex rather than putting control characters in the error stream.

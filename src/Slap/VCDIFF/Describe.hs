@@ -213,7 +213,7 @@ describeWindow outputCursor (windowNumber, pairedWindow) =
 windowHeader :: Int -> Window -> Maybe Adler32 -> AnalysisSection
 windowHeader windowNumber window maybeAdler =
   SectionLabeled ("window " <> renderAsText windowNumber <> ":") $
-       [ InfoLine "target size" (renderAsText (unFileSize (windowTargetSize window)))
+       [ InfoLine "target size" (renderAsText (unFileSize (windowTargetSize window)) <> " bytes")
        , InfoLine "source"      (renderSourceSegment (windowSourceSegment window)) ]
     ++ [ InfoLine "adler32" (showAdler32 adler) | Just adler <- [maybeAdler] ]
 

@@ -710,8 +710,8 @@ xdelta1SourceShapeTests =
       in case parseControlBytes controlBytes of
         Right _ -> assertFailure "expected parse failure for three-source xdelta1 patch"
         Left rendered -> do
-          assertBool ("expected 'a shape canonical xdelta cannot emit': " ++ rendered)
-            (ciContains "a shape canonical xdelta cannot emit" rendered)
+          assertBool ("expected 'reads from at most two': " ++ rendered)
+            (ciContains "reads from at most two" rendered)
           assertBool ("expected '3 sources' in: " ++ rendered)
             (ciContains "3 sources" rendered)
 
@@ -720,10 +720,10 @@ xdelta1SourceShapeTests =
       in case parseControlBytes controlBytes of
         Right _ -> assertFailure "expected parse failure for [file, data] ordering"
         Left rendered -> do
-          assertBool ("expected 'a shape canonical xdelta cannot emit': " ++ rendered)
-            (ciContains "a shape canonical xdelta cannot emit" rendered)
-          assertBool ("expected '[file, data]' in: " ++ rendered)
-            (ciContains "[file, data]" rendered)
+          assertBool ("expected 'the input file before its own bundled data': " ++ rendered)
+            (ciContains "the input file before its own bundled data" rendered)
+          assertBool ("expected 'reverse order isn't one the format allows' in: " ++ rendered)
+            (ciContains "reverse order isn't one the format allows" rendered)
 
   , testCase "xdelta1-shape/accepts empty source list as NoSources" $
       let controlBytes = buildXDelta1Control [] []
@@ -752,10 +752,10 @@ xdelta1SourceShapeTests =
       in case parseControlBytes controlBytes of
         Right _ -> assertFailure "expected parse failure for unknown instruction target"
         Left rendered -> do
-          assertBool ("expected 'instruction references source index 2' in: " ++ rendered)
-            (ciContains "instruction references source index 2" rendered)
-          assertBool ("expected 'the valid indices are 0 and 1' in: " ++ rendered)
-            (ciContains "the valid indices are 0 and 1" rendered)
+          assertBool ("expected 'it asks for source 2' in: " ++ rendered)
+            (ciContains "it asks for source 2" rendered)
+          assertBool ("expected '0 (its own data) and 1 (the input file)' in: " ++ rendered)
+            (ciContains "0 (its own data) and 1 (the input file)" rendered)
 
   , testCase "xdelta1-shape/rejects instruction indexing past a reduced list" $
       let controlBytes = buildXDelta1Control
@@ -764,10 +764,10 @@ xdelta1SourceShapeTests =
       in case parseControlBytes controlBytes of
         Right _ -> assertFailure "expected parse failure for index 1 against [data]"
         Left rendered -> do
-          assertBool ("expected 'instruction references source index 1' in: " ++ rendered)
-            (ciContains "instruction references source index 1" rendered)
-          assertBool ("expected 'only the data segment, at index 0' in: " ++ rendered)
-            (ciContains "only the data segment, at index 0" rendered)
+          assertBool ("expected 'it asks for source 1' in: " ++ rendered)
+            (ciContains "it asks for source 1" rendered)
+          assertBool ("expected 'lists only one: 0 (its own data)' in: " ++ rendered)
+            (ciContains "lists only one: 0 (its own data)" rendered)
   ]
   where
     parseControlBytes controlBytes =

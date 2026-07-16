@@ -146,7 +146,7 @@ renderByteParserError (ByteParserTerminatorNotFound terminatorByte (Position cur
 
 renderByteParserError
   (ByteParserPositionOutOfBounds (Position target) (ActualLength (Length inputLength))) =
-  "the patch seeks to offset " <> renderAsText target
+  "the patch seeks to offset 0x" <> renderHexAsText target
   <> ", but the patch is only " <> renderAsText inputLength
   <> plural inputLength " byte" " bytes"
 

@@ -28,7 +28,7 @@ import Data.List (mapAccumL)
 
 bsdiffMeta :: BSDiffPatch -> [InfoLine]
 bsdiffMeta patch =
-  [ InfoLine "new size" (renderAsText (unFileSize (bsdiffTargetSize patch)))
+  [ InfoLine "new size" (renderAsText (unFileSize (bsdiffTargetSize patch)) <> " bytes")
   , InfoLine "control block" (renderAsText (unLength (bsdiffControlSize patch)) <> " bytes (compressed)")
   , InfoLine "diff block" (renderAsText (unLength (bsdiffDiffSize patch)) <> " bytes (compressed)")
   , InfoLine "extra block" (renderAsText (unLength (bsdiffExtraSize patch)) <> " bytes (compressed)")
