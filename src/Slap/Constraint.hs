@@ -21,12 +21,14 @@ module Slap.Constraint
 
 import Data.Aeson (ToJSON)
 import Data.Text (Text)
-import GHC.Generics (Generic, Generically(..))
+import GHC.Generics (Generic)
+
+import Slap.JSON.Nullary (AsConstructorName(..))
 
 data Constraint
   = SMCShapeConstraint
   deriving (Show, Eq, Ord, Generic)
-  deriving (ToJSON) via Generically Constraint
+  deriving (ToJSON) via AsConstructorName Constraint
 
 -- | Used by 'Slap.Status' renderers.
 constraintName :: Constraint -> Text

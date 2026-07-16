@@ -5,7 +5,7 @@ PREFIX    ?= $(HOME)/.local
 # Match system make.conf: compile Rust for the host CPU, so crc32fast picks up CLMUL/PCLMULQDQ at compile time.
 export RUSTFLAGS += -C target-cpu=native
 
-.PHONY: all rusty-slap cabal install test haddock wasm wasm-link-check wasm-parity-check rusty-slap-wasm clean
+.PHONY: all rusty-slap cabal install test haddock wasm wasm-link-check wasm-parity-check wasm-worker-rig rusty-slap-wasm clean
 
 all: rusty-slap cabal
 
@@ -101,6 +101,14 @@ wasm-parity-check: cabal wasm
 	 agree convert test/data/dm4y/patch.bps test/data/web/convert.json; \
 	 agree convert test/data/dm4y/patch.ips test/data/web/convert.json; \
 	 agree convert test/data/dm4y/patch.bps test/data/web/convert-with-source.json test/data/dm4y/base.gbc
+
+# Serve the Worker shell's check, run by hand in a browser; worker-rig.html says what to watch for.
+wasm-worker-rig: wasm
+	@if [ ! -f vendor/browser_wasi_shim/dist/index.js ]; then git submodule update --init vendor/browser_wasi_shim; fi
+	. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal build slap-web-reactor $(WASM_CABAL_FLAGS)
+	cp "$$(. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal -v0 list-bin slap-web-reactor $(WASM_CABAL_FLAGS))" web-reactor/slap-web-reactor.wasm
+	@echo "the rig is at http://127.0.0.1:8000/web-reactor/worker-rig.html"
+	@python3 -m http.server --bind 127.0.0.1 8000
 
 # Scrub 🧼
 clean:

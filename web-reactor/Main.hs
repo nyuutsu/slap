@@ -49,6 +49,7 @@ slapWebLinkCheck = pure (unCRC32 (romCRC32 (describeRom fixedInput)))
 
 -- The buffer protocol: the host allocates with 'slap_web_alloc' and copies its bytes in; an export answers with a buffer
 -- whose first four bytes are the payload length (little-endian, wasm's own byte order); the host frees both sides with 'slap_web_free'.
+-- A pointer reaches JS as a signed i32, so past 2 GB of instance memory a host must take it unsigned or the address reads negative.
 -- An act's payload opens with one more little-endian u32 — the envelope's own length; the output bytes are everything after the envelope.
 
 foreign export ccall "slap_web_alloc" slapWebAlloc :: Int -> IO (Ptr Word8)

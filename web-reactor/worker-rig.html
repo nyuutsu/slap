@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<meta charset="utf-8">
+<title>slap worker rig</title>
+<!-- The hand-run check for the Worker shell (make wasm-worker-rig serves it): the ticker stays smooth while a job runs off the main thread,
+     cancel kills it mid-flight, and the next run works from a fresh instance. Not the product page — Phase 3 builds that fresh. -->
+<style>
+  body { font-family: monospace; max-width: 72rem; margin: 2rem auto; padding: 0 1rem; }
+  section { border: 1px solid #888; padding: 0.5rem 1rem; margin: 1rem 0; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #8881; padding: 0.5rem; max-height: 24rem; overflow-y: auto; }
+  textarea { width: 100%; height: 8rem; font-family: monospace; }
+</style>
+
+<h1>slap worker rig</h1>
+<p id="liveness"></p>
+
+<section>
+  <h2>surface</h2>
+  <p>Runs on load, from its own Worker.</p>
+  <pre id="surface-envelope">…</pre>
+</section>
+
+<section>
+  <h2>inspect</h2>
+  <p><input id="inspect-patch" type="file"> <button id="inspect-run">inspect</button></p>
+  <pre id="inspect-envelope"></pre>
+</section>
+
+<section>
+  <h2>apply</h2>
+  <p>patch <input id="apply-patch" type="file"> rom <input id="apply-rom" type="file"></p>
+  <textarea id="apply-declaration">{
+  "declaredApplyFraming": { "tag": "TakeInputAsIs" },
+  "declaredApplyVerificationPolicy": "EnforceVerification",
+  "declaredApplyDialects": { "requestedPPF1Origin": "PPF1OriginPC" }
+}</textarea>
+  <p><button id="apply-run">apply</button> <button id="apply-cancel">cancel</button> <span id="apply-status"></span></p>
+  <pre id="apply-envelope"></pre>
+  <p id="apply-tail"></p>
+</section>
+
+<script type="module">
+  import { compileReactor, startReactorJob, ReactorJobCancelled } from './reactor-client.mjs';
+
+  const element = (id) => document.getElementById(id);
+  const showEnvelope = (id, envelope) => { element(id).textContent = JSON.stringify(envelope, null, 2); };
+
+  let frameCount = 0;
+  const tick = () => {
+    element('liveness').textContent = `main thread live — frame ${++frameCount}`;
+    requestAnimationFrame(tick);
+  };
+  tick();
+
+  const reactor = await compileReactor('./slap-web-reactor.wasm');
+
+  showEnvelope('surface-envelope', (await startReactorJob(reactor, 'surface').answered).envelope);
+
+  element('inspect-run').onclick = async () => {
+    const [patch] = element('inspect-patch').files;
+    if (!patch) return;
+    showEnvelope('inspect-envelope', (await startReactorJob(reactor, 'inspect', { patch }).answered).envelope);
+  };
+
+  let cancelRunningApply = null;
+  element('apply-cancel').onclick = () => cancelRunningApply?.();
+  element('apply-run').onclick = async () => {
+    const [patch] = element('apply-patch').files;
+    const [rom] = element('apply-rom').files;
+    if (!patch || !rom) return;
+    const job = startReactorJob(reactor, 'apply', { patch, rom, declaration: JSON.parse(element('apply-declaration').value) });
+    cancelRunningApply = job.cancel;
+    const startedAt = performance.now();
+    element('apply-status').textContent = 'running…';
+    element('apply-envelope').textContent = '';
+    element('apply-tail').textContent = '';
+    try {
+      const { envelope, tail } = await job.answered;
+      element('apply-status').textContent = `answered in ${Math.round(performance.now() - startedAt)} ms`;
+      showEnvelope('apply-envelope', envelope);
+      element('apply-tail').textContent = `tail: ${tail.length} bytes `;
+      if (tail.length > 0) {
+        const download = document.createElement('a');
+        download.href = URL.createObjectURL(new Blob([tail]));
+        download.download = 'patched-' + rom.name;
+        download.textContent = 'download';
+        element('apply-tail').append(download);
+      }
+    } catch (jobFailure) {
+      element('apply-status').textContent =
+        jobFailure instanceof ReactorJobCancelled ? 'cancelled' : `failed: ${jobFailure.message}`;
+    } finally {
+      cancelRunningApply = null;
+    }
+  };
+</script>

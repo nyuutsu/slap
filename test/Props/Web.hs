@@ -9,6 +9,7 @@ import Slap.Convert (CreateFormat(..), DifferentialCreate(..), DirectCreate(..),
                      advertisedCreateFormats, lookupCreateFormatToken, noConstraintsRequested,
                      noDialectsRequested, noMetadataRequested)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
+import Slap.Constraint (Constraint(..))
 import qualified Slap.Create as Create
 import Slap.Dialect (Dialect(..))
 import Slap.Display.Analysis (renderAnalysisFull)
@@ -22,6 +23,7 @@ import Slap.PPF1.Types (PPF1Origin(PPF1OriginAmiga))
 import Slap.SomePatch (parseSome, patchAdvisories, patchAnalysis, patchInfo)
 import Slap.Status (CreateResult(..), Outcome(..), SlapAdvisory(..), SlapError(..),
                     SourceRequiredCause(..), noAdvisories, renderSlapAdvisory, renderSlapError)
+import Slap.Status.VCDIFF (VCDIFFShapeViolation(..))
 import Slap.Text (EncodedText(..), EncodingName(..), resolveEncodingName)
 import Slap.VCDIFF.SecondaryCompression (secondaryCompressorTokens)
 import Slap.Verify (VerificationPolicy(EnforceVerification), VerificationVerdict(..))
@@ -99,6 +101,7 @@ webTests = testGroup "Web"
       , testCase "a refusal crosses spoken: its tag beside slap's sentence"  test_envelopeSpeaksRefusal
       , testCase "an advisory crosses with severity and sentence beside it"  test_envelopeSpeaksAdvisory
       , testCase "byte fields cross as base64"                               test_envelopeBytesAsBase64
+      , testCase "a lone nullary constructor crosses as its name"            test_envelopeNamesLoneConstructor
       , testCase "the surface crosses with the engine's own format census"   test_envelopeCarriesSurface
       , testCase "the explanation crosses: info beside the structured walk"  test_envelopeCarriesExplanation
       ]
@@ -580,6 +583,12 @@ test_envelopeCarriesExplanation = do
   case crossedSections of
     Aeson.Array sections -> assertBool "the walk crossed with no sections" (not (Vector.null sections))
     other                -> assertFailure ("expected a section array: " <> show other)
+
+test_envelopeNamesLoneConstructor :: Assertion
+test_envelopeNamesLoneConstructor = do
+  Aeson.toJSON SMCShapeConstraint          @?= Aeson.String "SMCShapeConstraint"
+  Aeson.toJSON PPF1OriginAxis              @?= Aeson.String "PPF1OriginAxis"
+  Aeson.toJSON VCDIFFNestedCustomCodeTable @?= Aeson.String "VCDIFFNestedCustomCodeTable"
 
 test_declarationDrivesCheckApply :: Assertion
 test_declarationDrivesCheckApply = do

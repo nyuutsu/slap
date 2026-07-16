@@ -3,6 +3,9 @@ dist-newstyle-wasm/
 rusty-slap/target/
 .rusty-stamp
 .rusty-wasm-stamp
+
+# make wasm-worker-rig places the built reactor beside the rig page
+web-reactor/slap-web-reactor.wasm
 *.hi
 *.o
 *.dyn_hi

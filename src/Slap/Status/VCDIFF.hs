@@ -22,6 +22,7 @@ module Slap.Status.VCDIFF
   ) where
 
 import Slap.Binary (VarintReadFailure)
+import Slap.JSON.Nullary (AsConstructorName(..))
 import Slap.Measure (Length, ActionIndex, ActualOffset,
                      ExpectedSize, ActualSize, ActualLength)
 import Slap.Status.Vocabulary (CompressionAlgorithm)
@@ -37,7 +38,7 @@ import GHC.Generics (Generic, Generically(..))
 data VCDIFFShapeViolation
   = VCDIFFNestedCustomCodeTable
   deriving (Eq, Show, Generic)
-  deriving (ToJSON) via Generically VCDIFFShapeViolation
+  deriving (ToJSON) via AsConstructorName VCDIFFShapeViolation
 
 -- | The structural failures of decoding a VCDIFF custom code table, validated outside the byte parser.
 -- Most are decidable from the 1536-byte image alone and surface from 'Slap.VCDIFF.CodeTable.deserializeCodeTable';

@@ -7,3 +7,6 @@
 [submodule "vendor/ram"]
 	path = vendor/ram
 	url = git@github.com:nyuutsu/slap-ram.git
+[submodule "vendor/browser_wasi_shim"]
+	path = vendor/browser_wasi_shim
+	url = git@github.com:nyuutsu/browser_wasi_shim.git

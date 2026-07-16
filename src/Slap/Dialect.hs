@@ -21,7 +21,9 @@ module Slap.Dialect
 
 import Data.Aeson (ToJSON)
 import Data.Text (Text)
-import GHC.Generics (Generic, Generically(..))
+import GHC.Generics (Generic)
+
+import Slap.JSON.Nullary (AsConstructorName(..))
 
 data Dialect
   = PPF1OriginAxis
@@ -38,7 +40,7 @@ data Dialect
     --
     -- Per @docs/ppf/spec.md@ §"Offset size and endianness".
   deriving (Show, Eq, Ord, Generic)
-  deriving (ToJSON) via Generically Dialect
+  deriving (ToJSON) via AsConstructorName Dialect
 
 -- | Display name for prose contexts in error and help messages.
 dialectName :: Dialect -> Text

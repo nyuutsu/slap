@@ -40,12 +40,12 @@ for (const path of shape.buffers(verbArgs)) {
     continue;
   }
   const bytes = await readFile(path);
-  const pointer = instance.exports.slap_web_alloc(bytes.length);
+  const pointer = instance.exports.slap_web_alloc(bytes.length) >>> 0;
   new Uint8Array(instance.exports.memory.buffer, pointer, bytes.length).set(bytes);
   buffers.push({ pointer, length: bytes.length, allocated: true });
 }
 
-const envelopePointer = instance.exports[shape.export](...buffers.flatMap(({ pointer, length }) => [pointer, length]));
+const envelopePointer = instance.exports[shape.export](...buffers.flatMap(({ pointer, length }) => [pointer, length])) >>> 0;
 for (const { pointer, allocated } of buffers) {
   if (allocated) instance.exports.slap_web_free(pointer);
 }

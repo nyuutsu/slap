@@ -85,6 +85,7 @@ library slap-internal
     , Slap.GDIFF.Parse
     , Slap.GDIFF.Types
     , Slap.JSON.Bytes
+    , Slap.JSON.Nullary
     , Slap.IPS.Apply
     , Slap.IPS.Create
     , Slap.IPS.Describe
