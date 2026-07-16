@@ -7,8 +7,8 @@ import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Binary (copyRegion, fillNewBuffer, fillRegion, seedBufferFromSource)
 import Slap.Measure (Offset(..), Length(..),
-                     ActionIndex, RequestedLength(..), RemainingLength(..),
-                     byteLength, fitsWithin, remainingFromOffset,
+                     ActionIndex, RequestedLength(..),
+                     byteLength, fitsWithin,
                      firstAction, nextAction)
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
@@ -20,7 +20,7 @@ import System.IO.Unsafe (unsafePerformIO)
 
 -- | Apply an APS-N64 patch. The output is sized to the header's destination-size field, matching the reference @n64aps@,
 -- whose @ReadSizeHeader@ truncates or zero-pads the source to that size before any record is written.
--- A record whose write would fall past the declared destination is malformed, surfacing as 'ApplyWritesPastTarget'
+-- A record whose write would fall past the declared destination is malformed, surfacing as 'ApplyAbsoluteWritePastTarget'
 -- rather than silently growing the output.
 applyAPSN64 :: APSN64Patch -> InputFileContents -> Either SlapError OutputFileContents
 applyAPSN64 (APSN64Patch header records) (InputFileContents source) =
@@ -37,9 +37,10 @@ applyAPSN64 (APSN64Patch header records) (InputFileContents source) =
     checkWriteFitsTarget actionIndex writeOffset writeLength
       | fitsWithin writeOffset writeLength outputFileSize = Right ()
       | otherwise =
-          Left (ApplyWritesPastTarget actionIndex
+          Left (ApplyAbsoluteWritePastTarget actionIndex
+                 writeOffset
                  (RequestedLength writeLength)
-                 (RemainingLength (remainingFromOffset writeOffset outputFileSize)))
+                 outputFileSize)
 
     runApply :: Ptr Word8 -> IO (Maybe ApplyError)
     runApply targetPointer = do

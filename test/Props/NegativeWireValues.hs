@@ -20,6 +20,16 @@
 -- near-2^63 declared sizes would wrap a summed bound and slip through
 -- as a decompression failure; sequential comparison keeps the verdict
 -- a header verdict naming the block.
+--
+-- A separate apply-time shape is the absolute write whose start already
+-- sits past the target's end: an APSN64 record against its declared
+-- destination, or a PPF3 undo run against the wrong modified file. The
+-- forward-cursor refusal 'ApplyWritesPastTarget' would describe it as
+-- remaining space — target size minus offset — but that subtraction
+-- throws when the offset is the larger, so these sites carry offset and
+-- size raw in 'ApplyAbsoluteWritePastTarget'. The tests force the whole
+-- rendered message, because the field is lazy: the wrong constructor
+-- would carry the throwing subtraction unforced and blow up only here.
 module Props.NegativeWireValues (negativeWireValuesTests) where
 
 import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffInstruction(..), bsdiffMagicBytes)
@@ -29,9 +39,16 @@ import qualified Slap.BSDiff.Parse as BSDiff
 import Slap.NINJA2.Types (NINJA2Patch(..), NINJA2Record(..))
 import Slap.NINJA2.Apply (applyNINJA2)
 import qualified Slap.NINJA2.Parse as NINJA2
+import Slap.APSN64.Types (APSN64Patch(..), APSN64Header(..), APSN64Record(..),
+                          APSPatchType(..), apsN64DestinationSizeFromParsed)
+import Slap.APSN64.Apply (applyAPSN64)
+import Slap.PPF3.Types (PPF3Patch(..), PPF3Record(..), PPF3ImageType(..))
+import Slap.PPF3.Apply (undoPPF3)
 import Slap.Create (createNINJA2)
 import Slap.Status (SlapError(..), ApplyError(..), CreateResult(..),
                     BSDiffHeaderMalformation(..), Parsed(..), renderSlapError)
+import Control.Exception (evaluate)
+import qualified Data.Text as Text
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Delta(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
@@ -40,6 +57,7 @@ import qualified Slap.Text as SlapText
 import Props.Helpers (emptyNINJA2Metadata, assertFailureT)
 
 import qualified Data.ByteString as ByteString
+import qualified Data.Vector as Vector
 import Data.ByteString.Builder (toLazyByteString, byteString)
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Int (Int64)
@@ -59,7 +77,77 @@ negativeWireValuesTests = testGroup "hostile wire values are named, not mislabel
       bsdiffHostileSizesCannotWrap
   , testCase "NINJA2: a negative record offset is refused as a negative record offset"
       ninja2NegativeRecordOffset
+  , testCase "APSN64: a record starting past the destination renders, not crashes"
+      apsn64AbsoluteWritePastTarget
+  , testCase "PPF3 undo: a record starting past the modified file renders, not crashes"
+      ppf3UndoAbsoluteWritePastTarget
   ]
+
+-- | An APS-N64 patch whose destination is 10 bytes and whose single
+-- record writes 5 bytes at offset 100 — the start alone is 90 past the
+-- end. Apply must refuse with 'ApplyAbsoluteWritePastTarget'.
+apsn64AbsoluteWritePastTarget :: Assertion
+apsn64AbsoluteWritePastTarget =
+  assertAbsoluteWritePastTarget "APSN64" $
+    applyAPSN64 apsn64OutOfBoundsPatch (InputFileContents ByteString.empty)
+
+apsn64OutOfBoundsPatch :: APSN64Patch
+apsn64OutOfBoundsPatch = APSN64Patch header (Vector.singleton record)
+  where
+    header = APSN64Header
+      { apsN64PatchType       = APSSimple
+      , apsN64Description     = SlapText.EncodedText SlapText.EncodingUtf8 Text.empty
+      , apsN64ImageFormat     = Nothing
+      , apsN64CartId          = Nothing
+      , apsN64Country         = Nothing
+      , apsN64Crc             = Nothing
+      , apsN64DestinationSize = apsN64DestinationSizeFromParsed 10
+      }
+    record = APSN64Normal (Offset 100) (ByteString.pack [1, 2, 3, 4, 5])
+
+-- | A PPF3 patch carrying undo data whose one record's undo write lands
+-- at offset 100, run against a 10-byte modified file: the everyday
+-- undo-against-the-wrong-file mistake. Undo must refuse with
+-- 'ApplyAbsoluteWritePastTarget'.
+ppf3UndoAbsoluteWritePastTarget :: Assertion
+ppf3UndoAbsoluteWritePastTarget =
+  assertAbsoluteWritePastTarget "PPF3 undo" $
+    undoPPF3 ppf3OutOfBoundsUndoPatch (OutputFileContents (ByteString.replicate 10 0x00))
+
+ppf3OutOfBoundsUndoPatch :: PPF3Patch
+ppf3OutOfBoundsUndoPatch = PPF3Patch
+  { ppf3Description     = SlapText.EncodedText SlapText.EncodingUtf8 Text.empty
+  , ppf3ImageType       = BIN
+  , ppf3HasUndo         = True
+  , ppf3ValidationBlock = Nothing
+  , ppf3Records         = [PPF3Record (Offset 100) payload (Just payload)]
+  , ppf3FileId          = Nothing
+  }
+  where
+    payload = ByteString.pack [1, 2, 3, 4, 5]
+
+-- | Match the absolute-write refusal and force the whole rendered
+-- message. Forcing is the point: the pre-fix 'ApplyWritesPastTarget'
+-- carried a throwing remaining-length subtraction that a lazy field
+-- left unforced until render.
+assertAbsoluteWritePastTarget :: Text.Text -> Either SlapError a -> Assertion
+assertAbsoluteWritePastTarget label result =
+  case result of
+    Left err | isAbsoluteWritePastTarget err -> do
+      rendered <- evaluate (renderSlapError err)
+      _        <- evaluate (Text.length rendered)
+      assertBool (Text.unpack label <> ": rendered refusal is empty")
+                 (not (Text.null rendered))
+    Left other -> assertFailureT
+      (label <> ": expected an absolute-write-past-target refusal, got: "
+             <> renderSlapError other)
+    Right _ -> assertFailureT
+      (label <> ": expected the out-of-bounds write to be refused, but it succeeded")
+
+isAbsoluteWritePastTarget :: SlapError -> Bool
+isAbsoluteWritePastTarget (ApplyFailed _ ApplyAbsoluteWritePastTarget{}) = True
+isAbsoluteWritePastTarget (UndoFailed  _ ApplyAbsoluteWritePastTarget{}) = True
+isAbsoluteWritePastTarget _                                              = False
 
 -- | A bsdiff patch whose single instruction declares an add region of negative length.
 -- Apply must refuse with 'ApplyNegativeControlLength', naming the malformed instruction, not fold the negative length into a bounds verdict.

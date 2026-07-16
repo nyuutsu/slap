@@ -77,10 +77,8 @@ data ApplyError
   -- | The extra-stream mirror of 'ApplyDiffReadOutOfBounds', for BSDiff COPY.
   | ApplyExtraReadOutOfBounds ActionIndex Offset FileSize
 
-  -- | A record's wire-declared absolute write position plus payload extends past the declared target end ('FileSize').
-  -- For formats that name absolute positions on the wire — NINJA2's XOR records and overflow-append step, APSGBA's blocks —
-  -- where the start alone can already sit past the end,
-  -- unlike 'ApplyWritesPastTarget', whose forward-walking cursor always sits within the buffer.
+  -- | An absolute wire write position whose payload runs past the target's end — the start alone can sit past it,
+  -- unlike 'ApplyWritesPastTarget' and its always-in-buffer forward cursor.
   | ApplyAbsoluteWritePastTarget ActionIndex Offset RequestedLength FileSize
 
   deriving (Show, Eq, Generic)
@@ -172,5 +170,5 @@ renderApplyError (ApplyAbsoluteWritePastTarget actionIndex writeStart (Requested
   <> " writes " <> renderAsText (unLength payloadLength)
   <> plural (unLength payloadLength) " byte" " bytes"
   <> " at offset 0x" <> renderHexAsText (unOffset writeStart)
-  <> ", running past the output's declared size of "
-  <> renderAsText (unFileSize targetSize) <> " bytes"
+  <> ", running past the output's "
+  <> renderAsText (unFileSize targetSize) <> "-byte end"

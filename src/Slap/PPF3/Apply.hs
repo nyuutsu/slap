@@ -115,14 +115,15 @@ undoPPF3 patch (OutputFileContents input)
   | inputLength == 0 =
       Right (InputFileContents ByteString.empty)
   | otherwise = unsafePerformIO $ do
-      (result, maybeErr) <- fillNewBuffer (FileSize (fromIntegral inputLength)) $ \outputPointer -> do
+      (result, maybeErr) <- fillNewBuffer inputFileSize $ \outputPointer -> do
         copyRegion outputPointer (Offset 0) input (Offset 0) (Length (fromIntegral inputLength))
         undoRecordStream outputPointer firstAction (ppf3Records patch)
       pure $ case maybeErr of
         Just applyErr -> Left (UndoFailed LabelPPF3 applyErr)
         Nothing       -> Right (InputFileContents result)
   where
-    inputLength = ByteString.length input
+    inputLength   = ByteString.length input
+    inputFileSize = FileSize (fromIntegral inputLength)
 
     undoRecordStream :: Ptr Word8
                      -> ActionIndex -> [PPF3Record] -> IO (Maybe ApplyError)
@@ -132,11 +133,11 @@ undoPPF3 patch (OutputFileContents input)
           undoRecordStream outputPointer (nextAction recordIndex) rest
       | unOffset writeOffset < 0 =
           pure (Just (ApplyNegativeRecordOffset recordIndex writeOffset))
-      | not (fitsWithin writeOffset payloadLength (FileSize (fromIntegral inputLength))) =
-          pure (Just (ApplyWritesPastTarget recordIndex
+      | not (fitsWithin writeOffset payloadLength inputFileSize) =
+          pure (Just (ApplyAbsoluteWritePastTarget recordIndex
+                       writeOffset
                        (RequestedLength payloadLength)
-                       (RemainingLength
-                          (remainingFromOffset writeOffset (FileSize (fromIntegral inputLength))))))
+                       inputFileSize))
       | otherwise = do
           copyRegion outputPointer writeOffset undoPayload (Offset 0) payloadLength
           undoRecordStream outputPointer (nextAction recordIndex) rest

@@ -12,7 +12,7 @@ import Slap.Status (SlapError(..), ApplyError(..), SlapAdvisory(..),
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex(unActionIndex),
-                     RequestedLength(..), RemainingLength(..),
+                     RequestedLength(..),
                      DeclaredTargetSize(..), NaturalTargetSize(..),
                      Cursor(..), fitsWithin, offsetToFileSize, remainingFromOffset,
                      subtractLength, byteLength, byteFileSize,
@@ -211,19 +211,16 @@ applyIPS (InputFileContents source) patch
               applyRecordStream (nextAction recordIndex)
 
         -- | Record handler for the three non-Honored dispositions.
-        -- Strict bounds check; 'ApplyWritesPastTarget' on overrun.
-        -- Structurally unreachable for these dispositions
-        -- (effective >= maxRecordEnd), kept as a
-        -- defensive total guard.
+        -- Structurally unreachable — for these, effective >= maxRecordEnd — but kept as a defensive total guard.
         handleStrict :: ActionIndex -> IPSRecord -> IPSApply (Maybe ApplyError)
         handleStrict recordIndex record =
-          let writePosition  = ipsRecordOffset record
-              writeLength    = recordPayloadLength record
-              remainingSpace = remainingFromOffset writePosition effectiveSize
+          let writePosition = ipsRecordOffset record
+              writeLength   = recordPayloadLength record
           in if not (fitsWithin writePosition writeLength effectiveSize)
-               then pure (Just (ApplyWritesPastTarget recordIndex
+               then pure (Just (ApplyAbsoluteWritePastTarget recordIndex
+                                  writePosition
                                   (RequestedLength writeLength)
-                                  (RemainingLength remainingSpace)))
+                                  effectiveSize))
                else do
                  liftIO (writeRecord record)
                  applyRecordStream (nextAction recordIndex)
