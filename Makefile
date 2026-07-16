@@ -5,7 +5,12 @@ PREFIX    ?= $(HOME)/.local
 # Match system make.conf: compile Rust for the host CPU, so crc32fast picks up CLMUL/PCLMULQDQ at compile time.
 export RUSTFLAGS += -C target-cpu=native
 
-.PHONY: all rusty-slap cabal install test haddock wasm wasm-link-check wasm-parity-check wasm-worker-rig rusty-slap-wasm clean
+# Release (`make`, `make test`) builds -O2 (from cabal.project) with lean DWARF. `make dev` overrides for a
+# fast, backtrace-fat loop: -O0 plus the IPE info-table map, threaded onto the shared cabal step below.
+CABAL_BUILD_FLAGS ?=
+DEV_GHC_OPTIONS   := -O0 -finfo-table-map -fdistinct-constructor-tables
+
+.PHONY: all rusty-slap cabal dev dev-test install test haddock wasm wasm-link-check wasm-parity-check wasm-worker-rig rusty-slap-wasm clean
 
 all: rusty-slap cabal
 
@@ -23,7 +28,16 @@ cabal: rusty-slap
 	@if [ ! -f .rusty-stamp ] || [ $(RUSTY_A) -nt .rusty-stamp ]; then \
 	  cabal clean 2>/dev/null; touch .rusty-stamp; \
 	fi
-	cabal build
+	cabal build $(CABAL_BUILD_FLAGS)
+
+# Fast, fat dev loop: -O0 (overriding the -O2 default) plus IPE backtraces. Reuses cabal's staticlib prep.
+dev: CABAL_BUILD_FLAGS = --ghc-options='$(DEV_GHC_OPTIONS)'
+dev: cabal
+
+dev-test: CABAL_BUILD_FLAGS = --ghc-options='$(DEV_GHC_OPTIONS)'
+dev-test: cabal
+	cabal test props --ghc-options='$(DEV_GHC_OPTIONS)'
+	cabal test integration --ghc-options='$(DEV_GHC_OPTIONS)' --test-options="--num-threads=1"
 
 # Copy the built binary onto your PATH. PREFIX defaults to ~/.local; override it (PREFIX=/usr/local may need sudo).
 install: cabal

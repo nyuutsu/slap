@@ -1,7 +1,12 @@
 packages: .
 
--- tasty-stats and encoding cap dependencies below the versions we build
--- against; both build fine past those caps, so relax them here.
+-- tasty-stats and encoding cap dependencies below the versions we build against; both build fine past those caps, so relax them here.
 allow-newer:
     tasty-stats:*
   , encoding:containers
+
+-- Build at -O2. The components already ask for it in their ghc-options; declaring it here makes the reported build profile say -O2 too.
+optimization: 2
+
+-- One shared job pool for the whole build, sized to the machine's cores, so the big library stops compiling on a single core.
+semaphore: True

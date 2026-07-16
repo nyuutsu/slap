@@ -12,7 +12,13 @@ author:        nyuu
 build-type:    Simple
 tested-with:   GHC == 9.10.*, GHC == 9.12.*, GHC == 9.14.*
 
+common shared
+  default-language: GHC2024
+  ghc-options:      -Wall -Werror -Wname-shadowing
+  build-depends:    base >= 4.20 && < 5
+
 library slap-internal
+  import:           shared
   exposed-modules:
       Slap.Apply
     , Slap.Archive.Types
@@ -162,12 +168,10 @@ library slap-internal
     , Slap.PPF4.Parse
     , Slap.PPF4.Types
   hs-source-dirs:   src
-  default-language: GHC2024
-  ghc-options:      -Wall -Werror -Wname-shadowing -O2 -g3
+  ghc-options:      -g2
   extra-libraries:  rusty_slap
   build-depends:
-      base                 >= 4.20 && < 5
-    , aeson                >= 2.1  && < 2.3
+      aeson                >= 2.1  && < 2.3
     , array                >= 0.5
     , base64-bytestring    >= 1.2  && < 1.3
     , bytestring           >= 0.11
@@ -182,15 +186,14 @@ library slap-internal
     , vector-algorithms    >= 0.9  && < 0.10
 
 library slap-web
+  import:           shared
   exposed-modules:  Slap.Web
                   , Slap.Web.Declaration
                   , Slap.Web.Envelope
   hs-source-dirs:   web
-  default-language: GHC2024
-  ghc-options:      -Wall -Werror -Wname-shadowing -O2 -g3
+  ghc-options:      -g2
   build-depends:
-      base                 >= 4.20 && < 5
-    , aeson                >= 2.1  && < 2.3
+      aeson                >= 2.1  && < 2.3
     , bytestring           >= 0.11
     , containers           >= 0.6
     , slap:slap-internal
@@ -199,13 +202,12 @@ library slap-web
 -- The reactor over slap-web. Under wasm it is the browser-facing artifact: -no-hs-main, exports only.
 -- Built natively it is the parity check's probe; Main.hs holds that story.
 executable slap-web-reactor
+  import:           shared
   main-is:          Main.hs
   hs-source-dirs:   web-reactor
-  default-language: GHC2024
-  ghc-options:      -Wall -Werror -Wname-shadowing -O2 -g3
+  ghc-options:      -g2
   build-depends:
-      base                 >= 4.20 && < 5
-    , aeson                >= 2.1  && < 2.3
+      aeson                >= 2.1  && < 2.3
     , bytestring           >= 0.11
     , slap:slap-internal
     , slap:slap-web
@@ -221,17 +223,16 @@ executable slap-web-reactor
                  "-optl-Wl,--export=slap_web_create_patch" "-optl-Wl,--export=slap_web_convert_patch"
 
 executable slap
+  import:           shared
   main-is:          Main.hs
   other-modules:    CLI
                   , Archive
                   , Archive.Zip
   hs-source-dirs:   app
-  default-language: GHC2024
-  ghc-options:      -Wall -Werror -Wpartial-fields -Wname-shadowing -O2 -g3
+  ghc-options:      -Wpartial-fields -g2
   extra-libraries:  rusty_slap
   build-depends:
-      base                 >= 4.20 && < 5
-    , bytestring           >= 0.11
+      bytestring           >= 0.11
     , containers           >= 0.6
     , directory            >= 1.3
     , filepath             >= 1.4
@@ -242,6 +243,7 @@ executable slap
     , text                 >= 2.0
 
 test-suite props
+  import:           shared
   type:             exitcode-stdio-1.0
   main-is:          Props.hs
   other-modules:    Props.BPSMetadata
@@ -270,11 +272,9 @@ test-suite props
                   , Props.Web
                   , Props.XDelta1Conformance
   hs-source-dirs:   test
-  default-language: GHC2024
-  ghc-options:      -Wall -Werror -Wname-shadowing -threaded -rtsopts "-with-rtsopts=-N"
+  ghc-options:      -threaded -rtsopts "-with-rtsopts=-N"
   build-depends:
-      base                 >= 4.20 && < 5
-    , aeson                >= 2.1  && < 2.3
+      aeson                >= 2.1  && < 2.3
     , array                >= 0.5
     , bytestring           >= 0.11
     , directory            >= 1.3
@@ -291,6 +291,7 @@ test-suite props
     , vector               >= 0.13 && < 0.14
 
 test-suite integration
+  import:           shared
   type:             exitcode-stdio-1.0
   main-is:          Integration.hs
   hs-source-dirs:   test
@@ -309,11 +310,9 @@ test-suite integration
                   , Integration.FailureMode
                   , Integration.VCDIFFApply
                   , Integration.XDelta1Names
-  default-language: GHC2024
-  ghc-options:      -Wall -Werror -Wname-shadowing -threaded -rtsopts "-with-rtsopts=-N"
+  ghc-options:      -threaded -rtsopts "-with-rtsopts=-N"
   build-depends:
-      base          >= 4.20 && < 5
-    , bytestring    >= 0.11
+      bytestring    >= 0.11
     , containers    >= 0.6
     , directory     >= 1.3
     , filepath      >= 1.4

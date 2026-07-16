@@ -89,6 +89,7 @@ import System.IO.Error (isDoesNotExistError, ioeGetErrorString)
 import GHC.IO.Encoding (setFileSystemEncoding, setLocaleEncoding, utf8)
 import GHC.IO.Encoding.UTF8 (mkUTF8)
 import GHC.IO.Encoding.Failure (CodingFailureMode(TransliterateCodingFailure, RoundtripFailure))
+import Control.Exception.Backtrace (setBacktraceMechanismState, BacktraceMechanism(IPEBacktrace))
 
 ----------------------------------------------------------------------------
 -- Entry point and dispatch
@@ -96,6 +97,8 @@ import GHC.IO.Encoding.Failure (CodingFailureMode(TransliterateCodingFailure, Ro
 
 main :: IO ()
 main = do
+  -- Source-located backtraces on an uncaught exception, when built with the info-table map (make dev); inert otherwise.
+  setBacktraceMechanismState IPEBacktrace True
   -- Slap is a UTF-8 program on both sides:
   -- the filesystem pin decodes arguments and path bytes as UTF-8 (RoundtripFailure, so an odd non-UTF-8 name still round-trips),
   -- setStdoutAndStderrToLenientUtf8 pins output, so LANG/LC_CTYPE cannot change how slap reads its arguments or what it prints.
