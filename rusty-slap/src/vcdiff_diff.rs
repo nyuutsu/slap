@@ -157,7 +157,13 @@ fn greedy_cover(
     while target_position < target_length {
         match worthwhile_match_at(target_position, literal_start) {
             Some(taken) => {
-                let copy_start = target_position - taken.starts_earlier_by;
+                // The engine's contract: backward reach never passes the
+                // literal floor. A reach past it would double-cover
+                // bytes, quietly, so the parse holds the engine to it.
+                let copy_start = target_position
+                    .checked_sub(taken.starts_earlier_by)
+                    .filter(|start| *start >= literal_start)
+                    .expect("vcdiff cover: match reaches back past the pending literal floor (engine contract violation)");
                 flush_literal(&mut segments, literal_start, copy_start);
                 segments.push(CoverSegment {
                     kind: SegmentKind::Copy,

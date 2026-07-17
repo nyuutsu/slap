@@ -60,7 +60,7 @@ pub fn gdiff_diff(source: &[u8], target: &[u8]) -> Result<GDiffDiffOutput, Strin
     let mut state   = EncoderState::initial();
     while state.target_position < target.len() {
         match matcher.match_at(target, state.target_position, state.pending_literal_floor()) {
-            Some(found) => state.emit_copy(target, found),
+            Some(found) => state.emit_copy(target, found)?,
             None        => state.accumulate_literal_byte(),
         }
     }
@@ -107,9 +107,19 @@ impl EncoderState {
     /// Record a copy. Any pending literal run is flushed first —
     /// shortened by the bytes the match reached back to absorb, and
     /// dropped whole when it absorbed them all — so the DATA command
-    /// lands before the copy in emission order.
-    fn emit_copy(&mut self, target: &[u8], found: SourceMatch) {
-        let match_start = self.target_position - found.starts_earlier_by;
+    /// lands before the copy in emission order. The match's backward
+    /// reach is held to the pending literal floor (the matcher's
+    /// contract); a reach past it would double-cover bytes, quietly.
+    fn emit_copy(&mut self, target: &[u8], found: SourceMatch) -> Result<(), String> {
+        let match_start = self
+            .target_position
+            .checked_sub(found.starts_earlier_by)
+            .filter(|start| *start >= self.pending_literal_floor())
+            .ok_or_else(|| {
+                "gdiff differ: match reaches back past the pending literal floor \
+                 (internal invariant violation)"
+                    .to_string()
+            })?;
         if let Some(literal_run_start) = self.literal_run_start.take() {
             if match_start > literal_run_start {
                 self.flush_literal_run(&target[literal_run_start..match_start]);
@@ -121,6 +131,7 @@ impl EncoderState {
             length:        found.length as u64,
         });
         self.target_position = match_start + found.length;
+        Ok(())
     }
 
     /// Append `literal_bytes` to the data segment and emit one DATA

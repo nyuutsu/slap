@@ -114,10 +114,11 @@ struct MatchEmission {
     /// match.
     file_position: usize,
     length: usize,
-    /// How many bytes the match reached back into the pending
-    /// `TargetRead`: the emission begins this many bytes before the
-    /// query position, and the flush shortens to match.
-    starts_earlier_by: usize,
+    /// Output-relative position where the emission begins: the query
+    /// position, minus however far the match reached back into the
+    /// pending `TargetRead` (the flush shortens to match). Minted only
+    /// by [`classify_match`], which holds it to the literal floor.
+    output_start: usize,
 }
 
 /// What the encoder decided to do at the current output position.
@@ -174,7 +175,7 @@ pub fn bps_diff(source: &[u8], target: &[u8]) -> Vec<u8> {
 /// Classify a finder candidate into a concrete [`MatchEmission`] and
 /// decide whether emitting it beats accumulating a literal byte.
 fn classify_and_decide(found: FoundMatch, state: &EncoderState) -> LoopStep {
-    let emission = classify_match(found, state.output_position);
+    let emission = classify_match(found, state.output_position, state.pending_literal_floor());
     if match_beats_literal(&emission, state) {
         LoopStep::EmitMatch(emission)
     } else {
@@ -187,18 +188,28 @@ fn classify_and_decide(found: FoundMatch, state: &EncoderState) -> LoopStep {
 /// where the emission begins is the offset-free `SourceRead`, and
 /// anywhere else a `SourceCopy`. Backward reach slides the read and the
 /// emission start together, so it never flips this classification.
-fn classify_match(found: FoundMatch, output_position: usize) -> MatchEmission {
-    let emission_start = output_position - found.starts_earlier_by;
+/// The emission's start is minted here, held to the matcher's contract
+/// — backward reach never passes the pending literal floor — because a
+/// start below the floor would double-cover bytes downstream, quietly.
+fn classify_match(
+    found: FoundMatch,
+    output_position: usize,
+    pending_literal_floor: usize,
+) -> MatchEmission {
+    let output_start = output_position
+        .checked_sub(found.starts_earlier_by)
+        .filter(|start| *start >= pending_literal_floor)
+        .expect("bps differ: match reaches back past the pending literal floor (matcher contract violation)");
     let action = match found.side {
         MatchSide::FromWrittenTarget => BpsAction::TargetCopy,
-        MatchSide::FromSource if found.file_position == emission_start => BpsAction::SourceRead,
+        MatchSide::FromSource if found.file_position == output_start => BpsAction::SourceRead,
         MatchSide::FromSource => BpsAction::SourceCopy,
     };
     MatchEmission {
         action,
         file_position: found.file_position,
         length: found.length,
-        starts_earlier_by: found.starts_earlier_by,
+        output_start,
     }
 }
 
@@ -238,11 +249,10 @@ fn match_byte_cost(action: BpsAction, file_position: usize, state: &EncoderState
 ///   the match strictly saves bytes, never when it merely ties.
 fn match_beats_literal(emission: &MatchEmission, state: &EncoderState) -> bool {
     let action_byte_cost = match_byte_cost(emission.action, emission.file_position, state);
-    let emission_start = state.output_position - emission.starts_earlier_by;
     let pending_flush_cost = usize::from(
         state
             .pending_target_read_start
-            .is_some_and(|literal_run_start| emission_start > literal_run_start),
+            .is_some_and(|literal_run_start| emission.output_start > literal_run_start),
     );
     let single_byte_tiebreaker = usize::from(emission.length == 1);
     let break_even_length = 1 + action_byte_cost + pending_flush_cost + single_byte_tiebreaker;
@@ -262,8 +272,7 @@ fn emit_match(
     target: &[u8],
     emission: MatchEmission,
 ) {
-    let emission_start = state.output_position - emission.starts_earlier_by;
-    flush_pending_target_read_before(out, state, target, emission_start);
+    flush_pending_target_read_before(out, state, target, emission.output_start);
     let offset_payload = match emission.action {
         BpsAction::SourceRead | BpsAction::TargetRead => None,
         BpsAction::SourceCopy => Some(encode_delta(
@@ -285,7 +294,7 @@ fn emit_match(
         }
         BpsAction::SourceRead | BpsAction::TargetRead => {}
     }
-    state.output_position = emission_start + emission.length;
+    state.output_position = emission.output_start + emission.length;
 }
 
 /// Emit the byuu-varint header for `action` of `length` bytes, then the
