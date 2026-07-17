@@ -389,7 +389,7 @@ The per-test durations are logged to `test-results/`.
 
 [^CONVERTS]: Conversion is *pretty close to being* [sugar](https://en.wikipedia.org/wiki/Syntactic_sugar) for "use the apply mode to apply `example.patch` to `input.rom`, yielding `output.rom`, then use create mode, `input.rom`, and `output.rom` to create a patch in the new format". It probably is not directly useful to most users but was extremely helpful as a whetstone for the program's design. Also it isn't *quite* the same, in that if there is a metadata field that's in both the input and output formats, it is safely transplanted into the new patch, and so doesn't need to be re-specified.
 
-[^PPF4]: [Pyriel](https://www.romhacking.net/community/1288/) distributes their patches in files that have the extension `.ppf`. The [magic](https://en.wikipedia.org/wiki/List_of_file_signatures) says it is of type: `PPF4`. It allows growing the output file.
+[^PPF4]: [Pyriell](https://www.romhacking.net/community/1288/) distributes their patches in files that have the extension `.ppf`. The [magic](https://en.wikipedia.org/wiki/List_of_file_signatures) says it is of type: `PPF4`. It allows growing the output file.
 
 [^VCDIFF]: Okay, okay, so: this is actually novel. I *think* slap is the first[^GOOGLE] tool to *emit* patches that use either, let alone both, of these features: custom code tables, and, using `vcd_target`. The latter only becomes applicable if you go out of your way to request multiple windows in the patch. What these *do* is a bit beyond the scope of this readme, but, the post linked at the top of the file *should* explain this, along with a lot of other things.
 

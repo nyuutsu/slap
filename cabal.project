@@ -5,8 +5,12 @@ allow-newer:
     tasty-stats:*
   , encoding:containers
 
--- Build at -O2. The components already ask for it in their ghc-options; declaring it here makes the reported build profile say -O2 too.
-optimization: 2
+-- Everyday builds iterate at -O0; `make optimized` asks for -O2, which cabal keeps in its own output directory.
+optimization: 0
+
+-- Info-table provenance, so backtraces name real constructors.
+package slap
+  ghc-options: -finfo-table-map -fdistinct-constructor-tables
 
 -- One shared job pool for the whole build, sized to the machine's cores, so the big library stops compiling on a single core.
 semaphore: True

@@ -74,6 +74,8 @@ import Data.Char (isDigit, toLower)
 import Data.List (intercalate, sortOn)
 import Options.Applicative
 import Options.Applicative.Help.Pretty (pretty, vcat)
+import Data.Version (showVersion)
+import qualified Paths_slap
 
 ----------------------------------------------------------------------------
 -- The parsed command surface
@@ -318,13 +320,21 @@ encodingsInfo = infoOption renderAdvertisedEncodings
   ( long "encodings"
  <> help "List the text encodings slap can decode (for --metadata-encoding) and exit" )
 
+-- | The top-level @--version@ flag: print slap's version and exit. The string comes from the cabal file via 'Paths_slap', so it never drifts.
+versionInfo :: Parser (a -> a)
+versionInfo = infoOption ("slap " ++ showVersion Paths_slap.version)
+  ( long "version"
+ <> help "Show the version and exit" )
+
 options :: ParserInfo Command
-options = info (commandParser <**> encodingsInfo <**> helper)
+options = info (commandParser <**> encodingsInfo <**> versionInfo <**> helper)
   (fullDesc <> header "slap - multi-format ROM patching tool"
-            <> progDesc "Apply, undo, create, convert, and inspect ROM patches. Format is auto-detected."
+            <> progDesc "Apply, undo, create, convert, and inspect ROM patches. Format is auto-detected"
             <> footerDoc (Just (vcat
                 [ pretty ("Quick start:  slap apply PATCH ROM" :: String)
                 , pretty ("              slap apply patch.bps game.rom -o patched.rom" :: String)
+                , pretty ("" :: String)
+                , pretty ("Run 'slap COMMAND --help' for a command's options" :: String)
                 ])))
 
 commandParser :: Parser Command
@@ -357,7 +367,7 @@ metadataEncodingParser = option (eitherReader resolveMetadataEncoding)
  <> help ("Interpret text fields whose encoding the patch format leaves"
        ++ " undeclared (PPF descriptions, xdelta1 names, DPS metadata,"
        ++ " NINJA2 mode-0 fields) as ENC (e.g. shift-jis, cp1252; see"
-       ++ " --encodings). Default: utf8.") )
+       ++ " --encodings). Default: utf8") )
 
 -- | Resolve a @--metadata-encoding@ value to an 'EncodingName', or name the value that didn't resolve.
 -- Write is always UTF-8, so this only ever feeds the read side.
@@ -373,7 +383,7 @@ explainParser = do
     verbosity          <- flag Summary FullRecords
                             (long "records" <> help "Show full record-by-record dump instead of summary")
     maybeWithPath      <- optional (pathOption (long "with" <> metavar "SOURCE"
-                            <> help "Source file (resolves delta/copy operations in output)"))
+                            <> help "Source file, so explain can resolve copies and deltas against it, not just describe the structure"))
     fileReadingOptions <- fileReadingOptionsParser
     dialects           <- dialectsParser
     metadataEncoding   <- metadataEncodingParser
@@ -414,7 +424,7 @@ verificationPolicyParser = flag EnforceVerification SkipVerification
 -- | Parser for the three mutually exclusive header lanes; mixing the two flags errors at parse time.
 headerDirectiveParser :: Parser InputHeaderDirective
 headerDirectiveParser = asum
-  [ AddHeader    <$> consoleHeaderOption "add-header"    "Prepend a blank CONSOLE header to the input before applying"
+  [ AddHeader    <$> consoleHeaderOption "add-header"    "Add a blank CONSOLE header to the front of the input before applying"
   , RemoveHeader <$> consoleHeaderOption "remove-header" "Remove the input's leading CONSOLE header before applying"
   , pure TakeInputAsIs
   ]
@@ -448,9 +458,9 @@ applyOutputParser = chooseWritingLane
     outputPathOption :: Parser FilePath
     outputPathOption =
           pathOption (long "output" <> short 'o' <> metavar "FILE"
-            <> help "Write patched output to FILE. Or pass it as the third argument.")
+            <> help "Write patched output to FILE. Or pass it as the third argument")
       <|> pathArgument (metavar "OUTPUT"
-            <> help "Write patched output to this path. Or pass it via -o FILE.")
+            <> help "Write patched output to this path. Or pass it via -o FILE")
 
     overwritePolicyFlag :: Parser OverwritePolicy
     overwritePolicyFlag = flag RefuseOverwrite ForceOverwrite
@@ -495,9 +505,9 @@ undoOutputParser = chooseWritingLane
     outputPathOption :: Parser FilePath
     outputPathOption =
           pathOption (long "output" <> short 'o' <> metavar "FILE"
-            <> help "Write reverted output to FILE. Or pass it as the third argument.")
+            <> help "Write reverted output to FILE. Or pass it as the third argument")
       <|> pathArgument (metavar "OUTPUT"
-            <> help "Write reverted output to this path. Or pass it via -o FILE.")
+            <> help "Write reverted output to this path. Or pass it via -o FILE")
 
     overwritePolicyFlag :: Parser OverwritePolicy
     overwritePolicyFlag = flag RefuseOverwrite ForceOverwrite
@@ -577,8 +587,8 @@ constraintsParser :: Parser RequestedConstraints
 constraintsParser = do
   smcShape <- flag AllowAnyTruncationShape RequireSMCShapedTruncation
     ( long (Text.unpack (constraintFlagName SMCShapeConstraint))
-   <> help ("Refuse to emit an IPS truncation marker whose declared size"
-         ++ " doesn't satisfy SNESTool's (size & 0xFFF) == 0x200 shape filter")
+   <> help ("Refuse to emit an IPS truncation marker unless the output size is one SNESTool accepts:"
+         ++ " a multiple of 4096 plus 512, the shape a copier-headered SNES ROM has (size & 0xFFF == 0x200)")
     )
   pure RequestedConstraints
     { requestedSMCShape = smcShape
@@ -590,11 +600,10 @@ dialectsParser :: Parser RequestedDialects
 dialectsParser = do
   ppf1Origin <- flag PPF1OriginPC PPF1OriginAmiga
     ( long (Text.unpack (dialectFlagName PPF1OriginAxis))
-   <> help ("Decode (apply/undo/info/explain/convert)"
-         ++ " PPF1 offsets as big-endian rather than little-endian. PPF1 has no"
-         ++ " on-disk endianness marker; the reference applier reads offsets in"
-         ++ " host-native byte order, making PC and Amiga PPF1 patches mutually"
-         ++ " incompatible. The default (LE) is correct for every PC-origin patch.")
+   <> help ("Read PPF1 offsets as big-endian rather than little-endian. PPF1 carries no"
+         ++ " endianness marker, and the reference applier reads offsets in host byte order,"
+         ++ " so PC and Amiga PPF1 patches don't interoperate."
+         ++ " The default (little-endian) is right for every PC-origin patch")
     )
   pure RequestedDialects
     { requestedPPF1Origin = ppf1Origin
@@ -606,7 +615,7 @@ dialectsParser = do
 convertWithSourceParser :: Parser ConvertWithSource
 convertWithSourceParser = ConvertWithSource
   <$> pathOption (long "with" <> metavar "INPUT"
-        <> help "Input file: enables apply-and-recreate conversion and input hash verification")
+        <> help "Input file: lets convert apply the patch and rebuild it in the target format (needed for targets direct conversion can't reach), and verify the input's stored hashes")
   <*> flag EnforceVerification SkipVerification
         (long "no-verify"
           <> help "Skip input hash verification (requires --with INPUT; mismatches become warnings)")
@@ -703,7 +712,7 @@ requestedMetadataParser = do
     windowSize        <- optional (option (eitherReader parseWindowSize) (metadataFlag MetadataWindowSize <> metavar "SIZE"
                             <> help ("VCDIFF window size: bytes with an optional k or m suffix. xdelta3 defaults to 8m;"
                                   ++ " rfc-vcdiff defaults to one window spanning the whole output."
-                                  ++ " The widespread xdelta3 3.0.11 build declines to decode windows past 16m; slap reads them fine.")))
+                                  ++ " The widespread xdelta3 3.0.11 build declines to decode windows past 16m; slap reads them fine")))
     unstable          <- optional (flag' UnstablePatch (metadataFlag MetadataStability
                             <> help "Mark patch unstable (DPS)"))
     romType           <- optional (option (eitherReader parseRomType) (metadataFlag MetadataRomType <> metavar "TYPE"
@@ -725,7 +734,7 @@ requestedMetadataParser = do
                             <> help ("Wire text mode for NINJA2 metadata: " ++ intercalate ", " (map fst textModeTokens) ++ "."
                                   ++ " Overrides any encoding declared by the source patch when supplied."
                                   ++ " When omitted: inherit from the source patch's metadata encoding"
-                                  ++ " if one is available, otherwise utf8.")))
+                                  ++ " if one is available, otherwise utf8")))
     xdelta1FromName   <- optional (option str (metadataFlag MetadataXDelta1FromName <> metavar "TEXT"
                             <> help ("Embedded source-file display label (xdelta1 only;"
                                   ++ " default: basename of input/source ROM on create,"

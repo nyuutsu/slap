@@ -11,6 +11,9 @@ web-reactor/slap-web-reactor.wasm
 *.dyn_hi
 *.dyn_o
 
+# make man / make install regenerate this from --help
+/slap.1
+
 # Per-machine cabal overrides; `make` and `make wasm` write the rusty-slap link paths here
 cabal.project.local
 cabal.project.wasm32-wasi.local

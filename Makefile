@@ -2,17 +2,14 @@ RUSTY_LIB := $(CURDIR)/rusty-slap/target/release
 RUSTY_A   := $(RUSTY_LIB)/librusty_slap.a
 PREFIX    ?= $(HOME)/.local
 
-# Match system make.conf: compile Rust for the host CPU, so crc32fast picks up CLMUL/PCLMULQDQ at compile time.
+# Match system make.conf: compile Rust for the host CPU. This Makefile builds slap for the machine it runs on.
 export RUSTFLAGS += -C target-cpu=native
 
-# Release (`make`, `make test`) builds -O2 (from cabal.project) with lean DWARF. `make dev` overrides for a
-# fast, backtrace-fat loop: -O0 plus the IPE info-table map, threaded onto the shared cabal step below.
-CABAL_BUILD_FLAGS ?=
-DEV_GHC_OPTIONS   := -O0 -finfo-table-map -fdistinct-constructor-tables
+# Two flavors, one dist-newstyle. `make` iterates at -O0 with info-table provenance (both declared in cabal.project);
+# `make optimized` asks for -O2, which cabal keeps in its own output directory, so the flavors never disturb each other.
+.PHONY: all build optimized rusty-slap staticlib-wiring install man test haddock wasm wasm-optimized wasm-staticlib-wiring wasm-link-check wasm-parity-check wasm-worker-rig rusty-slap-wasm clean
 
-.PHONY: all rusty-slap cabal dev dev-test install test haddock wasm wasm-link-check wasm-parity-check wasm-worker-rig rusty-slap-wasm clean
-
-all: rusty-slap cabal
+all: build
 
 rusty-slap:
 	cd rusty-slap && cargo build --release
@@ -20,7 +17,7 @@ rusty-slap:
 # Write cabal.project.local so cabal finds the staticlib.
 # cabal doesn't track the .a as an input, so a Rust-only change won't relink on its own.
 # .rusty-stamp forces a clean when the .a is newer.
-cabal: rusty-slap
+staticlib-wiring: rusty-slap
 	@desired='extra-lib-dirs: $(RUSTY_LIB)'; \
 	 if [ ! -f cabal.project.local ] || [ "$$(cat cabal.project.local)" != "$$desired" ]; then \
 	   printf '%s\n' "$$desired" > cabal.project.local; \
@@ -28,33 +25,42 @@ cabal: rusty-slap
 	@if [ ! -f .rusty-stamp ] || [ $(RUSTY_A) -nt .rusty-stamp ]; then \
 	  cabal clean 2>/dev/null; touch .rusty-stamp; \
 	fi
-	cabal build $(CABAL_BUILD_FLAGS)
 
-# Fast, fat dev loop: -O0 (overriding the -O2 default) plus IPE backtraces. Reuses cabal's staticlib prep.
-dev: CABAL_BUILD_FLAGS = --ghc-options='$(DEV_GHC_OPTIONS)'
-dev: cabal
+build: staticlib-wiring
+	cabal build
 
-dev-test: CABAL_BUILD_FLAGS = --ghc-options='$(DEV_GHC_OPTIONS)'
-dev-test: cabal
-	cabal test props --ghc-options='$(DEV_GHC_OPTIONS)'
-	cabal test integration --ghc-options='$(DEV_GHC_OPTIONS)' --test-options="--num-threads=1"
+# The slap binary at -O2, for benchmarking and for `install`.
+optimized: staticlib-wiring
+	cabal build exe:slap -O2
 
-# Copy the built binary onto your PATH. PREFIX defaults to ~/.local; override it (PREFIX=/usr/local may need sudo).
-install: cabal
+# Copy the optimized binary onto your PATH. PREFIX defaults to ~/.local; override it (PREFIX=/usr/local may need sudo).
+install: optimized
 	mkdir -p "$(DESTDIR)$(PREFIX)/bin"
-	cp "$$(cabal -v0 list-bin slap)" "$(DESTDIR)$(PREFIX)/bin/slap"
+	cp "$$(cabal -v0 list-bin -O2 slap)" "$(DESTDIR)$(PREFIX)/bin/slap"
 	@echo "installed slap to $(DESTDIR)$(PREFIX)/bin/slap"
+	@if command -v help2man >/dev/null 2>&1; then \
+	  mkdir -p "$(DESTDIR)$(PREFIX)/share/man/man1"; \
+	  help2man --no-info --name 'multi-format ROM patching tool' --output="$(DESTDIR)$(PREFIX)/share/man/man1/slap.1" "$$(cabal -v0 list-bin -O2 slap)"; \
+	  echo "installed man page to $(DESTDIR)$(PREFIX)/share/man/man1/slap.1"; \
+	else \
+	  echo "help2man not found; skipping man page (emerge dev-util/help2man to include it)"; \
+	fi
+
+# Generate slap.1 from the built binary's --help/--version (help2man, so it never drifts). View with: man ./slap.1
+man: build
+	help2man --no-info --name 'multi-format ROM patching tool' --output=slap.1 "$$(cabal -v0 list-bin slap)"
+	@echo "wrote slap.1  (view with: man ./slap.1)"
 
 SLAP_TEST_RESULTS ?= test-results
 
 # Run all the tests. Done using one core so as to actually track per-test execution time.
-test: cabal
+test: build
 	@mkdir -p $(SLAP_TEST_RESULTS)
 	cabal test props
 	cabal test integration --test-options="--num-threads=1 --stats=$(SLAP_TEST_RESULTS)/test-$$(date +%Y%m%d-%H%M%S).csv"
 
 # Generate Haddock, if you're into that sort of thing.
-haddock: cabal
+haddock: build
 	cabal haddock slap-internal
 
 WASM_RUSTY_LIB   := $(CURDIR)/rusty-slap/target/wasm32-wasip1/release
@@ -65,9 +71,8 @@ WASM_CABAL_FLAGS := --project-file=cabal.project.wasm32-wasi --builddir=dist-new
 rusty-slap-wasm:
 	cd rusty-slap && RUSTFLAGS='' cargo build --release --target wasm32-wasip1
 
-# Cross-compile slap-internal with the ghc-wasm toolchain (~/.ghc-wasm, installed by ghc-wasm-meta); needs the vendor/ram submodule.
-# The stale-staticlib trap from the cabal target, mirrored: a fresh wasm .a forces a clean of the wasm builddir.
-wasm: rusty-slap-wasm
+# staticlib-wiring's wasm mirror, with the stale-staticlib trap handled the same way: a fresh wasm .a forces a clean of the wasm builddir.
+wasm-staticlib-wiring: rusty-slap-wasm
 	@if [ ! -f $(HOME)/.ghc-wasm/env ]; then echo "make wasm needs the ghc-wasm toolchain at ~/.ghc-wasm (see ghc-wasm-meta)"; exit 1; fi
 	@if [ ! -f vendor/ram/ram.cabal ]; then git submodule update --init vendor/ram; fi
 	@desired='extra-lib-dirs: $(WASM_RUSTY_LIB)'; \
@@ -77,7 +82,15 @@ wasm: rusty-slap-wasm
 	@if [ ! -f .rusty-wasm-stamp ] || [ $(WASM_RUSTY_A) -nt .rusty-wasm-stamp ]; then \
 	  rm -rf dist-newstyle-wasm; touch .rusty-wasm-stamp; \
 	fi
+
+# Cross-compile slap-internal with the ghc-wasm toolchain (~/.ghc-wasm, installed by ghc-wasm-meta); needs the vendor/ram submodule.
+wasm: wasm-staticlib-wiring
 	. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal build slap-internal $(WASM_CABAL_FLAGS)
+
+# The browser artifact at -O2, for measuring what visitors would actually run.
+wasm-optimized: wasm-staticlib-wiring
+	. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal build slap-web-reactor -O2 $(WASM_CABAL_FLAGS)
+	@echo "optimized reactor at $$(. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal -v0 list-bin slap-web-reactor -O2 $(WASM_CABAL_FLAGS))"
 
 # Link the reactor over slap-web and prove one value survives the crossing: the JS host checks the CRC-32 of "123456789".
 wasm-link-check: wasm
@@ -86,7 +99,7 @@ wasm-link-check: wasm
 
 # Native and wasm inspect the same patches and must speak byte-identical envelopes; cmp judges.
 # Sweeps every dm4y fixture (one patch per format) plus a non-patch, so a refusal envelope crosses too.
-wasm-parity-check: cabal wasm
+wasm-parity-check: build wasm
 	. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal build slap-web-reactor $(WASM_CABAL_FLAGS)
 	@probe="$$(cabal -v0 list-bin slap-web-reactor)"; \
 	 reactor="$$(. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal -v0 list-bin slap-web-reactor $(WASM_CABAL_FLAGS))"; \

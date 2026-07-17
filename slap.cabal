@@ -1,11 +1,12 @@
 cabal-version: 3.0
 name:          slap
-version:       0.1.0.0
+version:       1.0.0
 synopsis:      Multi-format ROM patching tool
 description:
-  Apply, create, convert, and examine ROM patches.
-  See README for the full list.
-
+  slap applies, creates, examines, and converts ROM patches in some twenty formats,
+  including IPS, BPS, UPS, PPF, and VCDIFF. The patch format is detected automatically.
+  Available as a command-line tool and as a website.
+  
 license:       MIT
 license-file:  LICENSE
 author:        nyuu
@@ -228,6 +229,8 @@ executable slap
   other-modules:    CLI
                   , Archive
                   , Archive.Zip
+                  , Paths_slap
+  autogen-modules:  Paths_slap
   hs-source-dirs:   app
   ghc-options:      -Wpartial-fields -g2
   extra-libraries:  rusty_slap
