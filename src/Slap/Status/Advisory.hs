@@ -146,6 +146,10 @@ data SlapAdvisory
   -- The 'Length' is the fragment's byte count (one to four).
   | APSN64TrailingFragment !Length
 
+  -- | Bytes at the end of an APS-GBA patch too few to begin another record (records are a fixed 65544 bytes).
+  -- The 'Length' is the fragment's byte count — up to 65543, since a whole record's worth would parse.
+  | APSGBATrailingFragment !Length
+
   -- | Bytes at the end of a BSDiff control stream too few to form another
   -- instruction (one is 24 bytes: three 8-byte sign-magnitude values).
   -- An applier that reads triples on demand stops when the target fills and never sees such a tail;
@@ -350,6 +354,7 @@ slapAdvisorySeverity advisory = case advisory of
   NoEOFMarker{}                        -> SeverityWarning
   BSDiffTrailingControlFragment{}      -> SeverityWarning
   APSN64TrailingFragment{}             -> SeverityWarning
+  APSGBATrailingFragment{}             -> SeverityWarning
   IPS32TrailingBytes{}                 -> SeverityWarning
   -- PPF2 tolerates growth, so its apply-grow advisory is a note; the other labels warn.
   PPFApplyGrewPastSource LabelPPF2 _ _ -> SeverityNote

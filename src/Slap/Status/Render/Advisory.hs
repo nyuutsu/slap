@@ -159,6 +159,12 @@ renderSlapAdvisory (APSN64TrailingFragment (Length fragmentLength)) =
   <> plural fragmentLength " trailing byte" " trailing bytes"
   <> " after the last record (too few to begin another); not record data, ignored"
 
+renderSlapAdvisory (APSGBATrailingFragment (Length fragmentLength)) =
+  formatLabelName LabelAPSGBA
+  <> ": " <> renderAsText fragmentLength
+  <> plural fragmentLength " trailing byte" " trailing bytes"
+  <> " after the last record (too few to begin another); not record data, ignored"
+
 renderSlapAdvisory (BSDiffTrailingControlFragment (Length fragmentLength)) =
   formatLabelName LabelBSDiff
   <> ": " <> renderAsText fragmentLength

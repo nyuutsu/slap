@@ -102,9 +102,8 @@ parseN64 metadataEncoding patchType = do
         , apsN64ParseWalkWarnings = descriptionAdvisories ++ apsN64WalkAdvisories recordWalk
         }
 
--- | What the record walk finds at the cursor: input spent exactly on
--- a record boundary, a fragment too short to begin another record,
--- or a record ahead.
+-- | What the record walk finds at the cursor. The fragment case exists because a record needs at least its header:
+-- a tail shorter than that can't begin one, so it is a truncation to note, not the clean end 'StreamSpent' marks.
 data APSN64StreamHead
   = StreamSpent
   | TrailingFragment !Length

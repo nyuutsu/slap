@@ -14,7 +14,7 @@ import Slap.APSGBA.Types (APSGBAPatch(..), APSGBAHeader(..), APSGBARecord(..),
                            apsGbaMagicBytes, apsGbaBlockSize, apsGbaRecordSize,
                            apsGbaHeaderSize)
 import Slap.Checksum (CRC16(..))
-import Slap.Status (SlapError(..), Parsed(..))
+import Slap.Status (SlapError(..), SlapAdvisory(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runFormatParser, getBytes, skip, remaining, word16LE, word32LE)
@@ -46,25 +46,45 @@ parseAPSGBA (PatchFileContents input)
   | ByteString.take 4 input /= apsGbaMagicBytes =
       Left (BadMagic LabelAPSGBA (ActualMagic (ByteString.take 4 input)))
   | otherwise = do
-      patch <- runFormatParser LabelAPSGBA parseGBA input
-      Right (Parsed patch [])
+      (patch, advisories) <- runFormatParser LabelAPSGBA parseGBA input
+      Right (Parsed patch advisories)
 
-parseGBA :: ByteParser APSGBAPatch
+parseGBA :: ByteParser (APSGBAPatch, [SlapAdvisory])
 parseGBA = do
   skip (Length 4)  -- "APS1"
   sourceSize <- FileSize . fromIntegral <$> word32LE
   targetSize <- FileSize . fromIntegral <$> word32LE
-  records <- parseGBARecords
-  pure $ APSGBAPatch (APSGBAHeader sourceSize targetSize) records
+  (records, advisories) <- parseGBARecords
+  pure (APSGBAPatch (APSGBAHeader sourceSize targetSize) records, advisories)
 
-parseGBARecords :: ByteParser [APSGBARecord]
-parseGBARecords = do
-  remainingLength <- remaining
-  if unLength remainingLength < fromIntegral apsGbaRecordSize then pure []
-  else do
-    offset <- offsetFromParsed <$> word32LE
-    sourceCrc <- CRC16 <$> word16LE
-    targetCrc <- CRC16 <$> word16LE
-    xorPayload <- getBytes (Length (fromIntegral apsGbaBlockSize))
-    rest <- parseGBARecords
-    pure (APSGBARecord offset sourceCrc targetCrc xorPayload : rest)
+-- | What the record walk finds at the cursor. The fragment case exists because APS-GBA records are a fixed size:
+-- a tail shorter than one whole record is a truncation to note, not the clean end 'StreamSpent' marks.
+data APSGBAStreamHead
+  = StreamSpent
+  | TrailingFragment !Length
+  | RecordAhead
+
+parseGBARecords :: ByteParser ([APSGBARecord], [SlapAdvisory])
+parseGBARecords = walkRecords []
+  where
+    walkRecords :: [APSGBARecord] -> ByteParser ([APSGBARecord], [SlapAdvisory])
+    walkRecords accumulatedReversed = do
+      streamHead <- classifyStreamHead <$> remaining
+      case streamHead of
+        StreamSpent ->
+          pure (reverse accumulatedReversed, [])
+        TrailingFragment fragmentLength -> do
+          skip fragmentLength
+          pure (reverse accumulatedReversed, [APSGBATrailingFragment fragmentLength])
+        RecordAhead -> do
+          offset     <- offsetFromParsed <$> word32LE
+          sourceCrc  <- CRC16 <$> word16LE
+          targetCrc  <- CRC16 <$> word16LE
+          xorPayload <- getBytes (Length (fromIntegral apsGbaBlockSize))
+          walkRecords (APSGBARecord offset sourceCrc targetCrc xorPayload : accumulatedReversed)
+
+    classifyStreamHead :: Length -> APSGBAStreamHead
+    classifyStreamHead remainingLength
+      | remainingLength == Length 0                             = StreamSpent
+      | remainingLength <  Length (fromIntegral apsGbaRecordSize) = TrailingFragment remainingLength
+      | otherwise                                              = RecordAhead
