@@ -174,6 +174,9 @@ renderSlapError (NegativeSize label name (ParsedSizeValue value)) =
 renderSlapError (DecompressionFailed failure) =
   renderDecompressionFailure failure
 
+renderSlapError NestedYay0Envelope =
+  "the Yay0 wrapper holds another Yay0 wrapper, not a patch"
+
 renderSlapError (XDelta1DiffFailed (XDelta1DiffCause causeMessage)) =
   "the xdelta1 differ failed: " <> causeMessage
 

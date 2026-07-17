@@ -116,6 +116,10 @@ data SlapError
   | NegativeSize FormatLabel FieldName ParsedSizeValue
   | DecompressionFailed DecompressionFailure
 
+  -- | A Yay0 envelope unwrapped to another Yay0 envelope. Nothing ships a patch wrapped twice,
+  -- and every layer costs a full decompression, so a second envelope is refused rather than recursed into.
+  | NestedYay0Envelope
+
   | XDelta1DiffFailed XDelta1DiffCause
   | BSDiffDifferFailed BSDiffDifferCause
   | GDIFFDiffFailed GDIFFDiffCause

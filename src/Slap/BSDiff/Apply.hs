@@ -18,6 +18,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      firstAction, nextAction)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.State.Strict (StateT, evalStateT, gets, modify)
+import Data.Int (Int64)
 import Data.Word (Word8)
 import Foreign.Storable (pokeByteOff)
 import System.IO.Unsafe (unsafePerformIO)
@@ -139,12 +140,12 @@ applyBSDiff patch (InputFileContents source) =
             diffRegion = viewBytesInRange diffReadOffset addLength diffBytes
             addByteCount :: Int
             addByteCount = fromIntegral (unLength addLength)
-            sourceBase   = fromIntegral (unSignedOffset originalPosition)
+            sourceBase   = unSignedOffset originalPosition
             writeBase    = targetPointer `plusOffset` outputPosition
             writeRemainingBytes !byteOffset
               | byteOffset >= addByteCount = pure ()
               | otherwise = do
-                  let sourceByte = sourceByteOrZero source (sourceBase + byteOffset)
+                  let sourceByte = sourceByteOrZero source (sourceBase + fromIntegral byteOffset)
                       diffByte   = ByteString.index diffRegion byteOffset
                   pokeByteOff writeBase byteOffset (sourceByte + diffByte :: Word8)
                   writeRemainingBytes (byteOffset + 1)
@@ -184,17 +185,14 @@ applyBSDiff patch (InputFileContents source) =
                   applyLoop rest (nextAction actionIndex)
       in evalStateT (applyLoop (bsdiffInstructions patch) firstAction) initialCursors
 
--- | Read a byte at @index@ from the source ByteString, returning 0 for out-of-bounds indices (negative or past the end).
+-- | The bsdiff matching-window extension rule: @new[i] = old[oldpos+i] + diff[i]@, with @old@ reading as 0 outside @[0, sourceLength)@.
+-- One ADD region can thus run past either end of the source, its diff bytes carrying those target bytes verbatim.
 --
--- This is the bsdiff matching-window extension rule.
--- An ADD region forms @new[i] = old[oldpos+i] + diff[i]@; for a position past either end of the source, @old@ contributes 0,
--- so a diff byte holding the target byte verbatim reconstructs that target byte.
--- This lets one ADD region cover bytes whose source position falls outside @[0, sourceLength)@.
+-- The range check runs on the cursor's own 'Int64'; narrowing to a 32-bit 'Int' first could wrap a far-out position back into the source.
 --
--- The extension-zero semantics are the source side only.
--- The diff stream is bounds-checked per-instruction and overflow raises 'ApplyDiffReadOutOfBounds'.
-sourceByteOrZero :: ByteString -> Int -> Word8
-sourceByteOrZero bytes index
-  | index >= 0 && index < ByteString.length bytes =
-      ByteString.index bytes index
+-- Extension-zero is the source side only. The diff stream is bounds-checked per-instruction, and overflow raises 'ApplyDiffReadOutOfBounds'.
+sourceByteOrZero :: ByteString -> Int64 -> Word8
+sourceByteOrZero bytes position
+  | position >= 0 && position < fromIntegral (ByteString.length bytes) =
+      ByteString.index bytes (fromIntegral position)
   | otherwise = 0

@@ -211,26 +211,36 @@ data SomePatch = SomePatch
 
 parseSome :: RequestedDialects -> EncodingName -> PatchFileContents -> Either SlapError SomePatch
 parseSome dialects metadataEncoding patchContents = case recognizePatchFile patchContents of
-  Nothing                     -> Left UnrecognizedFormat
-  Just RecognizedYay0Envelope -> parseSomePatchFromYay0 dialects metadataEncoding patchContents
-  Just (RecognizedWireFormat wireFormat) -> case wireFormat of
-    PatchDirect       FormatPPF1          -> PPF1.parsePPF1 (requestedPPF1Origin dialects) metadataEncoding patchContents >>= parseSomePatchFromPPF1
-    PatchDirect       FormatPPF2          -> PPF2.parsePPF2 metadataEncoding patchContents >>= parseSomePatchFromPPF2
-    PatchDirect       FormatPPF3          -> PPF3.parsePPF3 metadataEncoding patchContents >>= parseSomePatchFromPPF3
-    PatchDirect       FormatPPF4          -> parseSomePatchFromPPF4 metadataEncoding patchContents
-    PatchDirect       (FormatIPS variant) -> parseSomePatchFromIPS variant patchContents
-    PatchDirect       FormatAPSN64        -> parseSomePatchFromAPSN64 metadataEncoding patchContents
-    PatchDirect       FormatNINJA1        -> parseSomePatchFromNINJA1 patchContents
-    PatchDirect       FormatPMSR          -> parseSomePatchFromPMSR patchContents
-    PatchDifferential FormatBPS           -> parseSomePatchFromBPS metadataEncoding patchContents
-    PatchDifferential FormatUPS           -> parseSomePatchFromUPS patchContents
-    PatchDifferential FormatVCDIFF        -> parseSomePatchFromVCDIFF metadataEncoding patchContents
-    PatchDifferential FormatAPSGBA        -> parseSomePatchFromAPSGBA patchContents
-    PatchDifferential FormatNINJA2        -> parseSomePatchFromNINJA2 metadataEncoding patchContents
-    PatchDifferential FormatBSDiff        -> parseSomePatchFromBSDiff patchContents
-    PatchDifferential FormatGDIFF         -> parseSomePatchFromGDIFF patchContents
-    PatchDifferential FormatXDelta1       -> parseSomePatchFromXDelta1 metadataEncoding patchContents
-    PatchDifferential FormatDPS           -> parseSomePatchFromDPS metadataEncoding patchContents
+  Nothing                                -> Left UnrecognizedFormat
+  Just RecognizedYay0Envelope            -> parseSomePatchFromYay0 dialects metadataEncoding patchContents
+  Just (RecognizedWireFormat wireFormat) -> parseSomeWireFormat dialects metadataEncoding wireFormat patchContents
+
+-- | 'parseSome' for the bytes inside a Yay0 envelope: a second envelope raises 'NestedYay0Envelope'.
+parseSomeUnwrapped :: RequestedDialects -> EncodingName -> PatchFileContents -> Either SlapError SomePatch
+parseSomeUnwrapped dialects metadataEncoding patchContents = case recognizePatchFile patchContents of
+  Nothing                                -> Left UnrecognizedFormat
+  Just RecognizedYay0Envelope            -> Left NestedYay0Envelope
+  Just (RecognizedWireFormat wireFormat) -> parseSomeWireFormat dialects metadataEncoding wireFormat patchContents
+
+parseSomeWireFormat :: RequestedDialects -> EncodingName -> PatchFormat -> PatchFileContents -> Either SlapError SomePatch
+parseSomeWireFormat dialects metadataEncoding wireFormat patchContents = case wireFormat of
+  PatchDirect       FormatPPF1          -> PPF1.parsePPF1 (requestedPPF1Origin dialects) metadataEncoding patchContents >>= parseSomePatchFromPPF1
+  PatchDirect       FormatPPF2          -> PPF2.parsePPF2 metadataEncoding patchContents >>= parseSomePatchFromPPF2
+  PatchDirect       FormatPPF3          -> PPF3.parsePPF3 metadataEncoding patchContents >>= parseSomePatchFromPPF3
+  PatchDirect       FormatPPF4          -> parseSomePatchFromPPF4 metadataEncoding patchContents
+  PatchDirect       (FormatIPS variant) -> parseSomePatchFromIPS variant patchContents
+  PatchDirect       FormatAPSN64        -> parseSomePatchFromAPSN64 metadataEncoding patchContents
+  PatchDirect       FormatNINJA1        -> parseSomePatchFromNINJA1 patchContents
+  PatchDirect       FormatPMSR          -> parseSomePatchFromPMSR patchContents
+  PatchDifferential FormatBPS           -> parseSomePatchFromBPS metadataEncoding patchContents
+  PatchDifferential FormatUPS           -> parseSomePatchFromUPS patchContents
+  PatchDifferential FormatVCDIFF        -> parseSomePatchFromVCDIFF metadataEncoding patchContents
+  PatchDifferential FormatAPSGBA        -> parseSomePatchFromAPSGBA patchContents
+  PatchDifferential FormatNINJA2        -> parseSomePatchFromNINJA2 metadataEncoding patchContents
+  PatchDifferential FormatBSDiff        -> parseSomePatchFromBSDiff patchContents
+  PatchDifferential FormatGDIFF         -> parseSomePatchFromGDIFF patchContents
+  PatchDifferential FormatXDelta1       -> parseSomePatchFromXDelta1 metadataEncoding patchContents
+  PatchDifferential FormatDPS           -> parseSomePatchFromDPS metadataEncoding patchContents
 
 -- | The identity a frontend shapes its controls by, with nothing executable inside.
 data PatchIdentity = PatchIdentity
@@ -1004,12 +1014,12 @@ parseSomePatchFromDPS metadataEncoding patchContents = do
     }
 
 -- | Yay0 is a compression container (Nintendo LZSS), not a patch format.
--- Decompress the envelope and recurse into parseSome on the inner bytes.
--- The format suffix @"\/Yay0"@ is appended to 'patchInfo' so the user can see the envelope at a glance.
+-- The envelope is unwrapped once and its contents parsed via 'parseSomeUnwrapped';
+-- the format suffix @"\/Yay0"@ on 'patchInfo' keeps the envelope visible.
 parseSomePatchFromYay0 :: RequestedDialects -> EncodingName -> PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromYay0 dialects metadataEncoding (PatchFileContents input) = case Stream.yay0Decompress input of
   Left cause              -> Left (DecompressionFailed (Yay0WrapperFailed cause))
-  Right decompressedBytes -> case parseSome dialects metadataEncoding (PatchFileContents decompressedBytes) of
+  Right decompressedBytes -> case parseSomeUnwrapped dialects metadataEncoding (PatchFileContents decompressedBytes) of
     Left slapError -> Left slapError
     Right parsed ->
       let innerHeader = infoFormat (patchInfo parsed)

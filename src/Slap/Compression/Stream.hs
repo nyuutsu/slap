@@ -75,6 +75,7 @@ foreign import ccall unsafe "rusty_bzip2_compress"
 foreign import ccall unsafe "rusty_lzma_decompress"
   rustyLzmaDecompress
     :: Ptr Word8 -> CSize
+    -> CSize                            -- declared output length
     -> Ptr (Ptr Word8) -> Ptr CSize     -- decoded bytes
     -> Ptr CSize                        -- consumed input length
     -> Ptr (Ptr Word8) -> Ptr CSize     -- error message buffer
@@ -211,14 +212,16 @@ data LzmaDecoded = LzmaDecoded
   }
   deriving (Show, Eq)
 
--- | LZMA decompression of one xdelta3-flavored stream (xz header,
--- raw LZMA2 chunks, no closing footer — see @rusty-slap/src/xdelta3_lzma.rs@
--- for the stream shape). Written longhand rather than through 'callDecompressor':
--- the consumed-input length is a third output channel the helper's shape has no slot for,
--- and the helper's empty-input short-circuit would be wrong here: an empty input is not an empty output,
--- it is a stream with no xz header, and the decoder's complaint to that effect is the right answer.
-lzmaDecompress :: ByteString -> Either DecompressionCause LzmaDecoded
-lzmaDecompress input = unsafePerformIO $
+-- | LZMA decompression of one xdelta3-flavored stream
+-- (xz header, raw LZMA2 chunks, no closing footer — see @rusty-slap/src/xdelta3_lzma.rs@ for the stream shape).
+-- The 'Length' is the output total the sections' framing declared — not a terminus like 'djwDecompress's,
+-- since LZMA2 chunk headers declare their own output sizes, but the ceiling those declarations are held to:
+-- a stream declaring more output than its framing does is refused before anything decompresses.
+-- Written longhand rather than through 'callDecompressor', which has no slot for the consumed-input channel,
+-- and whose empty-input short-circuit would be wrong here:
+-- an empty input is not an empty output but a stream missing its xz header, and the decoder's complaint to that effect is the right answer.
+lzmaDecompress :: Length -> ByteString -> Either DecompressionCause LzmaDecoded
+lzmaDecompress declaredOutputLength input = unsafePerformIO $
   withByteString input $ \dataPointer dataLength ->
     alloca $ \resultAddressPointer ->
     alloca $ \resultLengthPointer ->
@@ -227,6 +230,7 @@ lzmaDecompress input = unsafePerformIO $
     alloca $ \errorLengthPointer -> do
       returnCode <- rustyLzmaDecompress
         dataPointer dataLength
+        (fromIntegral (unLength declaredOutputLength))
         resultAddressPointer resultLengthPointer
         consumedLengthPointer
         errorAddressPointer  errorLengthPointer
@@ -302,14 +306,10 @@ data DjwDecoded = DjwDecoded
   deriving (Show, Eq)
 
 -- | DJW decompression of one xdelta3 secondary-compressed section
--- (xdelta3's own static multi-table Huffman — see
--- @rusty-slap/src/xdelta3_djw.rs@ for the stream shape). The 'Length' is the
--- section's declared output size, handed to the decoder as its loop
--- terminus — DJW's bit stream carries no output size of its own
--- (LZMA's chunk headers do), so the declaration must travel beside
--- the bytes; the asymmetry with 'lzmaDecompress' is real and stays
--- visible. Written longhand for the same reasons as 'lzmaDecompress':
--- the consumed-length channel, and the right answer on empty input.
+-- (xdelta3's own static multi-table Huffman — see @rusty-slap/src/xdelta3_djw.rs@ for the stream shape).
+-- The 'Length' is the section's declared output size, handed to the decoder as its loop terminus —
+-- DJW's bit stream carries no output size of its own, so the declaration must travel beside the bytes.
+-- Written longhand for the same reasons as 'lzmaDecompress': the consumed-length channel, and the right answer on empty input.
 djwDecompress :: Length -> ByteString -> Either DecompressionCause DjwDecoded
 djwDecompress expectedOutputLength input = unsafePerformIO $
   withByteString input $ \dataPointer dataLength ->

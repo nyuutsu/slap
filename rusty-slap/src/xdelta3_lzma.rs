@@ -32,7 +32,10 @@
 //! What comes back is bytes and facts: the decoded output, plus how
 //! many input bytes the decoder consumed. Whether those facts honor
 //! the framing the stream was carried under is the caller's judgment,
-//! not this module's.
+//! not this module's. The one exception sits before the decode: the
+//! chunk headers' declared sizes are held to the caller's ceiling
+//! ([`hold_chunk_declarations_to_ceiling`]), so a stream declaring
+//! more output than its framing never decompresses at all.
 
 use std::io::{Cursor, Read};
 
@@ -57,18 +60,26 @@ const LZMA2_END_OF_STREAM: [u8; 1] = [0x00];
 /// finished. Consumption counts the xz framing as consumed; a
 /// shortfall against the input length means the decoder stopped — at
 /// a premature end-of-stream marker — with input left over.
+#[derive(Debug)]
 pub struct LzmaDecodeOutcome {
     pub decoded_bytes: Vec<u8>,
     pub consumed_input_length: usize,
 }
 
-/// Decompress one xdelta3-flavored LZMA stream. On failure the
-/// returned message carries the underlying cause verbatim — either
-/// this module's own framing complaint or `lzma-rs`'s diagnostic —
-/// for the caller to wrap as it sees fit.
-pub fn lzma_decompress(input: &[u8]) -> Result<LzmaDecodeOutcome, String> {
+/// Decompress one xdelta3-flavored LZMA stream. `declared_output_length`
+/// is the output total the carrying framing declared: not the decode's
+/// terminus — the chunk headers declare their own sizes — but the ceiling
+/// those declarations are held to before any chunk decodes. On failure
+/// the returned message carries the underlying cause verbatim — either
+/// this module's own complaint or `lzma-rs`'s diagnostic — for the
+/// caller to wrap as it sees fit.
+pub fn lzma_decompress(
+    input: &[u8],
+    declared_output_length: usize,
+) -> Result<LzmaDecodeOutcome, String> {
     let framing_length = xz_framing_length(input)?;
     let chunk_bytes = &input[framing_length..];
+    hold_chunk_declarations_to_ceiling(chunk_bytes, declared_output_length)?;
 
     // Chain the synthetic end-of-stream marker after the real chunks.
     // The chain leaves the cursor inspectable afterwards: its position
@@ -103,6 +114,58 @@ fn xz_framing_length(input: &[u8]) -> Result<usize, String> {
         return Err("stream ends inside its xz block header".to_string());
     }
     Ok(framing_length)
+}
+
+/// Hold the chunk headers' declared unpacked sizes to the output total
+/// the carrying framing declared. The chunk framing is readable without
+/// decoding anything, and a chunk decodes to at most the size its header
+/// declares, so the running sum bounds the whole decode's output — and a
+/// high-ratio stream declaring more than its framing does is refused
+/// before a byte of it decompresses. No write-side bound could do the
+/// same: `lzma-rs` buffers the entire output before its sink sees any
+/// of it. The walk judges nothing else — a malformed status byte, a
+/// truncated header, or a chunk running off the input's end all stop it
+/// early, leaving the decoder's own diagnostics to speak.
+fn hold_chunk_declarations_to_ceiling(
+    chunk_bytes: &[u8],
+    declared_output_length: usize,
+) -> Result<(), String> {
+    // The sum runs in u64: on a 32-bit target the declarations can
+    // outgrow a usize before the ceiling check fires.
+    let mut declared_total: u64 = 0;
+    let mut position: usize = 0;
+    loop {
+        let Some(&status_byte) = chunk_bytes.get(position) else { return Ok(()) };
+        let (unpacked_size, chunk_stride) = match status_byte {
+            // The end-of-stream marker.
+            0x00 => return Ok(()),
+            // An uncompressed chunk: u16 BE `size - 1`, then the bytes in the clear.
+            0x01 | 0x02 => {
+                let Some(header) = chunk_bytes.get(position + 1..position + 3) else { return Ok(()) };
+                let unpacked_size = u16::from_be_bytes([header[0], header[1]]) as u64 + 1;
+                (unpacked_size, 3 + unpacked_size as usize)
+            }
+            // No chunk starts with 0x03..=0x7F.
+            0x03..=0x7F => return Ok(()),
+            // A compressed chunk: the status byte's low five bits extend the u16 BE unpacked size,
+            // then a u16 BE packed size, then a properties byte when bits 5–6 say properties reset.
+            _ => {
+                let Some(header) = chunk_bytes.get(position + 1..position + 5) else { return Ok(()) };
+                let unpacked_size = ((u64::from(status_byte) & 0x1F) << 16
+                    | u16::from_be_bytes([header[0], header[1]]) as u64) + 1;
+                let packed_size = u16::from_be_bytes([header[2], header[3]]) as usize + 1;
+                let properties_byte_length = usize::from((status_byte >> 5) & 0x3 >= 2);
+                (unpacked_size, 5 + properties_byte_length + packed_size)
+            }
+        };
+        declared_total += unpacked_size;
+        if declared_total > declared_output_length as u64 {
+            return Err(format!(
+                "the chunks declare {declared_total} or more output bytes where the framing declares {declared_output_length}"
+            ));
+        }
+        position += chunk_stride;
+    }
 }
 
 // ── Compression ────────────────────────────────────────────────────────
@@ -301,14 +364,14 @@ mod tests {
 
     #[test]
     fn uncompressed_chunk_stream_round_trips() {
-        let outcome = lzma_decompress(&XD3_UNCOMPRESSED_CHUNK_STREAM).expect("decodes");
+        let outcome = lzma_decompress(&XD3_UNCOMPRESSED_CHUNK_STREAM, XD3_UNCOMPRESSED_CHUNK_PLAIN.len()).expect("decodes");
         assert_eq!(outcome.decoded_bytes, XD3_UNCOMPRESSED_CHUNK_PLAIN);
         assert_eq!(outcome.consumed_input_length, XD3_UNCOMPRESSED_CHUNK_STREAM.len());
     }
 
     #[test]
     fn compressed_chunk_stream_round_trips() {
-        let outcome = lzma_decompress(&XD3_COMPRESSED_CHUNK_STREAM).expect("decodes");
+        let outcome = lzma_decompress(&XD3_COMPRESSED_CHUNK_STREAM, XD3_COMPRESSED_CHUNK_PLAIN.len()).expect("decodes");
         assert_eq!(outcome.decoded_bytes, XD3_COMPRESSED_CHUNK_PLAIN);
         assert_eq!(outcome.consumed_input_length, XD3_COMPRESSED_CHUNK_STREAM.len());
     }
@@ -320,7 +383,7 @@ mod tests {
         let mut stream = XD3_UNCOMPRESSED_CHUNK_STREAM.to_vec();
         stream.push(0x00);
         stream.extend_from_slice(b"trailing");
-        let outcome = lzma_decompress(&stream).expect("decodes up to the marker");
+        let outcome = lzma_decompress(&stream, XD3_UNCOMPRESSED_CHUNK_PLAIN.len()).expect("decodes up to the marker");
         assert_eq!(outcome.decoded_bytes, XD3_UNCOMPRESSED_CHUNK_PLAIN);
         assert_eq!(
             outcome.consumed_input_length,
@@ -331,13 +394,13 @@ mod tests {
     #[test]
     fn truncated_chunk_errors() {
         let truncated = &XD3_COMPRESSED_CHUNK_STREAM[..XD3_COMPRESSED_CHUNK_STREAM.len() - 40];
-        assert!(lzma_decompress(truncated).is_err());
+        assert!(lzma_decompress(truncated, XD3_COMPRESSED_CHUNK_PLAIN.len()).is_err());
     }
 
     #[test]
     fn missing_xz_header_errors() {
-        assert!(lzma_decompress(b"").is_err());
-        assert!(lzma_decompress(b"not an xz stream at all").is_err());
+        assert!(lzma_decompress(b"", 0).is_err());
+        assert!(lzma_decompress(b"not an xz stream at all", 0).is_err());
     }
 
     #[test]
@@ -346,7 +409,22 @@ mod tests {
         // than the stream holds.
         let mut stream = XD3_UNCOMPRESSED_CHUNK_STREAM[..13].to_vec();
         stream[12] = 0xFF;
-        assert!(lzma_decompress(&stream).is_err());
+        assert!(lzma_decompress(&stream, XD3_UNCOMPRESSED_CHUNK_PLAIN.len()).is_err());
+    }
+
+    #[test]
+    fn chunks_declaring_past_the_framing_are_refused_undecoded() {
+        // A megabyte of one byte compresses to a handful of chunks whose
+        // headers still declare the megabyte; a framing declaring one
+        // byte less must be refused by the header walk, before any
+        // chunk decodes.
+        let plain = vec![0x42u8; 1 << 20];
+        let stream = lzma_compress(&plain);
+        let refusal = lzma_decompress(&stream, plain.len() - 1).unwrap_err();
+        assert!(
+            refusal.contains("where the framing declares"),
+            "unexpected error: {refusal}",
+        );
     }
 
     // ── The compression half ──────────────────────────────────────────
@@ -387,7 +465,7 @@ mod tests {
                 .map(|byte| byte % alphabet)
                 .collect();
             let stream = lzma_compress(&plain);
-            let outcome = lzma_decompress(&stream).expect("compressed stream decodes");
+            let outcome = lzma_decompress(&stream, plain.len()).expect("compressed stream decodes");
             assert_eq!(outcome.decoded_bytes, plain, "seed {seed:#x}");
             assert_eq!(
                 outcome.consumed_input_length,
@@ -420,7 +498,7 @@ mod tests {
         for (index, section) in sections.iter().enumerate() {
             expected.extend_from_slice(section);
             let prefix = &outcome.stream_bytes[..outcome.piece_end_offsets[index]];
-            let decoded = lzma_decompress(prefix).expect("a cut prefix decodes");
+            let decoded = lzma_decompress(prefix, expected.len()).expect("a cut prefix decodes");
             assert_eq!(decoded.decoded_bytes, expected, "prefix {index}");
             assert_eq!(
                 decoded.consumed_input_length,
@@ -457,7 +535,7 @@ mod tests {
     fn empty_input_round_trips_as_bare_framing() {
         let stream = lzma_compress(b"");
         assert_eq!(stream.len(), XZ_STREAM_HEADER_LENGTH + 12);
-        let outcome = lzma_decompress(&stream).expect("bare framing decodes");
+        let outcome = lzma_decompress(&stream, 0).expect("bare framing decodes");
         assert!(outcome.decoded_bytes.is_empty());
         assert_eq!(outcome.consumed_input_length, stream.len());
     }
@@ -492,7 +570,7 @@ mod tests {
                 .collect();
             let sections: Vec<&[u8]> = whole.chunks(3_000).collect();
             let outcome = lzma_compress_sections(&sections);
-            let decoded = lzma_decompress(&outcome.stream_bytes)
+            let decoded = lzma_decompress(&outcome.stream_bytes, whole.len())
                 .expect("the gathered stream decodes");
             assert_eq!(
                 decoded.decoded_bytes, whole,

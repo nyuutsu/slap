@@ -711,11 +711,14 @@ pub unsafe extern "C" fn rusty_bzip2_compress(
 }
 
 /// LZMA decompression of one xdelta3-flavored stream (xz header, raw
-/// LZMA2 chunks, no closing footer — see [`xdelta3_lzma`]). Rust allocates
-/// the output; caller frees with [`rusty_free`]. Returns 0 on success
-/// (output and consumed-input-length populated; error channel empty),
-/// -1 on decoder fault (output empty, consumed 0, cause message in
-/// the error channel). The consumed length is a fact only the decoder
+/// LZMA2 chunks, no closing footer — see [`xdelta3_lzma`]). The declared
+/// output length crosses as an argument: the ceiling the chunk headers'
+/// own declared sizes are held to before any chunk decodes (see
+/// [`xdelta3_lzma::lzma_decompress`]). Rust allocates the output;
+/// caller frees with [`rusty_free`]. Returns 0 on success (output and
+/// consumed-input-length populated; error channel empty), -1 on
+/// decoder fault (output empty, consumed 0, cause message in the
+/// error channel). The consumed length is a fact only the decoder
 /// can know — whether it honors the framing the stream was carried
 /// under is the caller's judgment, made on the other side of the seam.
 ///
@@ -728,6 +731,7 @@ pub unsafe extern "C" fn rusty_bzip2_compress(
 pub unsafe extern "C" fn rusty_lzma_decompress(
     input_address:           *const u8,
     input_length:            usize,
+    declared_output_length:  usize,
     output_address_pointer:  *mut *mut u8,
     output_length_pointer:   *mut usize,
     consumed_length_pointer: *mut usize,
@@ -735,7 +739,7 @@ pub unsafe extern "C" fn rusty_lzma_decompress(
     error_length_pointer:    *mut usize,
 ) -> i32 {
     let input = unsafe { view_caller_buffer(input_address, input_length) };
-    match xdelta3_lzma::lzma_decompress(input) {
+    match xdelta3_lzma::lzma_decompress(input, declared_output_length) {
         Ok(outcome) => {
             unsafe {
                 surface_buffer_to_caller(outcome.decoded_bytes, output_address_pointer, output_length_pointer);

@@ -58,7 +58,8 @@ import Slap.VCDIFF.Types (VCDIFFPatch(..), Window(..), VCDIFFInstruction(..),
 import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor(..),
                                          secondaryCompressorCatalog, secondaryCompressorId,
                                          SectionCompressor, sectionCompressorAlgorithm,
-                                         lzmaSectionCompressor, djwSectionCompressor)
+                                         lzmaSectionCompressor, djwSectionCompressor,
+                                         SectionCarriage(..), decodeLZMACompressedKind)
 import Slap.VCDIFF.Create (createFromCover, createConsideringCustomTable,
                            coverToInstructions, resolveInstructionAddresses,
                            designCandidateTable, rejectUnaddressablePair,
@@ -103,9 +104,11 @@ import Slap.PPF3.Types (PPF3ImageType(..), narrowPPF3FileId)
 
 import Slap.Binary (md5, sha1, diffHunks)
 import Slap.Binary (minimalVcdiffVarintLength, getVcdiffVarint, VarintResult(..), putVcdiffVarint)
+import Slap.Compression.Stream (lzmaCompress)
 import Slap.Status (CreateResult(..), Parsed(..), SlapError(..), Outcome(..),
                    noAdvisories, UnencodeabilityReason(..), CompressionAlgorithm(..),
-                   SlapAdvisory(..), renderSlapError)
+                   SlapAdvisory(..), renderSlapError,
+                   DecompressionFailure(..), VCDIFFSection(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
@@ -231,6 +234,8 @@ roundTripTests = testGroup "RoundTrip"
       , testCase     "xdelta3: compression pays on a repetitive cover and declares DJW"
           (xdelta3CompressionPaysOnARepetitiveCover djwSectionCompressor)
       , testCase     "xdelta3: unpaying compression leaves the core shape" xdelta3UnpayingCompressionLeavesTheCoreShape
+      , testCase     "xdelta3: an LZMA section declaring past its framing is refused"
+          xdelta3LZMASectionDeclaringPastItsFramingIsRefused
       , testCase     "xdelta3: a source patch's compressor inherits on convert"
           xdelta3DeclaredCompressorInheritsOnConvert
       , testCase     "xdelta3: application header round-trips" xdelta3AppHeaderRoundTrips
@@ -671,6 +676,18 @@ xdelta3CompressionPaysOnARepetitiveCover compressor = do
           otherFlavor -> assertFailure ("parsed flavor: " ++ show otherFlavor)
     (Left createError, _) -> assertFailureT ("compressed create: " <> renderSlapError createError)
     (_, Left createError) -> assertFailureT ("plain create: " <> renderSlapError createError)
+
+-- | A compressed section whose LZMA chunk headers declare far more output than its own size varint does
+-- is refused at the chunk-header walk, before anything decompresses.
+xdelta3LZMASectionDeclaringPastItsFramingIsRefused :: Assertion
+xdelta3LZMASectionDeclaringPastItsFramingIsRefused = do
+  let sectionStream  = lzmaCompress (ByteString.replicate (1024 * 1024) 0x42)
+      undersoldSize  = LazyByteString.toStrict (toLazyByteString (putVcdiffVarint 5))
+      carriedSection = CarriedCompressed (undersoldSize <> sectionStream)
+  case decodeLZMACompressedKind VCDIFFDataSection [carriedSection] of
+    Left (DecompressionFailed (VCDIFFSectionFailed VCDIFFDataSection LZMA _)) -> pure ()
+    Left otherError -> assertFailureT ("refused differently: " <> renderSlapError otherError)
+    Right _         -> assertFailure "a section declaring past its framing decoded"
 
 -- | Compression that never pays leaves no trace: with verification also omitted, the
 -- requested-but-unpaying compression ships bytes identical to the uncompressed emission,

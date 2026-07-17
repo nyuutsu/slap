@@ -133,7 +133,6 @@ data CompressedPiece = CompressedPiece
 
 -- | Decode one section (data, instructions, or addresses) across every window, for an LZMA patch.
 -- LZMA is one continuous stream: gather the slices, decode once, split the output by declared size.
--- 'lzmaDecompress' sizes its own output, so no expected size crosses the seam.
 decodeLZMACompressedKind
   :: VCDIFFSection      -- ^ which section, named in any refusal
   -> [SectionCarriage]  -- ^ one per window, in window order
@@ -146,7 +145,7 @@ decodeLZMACompressedKind kind carriages = do
     pieces -> do
       let gatheredStream = ByteString.concat (map pieceStreamSlice pieces)
           declaredTotal  = foldMap pieceDeclaredOutputSize pieces
-      decoded <- runLZMADecoder kind gatheredStream
+      decoded <- runLZMADecoder kind declaredTotal gatheredStream
       holdDecoderToFraming kind LZMA gatheredStream declaredTotal
         (lzmaDecoderFacts decoded)
       pure (handOutDecodedSlices (lzmaDecodedBytes decoded) contributions)
@@ -209,24 +208,24 @@ readContribution kind (CarriedCompressed sectionBytes) =
             , pieceStreamSlice        = ByteString.drop consumed sectionBytes
             })
 
--- | Run the gathered stream through the LZMA seam; a fault (a broken chunk, a missing xz header)
--- becomes a 'DecompressionFailed'.
-runLZMADecoder :: VCDIFFSection -> ByteString -> Either SlapError LzmaDecoded
-runLZMADecoder kind gatheredStream =
-  case lzmaDecompress gatheredStream of
+-- | Run the gathered stream through the LZMA seam; a fault (a broken chunk, a missing xz header) becomes a 'DecompressionFailed'.
+-- The sections' declared total is the decoder's output ceiling.
+runLZMADecoder :: VCDIFFSection -> Length -> ByteString -> Either SlapError LzmaDecoded
+runLZMADecoder kind declaredTotal gatheredStream =
+  case lzmaDecompress declaredTotal gatheredStream of
     Left cause         -> Left (DecompressionFailed (VCDIFFSectionFailed kind LZMA cause))
     Right decoderFacts -> Right decoderFacts
 
--- | Run one section's stream through the DJW seam; a fault (an exhausted bit stream, a code outside its table)
--- becomes a 'DecompressionFailed'. The section's declared size is the decoder's budget.
+-- | Run one section's stream through the DJW seam; a fault (an exhausted bit stream, a code outside its table) becomes a 'DecompressionFailed'.
+-- The section's declared size is the decoder's budget.
 runDJWDecoder :: VCDIFFSection -> CompressedPiece -> Either SlapError DjwDecoded
 runDJWDecoder kind piece =
   case djwDecompress (pieceDeclaredOutputSize piece) (pieceStreamSlice piece) of
     Left cause         -> Left (DecompressionFailed (VCDIFFSectionFailed kind DJW cause))
     Right decoderFacts -> Right decoderFacts
 
--- | Run the gathered stream through the FGK seam; a fault (an exhausted bit stream, an escape past the unseen list)
--- becomes a 'DecompressionFailed'. The per-section sizes are the decoder's budgets.
+-- | Run the gathered stream through the FGK seam; a fault (an exhausted bit stream, an escape past the unseen list) becomes a 'DecompressionFailed'.
+-- The per-section sizes are the decoder's budgets.
 runFGKDecoder :: VCDIFFSection -> [Length] -> ByteString -> Either SlapError FgkDecoded
 runFGKDecoder kind sectionOutputLengths gatheredStream =
   case fgkDecompress sectionOutputLengths gatheredStream of

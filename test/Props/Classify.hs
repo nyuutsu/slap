@@ -3,6 +3,7 @@
 -- | 'classifyDroppedFile' and 'patchIdentity', walked through every creatable format.
 module Props.Classify (classifyTests) where
 
+import Slap.Binary (word32BEBytes)
 import Slap.BPS.Types (bpsMagicBytes)
 import Slap.Convert (CreateFormat(..), DirectCreate(..), DifferentialCreate(..),
                      RequestedPatchMetadata(..), UndoInclusion(..), acceptedDialects,
@@ -39,6 +40,7 @@ classifyTests = testGroup "Classify"
   , testCase "PPF1 identity offers the origin axis" test_ppf1IdentityOffersOriginAxis
   , testCase "PPF3 without undo data answers AuthorOmittedUndoData" test_ppf3WithoutUndoAnswersAuthorOmitted
   , testCase "a Yay0 envelope sorts into the patch slot even around garbage" test_yay0EnvelopeSortsAsPatch
+  , testCase "a Yay0 envelope holding another Yay0 envelope is refused" test_nestedYay0EnvelopeRefused
   ]
 
 -- | One row per creatable format: the fixture pair to create from,
@@ -157,3 +159,26 @@ test_yay0EnvelopeSortsAsPatch = do
   case classifyDroppedFile envelopeBytes of
     DroppedPatch _ -> pure ()
     DroppedRom _   -> assertFailure "Yay0 envelope sorted into the rom slot"
+
+test_nestedYay0EnvelopeRefused :: IO ()
+test_nestedYay0EnvelopeRefused =
+  case parseSome noDialectsRequested EncodingUtf8 (PatchFileContents nestedEnvelope) of
+    Left NestedYay0Envelope -> pure ()
+    Left otherError         -> assertFailureT ("refused differently: " <> renderSlapError otherError)
+    Right _                 -> assertFailure "a Yay0 envelope holding another Yay0 envelope parsed as a patch"
+  where
+    nestedEnvelope = yay0EnvelopeOfLiterals ("Yay0" <> ByteString.replicate 12 0)
+
+-- | Wrap @payload@ as a real Yay0 stream spelling every byte as a literal:
+-- all-ones command bytes, an empty link table, and the payload verbatim as chunk data.
+yay0EnvelopeOfLiterals :: ByteString -> ByteString
+yay0EnvelopeOfLiterals payload =
+  "Yay0"
+  <> word32BEBytes (fromIntegral (ByteString.length payload))
+  <> word32BEBytes chunkDataOffset
+  <> word32BEBytes chunkDataOffset
+  <> ByteString.replicate commandByteCount 0xFF
+  <> payload
+  where
+    commandByteCount = (ByteString.length payload + 7) `div` 8
+    chunkDataOffset  = fromIntegral (16 + commandByteCount)
