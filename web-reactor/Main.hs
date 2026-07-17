@@ -13,10 +13,11 @@ import Data.Maybe (listToMaybe)
 import Data.Word (Word8, Word32)
 import Foreign.Marshal.Alloc (free, mallocBytes)
 import Foreign.Marshal.Utils (copyBytes)
-import Foreign.Ptr (Ptr, castPtr, plusPtr)
+import Foreign.Ptr (Ptr, castPtr, nullPtr, plusPtr)
 import Foreign.Storable (pokeByteOff)
 import System.Environment (getArgs)
 import System.Exit (die)
+import System.IO.Error (catchIOError, isFullError)
 
 import Data.Aeson (FromJSON)
 
@@ -24,7 +25,7 @@ import Slap.Checksum (CRC32(unCRC32))
 import Slap.Convert (noDialectsRequested)
 import Slap.FileContents (InputFileContents(InputFileContents), OutputFileContents(OutputFileContents),
                           PatchFileContents(PatchFileContents))
-import Slap.Status (noAdvisories)
+import Slap.Status (SlapError(ReactorMemoryExhausted), noAdvisories)
 import Slap.Text (EncodingName(EncodingUtf8))
 import Slap.Web (AnalyzeRequest(..), InspectRequest(..), RomFacts(romCRC32),
                  analyzePatch, applyPatch, checkApply, checkConvert, checkCreate, checkUndo,
@@ -50,12 +51,15 @@ slapWebLinkCheck = pure (unCRC32 (romCRC32 (describeRom fixedInput)))
 -- The buffer protocol: the host allocates with 'slap_web_alloc' and copies its bytes in; an export answers with a buffer
 -- whose first four bytes are the payload length (little-endian, wasm's own byte order); the host frees both sides with 'slap_web_free'.
 -- A pointer reaches JS as a signed i32, so past 2 GB of instance memory a host must take it unsigned or the address reads negative.
+-- 'slap_web_alloc' answers null when the bytes will not fit, and the host speaks for that refusal — no envelope exists yet to carry it.
 -- An act's payload opens with one more little-endian u32 — the envelope's own length; the output bytes are everything after the envelope.
 
 foreign export ccall "slap_web_alloc" slapWebAlloc :: Int -> IO (Ptr Word8)
 
 slapWebAlloc :: Int -> IO (Ptr Word8)
-slapWebAlloc = mallocBytes
+slapWebAlloc allocationLength =
+  mallocBytes allocationLength `catchIOError` \allocationFailure ->
+    if isFullError allocationFailure then pure nullPtr else ioError allocationFailure
 
 foreign export ccall "slap_web_free" slapWebFree :: Ptr Word8 -> IO ()
 
@@ -65,21 +69,21 @@ slapWebFree = free
 foreign export ccall "slap_web_describe_surface" slapWebDescribeSurface :: IO (Ptr Word8)
 
 slapWebDescribeSurface :: IO (Ptr Word8)
-slapWebDescribeSurface = lengthPrefixedBuffer surfaceEnvelope
+slapWebDescribeSurface = answerEnvelope surfaceEnvelope
 
 foreign export ccall "slap_web_inspect_patch" slapWebInspectPatch :: Ptr Word8 -> Int -> IO (Ptr Word8)
 
 slapWebInspectPatch :: Ptr Word8 -> Int -> IO (Ptr Word8)
 slapWebInspectPatch patchPointer patchLength = do
   patchBytes <- packBuffer patchPointer patchLength
-  lengthPrefixedBuffer (inspectEnvelope patchBytes)
+  answerEnvelope (inspectEnvelope patchBytes)
 
 foreign export ccall "slap_web_analyze_patch" slapWebAnalyzePatch :: Ptr Word8 -> Int -> IO (Ptr Word8)
 
 slapWebAnalyzePatch :: Ptr Word8 -> Int -> IO (Ptr Word8)
 slapWebAnalyzePatch patchPointer patchLength = do
   patchBytes <- packBuffer patchPointer patchLength
-  lengthPrefixedBuffer (analyzeEnvelope patchBytes)
+  answerEnvelope (analyzeEnvelope patchBytes)
 
 foreign export ccall "slap_web_check_apply" slapWebCheckApply
   :: Ptr Word8 -> Int -> Ptr Word8 -> Int -> Ptr Word8 -> Int -> IO (Ptr Word8)
@@ -89,7 +93,7 @@ slapWebCheckApply patchPointer patchLength romPointer romLength declarationPoint
   declared   <- decodedDeclaration <$> packBuffer declarationPointer declarationLength
   patchBytes <- PatchFileContents <$> packBuffer patchPointer patchLength
   romBytes   <- InputFileContents <$> packBuffer romPointer romLength
-  lengthPrefixedBuffer (checkApplyEnvelope declared patchBytes romBytes)
+  answerEnvelope (checkApplyEnvelope declared patchBytes romBytes)
 
 foreign export ccall "slap_web_check_undo" slapWebCheckUndo
   :: Ptr Word8 -> Int -> Ptr Word8 -> Int -> Ptr Word8 -> Int -> IO (Ptr Word8)
@@ -99,7 +103,7 @@ slapWebCheckUndo patchPointer patchLength patchedPointer patchedLength declarati
   declared     <- decodedDeclaration <$> packBuffer declarationPointer declarationLength
   patchBytes   <- PatchFileContents <$> packBuffer patchPointer patchLength
   patchedBytes <- OutputFileContents <$> packBuffer patchedPointer patchedLength
-  lengthPrefixedBuffer (checkUndoEnvelope declared patchBytes patchedBytes)
+  answerEnvelope (checkUndoEnvelope declared patchBytes patchedBytes)
 
 foreign export ccall "slap_web_check_create" slapWebCheckCreate
   :: Ptr Word8 -> Int -> Ptr Word8 -> Int -> Ptr Word8 -> Int -> IO (Ptr Word8)
@@ -109,7 +113,7 @@ slapWebCheckCreate originalPointer originalLength modifiedPointer modifiedLength
   declared      <- decodedDeclaration <$> packBuffer declarationPointer declarationLength
   originalBytes <- InputFileContents <$> packBuffer originalPointer originalLength
   modifiedBytes <- OutputFileContents <$> packBuffer modifiedPointer modifiedLength
-  lengthPrefixedBuffer (checkCreateEnvelope declared originalBytes modifiedBytes)
+  answerEnvelope (checkCreateEnvelope declared originalBytes modifiedBytes)
 
 -- | The source pair is read only when the declaration speaks of a source; a host with none to hand passes null and zero.
 foreign export ccall "slap_web_check_convert" slapWebCheckConvert
@@ -122,7 +126,7 @@ slapWebCheckConvert patchPointer patchLength sourcePointer sourceLength declarat
   handedSource <- case declaredConvertSourceFraming declared of
     Nothing -> pure Nothing
     Just _  -> Just . InputFileContents <$> packBuffer sourcePointer sourceLength
-  lengthPrefixedBuffer (checkConvertEnvelope declared patchBytes handedSource)
+  answerEnvelope (checkConvertEnvelope declared patchBytes handedSource)
 
 -- The acts: each takes the buffers its check takes, and answers with an envelope-and-tail payload.
 
@@ -134,7 +138,7 @@ slapWebApplyPatch patchPointer patchLength romPointer romLength declarationPoint
   declared   <- decodedDeclaration <$> packBuffer declarationPointer declarationLength
   patchBytes <- PatchFileContents <$> packBuffer patchPointer patchLength
   romBytes   <- InputFileContents <$> packBuffer romPointer romLength
-  lengthPrefixedBuffer =<< applyEnvelopeAndTail declared patchBytes romBytes
+  answerEnvelopeAndTail =<< applyEnvelopeAndTail declared patchBytes romBytes
 
 foreign export ccall "slap_web_undo_patch" slapWebUndoPatch
   :: Ptr Word8 -> Int -> Ptr Word8 -> Int -> Ptr Word8 -> Int -> IO (Ptr Word8)
@@ -144,7 +148,7 @@ slapWebUndoPatch patchPointer patchLength patchedPointer patchedLength declarati
   declared     <- decodedDeclaration <$> packBuffer declarationPointer declarationLength
   patchBytes   <- PatchFileContents <$> packBuffer patchPointer patchLength
   patchedBytes <- OutputFileContents <$> packBuffer patchedPointer patchedLength
-  lengthPrefixedBuffer (undoEnvelopeAndTail declared patchBytes patchedBytes)
+  answerEnvelopeAndTail (undoEnvelopeAndTail declared patchBytes patchedBytes)
 
 foreign export ccall "slap_web_create_patch" slapWebCreatePatch
   :: Ptr Word8 -> Int -> Ptr Word8 -> Int -> Ptr Word8 -> Int -> IO (Ptr Word8)
@@ -154,7 +158,7 @@ slapWebCreatePatch originalPointer originalLength modifiedPointer modifiedLength
   declared      <- decodedDeclaration <$> packBuffer declarationPointer declarationLength
   originalBytes <- InputFileContents <$> packBuffer originalPointer originalLength
   modifiedBytes <- OutputFileContents <$> packBuffer modifiedPointer modifiedLength
-  lengthPrefixedBuffer (createEnvelopeAndTail declared originalBytes modifiedBytes)
+  answerEnvelopeAndTail (createEnvelopeAndTail declared originalBytes modifiedBytes)
 
 foreign export ccall "slap_web_convert_patch" slapWebConvertPatch
   :: Ptr Word8 -> Int -> Ptr Word8 -> Int -> Ptr Word8 -> Int -> IO (Ptr Word8)
@@ -166,7 +170,7 @@ slapWebConvertPatch patchPointer patchLength sourcePointer sourceLength declarat
   handedSource <- case declaredConvertSourceFraming declared of
     Nothing -> pure Nothing
     Just _  -> Just . InputFileContents <$> packBuffer sourcePointer sourceLength
-  lengthPrefixedBuffer =<< convertEnvelopeAndTail declared patchBytes handedSource
+  answerEnvelopeAndTail =<< convertEnvelopeAndTail declared patchBytes handedSource
 
 packBuffer :: Ptr Word8 -> Int -> IO ByteString
 packBuffer pointer bufferLength = ByteString.packCStringLen (castPtr pointer, bufferLength)
@@ -234,6 +238,29 @@ lengthPrefixedBuffer payload = do
   UnsafeByteString.unsafeUseAsCStringLen payload $ \(source, sourceLength) ->
     copyBytes (buffer `plusPtr` 4) (castPtr source) sourceLength
   pure buffer
+
+-- | Answer a read or check verb's envelope.
+answerEnvelope :: ByteString -> IO (Ptr Word8)
+answerEnvelope = answerOrSpeakExhaustion memoryExhaustedEnvelope
+
+-- | Answer an act's payload, which opens with the envelope's own length;
+-- its stand-in refusal keeps that shape, with no output bytes behind it.
+answerEnvelopeAndTail :: ByteString -> IO (Ptr Word8)
+answerEnvelopeAndTail = answerOrSpeakExhaustion (envelopeAndTailPayload (memoryExhaustedEnvelope, ByteString.empty))
+
+-- | When the answer buffer's allocation refuses, the stand-in refusal rides home in its place,
+-- small enough to allocate at the ceiling the answer could not. This is the reactor's one catchable exhaustion:
+-- the acts' working buffers live on the GHC heap, whose exhaustion traps the instance and belongs to the worker's fallback.
+answerOrSpeakExhaustion :: ByteString -> ByteString -> IO (Ptr Word8)
+answerOrSpeakExhaustion standInRefusal payload =
+  lengthPrefixedBuffer payload `catchIOError` \bufferFailure ->
+    if isFullError bufferFailure
+      then lengthPrefixedBuffer standInRefusal
+      else ioError bufferFailure
+
+-- | The envelope spoken when an answer will not fit. All Left, so the answer type never encodes; the @()@ stands in.
+memoryExhaustedEnvelope :: ByteString
+memoryExhaustedEnvelope = encodeEnvelope (noAdvisories (Left ReactorMemoryExhausted :: Either SlapError ()))
 
 main :: IO ()
 main = do

@@ -361,6 +361,13 @@ data SlapError
   -- Only fatal-class mismatches are promoted here, per 'Slap.Verify.mismatchClass'.
   | VerificationFatal VerificationMismatch
 
+  -- Reactor
+  -- | An allocation the wasm reactor could not satisfy: the catchable face of running out of browser memory.
+  -- The uncatchable face is a trap only the JS worker can answer; both speakers live in @web-reactor/@.
+  -- Distinct from 'FileExceedsAddressableRange', whose ceiling is slap's own carrier, fixed and pre-statable —
+  -- browser memory varies by device and moment, so this refusal can name no number.
+  | ReactorMemoryExhausted
+
   deriving (Show, Eq, Generic)
   deriving (ToJSON) via Generically SlapError
 

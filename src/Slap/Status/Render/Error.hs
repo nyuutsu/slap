@@ -695,6 +695,11 @@ renderSlapError (TruncationViolatesSMCShape size) =
 renderSlapError (VerificationFatal mismatch) =
   renderVerificationMismatch mismatch <> "\n  use --no-verify to proceed anyway"
 
+-- Deliberate twins in web-reactor/envelope-worker.mjs say nearly the same thing for the failures no envelope can cross
+-- (a refused seat allocation, a mid-act trap); an edit here should visit them.
+renderSlapError ReactorMemoryExhausted =
+  "these files don't fit in the browser's memory; the slap command line has no such ceiling"
+
 renderNarrowingFailure :: NarrowingFailure -> Text
 renderNarrowingFailure (OffsetExceedsBound label (ActualOffset actual) (MaxOffset maxOffset)) =
   formatLabelName label <> ": a record writes at offset 0x"
