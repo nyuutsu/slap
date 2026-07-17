@@ -283,20 +283,22 @@ struct RankedCandidate {
 
 impl<'pair, Cell: ChainCell> Engine<'pair, Cell> {
     fn build(source: &'pair [u8], target: &'pair [u8]) -> Self {
-        // No positions will ever be queried, so no table is built: the
-        // empty-target diff should not pay for indexing a large source.
+        // No positions will ever be queried, so the source is not
+        // indexed: the empty-target diff should not pay for tiling a
+        // large source. The tables still get floor sizes and legal
+        // shifts, so nothing about the engine leans on never-called.
         if target.is_empty() {
             return Engine {
                 source,
                 target,
-                bucket_heads: Vec::new(),
+                bucket_heads: vec![Cell::CHAIN_END; 2],
                 chain_links: Vec::new(),
                 source_tile_count: 0,
-                hash_shift: u64::BITS,
-                short_bucket_heads: Vec::new(),
-                short_chain_links: Vec::new(),
+                hash_shift: u64::BITS - 1,
+                short_bucket_heads: vec![u32::MAX; 2],
+                short_chain_links: vec![u32::MAX; 1],
                 short_ring_mask: 0,
-                short_hash_shift: u64::BITS,
+                short_hash_shift: u64::BITS - 1,
                 next_target_anchor: 0,
             };
         }

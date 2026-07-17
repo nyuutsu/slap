@@ -186,14 +186,9 @@ struct Engine<'source, Cell> {
 
 impl<'source, Cell: ChainCell> Engine<'source, Cell> {
     fn build(source: &'source [u8]) -> Self {
-        if source.len() < ANCHOR_LENGTH {
-            return Engine {
-                source,
-                bucket_heads: Vec::new(),
-                chain_links: Vec::new(),
-                hash_shift: u64::BITS,
-            };
-        }
+        // A source under one anchor window has no tiles, so the loop
+        // below files nothing — but the table still gets its two-bucket
+        // floor, so every shift and probe stays legal.
         let tile_count = tile_count_of(source.len());
         let bucket_bits = bucket_bits_for(tile_count);
         let mut engine = Engine {
@@ -217,7 +212,7 @@ impl<'source, Cell: ChainCell> Engine<'source, Cell> {
         scan: usize,
         aligned_source_start: i64,
     ) -> Option<SourceMatch> {
-        if self.bucket_heads.is_empty() || scan + ANCHOR_LENGTH > target.len() {
+        if scan + ANCHOR_LENGTH > target.len() {
             return None;
         }
         let target_suffix = &target[scan..];

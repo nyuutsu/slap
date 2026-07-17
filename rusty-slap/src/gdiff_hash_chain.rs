@@ -402,12 +402,20 @@ fn pays_its_wire_cost(source_offset: usize, length: usize) -> bool {
 /// The wire bytes a COPY command spends at this offset and length: one
 /// opcode byte plus the narrowest offset and length fields that fit —
 /// the ladder of COPY 249–255, the same one create's opcode selection
-/// climbs.
+/// climbs. An eight-byte offset rides COPY 255, the one opcode at that
+/// width, whose length field is a fixed four-byte int.
 fn copy_command_wire_cost(source_offset: usize, length: usize) -> usize {
     let offset_field_bytes =
         if source_offset <= 0xFFFF { 2 } else if source_offset <= 0xFFFF_FFFF { 4 } else { 8 };
-    let length_field_bytes =
-        if length <= 0xFF { 1 } else if length <= 0xFFFF { 2 } else { 4 };
+    let length_field_bytes = if offset_field_bytes == 8 {
+        4
+    } else if length <= 0xFF {
+        1
+    } else if length <= 0xFFFF {
+        2
+    } else {
+        4
+    };
     1 + offset_field_bytes + length_field_bytes
 }
 
@@ -613,14 +621,18 @@ mod tests {
         assert_eq!(copy_command_wire_cost(0x10000, 0xFF), 6);
         assert_eq!(copy_command_wire_cost(0x10000, 0xFFFF), 7);
         assert_eq!(copy_command_wire_cost(0x10000, 0x10000), 9);
-        assert_eq!(copy_command_wire_cost(0x1_0000_0000, 0xFF), 10);
+        // COPY 255's length field is a fixed four-byte int, so the cost
+        // holds at 13 however short the run.
+        assert_eq!(copy_command_wire_cost(0x1_0000_0000, 0xFF), 13);
+        assert_eq!(copy_command_wire_cost(0x1_0000_0000, 0x10000), 13);
     }
 
     #[test]
     fn an_eight_byte_match_pays_at_narrow_offsets_but_not_at_wide_ones() {
         assert!(pays_its_wire_cost(0xFFFF, 8), "two-byte offset: 8 > 4 + 1");
         assert!(pays_its_wire_cost(0xFFFF_FFFF, 8), "four-byte offset: 8 > 6 + 1");
-        assert!(!pays_its_wire_cost(0x1_0000_0000, 8), "eight-byte offset: 8 < 10 + 1");
-        assert!(pays_its_wire_cost(0x1_0000_0000, 12), "an eight-byte offset needs twelve to pay");
+        assert!(!pays_its_wire_cost(0x1_0000_0000, 8), "eight-byte offset: 8 < 13 + 1");
+        assert!(!pays_its_wire_cost(0x1_0000_0000, 14), "a wash is not paying");
+        assert!(pays_its_wire_cost(0x1_0000_0000, 15), "an eight-byte offset needs fifteen to pay");
     }
 }
