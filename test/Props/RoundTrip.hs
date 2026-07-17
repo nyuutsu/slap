@@ -280,6 +280,8 @@ roundTripTests = testGroup "RoundTrip"
                  ppf2FileIdDizOverCapStillParses
       , testCase "file_id.diz: a footer with no BEGIN marker is record bytes"
                  ppf2FileIdTrailerWithoutBeginMarkerIsRecordBytes
+      , testCase "file_id.diz: a trailer declaring content back into the header is record bytes"
+                 ppf2FileIdTrailerReachingIntoHeaderIsRecordBytes
       , testCase "growth: target longer than source round-trips with a grow note"
                  ppf2GrowthRoundTrip
       , testCase "validation: exact-fit source round-trips"
@@ -307,6 +309,8 @@ roundTripTests = testGroup "RoundTrip"
                  ppf3FileIdDizOverCapStillParses
       , testCase "file_id.diz: a footer with no BEGIN marker is record bytes"
                  ppf3FileIdTrailerWithoutBeginMarkerIsRecordBytes
+      , testCase "file_id.diz: a trailer declaring content back into the header is record bytes"
+                 ppf3FileIdTrailerReachingIntoHeaderIsRecordBytes
       ]
   , testGroup "PPF4"
       [ testProperty "round-trip" prop_ppf4
@@ -3294,6 +3298,56 @@ ppf2FileIdTrailerWithoutBeginMarkerIsRecordBytes =
          assertEqual "the tail parsed as one record's payload"
            ["@END_FILE_ID.DIZ" <> ByteString.pack [5, 0, 0, 0]]
            (map PPF2.ppf2RecordPayload (PPF2.ppf2Records parsed))
+
+-- | The marker planted where the trailer walk must not see it: the description carries
+-- "@BEGIN_FILE_ID.DIZ", and the tail's length field declares content reaching back to just past it —
+-- arithmetic that lined the marker check up with the header plant when the walk ran over the whole
+-- file. The walk runs over the record body alone, so the declared length overruns it and the tail
+-- stays record bytes.
+ppf3FileIdTrailerReachingIntoHeaderIsRecordBytes :: Assertion
+ppf3FileIdTrailerReachingIntoHeaderIsRecordBytes =
+  let descriptionTyped = SlapText.EncodedText SlapText.EncodingUtf8 (Text.pack "@BEGIN_FILE_ID.DIZ")
+      CreateResult patchBytes _ = PPF3.encodePPF3 [] descriptionTyped Nothing Nothing BIN
+      headerBytes     = unPatchFileContents patchBytes
+      recordByteCount = 27 -- 8 offset bytes, a count of 18, the footer-plus-length payload
+      -- The description sits at header offset 6, so the planted marker ends at 24; the declared
+      -- content spans from there to the footer's start, 18 bytes before the file's end.
+      declaredLength  = ByteString.length headerBytes + recordByteCount - 24 - 18
+      payload         = "@END_FILE_ID.DIZ"
+                        <> ByteString.pack [fromIntegral (declaredLength `mod` 256), fromIntegral (declaredLength `div` 256)]
+      recordBytes     = ByteString.concat [ByteString.replicate 8 0, ByteString.singleton 18, payload]
+      stitched        = PatchFileContents (headerBytes <> recordBytes)
+  in case PPF3.parsePPF3 SlapText.EncodingUtf8 stitched of
+       Left slapError -> assertFailureT ("PPF3 parse: " <> renderSlapError slapError)
+       Right (Parsed parsed _) -> do
+         assertEqual "the crafted tail is one whole record" recordByteCount (ByteString.length recordBytes)
+         assertEqual "no FILE_ID.DIZ was read" Nothing (PPF3.ppf3FileId parsed)
+         assertEqual "the tail parsed as one record's payload"
+           [payload] (map PPF3.ppf3RecordPayload (PPF3.ppf3Records parsed))
+
+-- | The PPF2 face of 'ppf3FileIdTrailerReachingIntoHeaderIsRecordBytes', across the wider length field.
+ppf2FileIdTrailerReachingIntoHeaderIsRecordBytes :: Assertion
+ppf2FileIdTrailerReachingIntoHeaderIsRecordBytes =
+  let descriptionTyped = SlapText.EncodedText SlapText.EncodingUtf8 (Text.pack "@BEGIN_FILE_ID.DIZ")
+      sourceSize       = case narrowPPF2SourceSize (FileSize 0x9720) of
+        Right size -> size
+        Left  err  -> error ("narrowPPF2SourceSize: " ++ Text.unpack (renderSlapError err))
+      validation       = PPF2.PPF2ValidationBlock (ByteString.replicate 1024 0)
+      CreateResult patchBytes _ = PPF2.encodePPF2 [] descriptionTyped sourceSize validation
+      headerBytes     = unPatchFileContents patchBytes
+      recordByteCount = 25 -- 4 offset bytes, a count of 20, the footer-plus-length payload
+      declaredLength  = ByteString.length headerBytes + recordByteCount - 24 - 20
+      payload         = "@END_FILE_ID.DIZ"
+                        <> ByteString.pack [fromIntegral (declaredLength `mod` 256), fromIntegral (declaredLength `div` 256), 0, 0]
+      recordBytes     = ByteString.concat [ByteString.replicate 4 0, ByteString.singleton 20, payload]
+      stitched        = PatchFileContents (headerBytes <> recordBytes)
+  in case PPF2.parsePPF2 SlapText.EncodingUtf8 stitched of
+       Left slapError -> assertFailureT ("PPF2 parse: " <> renderSlapError slapError)
+       Right (Parsed parsed _) -> do
+         assertEqual "the crafted tail is one whole record" recordByteCount (ByteString.length recordBytes)
+         assertEqual "no FILE_ID.DIZ was read" Nothing (PPF2.ppf2FileId parsed)
+         assertEqual "the tail parsed as one record's payload"
+           [payload] (map PPF2.ppf2RecordPayload (PPF2.ppf2Records parsed))
 
 -- | A FILE_ID.DIZ of @byteCount@ ASCII bytes, tagged UTF-8 (one byte per character).
 dizOfBytes :: Int -> SlapText.EncodedText

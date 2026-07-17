@@ -50,7 +50,7 @@ parsePPF2 metadataEncoding (PatchFileContents input)
               (ActualLength (byteLength input)))
   | otherwise = do
       () <- checkEncodingByte input
-      let fileIdSplit = splitFileIdTrailer metadataEncoding ppf2HeaderLength input
+      let fileIdSplit = splitFileIdTrailer metadataEncoding (dropLength ppf2HeaderLength input)
       header <- runFormatParser LabelPPF2 parsePPF2Header input
       records <- runFormatParser LabelPPF2 (parsePPF2Records firstAction) (ppf2SplitRecordBody fileIdSplit)
       pure (Parsed
@@ -124,20 +124,21 @@ data PPF2FileIdSplit = PPF2FileIdSplit
   , ppf2SplitAdvisories :: ![SlapAdvisory]
   }
 
--- | Detect and peel a PPF2 FILE_ID.DIZ trailer off the record body; @headerLength@ marks where the body begins.
--- The trailer, when present, sits at the very end of @input@ with the wire shape
+-- | Detect and peel a PPF2 FILE_ID.DIZ trailer off the record body — the post-header slice,
+-- which is all this function is handed, so no declared length can reach back to bytes in the header.
+-- The trailer, when present, sits at the very end of the body with the wire shape
 --
 -- "@BEGIN_FILE_ID.DIZ" then content, then "@END_FILE_ID.DIZ", then a 4-byte LE content length
 --
 -- whose length suffix lets us walk back to the content start.
 -- A trailer is recognized only whole — both markers where the length says they belong —
--- and anything less leaves the body as the whole post-header slice, for the record parser to answer.
-splitFileIdTrailer :: EncodingName -> Length -> ByteString -> PPF2FileIdSplit
-splitFileIdTrailer metadataEncoding headerLength input
-  | byteLength input < ppf2FileIdFooterLength <> ppf2FileIdLengthFieldWidth = withoutTrailer
-  | footerCandidate /= "@END_FILE_ID.DIZ"                                   = withoutTrailer
-  | dizContentLength > byteLength bytesBeforeFooter                         = withoutTrailer
-  | markerCandidate /= "@BEGIN_FILE_ID.DIZ"                                 = withoutTrailer
+-- and anything less leaves the body untouched, for the record parser to answer.
+splitFileIdTrailer :: EncodingName -> ByteString -> PPF2FileIdSplit
+splitFileIdTrailer metadataEncoding recordBody
+  | byteLength recordBody < ppf2FileIdFooterLength <> ppf2FileIdLengthFieldWidth = withoutTrailer
+  | footerCandidate /= "@END_FILE_ID.DIZ"                                        = withoutTrailer
+  | dizContentLength > byteLength bytesBeforeFooter                              = withoutTrailer
+  | markerCandidate /= "@BEGIN_FILE_ID.DIZ"                                      = withoutTrailer
   | otherwise = PPF2FileIdSplit
       { ppf2SplitFileId     = Just (PPF2CarriedFileId dizContentBytes dizText (substitutionCount dizNotices))
       , ppf2SplitRecordBody = dropLengthFromEnd trailerSize recordBody
@@ -147,10 +148,9 @@ splitFileIdTrailer metadataEncoding headerLength input
           ++ decodeLossAdvisories LabelPPF2 FieldFileIdDiz dizNotices
       }
   where
-    recordBody     = dropLength headerLength input
     withoutTrailer = PPF2FileIdSplit Nothing recordBody []
 
-    (bytesBeforeLengthField, lengthFieldBytes) = splitSuffixOfLength ppf2FileIdLengthFieldWidth input
+    (bytesBeforeLengthField, lengthFieldBytes) = splitSuffixOfLength ppf2FileIdLengthFieldWidth recordBody
     (bytesBeforeFooter, footerCandidate)       = splitSuffixOfLength ppf2FileIdFooterLength bytesBeforeLengthField
     (bytesBeforeContent, dizContentBytes)      = splitSuffixOfLength dizContentLength bytesBeforeFooter
     (_, markerCandidate)                       = splitSuffixOfLength ppf2FileIdMarkerLength bytesBeforeContent
