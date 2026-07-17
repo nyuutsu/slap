@@ -2,7 +2,7 @@ module Slap.PPF4.Apply (applyPPF4) where
 
 import Slap.PPF4.Types (PPF4Patch(..), PPF4Replace(..), PPF4Append(..))
 import Slap.Binary (copyRegion, fillNewBuffer, fillRegion)
-import Slap.Status (SlapError(..), ApplyError(..))
+import Slap.Status (SlapError(..), ApplyError(..), addressableByteCount)
 import Slap.Measure (Offset(..), FileSize(..),
                      ActionIndex,
                      RequestedLength(..), RemainingLength(..),
@@ -24,28 +24,27 @@ import System.IO.Unsafe (unsafePerformIO)
 -- Append records run second, each writing sequentially starting at the snapshot of @sourceFileSize@ taken before any Replace runs.
 applyPPF4 :: PPF4Patch -> InputFileContents -> Either SlapError OutputFileContents
 applyPPF4 patch (InputFileContents source)
-  | unFileSize outputFileSize < 0 =
-      Left (NegativeTargetSize LabelPPF4 outputFileSize)
   | unFileSize outputFileSize == 0 =
       Right (OutputFileContents ByteString.empty)
-  | otherwise = unsafePerformIO $ do
-      (result, finalOutcome) <- fillNewBuffer outputFileSize $ \outputPointer -> do
-        copyRegion outputPointer (Offset 0) source (Offset 0) initialCopyLength
-        when (outputEnd > sourceEnd) $
-          fillRegion outputPointer sourceEnd 0x00 (distance sourceEnd outputEnd)
-        replaceOutcome <- applyReplaces outputPointer firstAction (ppf4Replaces patch)
-        -- First failure wins: a Replace-phase error short-circuits the
-        -- Append phase, so an Append-phase failure on a buffer corrupted
-        -- by a failed Replace can't overwrite the more useful diagnostic.
-        case replaceOutcome of
-          Left applyErr -> pure (Just applyErr)
-          Right appendStartIndex ->
-            applyAppends outputPointer
-                         appendStartIndex
-                         appendStartOffset (ppf4Appends patch)
-      pure $ case finalOutcome of
-        Just applyErr -> Left (ApplyFailed LabelPPF4 applyErr)
-        Nothing       -> Right (OutputFileContents result)
+  | otherwise = case addressableByteCount LabelPPF4 outputFileSize of
+      Left refusal          -> Left refusal
+      Right addressableSize -> unsafePerformIO $ do
+        (result, finalOutcome) <- fillNewBuffer addressableSize $ \outputPointer -> do
+          copyRegion outputPointer (Offset 0) source (Offset 0) initialCopyLength
+          when (outputEnd > sourceEnd) $
+            fillRegion outputPointer sourceEnd 0x00 (distance sourceEnd outputEnd)
+          replaceOutcome <- applyReplaces outputPointer firstAction (ppf4Replaces patch)
+          -- First failure wins: a Replace-phase error short-circuits the Append phase,
+          -- so an Append-phase failure on a Replace-corrupted buffer can't overwrite the more useful diagnostic.
+          case replaceOutcome of
+            Left applyErr -> pure (Just applyErr)
+            Right appendStartIndex ->
+              applyAppends outputPointer
+                           appendStartIndex
+                           appendStartOffset (ppf4Appends patch)
+        pure $ case finalOutcome of
+          Just applyErr -> Left (ApplyFailed LabelPPF4 applyErr)
+          Nothing       -> Right (OutputFileContents result)
   where
     sourceEnd         = Offset (fromIntegral (ByteString.length source))
     sourceFileSize    = offsetToFileSize sourceEnd

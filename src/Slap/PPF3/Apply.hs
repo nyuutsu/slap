@@ -10,7 +10,7 @@ module Slap.PPF3.Apply (applyPPF3, undoPPF3) where
 
 import Slap.PPF3.Types (PPF3Patch(..), PPF3Record(..))
 import Slap.Binary (copyRegion, fillNewBuffer, fillRegion)
-import Slap.Status (SlapError(..), SlapAdvisory(..), ApplyError(..),
+import Slap.Status (SlapError(..), addressableByteCount, SlapAdvisory(..), ApplyError(..),
                     Outcome(..), noAdvisories)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
@@ -60,15 +60,18 @@ applyPPF3 patch (InputFileContents source) =
                               (max currentEnd recordEnd) rest
 
     runForward :: Offset -> Either SlapError (Outcome OutputFileContents)
-    runForward outputEnd = unsafePerformIO $ do
-        (result, maybeErr) <- fillNewBuffer outputFileSize $ \outputPointer -> do
-          copyRegion outputPointer (Offset 0) source (Offset 0) initialCopyLength
-          when (outputEnd > sourceEnd) $
-            fillRegion outputPointer sourceEnd 0x00 (distance sourceEnd outputEnd)
-          applyRecordStream outputFileSize outputPointer firstAction (ppf3Records patch)
-        pure $ case maybeErr of
-          Just applyErr -> Left (ApplyFailed LabelPPF3 applyErr)
-          Nothing       -> Right (Outcome (OutputFileContents result) growthAdvisories)
+    runForward outputEnd =
+      case addressableByteCount LabelPPF3 outputFileSize of
+        Left refusal          -> Left refusal
+        Right addressableSize -> unsafePerformIO $ do
+          (result, maybeErr) <- fillNewBuffer addressableSize $ \outputPointer -> do
+            copyRegion outputPointer (Offset 0) source (Offset 0) initialCopyLength
+            when (outputEnd > sourceEnd) $
+              fillRegion outputPointer sourceEnd 0x00 (distance sourceEnd outputEnd)
+            applyRecordStream outputFileSize outputPointer firstAction (ppf3Records patch)
+          pure $ case maybeErr of
+            Just applyErr -> Left (ApplyFailed LabelPPF3 applyErr)
+            Nothing       -> Right (Outcome (OutputFileContents result) growthAdvisories)
       where
         outputFileSize    = offsetToFileSize outputEnd
         initialCopyLength = minLength
@@ -114,13 +117,15 @@ undoPPF3 :: PPF3Patch -> OutputFileContents -> Either SlapError InputFileContent
 undoPPF3 patch (OutputFileContents input)
   | inputLength == 0 =
       Right (InputFileContents ByteString.empty)
-  | otherwise = unsafePerformIO $ do
-      (result, maybeErr) <- fillNewBuffer inputFileSize $ \outputPointer -> do
-        copyRegion outputPointer (Offset 0) input (Offset 0) (Length (fromIntegral inputLength))
-        undoRecordStream outputPointer firstAction (ppf3Records patch)
-      pure $ case maybeErr of
-        Just applyErr -> Left (UndoFailed LabelPPF3 applyErr)
-        Nothing       -> Right (InputFileContents result)
+  | otherwise = case addressableByteCount LabelPPF3 inputFileSize of
+      Left refusal          -> Left refusal
+      Right addressableSize -> unsafePerformIO $ do
+        (result, maybeErr) <- fillNewBuffer addressableSize $ \outputPointer -> do
+          copyRegion outputPointer (Offset 0) input (Offset 0) (Length (fromIntegral inputLength))
+          undoRecordStream outputPointer firstAction (ppf3Records patch)
+        pure $ case maybeErr of
+          Just applyErr -> Left (UndoFailed LabelPPF3 applyErr)
+          Nothing       -> Right (InputFileContents result)
   where
     inputLength   = ByteString.length input
     inputFileSize = FileSize (fromIntegral inputLength)

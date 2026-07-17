@@ -7,7 +7,7 @@ import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffInstruction(..))
-import Slap.Status (SlapError(..), ApplyError(..))
+import Slap.Status (SlapError(..), ApplyError(..), addressableByteCount)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Binary (copyRegion, fillNewBuffer, viewBytesInRange)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
@@ -64,12 +64,14 @@ initialCursors = BSDiffCursors
 applyBSDiff :: BSDiffPatch -> InputFileContents -> Either SlapError OutputFileContents
 applyBSDiff patch _
   | unFileSize (bsdiffTargetSize patch) == 0 = Right (OutputFileContents ByteString.empty)
-  | unFileSize (bsdiffTargetSize patch) < 0  = Left (NegativeTargetSize LabelBSDiff (bsdiffTargetSize patch))
-applyBSDiff patch (InputFileContents source) = unsafePerformIO $ do
-    (result, maybeErr) <- fillNewBuffer targetFileSize runApply
-    pure $ case maybeErr of
-      Just applyErr -> Left (ApplyFailed LabelBSDiff applyErr)
-      Nothing       -> Right (OutputFileContents result)
+applyBSDiff patch (InputFileContents source) =
+  case addressableByteCount LabelBSDiff targetFileSize of
+    Left refusal          -> Left refusal
+    Right addressableSize -> unsafePerformIO $ do
+      (result, maybeErr) <- fillNewBuffer addressableSize runApply
+      pure $ case maybeErr of
+        Just applyErr -> Left (ApplyFailed LabelBSDiff applyErr)
+        Nothing       -> Right (OutputFileContents result)
   where
     targetFileSize = bsdiffTargetSize patch
     diffBytes      = bsdiffDiffData patch

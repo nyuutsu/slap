@@ -6,7 +6,7 @@ module Slap.PPF1.Apply (applyPPF1) where
 
 import Slap.PPF1.Types (PPF1Patch(..), PPF1Record(..))
 import Slap.Binary (copyRegion, fillNewBuffer, fillRegion)
-import Slap.Status (SlapError(..), SlapAdvisory(..), ApplyError(..),
+import Slap.Status (SlapError(..), addressableByteCount, SlapAdvisory(..), ApplyError(..),
                     Outcome(..), noAdvisories)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), FileSize(..),
@@ -25,19 +25,19 @@ import System.IO.Unsafe (unsafePerformIO)
 
 applyPPF1 :: PPF1Patch -> InputFileContents -> Either SlapError (Outcome OutputFileContents)
 applyPPF1 patch (InputFileContents source)
-  | unFileSize outputFileSize < 0 =
-      Left (NegativeTargetSize LabelPPF1 outputFileSize)
   | unFileSize outputFileSize == 0 =
       Right (noAdvisories (OutputFileContents ByteString.empty))
-  | otherwise = unsafePerformIO $ do
-      (result, maybeErr) <- fillNewBuffer outputFileSize $ \outputPointer -> do
-        copyRegion outputPointer (Offset 0) source (Offset 0) initialCopyLength
-        when (outputEnd > sourceEnd) $
-          fillRegion outputPointer sourceEnd 0x00 (distance sourceEnd outputEnd)
-        applyRecordStream outputPointer firstAction (ppf1Records patch)
-      pure $ case maybeErr of
-        Just applyErr -> Left (ApplyFailed LabelPPF1 applyErr)
-        Nothing       -> Right (Outcome (OutputFileContents result) growthAdvisories)
+  | otherwise = case addressableByteCount LabelPPF1 outputFileSize of
+      Left refusal          -> Left refusal
+      Right addressableSize -> unsafePerformIO $ do
+        (result, maybeErr) <- fillNewBuffer addressableSize $ \outputPointer -> do
+          copyRegion outputPointer (Offset 0) source (Offset 0) initialCopyLength
+          when (outputEnd > sourceEnd) $
+            fillRegion outputPointer sourceEnd 0x00 (distance sourceEnd outputEnd)
+          applyRecordStream outputPointer firstAction (ppf1Records patch)
+        pure $ case maybeErr of
+          Just applyErr -> Left (ApplyFailed LabelPPF1 applyErr)
+          Nothing       -> Right (Outcome (OutputFileContents result) growthAdvisories)
   where
     sourceEnd      = Offset (fromIntegral (ByteString.length source))
     outputEnd      = computeOutputEnd sourceEnd (ppf1Records patch)

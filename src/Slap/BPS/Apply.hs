@@ -6,7 +6,7 @@ module Slap.BPS.Apply
 
 import Slap.BPS.Types (BPSPatch(..), BPSAction(..))
 import Slap.Binary (copyRegion, copyInPlace, fillRegion, fillNewBuffer)
-import Slap.Status (SlapError(..), ApplyError(..), CursorKind(..))
+import Slap.Status (SlapError(..), ApplyError(..), CursorKind(..), addressableByteCount)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      SignedOffset(..), Delta, ActionIndex(unActionIndex),
@@ -99,15 +99,15 @@ classifyTargetCopy readStart writePosition copyLength
 -- a 'Left' here means the action stream is invalid, not that the patch bytes were corrupted.
 applyBPS :: BPSPatch -> InputFileContents -> Either SlapError OutputFileContents
 applyBPS patch (InputFileContents source)
-  | unFileSize targetSize < 0 =
-      Left (NegativeTargetSize LabelBPS targetSize)
   | unFileSize targetSize == 0 =
       Right (OutputFileContents ByteString.empty)
-  | otherwise = unsafePerformIO $ do
-      (result, maybeErr) <- fillNewBuffer targetSize runApply
-      pure $ case maybeErr of
-        Just applyErr -> Left (ApplyFailed LabelBPS applyErr)
-        Nothing       -> Right (OutputFileContents result)
+  | otherwise = case addressableByteCount LabelBPS targetSize of
+      Left refusal          -> Left refusal
+      Right addressableSize -> unsafePerformIO $ do
+        (result, maybeErr) <- fillNewBuffer addressableSize runApply
+        pure $ case maybeErr of
+          Just applyErr -> Left (ApplyFailed LabelBPS applyErr)
+          Nothing       -> Right (OutputFileContents result)
   where
     targetSize      = bpsTargetSize patch
     sourceSize      = byteFileSize source

@@ -80,6 +80,7 @@ import qualified Data.ByteArray as ByteArray
 import Slap.Checksum (CRC16(..), MD5Hash(..), SHA1Hash(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Hunk(..),
+                     AddressableByteCount(unAddressableByteCount),
                      advance, byteLength, distance, minLength, subtractLength,
                      lengthToOffset, fileSizeToLength, plusOffset)
 
@@ -486,30 +487,20 @@ copyInPlace buffer sourceOffset destinationOffset regionLength =
               (buffer `plusOffset` sourceOffset)
               (fromIntegral (unLength regionLength))
 
--- | Allocate an output buffer of exactly @size@ bytes, run a fill
--- action over it, and return the filled buffer paired with whatever
--- the action computed (an apply\/undo error, an 'Slap.Status.Outcome',
--- ...).
---
--- This is the one shape slap ever asks of bytestring's internal
--- 'Internal.createAndTrim'': start at offset 0, keep the full
--- requested length, never actually trim. That primitive's name half-
--- hides its calling convention — the @(offset, length, extra)@ triple
--- the fill action must return — and the format @Apply@ modules were
--- each spelling that triple identically. Closing over it here keeps
--- the 'Data.ByteString.Internal' import in one module and lets the
--- call sites pass a 'FileSize' and their fill action with nothing in
--- between.
-fillNewBuffer :: FileSize -> (Ptr Word8 -> IO a) -> IO (ByteString, a)
+-- | The one wrapper over bytestring's 'Internal.createAndTrim'': its @(offset, length, extra)@ return
+-- convention is easy to get wrong, and its 'Data.ByteString.Internal' import is best kept to one module.
+fillNewBuffer :: AddressableByteCount -> (Ptr Word8 -> IO a) -> IO (ByteString, a)
 fillNewBuffer size fill =
-  Internal.createAndTrim' (fromIntegral (unFileSize size)) $ \bufferPointer -> do
+  Internal.createAndTrim' bufferLength $ \bufferPointer -> do
     extra <- fill bufferPointer
-    pure (0, fromIntegral (unFileSize size), extra)
+    pure (0, bufferLength, extra)
+  where
+    bufferLength = unAddressableByteCount size
 
--- | A buffer of exactly @size@ bytes as a pure value, wholly written by the fill action ('Internal.unsafeCreate''s contract).
--- 'fillNewBuffer' is the sibling for fills that compute a result along the way.
-filledBufferOfSize :: FileSize -> (Ptr Word8 -> IO ()) -> ByteString
-filledBufferOfSize size = Internal.unsafeCreate (fromIntegral (unFileSize size))
+-- | A pure buffer wholly written by the fill action ('Internal.unsafeCreate''s contract).
+-- 'fillNewBuffer' is the sibling for a fill that also computes a result.
+filledBufferOfSize :: AddressableByteCount -> (Ptr Word8 -> IO ()) -> ByteString
+filledBufferOfSize size = Internal.unsafeCreate (unAddressableByteCount size)
 
 ----------------------------------------------------------------------------
 -- Byte permutations

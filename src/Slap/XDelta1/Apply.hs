@@ -8,7 +8,7 @@ import Slap.XDelta1.Types
     , XDelta1InstructionTarget(..)
     , XDelta1FileAtDeltaTime(..)
     )
-import Slap.Status (SlapError(..), SlapAdvisory(..), ApplyError(..),
+import Slap.Status (SlapError(..), addressableByteCount, SlapAdvisory(..), ApplyError(..),
                     Outcome(..), XDelta1GzipStreamInputs(..),
                     XDelta1SourcelessShape(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -51,10 +51,7 @@ applyXDelta1 patch sourceContents =
     (FileWasGzipStream, FileWasGzipStream)
       -> Left (XDelta1InputPreCompressionUnsupported BothFilesWereGzipStreams)
     (FileWasRawBytes,   FileWasRawBytes)
-      | unFileSize targetFileSize < 0
-          -> Left (NegativeTargetSize LabelXDelta1 targetFileSize)
-      | otherwise
-          -> attachSourcelessNotes <$> proceedWithApply sourceContents
+      -> attachSourcelessNotes <$> proceedWithApply sourceContents
   where
     targetFileSize = xdelta1TargetLength patch
     dataSegment    = xdelta1DataSegment patch
@@ -85,11 +82,14 @@ applyXDelta1 patch sourceContents =
                  (advance instructionOffset instructionLength) sourceFileSize)
       | otherwise = Right ()
 
-    proceedWithApply (InputFileContents source) = unsafePerformIO $ do
-      (result, maybeErr) <- fillNewBuffer targetFileSize runApply
-      pure $ case maybeErr of
-        Just applyErr -> Left (ApplyFailed LabelXDelta1 applyErr)
-        Nothing       -> Right (OutputFileContents result)
+    proceedWithApply (InputFileContents source) =
+      case addressableByteCount LabelXDelta1 targetFileSize of
+        Left refusal          -> Left refusal
+        Right addressableSize -> unsafePerformIO $ do
+          (result, maybeErr) <- fillNewBuffer addressableSize runApply
+          pure $ case maybeErr of
+            Just applyErr -> Left (ApplyFailed LabelXDelta1 applyErr)
+            Nothing       -> Right (OutputFileContents result)
       where
         runApply targetPointer =
           let

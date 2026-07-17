@@ -4,7 +4,8 @@ module Slap.PMSR.Apply
 
 import Slap.PMSR.Types (PMSRPatch(..), PMSRRecord(..))
 import Slap.Binary (copyRegion, filledBufferOfSize, seedBufferFromSource)
-import Slap.Status (SlapError)
+import Slap.FormatLabel (FormatLabel(LabelPMSR))
+import Slap.Status (SlapError, addressableByteCount)
 import Slap.Measure (Offset(..), advance, byteFileSize, byteLength, offsetToFileSize,
                      ActionIndex(unActionIndex),
                      firstAction, nextAction, streamEndIndex)
@@ -15,18 +16,21 @@ import qualified Data.Vector as Vector
 
 -- | Copy source, then overwrite at offsets.
 applyPMSR :: PMSRPatch -> InputFileContents -> Either SlapError OutputFileContents
-applyPMSR patch (InputFileContents source) = Right $ OutputFileContents $ filledBufferOfSize outputSize $ \targetPointer -> do
-    seedBufferFromSource targetPointer outputSize source
-    let applyRecordStream !recordIndex
-          | recordIndex >= recordStreamEnd = pure ()
-          | otherwise = do
-              let record = Vector.unsafeIndex records (unActionIndex recordIndex)
-              copyRegion targetPointer
-                (pmsrOffset record)
-                (pmsrData record) (Offset 0)
-                (byteLength (pmsrData record))
-              applyRecordStream (nextAction recordIndex)
-    applyRecordStream firstAction
+applyPMSR patch (InputFileContents source) =
+  case addressableByteCount LabelPMSR outputSize of
+    Left refusal          -> Left refusal
+    Right addressableSize -> Right $ OutputFileContents $ filledBufferOfSize addressableSize $ \targetPointer -> do
+      seedBufferFromSource targetPointer outputSize source
+      let applyRecordStream !recordIndex
+            | recordIndex >= recordStreamEnd = pure ()
+            | otherwise = do
+                let record = Vector.unsafeIndex records (unActionIndex recordIndex)
+                copyRegion targetPointer
+                  (pmsrOffset record)
+                  (pmsrData record) (Offset 0)
+                  (byteLength (pmsrData record))
+                applyRecordStream (nextAction recordIndex)
+      applyRecordStream firstAction
   where
     records         = pmsrRecords patch
     recordStreamEnd = streamEndIndex records

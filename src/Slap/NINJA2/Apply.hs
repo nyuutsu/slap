@@ -3,10 +3,10 @@ module Slap.NINJA2.Apply
   ) where
 
 import Slap.NINJA2.Types
-import Slap.Status (SlapError(..), ApplyError(..))
+import Slap.Status (SlapError(..), ApplyError(..), addressableByteCount)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Binary (copyRegion, fillNewBuffer, seedBufferFromSource)
-import Slap.Measure (Offset(..), Length, FileSize(..),
+import Slap.Measure (Offset(..), Length,
                      ActionIndex, RequestedLength(..),
                      byteFileSize, byteLength, fileSizeToOffset, fitsWithin, plusOffset,
                      firstAction, nextAction, streamEndIndex)
@@ -34,11 +34,11 @@ import System.IO.Unsafe (unsafePerformIO)
 -- the overflow-append step, when present, takes the index immediately after the last record (@length records@).
 -- So an OOB on the append shows up one index past the last record, unambiguous against an OOB on a specific record.
 applyNINJA2 :: NINJA2Patch -> InputFileContents -> Either SlapError OutputFileContents
-applyNINJA2 patch (InputFileContents source)
-  | outputFileSize < FileSize 0 =
-      Left (NegativeTargetSize LabelNINJA2 outputFileSize)
-  | otherwise = unsafePerformIO $ do
-      (result, maybeErr) <- fillNewBuffer outputFileSize runApply
+applyNINJA2 patch (InputFileContents source) =
+  case addressableByteCount LabelNINJA2 outputFileSize of
+    Left refusal          -> Left refusal
+    Right addressableSize -> unsafePerformIO $ do
+      (result, maybeErr) <- fillNewBuffer addressableSize runApply
       pure $ case maybeErr of
         Just applyErr -> Left (ApplyFailed LabelNINJA2 applyErr)
         Nothing       -> Right (OutputFileContents result)

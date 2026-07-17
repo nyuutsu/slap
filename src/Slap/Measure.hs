@@ -17,6 +17,8 @@ module Slap.Measure
   , ActualSize(..)
   , ExpectedSize(..)
   , MaxAddressableSize(..)
+  , AddressableByteCount(unAddressableByteCount)
+  , AddressableNarrowFailure(..)
   , SourceFileSize(..)
   , TargetFileSize(..)
   , DeclaredTargetSize(..)
@@ -78,6 +80,8 @@ module Slap.Measure
   , distance
   , fitsWithin
   , boundedWriteEnd
+  , maxAddressableByteCount
+  , narrowToAddressable
   , byteLength
   , byteFileSize
   , hunkEnd
@@ -185,7 +189,8 @@ newtype ExpectedSize = ExpectedSize { unExpectedSize :: FileSize }
   deriving (Eq, Ord, Show)
   deriving newtype (ToJSON)
 
--- | The maximum size slap can address, given that offsets and lengths flow through 'Int64': 'maxBound' :: 'Int64'.
+-- | The 'maxAddressableByteCount' ceiling, carried in 'Slap.Status.FileExceedsAddressableRange' to name
+-- the wall a size ran into — a role newtype so it cannot transpose with the 'ActualSize' beside it.
 newtype MaxAddressableSize = MaxAddressableSize { unMaxAddressableSize :: FileSize }
   deriving (Eq, Ord, Show)
   deriving newtype (ToJSON)
@@ -645,6 +650,28 @@ boundedWriteEnd (Offset regionStart) (Length regionLength)
   | otherwise         = Just (Offset end)
   where
     end = regionStart + regionLength
+
+-- | The largest byte count an allocation can hold: a buffer's length is an 'Int', narrower than the
+-- 'Int64' a 'FileSize' carries on wasm32, so 'maxBound' :: 'Int' — not the carrier's max — is the ceiling.
+maxAddressableByteCount :: FileSize
+maxAddressableByteCount = FileSize (fromIntegral (maxBound :: Int))
+
+-- | A 'FileSize' proven to fit an 'Int', so it can size a buffer. Minted only by 'narrowToAddressable'
+-- and taken by 'Slap.Binary''s allocators in place of a raw 'FileSize', so no unchecked size narrows at an allocation.
+newtype AddressableByteCount = AddressableByteCount { unAddressableByteCount :: Int }
+  deriving (Eq, Show)
+
+data AddressableNarrowFailure
+  = SizeIsNegative
+  | SizeExceedsAddressable
+  deriving (Eq, Show)
+
+-- | The one narrow every buffer allocation passes: a 'FileSize' that would not fit an 'Int' is refused, not truncated.
+narrowToAddressable :: FileSize -> Either AddressableNarrowFailure AddressableByteCount
+narrowToAddressable size
+  | unFileSize size < 0             = Left SizeIsNegative
+  | size <= maxAddressableByteCount = Right (AddressableByteCount (fromIntegral (unFileSize size)))
+  | otherwise                       = Left SizeExceedsAddressable
 
 byteLength :: ByteString -> Length
 byteLength bytes = Length (fromIntegral (ByteString.length bytes))

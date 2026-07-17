@@ -14,7 +14,7 @@ import Slap.VCDIFF.Types
   , SourceSegment(..), SegmentOrigin(..), windowOutputLength
   , xdelta3WindowBody )
 import Slap.Binary (copyRegion, copyInPlace, fillRegion, fillNewBuffer)
-import Slap.Status (SlapError(..), ApplyError(..))
+import Slap.Status (SlapError(..), ApplyError(..), addressableByteCount)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Measure
@@ -101,11 +101,13 @@ applyVCDIFF patch (InputFileContents source) =
     Right totalTargetSize
       | unFileSize totalTargetSize == 0 ->
           Right (OutputFileContents ByteString.empty)
-      | otherwise -> unsafePerformIO $ do
-          (result, maybeError) <- fillNewBuffer totalTargetSize runApply
-          pure $ case maybeError of
-            Just applyError -> Left (ApplyFailed LabelVCDIFF applyError)
-            Nothing         -> Right (OutputFileContents result)
+      | otherwise -> case addressableByteCount LabelVCDIFF totalTargetSize of
+          Left refusal          -> Left refusal
+          Right addressableSize -> unsafePerformIO $ do
+            (result, maybeError) <- fillNewBuffer addressableSize runApply
+            pure $ case maybeError of
+              Just applyError -> Left (ApplyFailed LabelVCDIFF applyError)
+              Nothing         -> Right (OutputFileContents result)
   where
     windows = case patch of
       PatchCoreOnly windowVector        -> windowVector
@@ -114,10 +116,8 @@ applyVCDIFF patch (InputFileContents source) =
 
     sourceSize = byteFileSize source
 
-    -- | The output size is the windows' target sizes laid end to end.
-    -- Folded through 'boundedWriteEnd' so a running total past 'Int64' is refused as
-    -- 'ApplyOutputExceedsAddressableRange' naming the window that overran, rather than
-    -- wrapping to a short buffer the window walk would then write past.
+    -- | The windows' target sizes laid end to end, folded through 'boundedWriteEnd' so a total
+    -- past 'Int64' is refused, not wrapped into a buffer the window walk would overrun.
     checkedTargetSize :: ActionIndex -> Offset -> [Window] -> Either ApplyError FileSize
     checkedTargetSize _ runningEnd [] = Right (offsetToFileSize runningEnd)
     checkedTargetSize windowIndex runningEnd (window : rest) =

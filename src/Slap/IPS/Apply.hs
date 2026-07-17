@@ -7,7 +7,7 @@ import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), IPSVariant(..),
                        MarkerDisposition(..), decideMarkerDisposition,
                        effectiveTargetSize)
 import Slap.Binary (copyRegion, fillRegion, seedBufferFromSource, fillNewBuffer)
-import Slap.Status (SlapError(..), ApplyError(..), SlapAdvisory(..),
+import Slap.Status (SlapError(..), addressableByteCount, ApplyError(..), SlapAdvisory(..),
                    Outcome(..), ClippedRecordCount(..), MarkerOvershootBytes(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
@@ -77,12 +77,12 @@ classifyRecordPlacement writePosition writeLength effectiveSize
 -- Error and warning labels come from the patch's 'ipsVariant', not the container it arrived in:
 -- an EBP-wrapped patch surfaces as 'LabelIPS' once the wrapper is peeled.
 applyIPS :: InputFileContents -> IPSPatch -> Either SlapError (Outcome OutputFileContents)
-applyIPS (InputFileContents source) patch
-  | unFileSize effectiveSize < 0 =
-      Left (NegativeTargetSize patchLabel effectiveSize)
-  | otherwise = unsafePerformIO $ do
+applyIPS (InputFileContents source) patch =
+  case addressableByteCount patchLabel effectiveSize of
+    Left refusal          -> Left refusal
+    Right addressableSize -> unsafePerformIO $ do
       (result, (errorOutcome, clipOutcome)) <-
-        fillNewBuffer effectiveSize $ \outputPointer ->
+        fillNewBuffer addressableSize $ \outputPointer ->
           runStateT (runApply outputPointer) Nothing
       pure $ case errorOutcome of
         Just applyErr -> Left (ApplyFailed patchLabel applyErr)
@@ -210,8 +210,6 @@ applyIPS (InputFileContents source) patch
               recordClip recordIndex overshootLength
               applyRecordStream (nextAction recordIndex)
 
-        -- | Record handler for the three non-Honored dispositions.
-        -- Structurally unreachable — for these, effective >= maxRecordEnd — but kept as a defensive total guard.
         handleStrict :: ActionIndex -> IPSRecord -> IPSApply (Maybe ApplyError)
         handleStrict recordIndex record =
           let writePosition = ipsRecordOffset record

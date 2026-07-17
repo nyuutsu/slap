@@ -20,12 +20,15 @@
 module Props.Measure (measureTests) where
 
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
-                     fitsWithin, boundedWriteEnd)
+                     fitsWithin, boundedWriteEnd,
+                     narrowToAddressable, maxAddressableByteCount,
+                     AddressableByteCount(unAddressableByteCount),
+                     AddressableNarrowFailure(..))
 import Slap.PPF3.Types (PPF3Patch(..), PPF3Record(..), PPF3ImageType(..))
 import Slap.PPF3.Apply (applyPPF3)
 import Slap.Text (EncodedText(..), EncodingName(EncodingUtf8))
 import Slap.FileContents (InputFileContents(..))
-import Slap.Status (SlapError(..), ApplyError(..), renderSlapError)
+import Slap.Status (SlapError(..), ApplyError(..), renderSlapError, addressableByteCount)
 import Slap.FormatLabel (FormatLabel(..))
 
 import Props.Helpers (assertFailureT)
@@ -41,6 +44,37 @@ measureTests :: TestTree
 measureTests = testGroup "Measure"
   [ fitsWithinTests
   , boundedWriteEndTests
+  , narrowToAddressableTests
+  ]
+
+----------------------------------------------------------------------------
+-- narrowToAddressable
+----------------------------------------------------------------------------
+
+-- | The over-ceiling refusal fires only where 'Int' is narrower than the 'Int64' a 'FileSize' carries —
+-- wasm32 — so on a 64-bit host no 'FileSize' reaches it and only the reachable arms run here. What is
+-- pinned on any host is that the ceiling is 'maxBound' :: 'Int'.
+narrowToAddressableTests :: TestTree
+narrowToAddressableTests = testGroup "narrowToAddressable"
+  [ testCase "the ceiling is maxBound::Int, whatever the host's word size" $
+      maxAddressableByteCount @?= FileSize (fromIntegral (maxBound :: Int))
+  , testCase "a negative size is refused as negative" $
+      narrowToAddressable (FileSize (-1)) @?= Left SizeIsNegative
+  , testCase "zero narrows to a zero byte count" $
+      fmap unAddressableByteCount (narrowToAddressable (FileSize 0)) @?= Right 0
+  , testCase "an ordinary size narrows to its Int" $
+      fmap unAddressableByteCount (narrowToAddressable (FileSize 4096)) @?= Right 4096
+  , testCase "a size at the ceiling narrows, it does not overrun it" $
+      fmap unAddressableByteCount (narrowToAddressable maxAddressableByteCount)
+        @?= Right (fromIntegral (unFileSize maxAddressableByteCount))
+  , testCase "addressableByteCount labels a negative size as NegativeTargetSize" $
+      case addressableByteCount LabelBPS (FileSize (-1)) of
+        Left (NegativeTargetSize LabelBPS _) -> pure ()
+        other -> assertFailureT ("expected a NegativeTargetSize refusal, got: "
+                                   <> either renderSlapError (const "a Right") other)
+  , testCase "addressableByteCount passes an addressable size through" $
+      fmap unAddressableByteCount (addressableByteCount LabelBPS (FileSize 4096))
+        @?= Right 4096
   ]
 
 ----------------------------------------------------------------------------

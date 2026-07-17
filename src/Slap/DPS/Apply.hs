@@ -4,7 +4,7 @@ module Slap.DPS.Apply
 
 import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), dpsOutputExtent)
 import Slap.Binary (copyRegion, fillNewBuffer, fillRegion)
-import Slap.Status (SlapError(..), ApplyError(..))
+import Slap.Status (SlapError(..), ApplyError(..), addressableByteCount)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length, FileSize(..),
                      ActionIndex,
@@ -23,15 +23,15 @@ import System.IO.Unsafe (unsafePerformIO)
 -- Bytes not named by any record are zero, matching the reference implementation (dpspatcher.exe).
 applyDPS :: DPSPatch -> InputFileContents -> Either SlapError OutputFileContents
 applyDPS patch (InputFileContents source)
-  | unFileSize outputSize < 0 =
-      Left (NegativeTargetSize LabelDPS outputSize)
   | unFileSize outputSize == 0 =
       Right (OutputFileContents ByteString.empty)
-  | otherwise = unsafePerformIO $ do
-      (result, maybeErr) <- fillNewBuffer outputSize runApply
-      pure $ case maybeErr of
-        Just applyErr -> Left (ApplyFailed LabelDPS applyErr)
-        Nothing       -> Right (OutputFileContents result)
+  | otherwise = case addressableByteCount LabelDPS outputSize of
+      Left refusal          -> Left refusal
+      Right addressableSize -> unsafePerformIO $ do
+        (result, maybeErr) <- fillNewBuffer addressableSize runApply
+        pure $ case maybeErr of
+          Just applyErr -> Left (ApplyFailed LabelDPS applyErr)
+          Nothing       -> Right (OutputFileContents result)
   where
     records    = dpsRecords patch
     sourceSize = byteFileSize source

@@ -6,7 +6,7 @@ module Slap.UPS.Apply
 
 import Slap.UPS.Types (UPSPatch(..), UPSBlock(..), upsTerminatorByteLength)
 import Slap.Binary (takeLength, copyBetweenBuffers, fillRegion, filledBufferOfSize)
-import Slap.Status (SlapError(..), SlapAdvisory(..), Outcome(..),
+import Slap.Status (SlapError(..), addressableByteCount, SlapAdvisory(..), Outcome(..),
                    OOBBlockCount(..), OOBOvershootBytes(..),
                    ApplyDirection(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -180,15 +180,15 @@ undoUPS patch (OutputFileContents modified) = do
 -- the variant is named after the apply direction's "target" but covers both directions.
 runUPSXorWalk :: UPSPatch -> ByteString -> FileSize -> Either SlapError ByteString
 runUPSXorWalk patch source outputSize
-  | unFileSize outputSize < 0 =
-      Left (NegativeTargetSize LabelUPS outputSize)
   | unFileSize outputSize == 0 =
       Right ByteString.empty
-  | otherwise = Right $
-      filledBufferOfSize outputSize $ \outputPointer ->
-        unsafeUseAsCStringLen source $ \(sourcePointerCString, _) ->
-          let sourcePointer = castPtr sourcePointerCString :: Ptr Word8
-          in runApply outputPointer sourcePointer
+  | otherwise = case addressableByteCount LabelUPS outputSize of
+      Left refusal          -> Left refusal
+      Right addressableSize -> Right $
+        filledBufferOfSize addressableSize $ \outputPointer ->
+          unsafeUseAsCStringLen source $ \(sourcePointerCString, _) ->
+            let sourcePointer = castPtr sourcePointerCString :: Ptr Word8
+            in runApply outputPointer sourcePointer
   where
     sourceSize     = byteFileSize source
     blocks         = upsBlocks patch

@@ -6,6 +6,7 @@ module Slap.Status.Error
   ( SlapError(..)
   , UnencodeabilityReason(..)
   , SourceRequiredCause(..)
+  , addressableByteCount
   ) where
 
 import Slap.Archive.Types (ArchiveFormat, UnwrapError)
@@ -16,7 +17,9 @@ import Slap.FieldName (FieldName)
 import Slap.FormatLabel (FormatLabel)
 import Slap.Header (ConsoleHeader)
 import Slap.Measure (Offset, Length, FileSize, ActionIndex,
-                     ActualSize, ExpectedSize, MaxAddressableSize,
+                     AddressableByteCount, AddressableNarrowFailure(..),
+                     narrowToAddressable, maxAddressableByteCount,
+                     ActualSize(..), ExpectedSize, MaxAddressableSize(..),
                      SourceFileSize, TargetFileSize,
                      DeclaredTargetSize,
                      RequiredLength, ActualLength,
@@ -43,6 +46,7 @@ import Slap.Status.XDelta1 (XDelta1KnownUnsupportedVersion, XDelta1ShapeViolatio
                             XDelta1SourceListShape, XDelta1SourceFlag, XDelta1GzipStreamInputs)
 
 import Data.Aeson (ToJSON)
+import Data.Bifunctor (first)
 import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Word (Word8)
@@ -364,3 +368,11 @@ data SourceRequiredCause
     -- ^ Direct, but carrying records only an apply can place (PPF4's Appends, which have no offset until a source gives them one).
   deriving (Show, Eq, Generic)
   deriving (ToJSON) via Generically SourceRequiredCause
+
+-- | The format-labelled face of 'Slap.Measure.narrowToAddressable'.
+addressableByteCount :: FormatLabel -> FileSize -> Either SlapError AddressableByteCount
+addressableByteCount label size = first labelledRefusal (narrowToAddressable size)
+  where
+    labelledRefusal SizeIsNegative         = NegativeTargetSize label size
+    labelledRefusal SizeExceedsAddressable =
+      FileExceedsAddressableRange label (ActualSize size) (MaxAddressableSize maxAddressableByteCount)

@@ -3,7 +3,7 @@ module Slap.APSN64.Apply
   ) where
 
 import Slap.APSN64.Types
-import Slap.Status (SlapError(..), ApplyError(..))
+import Slap.Status (SlapError(..), ApplyError(..), addressableByteCount)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Binary (copyRegion, fillNewBuffer, fillRegion, seedBufferFromSource)
 import Slap.Measure (Offset(..), Length(..),
@@ -18,17 +18,18 @@ import Data.Word (Word8)
 import Foreign.Ptr (Ptr)
 import System.IO.Unsafe (unsafePerformIO)
 
--- | Apply an APS-N64 patch. The output is sized to the header's destination-size field, matching the reference @n64aps@,
--- whose @ReadSizeHeader@ truncates or zero-pads the source to that size before any record is written.
--- A record whose write would fall past the declared destination is malformed, surfacing as 'ApplyAbsoluteWritePastTarget'
--- rather than silently growing the output.
+-- | Apply an APS-N64 patch, sizing the output to the header's destination-size field — not to the records —
+-- to match the reference @n64aps@, which truncates or zero-pads the source to that size before writing.
+-- A record past that size is refused ('ApplyAbsoluteWritePastTarget'), never grown into.
 applyAPSN64 :: APSN64Patch -> InputFileContents -> Either SlapError OutputFileContents
 applyAPSN64 (APSN64Patch header records) (InputFileContents source) =
-  unsafePerformIO $ do
-    (result, maybeErr) <- fillNewBuffer outputFileSize runApply
-    pure $ case maybeErr of
-      Just applyErr -> Left (ApplyFailed LabelAPSN64 applyErr)
-      Nothing       -> Right (OutputFileContents result)
+  case addressableByteCount LabelAPSN64 outputFileSize of
+    Left refusal          -> Left refusal
+    Right addressableSize -> unsafePerformIO $ do
+      (result, maybeErr) <- fillNewBuffer addressableSize runApply
+      pure $ case maybeErr of
+        Just applyErr -> Left (ApplyFailed LabelAPSN64 applyErr)
+        Nothing       -> Right (OutputFileContents result)
   where
     outputFileSize = apsN64DestinationSizeAsFileSize (apsN64DestinationSize header)
 

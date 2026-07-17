@@ -15,6 +15,7 @@ module Slap.Status
   , orBail
     -- Status values
   , SlapError(..)
+  , addressableByteCount
   , SourceRequiredCause(..)
   , ExtractionSubject(..)
   , SlapAdvisory(..)

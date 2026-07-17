@@ -10,7 +10,7 @@ import Slap.Measure
   ( Offset(..), FileSize(..), ActionIndex
   , advance, byteLength, firstAction, nextAction, fitsWithin, offsetToFileSize, boundedWriteEnd, byteFileSize
   )
-import Slap.Status (SlapError(..), ApplyError(..))
+import Slap.Status (SlapError(..), ApplyError(..), addressableByteCount)
 import Slap.FormatLabel (FormatLabel(..))
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
@@ -30,12 +30,14 @@ applyGDIFF patch (InputFileContents source) =
   case validateCommands sourceSize commands of
     Left applyError       -> Left (ApplyFailed LabelGDIFF applyError)
     Right (FileSize 0)    -> Right (OutputFileContents ByteString.empty)
-    Right totalOutputSize -> Right (OutputFileContents (writeOutput totalOutputSize))
+    Right totalOutputSize -> case addressableByteCount LabelGDIFF totalOutputSize of
+      Left refusal          -> Left refusal
+      Right addressableSize -> Right (OutputFileContents (writeOutput addressableSize))
   where
     commands   = gdiffCommands patch
     sourceSize = byteFileSize source
 
-    writeOutput totalOutputSize = filledBufferOfSize totalOutputSize $ \outputPointer ->
+    writeOutput addressableSize = filledBufferOfSize addressableSize $ \outputPointer ->
       let
         applyLoop :: Offset -> [GDiffCommand] -> IO ()
         applyLoop _outputPosition [] = pure ()
@@ -73,9 +75,6 @@ validateCommands sourceSize = validateCommandStream firstAction (Offset 0)
           | otherwise ->
               extendOutput copyLength
       where
-        -- The output grows through 'boundedWriteEnd', so a command whose length carries the
-        -- running total past 'Int64' is refused as 'ApplyOutputExceedsAddressableRange' rather
-        -- than wrapping the buffer 'applyGDIFF' then sizes to it.
         extendOutput producedLength =
           case boundedWriteEnd outputEnd producedLength of
             Nothing      -> Left (ApplyOutputExceedsAddressableRange actionIndex outputEnd producedLength)

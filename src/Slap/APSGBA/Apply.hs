@@ -6,7 +6,7 @@ module Slap.APSGBA.Apply
 
 import Slap.APSGBA.Types
 import Slap.Binary (fillNewBuffer, seedBufferFromSource)
-import Slap.Status (SlapError(..), ApplyError(..))
+import Slap.Status (SlapError(..), ApplyError(..), addressableByteCount)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex, RequestedLength(..),
@@ -31,11 +31,11 @@ import System.IO.Unsafe (unsafePerformIO)
 -- a record starting past the target writes nothing at all,
 -- while one starting in range with an overrunning tail writes its in-range bytes and drops only the overhang.
 applyAPSGBA :: APSGBAPatch -> InputFileContents -> Either SlapError OutputFileContents
-applyAPSGBA (APSGBAPatch header records) (InputFileContents source)
-  | targetFileSize < FileSize 0 =
-      Left (NegativeTargetSize LabelAPSGBA targetFileSize)
-  | otherwise = unsafePerformIO $ do
-      (result, maybeErr) <- fillNewBuffer targetFileSize runApply
+applyAPSGBA (APSGBAPatch header records) (InputFileContents source) =
+  case addressableByteCount LabelAPSGBA targetFileSize of
+    Left refusal          -> Left refusal
+    Right addressableSize -> unsafePerformIO $ do
+      (result, maybeErr) <- fillNewBuffer addressableSize runApply
       pure $ case maybeErr of
         Just applyErr -> Left (ApplyFailed LabelAPSGBA applyErr)
         Nothing       -> Right (OutputFileContents result)
