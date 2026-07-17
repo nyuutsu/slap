@@ -10,14 +10,15 @@
 
 use std::io::{Read, Write};
 
-use bzip2::read::{BzDecoder, BzEncoder};
-use flate2::read::{GzDecoder, ZlibEncoder};
+use bzip2::bufread::BzDecoder;
+use bzip2::read::BzEncoder;
+use flate2::bufread::GzDecoder;
+use flate2::read::ZlibEncoder;
 use flate2::{Compression, Decompress, FlushDecompress, GzBuilder, Status};
 
-/// Drain a `Read` to a fresh `Vec<u8>`, surfacing any I/O failure as the
-/// underlying library's diagnostic verbatim. The four streaming entry
-/// points below differ only in which decoder/encoder they construct;
-/// this helper keeps that single shared shape in one place.
+/// Drain a `Read` to a fresh `Vec<u8>`, surfacing any I/O failure as
+/// the underlying library's diagnostic verbatim — the one drain every
+/// streaming entry point below shares.
 fn drain_to_vec<R: Read>(mut reader: R) -> Result<Vec<u8>, String> {
     let mut output_bytes = Vec::new();
     reader
@@ -32,9 +33,9 @@ fn drain_to_vec<R: Read>(mut reader: R) -> Result<Vec<u8>, String> {
 /// the stream, so a stream ending before the input (trailing bytes) or
 /// an input ending before the stream (truncation) is container
 /// corruption. Both verdicts are judged on the raw `Decompress` state
-/// machine — the `Read`-wrapper decoders treat end-of-input as
-/// end-of-stream and hand back partial output for a truncated stream,
-/// exactly the completeness they cannot answer.
+/// machine, whose consumption count answers them exactly;
+/// [`gzip_inflate`] and [`bzip2_decompress`] hold the same line through
+/// their `bufread` decoders' unconsumed remainder.
 pub fn zlib_inflate(input: &[u8]) -> Result<Vec<u8>, String> {
     // A chunk at a time; the vector grows as output lands, not pre-sized.
     const OUTPUT_RESERVE_CHUNK: usize = 32 * 1024;
@@ -82,9 +83,14 @@ pub fn zlib_deflate(input: &[u8]) -> Vec<u8> {
         .expect("in-memory zlib deflate yields no error; allocation failure aborts")
 }
 
-/// Gzip (RFC 1952) inflate.
+/// Gzip (RFC 1952) inflate, held to [`zlib_inflate`]'s completeness
+/// contract: bytes past the member's end — junk or a second member —
+/// are container corruption and refused, never quietly ignored.
 pub fn gzip_inflate(input: &[u8]) -> Result<Vec<u8>, String> {
-    drain_to_vec(GzDecoder::new(input))
+    let mut decoder = GzDecoder::new(input);
+    let decoded = drain_to_vec(&mut decoder)?;
+    refuse_unconsumed_remainder(decoder.into_inner(), input.len())?;
+    Ok(decoded)
 }
 
 /// Gzip (RFC 1952) deflate at the library's default compression level
@@ -102,9 +108,28 @@ pub fn gzip_deflate(input: &[u8]) -> Vec<u8> {
     encoder.finish().expect("in-memory gzip deflate yields no error; allocation failure aborts")
 }
 
-/// Bzip2 decompress.
+/// Bzip2 decompress, held to [`zlib_inflate`]'s completeness contract:
+/// bytes past the stream's end are container corruption and refused.
 pub fn bzip2_decompress(input: &[u8]) -> Result<Vec<u8>, String> {
-    drain_to_vec(BzDecoder::new(input))
+    let mut decoder = BzDecoder::new(input);
+    let decoded = drain_to_vec(&mut decoder)?;
+    refuse_unconsumed_remainder(decoder.into_inner(), input.len())?;
+    Ok(decoded)
+}
+
+/// The completeness verdict shared by the streaming inflaters: a
+/// `bufread` decoder consumes exactly its stream's bytes, so whatever
+/// it leaves behind is not part of the stream. The message matches
+/// [`zlib_inflate`]'s, whose raw state machine reaches the same verdict
+/// through its consumption count.
+fn refuse_unconsumed_remainder(remainder: &[u8], input_length: usize) -> Result<(), String> {
+    if remainder.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "the stream ended after {} of {input_length} input bytes; the remainder is not part of the stream",
+        input_length - remainder.len()
+    ))
 }
 
 /// Bzip2 compress at level 9, the maximum block size — the setting the
@@ -119,7 +144,7 @@ pub fn bzip2_compress(input: &[u8]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{bzip2_compress, bzip2_decompress, zlib_deflate, zlib_inflate};
+    use super::{bzip2_compress, bzip2_decompress, gzip_deflate, gzip_inflate, zlib_deflate, zlib_inflate};
 
     #[test]
     fn bzip2_round_trips() {
@@ -154,5 +179,52 @@ mod tests {
         let mut padded = zlib_deflate(b"slap");
         padded.extend_from_slice(&[0x00, 0x51]);
         assert!(zlib_inflate(&padded).is_err(), "trailing bytes must be refused");
+    }
+
+    #[test]
+    fn gzip_round_trips() {
+        let inputs: [&[u8]; 3] = [b"", b"slap", &[0u8; 100_000]];
+        for input in inputs {
+            assert_eq!(gzip_inflate(&gzip_deflate(input)).as_deref(), Ok(input));
+        }
+    }
+
+    #[test]
+    fn gzip_truncated_stream_is_refused() {
+        let compressed =
+            gzip_deflate(b"a body long enough that cutting five bytes lands mid-stream");
+        let truncated = &compressed[..compressed.len() - 5];
+        assert!(gzip_inflate(truncated).is_err(), "a truncated stream must not decode");
+    }
+
+    #[test]
+    fn gzip_trailing_bytes_are_refused() {
+        let mut padded = gzip_deflate(b"slap");
+        padded.extend_from_slice(&[0x00, 0x51]);
+        assert!(gzip_inflate(&padded).is_err(), "trailing bytes must be refused");
+    }
+
+    /// A second gzip member is bytes past the stream's end like any
+    /// other: the wire containers each delimit exactly one stream.
+    #[test]
+    fn gzip_second_member_is_refused() {
+        let mut two_members = gzip_deflate(b"slap");
+        two_members.extend_from_slice(&gzip_deflate(b"slap again"));
+        assert!(gzip_inflate(&two_members).is_err(), "a second member must be refused");
+    }
+
+    #[test]
+    fn bzip2_truncated_stream_is_refused() {
+        let compressed =
+            bzip2_compress(b"a body long enough that cutting five bytes lands mid-stream");
+        let truncated = &compressed[..compressed.len() - 5];
+        assert!(bzip2_decompress(truncated).is_err(), "a truncated stream must not decode");
+    }
+
+    #[test]
+    fn bzip2_trailing_bytes_are_refused() {
+        let mut padded = bzip2_compress(b"slap");
+        padded.extend_from_slice(&[0x00, 0x51]);
+        assert!(bzip2_decompress(&padded).is_err(), "trailing bytes must be refused");
     }
 }
