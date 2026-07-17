@@ -16,7 +16,7 @@ import Slap.Header (ConsoleHeader, HeaderAdjustment(..), consoleHeaderName, cons
 import Slap.Measure (Offset(..), Length(..), FileSize(..), ActionIndex(unActionIndex),
                      ExpectedSize(..), ActualSize(..),
                      DeclaredTargetSize(..), NaturalTargetSize(..),
-                     MaxLength(..), OriginalLength(..), TruncatedLength(..),
+                     ActualLength(..), MaxLength(..), OriginalLength(..), TruncatedLength(..),
                      SubstitutionCount(..))
 import Slap.PatchField (fieldName)
 import Slap.PlatformType (PlatformType(..), platformName)
@@ -280,6 +280,11 @@ renderSlapAdvisory (FileIdDizNonASCII label (Length nonAsciiCount)) =
   <> ": FILE_ID.DIZ has " <> renderAsText nonAsciiCount
   <> plural nonAsciiCount " byte" " bytes"
   <> " outside 7-bit ASCII; the convention is plain ASCII, so older viewers may render them as garbage"
+
+renderSlapAdvisory (FileIdDizExceedsFormatCap label (ActualLength (Length contentLength)) (MaxLength (Length cap))) =
+  formatLabelName label
+  <> ": FILE_ID.DIZ is " <> renderAsText contentLength
+  <> " bytes, past the format's " <> renderAsText cap <> "-byte cap"
 
 renderSlapAdvisory (FieldEncodedSubstituted label name (SubstitutionCount count)) =
   formatLabelName label <> " "

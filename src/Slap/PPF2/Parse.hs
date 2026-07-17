@@ -10,10 +10,10 @@ import Slap.PPF2.Types (PPF2Patch(..), PPF2Record(..),
                         PPF2SourceSize, ppf2SourceSizeFromParsed,
                         ppf2DescriptionLength, ppf2HeaderLength,
                         ppf2ValidationSize,
-                        ppf2FileIdLengthFieldWidth,
+                        ppf2FileIdLengthFieldWidth, ppf2FileIdMaxContentLength,
                         ppf2FileIdMarkerLength, ppf2FileIdFooterLength)
 import Slap.Binary (getWord32LE, dropLength, dropLengthFromEnd, splitSuffixOfLength)
-import Slap.Status (SlapError(..), SlapAdvisory, Parsed(..), ByteParserError(..))
+import Slap.Status (SlapError(..), SlapAdvisory(..), Parsed(..), ByteParserError(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -22,7 +22,7 @@ import Slap.ByteParser (ByteParser, runFormatParser, throwByteParserError,
 import Slap.Measure (offsetFromParsed, Length(..),
                      EncodingMethodByte(..),
                      ActionIndex,
-                     RequiredLength(..), ActualLength(..), RemainingLength(..),
+                     RequiredLength(..), ActualLength(..), RemainingLength(..), MaxLength(..),
                      firstAction, nextAction, byteLength)
 import Slap.Text (EncodedText, EncodingName(..),
                   decodeTextLenient, decodeLossAdvisories, substitutionCount,
@@ -124,29 +124,27 @@ data PPF2FileIdSplit = PPF2FileIdSplit
   , ppf2SplitAdvisories :: ![SlapAdvisory]
   }
 
--- | Detect and peel a PPF2 FILE_ID.DIZ trailer off the record body.
--- @headerLength@ marks where the body begins; the trailer, when
--- present, sits at the very end of @input@ with the wire shape
+-- | Detect and peel a PPF2 FILE_ID.DIZ trailer off the record body; @headerLength@ marks where the body begins.
+-- The trailer, when present, sits at the very end of @input@ with the wire shape
 --
--- "@BEGIN_FILE_ID.DIZ" then content, then "@END_FILE_ID.DIZ", then a
--- 4-byte LE32 content length
+-- "@BEGIN_FILE_ID.DIZ" then content, then "@END_FILE_ID.DIZ", then a 4-byte LE content length
 --
--- whose length suffix lets us walk back to the content start. The
--- content is decoded leniently under the chosen metadata encoding; any
--- substitutions surface as 'Slap.Status.FieldDecodedSubstituted'
--- advisories. The on-wire content byte count stays a local here, sizing
--- the trim in place. An absent or unrecognized trailer (no
--- "@END_FILE_ID.DIZ" where the suffix points) leaves the body as the
--- whole post-header slice.
+-- whose length suffix lets us walk back to the content start.
+-- A trailer is recognized only whole — both markers where the length says they belong —
+-- and anything less leaves the body as the whole post-header slice, for the record parser to answer.
 splitFileIdTrailer :: EncodingName -> Length -> ByteString -> PPF2FileIdSplit
 splitFileIdTrailer metadataEncoding headerLength input
   | byteLength input < ppf2FileIdFooterLength <> ppf2FileIdLengthFieldWidth = withoutTrailer
   | footerCandidate /= "@END_FILE_ID.DIZ"                                   = withoutTrailer
   | dizContentLength > byteLength bytesBeforeFooter                         = withoutTrailer
+  | markerCandidate /= "@BEGIN_FILE_ID.DIZ"                                 = withoutTrailer
   | otherwise = PPF2FileIdSplit
       { ppf2SplitFileId     = Just (PPF2CarriedFileId dizContentBytes dizText (substitutionCount dizNotices))
       , ppf2SplitRecordBody = dropLengthFromEnd trailerSize recordBody
-      , ppf2SplitAdvisories = decodeLossAdvisories LabelPPF2 FieldFileIdDiz dizNotices
+      , ppf2SplitAdvisories =
+          [ FileIdDizExceedsFormatCap LabelPPF2 (ActualLength dizContentLength) (MaxLength ppf2FileIdMaxContentLength)
+          | dizContentLength > ppf2FileIdMaxContentLength ]
+          ++ decodeLossAdvisories LabelPPF2 FieldFileIdDiz dizNotices
       }
   where
     recordBody     = dropLength headerLength input
@@ -154,7 +152,8 @@ splitFileIdTrailer metadataEncoding headerLength input
 
     (bytesBeforeLengthField, lengthFieldBytes) = splitSuffixOfLength ppf2FileIdLengthFieldWidth input
     (bytesBeforeFooter, footerCandidate)       = splitSuffixOfLength ppf2FileIdFooterLength bytesBeforeLengthField
-    (_, dizContentBytes)                       = splitSuffixOfLength dizContentLength bytesBeforeFooter
+    (bytesBeforeContent, dizContentBytes)      = splitSuffixOfLength dizContentLength bytesBeforeFooter
+    (_, markerCandidate)                       = splitSuffixOfLength ppf2FileIdMarkerLength bytesBeforeContent
     dizContentLength      = Length (fromIntegral (getWord32LE 0 lengthFieldBytes))
     (dizText, dizNotices) = decodeTextLenient metadataEncoding dizContentBytes
     trailerSize = ppf2FileIdMarkerLength <> dizContentLength

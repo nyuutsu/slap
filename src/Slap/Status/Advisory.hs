@@ -21,7 +21,7 @@ import Slap.Header (ConsoleHeader, HeaderAdjustment)
 import Slap.Measure (Offset, Length, FileSize, ActionIndex,
                      ExpectedSize, ActualSize,
                      DeclaredTargetSize, NaturalTargetSize,
-                     MaxLength, OriginalLength, TruncatedLength,
+                     ActualLength, MaxLength, OriginalLength, TruncatedLength,
                      SubstitutionCount)
 import Slap.PatchField (PatchField)
 import Slap.PlatformType (PlatformType)
@@ -227,6 +227,11 @@ data SlapAdvisory
   -- so this is a note, not a refusal. The 'Length' is how many bytes are non-ASCII.
   | FileIdDizNonASCII FormatLabel Length
 
+  -- | A parsed FILE_ID.DIZ longer than the format's own cap
+  -- ('Slap.PPF2.Types.ppf2FileIdMaxContentLength' \/ 'Slap.PPF3.Types.ppf3FileIdMaxContentLength').
+  -- Reading keeps the full content — slap has no fixed buffer to protect; only writing one over the cap is refused.
+  | FileIdDizExceedsFormatCap FormatLabel ActualLength MaxLength
+
   -- Platform conversion
   --
   -- | A requested (@--rom-type@) or inherited platform the target format
@@ -393,6 +398,7 @@ slapAdvisorySeverity advisory = case advisory of
   FieldDecodedSubstituted{}            -> SeverityNote
   FieldEncodedSubstituted{}            -> SeverityNote
   FileIdDizNonASCII{}                  -> SeverityNote
+  FileIdDizExceedsFormatCap{}          -> SeverityNote
 
   -- Field, rom-type, image, and platform handling, where severity turns on whether slap could act cleanly:
   -- a recognized default or a clean normalization is a note; anything unrecognized, unconfirmable, or dropped warns.

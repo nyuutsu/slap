@@ -116,7 +116,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      Hunk(..), SentinelOffset(..),
                      OriginalLength(..), TruncatedLength(..),
                      SourceFileSize(..), TargetFileSize(..),
-                     EncodedLength(..), MaxLength(..), SubstitutionCount(..),
+                     EncodedLength(..), ActualLength(..), MaxLength(..), SubstitutionCount(..),
                      byteLength, splitHunks, splitPayload)
 import Slap.FFI (adler32, crc32)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
@@ -276,6 +276,10 @@ roundTripTests = testGroup "RoundTrip"
                  ppf2FileIdDizRoundTrip
       , testCase "file_id.diz: carried bytes survive a reading that substitutes"
                  ppf2FileIdDizBytesSurviveSubstitution
+      , testCase "file_id.diz: an over-cap trailer found in the wild still parses, byte-verbatim"
+                 ppf2FileIdDizOverCapStillParses
+      , testCase "file_id.diz: a footer with no BEGIN marker is record bytes"
+                 ppf2FileIdTrailerWithoutBeginMarkerIsRecordBytes
       , testCase "growth: target longer than source round-trips with a grow note"
                  ppf2GrowthRoundTrip
       , testCase "validation: exact-fit source round-trips"
@@ -301,6 +305,8 @@ roundTripTests = testGroup "RoundTrip"
                  ppf3FileIdDizAtCapAccepted
       , testCase "file_id.diz: an over-cap trailer found in the wild still parses, byte-verbatim"
                  ppf3FileIdDizOverCapStillParses
+      , testCase "file_id.diz: a footer with no BEGIN marker is record bytes"
+                 ppf3FileIdTrailerWithoutBeginMarkerIsRecordBytes
       ]
   , testGroup "PPF4"
       [ testProperty "round-trip" prop_ppf4
@@ -3199,7 +3205,8 @@ ppf3FileIdDizAtCapAccepted =
     Left slapError -> assertFailureT ("expected a 3072-byte FILE_ID.DIZ to be accepted: " <> renderSlapError slapError)
 
 -- | Reading tolerates what creation refuses: an over-cap trailer that some other tool wrote still parses,
--- and its content survives byte-for-byte (the apply path subtracts the whole trailer before it reads records).
+-- its content survives byte-for-byte (the apply path subtracts the whole trailer before it reads records),
+-- and the excess is noted rather than refused.
 ppf3FileIdDizOverCapStillParses :: Assertion
 ppf3FileIdDizOverCapStillParses =
   let descriptionTyped = SlapText.EncodedText SlapText.EncodingUtf8 Text.empty
@@ -3212,11 +3219,81 @@ ppf3FileIdDizOverCapStillParses =
       stitched = PatchFileContents (unPatchFileContents patchBytes <> trailer)
   in case PPF3.parsePPF3 SlapText.EncodingUtf8 stitched of
        Left slapError -> assertFailureT ("PPF3 parse: " <> renderSlapError slapError)
-       Right (Parsed parsed _) -> case PPF3.ppf3FileId parsed of
+       Right (Parsed parsed parseAdvisories) -> case PPF3.ppf3FileId parsed of
          Nothing            -> assertFailure "expected the over-cap trailer to be read as a FILE_ID.DIZ"
-         Just carriedFileId ->
+         Just carriedFileId -> do
            assertEqual "over-cap FILE_ID.DIZ content read byte-verbatim"
              dizContentBytes (PPF3.ppf3CarriedFileIdBytes carriedFileId)
+           assertBool "the over-cap length is noted"
+             (FileIdDizExceedsFormatCap LabelPPF3 (ActualLength (Length 4000)) (MaxLength (Length 3072))
+               `elem` parseAdvisories)
+
+-- | The PPF2 face of 'ppf3FileIdDizOverCapStillParses'; the caps agree, only the length field's width differs.
+ppf2FileIdDizOverCapStillParses :: Assertion
+ppf2FileIdDizOverCapStillParses =
+  let descriptionTyped = SlapText.EncodedText SlapText.EncodingUtf8 Text.empty
+      sourceSize       = case narrowPPF2SourceSize (FileSize 0x9720) of
+        Right size -> size
+        Left  err  -> error ("narrowPPF2SourceSize: " ++ Text.unpack (renderSlapError err))
+      validation       = PPF2.PPF2ValidationBlock (ByteString.replicate 1024 0)
+      dizLength        = 4000 :: Int
+      dizContentBytes  = ByteString.replicate dizLength 0x61
+      CreateResult patchBytes _ = PPF2.encodePPF2 [] descriptionTyped sourceSize validation
+      trailer = ByteString.concat
+        [ "@BEGIN_FILE_ID.DIZ", dizContentBytes, "@END_FILE_ID.DIZ"
+        , ByteString.pack [fromIntegral (dizLength `mod` 256), fromIntegral (dizLength `div` 256), 0, 0] ]
+      stitched = PatchFileContents (unPatchFileContents patchBytes <> trailer)
+  in case PPF2.parsePPF2 SlapText.EncodingUtf8 stitched of
+       Left slapError -> assertFailureT ("PPF2 parse: " <> renderSlapError slapError)
+       Right (Parsed parsed parseAdvisories) -> case PPF2.ppf2FileId parsed of
+         Nothing            -> assertFailure "expected the over-cap trailer to be read as a FILE_ID.DIZ"
+         Just carriedFileId -> do
+           assertEqual "over-cap FILE_ID.DIZ content read byte-verbatim"
+             dizContentBytes (PPF2.ppf2CarriedFileIdBytes carriedFileId)
+           assertBool "the over-cap length is noted"
+             (FileIdDizExceedsFormatCap LabelPPF2 (ActualLength (Length 4000)) (MaxLength (Length 3072))
+               `elem` parseAdvisories)
+
+-- | A tail that ends like a trailer — footer and a fitting length — but has no BEGIN marker where the length
+-- says it belongs is record bytes, not a FILE_ID.DIZ. The stitched tail is itself one well-formed record
+-- (8 offset bytes, a count of 18, and the footer-plus-length bytes as payload), so the fallback parses whole.
+ppf3FileIdTrailerWithoutBeginMarkerIsRecordBytes :: Assertion
+ppf3FileIdTrailerWithoutBeginMarkerIsRecordBytes =
+  let descriptionTyped = SlapText.EncodedText SlapText.EncodingUtf8 Text.empty
+      CreateResult patchBytes _ = PPF3.encodePPF3 [] descriptionTyped Nothing Nothing BIN
+      recordBytes = ByteString.concat
+        [ ByteString.replicate 8 0, ByteString.singleton 18
+        , "@END_FILE_ID.DIZ", ByteString.pack [9, 0] ]
+      stitched = PatchFileContents (unPatchFileContents patchBytes <> recordBytes)
+  in case PPF3.parsePPF3 SlapText.EncodingUtf8 stitched of
+       Left slapError -> assertFailureT ("PPF3 parse: " <> renderSlapError slapError)
+       Right (Parsed parsed _) -> do
+         assertEqual "no FILE_ID.DIZ was read" Nothing (PPF3.ppf3FileId parsed)
+         assertEqual "the tail parsed as one record's payload"
+           ["@END_FILE_ID.DIZ" <> ByteString.pack [9, 0]]
+           (map PPF3.ppf3RecordPayload (PPF3.ppf3Records parsed))
+
+-- | The PPF2 face of 'ppf3FileIdTrailerWithoutBeginMarkerIsRecordBytes':
+-- 4 offset bytes, a count of 20, and the footer plus the wider length field as payload.
+ppf2FileIdTrailerWithoutBeginMarkerIsRecordBytes :: Assertion
+ppf2FileIdTrailerWithoutBeginMarkerIsRecordBytes =
+  let descriptionTyped = SlapText.EncodedText SlapText.EncodingUtf8 Text.empty
+      sourceSize       = case narrowPPF2SourceSize (FileSize 0x9720) of
+        Right size -> size
+        Left  err  -> error ("narrowPPF2SourceSize: " ++ Text.unpack (renderSlapError err))
+      validation       = PPF2.PPF2ValidationBlock (ByteString.replicate 1024 0)
+      CreateResult patchBytes _ = PPF2.encodePPF2 [] descriptionTyped sourceSize validation
+      recordBytes = ByteString.concat
+        [ ByteString.replicate 4 0, ByteString.singleton 20
+        , "@END_FILE_ID.DIZ", ByteString.pack [5, 0, 0, 0] ]
+      stitched = PatchFileContents (unPatchFileContents patchBytes <> recordBytes)
+  in case PPF2.parsePPF2 SlapText.EncodingUtf8 stitched of
+       Left slapError -> assertFailureT ("PPF2 parse: " <> renderSlapError slapError)
+       Right (Parsed parsed _) -> do
+         assertEqual "no FILE_ID.DIZ was read" Nothing (PPF2.ppf2FileId parsed)
+         assertEqual "the tail parsed as one record's payload"
+           ["@END_FILE_ID.DIZ" <> ByteString.pack [5, 0, 0, 0]]
+           (map PPF2.ppf2RecordPayload (PPF2.ppf2Records parsed))
 
 -- | A FILE_ID.DIZ of @byteCount@ ASCII bytes, tagged UTF-8 (one byte per character).
 dizOfBytes :: Int -> SlapText.EncodedText
