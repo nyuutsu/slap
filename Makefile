@@ -48,6 +48,7 @@ install: optimized
 
 # Generate slap.1 from the built binary's --help/--version (help2man, so it never drifts). View with: man ./slap.1
 man: build
+	@command -v help2man >/dev/null 2>&1 || { echo "make man needs help2man (emerge dev-util/help2man)"; exit 1; }
 	help2man --no-info --name 'multi-format ROM patching tool' --output=slap.1 "$$(cabal -v0 list-bin slap)"
 	@echo "wrote slap.1  (view with: man ./slap.1)"
 

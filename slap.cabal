@@ -6,7 +6,7 @@ description:
   slap applies, creates, examines, and converts ROM patches in some twenty formats,
   including IPS, BPS, UPS, PPF, and VCDIFF. The patch format is detected automatically.
   Available as a command-line tool and as a website.
-  
+
 license:       MIT
 license-file:  LICENSE
 author:        nyuu
