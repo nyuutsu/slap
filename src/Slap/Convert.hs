@@ -1080,7 +1080,7 @@ encodeDirect contents source target meta limits constraints dialects = case targ
           { ebpMetadataTitle       = Just ebpTitle
           , ebpMetadataAuthor      = Just ebpAuthor
           , ebpMetadataDescription = Just descriptionTyped
-          , ebpMetadataPatcher     = Just slapPatcherIdentity
+          , ebpMetadataPatcher     = Just ebpPatcherDiscriminator
           }
     Right (CreateResult
             (IPS.encodeEBPPatch records metadata)
@@ -1430,10 +1430,9 @@ resolveEBPField cliValue ebpValue
   | Just value    <- ebpValue  = value
   | otherwise                  = EncodedText EncodingUtf8 Text.empty
 
--- | The @patcher@ field slap writes into every EBP metadata blob it emits: the project's name, tagged 'EncodingUtf8'.
--- A named constant rather than inlined at the one call site, so the bytes that identify a slap-emitted EBP have a single home.
-slapPatcherIdentity :: EncodedText
-slapPatcherIdentity = EncodedText EncodingUtf8 (Text.pack "slap")
+-- | The @patcher@ field EBP metadata carries. Despite the name, tools treat it as a format identifier rather than a credits field for the creation tool used.
+ebpPatcherDiscriminator :: EncodedText
+ebpPatcherDiscriminator = EncodedText EncodingUtf8 (Text.pack "EBPatcher")
 
 ----------------------------------------------------------------------------
 -- Format metadata
