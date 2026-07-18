@@ -73,10 +73,10 @@ parseBSDiff (PatchFileContents input)
       let instructions   = parseInstructions controlData
           fragmentLength = ByteString.length controlData `mod` bsdiffInstructionSize
       Right (Parsed
-              (BSDiffPatch (Length (fromIntegral rawControlSize))
-                           (Length (fromIntegral rawDiffSize))
-                           (Length (fromIntegral rawExtraSize))
-                           (FileSize (fromIntegral rawTargetSize))
+              (BSDiffPatch (Length rawControlSize)
+                           (Length rawDiffSize)
+                           (Length rawExtraSize)
+                           (FileSize rawTargetSize)
                            instructions diffData extraData)
               [BSDiffTrailingControlFragment (Length (fromIntegral fragmentLength)) | fragmentLength /= 0])
   where
@@ -106,7 +106,7 @@ parseInstructions input
   | ByteString.length input < bsdiffInstructionSize = []
   | otherwise =
       BSDiffInstruction
-        (Length (fromIntegral (getSignMagnitude64 0  input)))
-        (Length (fromIntegral (getSignMagnitude64 8  input)))
-        (Delta  (fromIntegral (getSignMagnitude64 16 input)))
+        (Length (getSignMagnitude64 0  input))
+        (Length (getSignMagnitude64 8  input))
+        (Delta  (getSignMagnitude64 16 input))
         : parseInstructions (ByteString.drop bsdiffInstructionSize input)

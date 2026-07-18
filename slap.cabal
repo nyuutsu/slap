@@ -3,9 +3,10 @@ name:          slap
 version:       1.0.0
 synopsis:      Multi-format ROM patching tool
 description:
-  slap applies, creates, examines, and converts ROM patches in some twenty formats,
-  including IPS, BPS, UPS, PPF, and VCDIFF. The patch format is detected automatically.
-  Available as a command-line tool and as a website.
+  slap applies, creates, examines, and converts ROM patches in several formats:
+  APS-GBA, APS-N64, BPS, BSDiff, DPS, EBP, GDIFF, IPS, IPS32, NINJA1, NINJA2, PMSR, (🏃💦)
+  PPF1, PPF2, PPF3, PPF4, UPS, VCDIFF (qua RFC 3284), xdelta1, and xdelta3.
+  The patch format is detected automatically. Available as a command-line tool and as a website.
 
 license:       MIT
 license-file:  LICENSE
@@ -15,7 +16,9 @@ tested-with:   GHC == 9.10.*, GHC == 9.12.*, GHC == 9.14.*
 
 common shared
   default-language: GHC2024
-  ghc-options:      -Wall -Werror -Wname-shadowing
+  ghc-options:      -Wall -Werror -Wname-shadowing -Wincomplete-record-selectors
+                    -Wcompat -Wredundant-constraints -Wmissing-export-lists -Woperator-whitespace
+                    -Wunused-packages -Wredundant-bang-patterns -Widentities
   build-depends:    base >= 4.20 && < 5
 
 library slap-internal
@@ -236,7 +239,6 @@ executable slap
   extra-libraries:  rusty_slap
   build-depends:
       bytestring           >= 0.11
-    , containers           >= 0.6
     , directory            >= 1.3
     , filepath             >= 1.4
     , mmap                 >= 0.5  && < 0.6
@@ -280,7 +282,6 @@ test-suite props
       aeson                >= 2.1  && < 2.3
     , array                >= 0.5
     , bytestring           >= 0.11
-    , directory            >= 1.3
     , encoding             >= 0.10 && < 0.11
     , tasty                >= 1.4  && < 1.6
     , tasty-quickcheck     >= 0.10 && < 0.12
@@ -288,8 +289,6 @@ test-suite props
     , slap:slap-internal
     , slap:slap-web
     , containers           >= 0.6
-    , crypton              >= 0.31 && < 1.2
-    , ram                  >= 0.21 && < 0.23
     , text                 >= 2.0
     , vector               >= 0.13 && < 0.14
 

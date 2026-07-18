@@ -308,7 +308,7 @@ decodeCopyAddress cache here mode addrSection cursor =
       case getVcdiffVarintAtOffset cursor addrSection of
         Left _ -> Left AddressSectionExhausted
         Right (VarintResult value consumed) ->
-          Right (readingOf (computeAddress (fromIntegral value))
+          Right (readingOf (computeAddress value)
                            (advance cursor (Length (fromIntegral consumed))))
 
     fromSameByte sameBlock

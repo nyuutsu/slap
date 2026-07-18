@@ -264,7 +264,7 @@ headerUsesOnlyRecognizedBits headerIndicator =
 parseVarintLengthPrefixedField :: ByteParser (ByteString, Maybe SlapAdvisory)
 parseVarintLengthPrefixedField = do
   declaredLength <- vcdiffVarintReportingCanonicality
-  bytes <- getBytes (Length (fromIntegral (vcdiffVarintValue declaredLength)))
+  bytes <- getBytes (Length (vcdiffVarintValue declaredLength))
   pure (bytes, vcdiffVarintAdvisory declaredLength)
 
 -- | The custom code table field (docs/vcdiff/rfc-vcdiff/spec.md "Custom code tables").
@@ -338,8 +338,8 @@ parseRawWindow = do
         segmentLength   <- vcdiffVarintReportingCanonicality
         segmentPosition <- vcdiffVarintReportingCanonicality
         pure ( Just (RawSegment
-                       (Offset (fromIntegral (vcdiffVarintValue segmentPosition)))
-                       (Length (fromIntegral (vcdiffVarintValue segmentLength))))
+                       (Offset (vcdiffVarintValue segmentPosition))
+                       (Length (vcdiffVarintValue segmentLength)))
              , mapMaybe vcdiffVarintAdvisory [segmentLength, segmentPosition] )
       else pure (Nothing, [])
   encodingLength           <- vcdiffVarintReportingCanonicality
@@ -351,17 +351,17 @@ parseRawWindow = do
   addrLength <- vcdiffVarintReportingCanonicality
   -- The per-window Adler32 checksum (docs/vcdiff/xdelta3/spec.md "Per-window Adler32").
   adlerChecksum <- parseWhen (testBit windowIndicator vcdAdler32Bit) (Adler32 <$> word32BE)
-  dataSection <- getBytes (Length (fromIntegral (vcdiffVarintValue dataLength)))
-  instSection <- getBytes (Length (fromIntegral (vcdiffVarintValue instLength)))
-  addrSection <- getBytes (Length (fromIntegral (vcdiffVarintValue addrLength)))
+  dataSection <- getBytes (Length (vcdiffVarintValue dataLength))
+  instSection <- getBytes (Length (vcdiffVarintValue instLength))
+  addrSection <- getBytes (Length (vcdiffVarintValue addrLength))
   remainingAtWindowEnd <- remaining
   pure RawWindow
     { rawWindowIndicator        = windowIndicator
     , rawSourceSegment          = sourceSegment
-    , rawDeclaredEncodingLength = Length (fromIntegral (vcdiffVarintValue encodingLength))
+    , rawDeclaredEncodingLength = Length (vcdiffVarintValue encodingLength)
     , rawMeasuredEncodingLength =
         subtractLength remainingAtEncodingStart remainingAtWindowEnd
-    , rawTargetSize             = FileSize (fromIntegral (vcdiffVarintValue targetSize))
+    , rawTargetSize             = FileSize (vcdiffVarintValue targetSize)
     , rawDeltaIndicator         = deltaIndicator
     , rawWindowAdler            = adlerChecksum
     , rawDataSection            = dataSection
@@ -989,7 +989,7 @@ decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection 
         Right (VarintResult value consumed) -> do
           modify (advanceInstCursor (Length (fromIntegral consumed)))
           traverse_ (modify . noteAdvisory) (nonCanonicalVcdiffVarintNote value consumed)
-          pure (Length (fromIntegral value))
+          pure (Length value)
 
     -- | Decode one COPY address through the cache, mapping the kernel's failures onto the malformation vocabulary.
     readCopyAddress :: Offset -> Word8 -> WindowDecode CopyAddressReading

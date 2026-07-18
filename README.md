@@ -1,8 +1,6 @@
-# slap 👋
+# slap
 
-slap is a [rom](https://en.wikipedia.org/wiki/ROM_image) [patching](https://en.wikipedia.org/wiki/Patch_(computing)#Binary_patching) (🩹) tool.
-
-See the [project page](https://nyuu.page/projects/slap/) for details.
+slap is a [rom](https://en.wikipedia.org/wiki/ROM_image) [patching](https://en.wikipedia.org/wiki/Patch_(computing)#Binary_patching) tool. See the [project page](https://nyuu.page/projects/slap/) for details about design decisions, performance, etc.
 
 There is a web application; it lives [here](https://slap.nyuu.page)[^WEB].
 
@@ -16,7 +14,7 @@ On conversion: if a conversion would lose data, it tells you what's being left b
 
 slap understands: `APS-GBA`, `APS-N64`[^APS], `BPS`, `BSDiff`, `DPS`, `EBP`, `GDIFF`, `IPS`, `IPS32`, `NINJA1`, `NINJA2`[^NINJA], `PMSR`, `PPF1`, `PPF2`, `PPF3`, `PPF4`[^PPF4], `UPS`, `VCDIFF` (qua RFC 3284)[^VCDIFF], `xdelta1`[^XDELTA1], and `xdelta3`[^XDELTA3].
 
-If your patch is tucked inside a `zip`, `rar`, or `7z` archive (📦), slap will attempt[^RAR] to find and retrieve it.
+If your patch is tucked inside a `zip`, `rar`, or `7z` archive, slap will attempt[^RAR] to find and retrieve it.
 
 Here is a representative sample of everything you are likely to care about doing:
 
@@ -43,7 +41,7 @@ slap create --format ninja2 --description "请输入描述" --title "my cool pat
 
 The rest of this document is very long since there are a lot of niche options.
 
-## Applying 🍄
+## Applying
 
 This is the most common thing you'd do with it. Give it a patch and a rom and it does the thing.
 
@@ -88,7 +86,7 @@ Without `--format`, slap makes a `BPS` patch.
 
 `--raw`: This suppresses archive detection and unwrapping. This is the cousin of `slap apply`'s `--raw`. Its purpose is "My rom (concerningly!!!) starts with the zip magic bytes. Treat it like the rom it is anyway." You probably do not need this. You could, but shouldn't, use this to produce diffs of zip files.
 
-### Metadata 📚
+### Metadata
 
 Some formats have room for creator-defined information. Usually this a text field. Sometimes it is an option flag. Rarely, it is something more bold, like a slot explicitly reserved for arbitrary data.
 
@@ -279,7 +277,7 @@ slap explain patch.bps --records --with original.gba
 
 `--raw`: Skip archive unwrapping. As with other instances of `--raw`, this is a hedge against the (unlikely) risk that the detection gets confused and tries to insist on treating a non-archive, as though it were one. Like always, this flag is safe to tack onto any "normal" operation. So if you are writing a script that involves calling slap and you are not intentionally attempting to do or permit archive manipulation: you probably should append `--raw` to every command that accepts it.
 
-## Undoing ↩️
+## Undoing
 
 Where supported by the patch format, put things back the way they were. `undo` understands the same flags as does `apply`.
 
@@ -290,7 +288,7 @@ slap undo patch.ups patched.gba
 
 ## Interpreting Patches 🤔
 
-### Text Encoding 💬
+### Text Encoding
 
 Several formats do not say what encoding the metadata should be in. On the off chance that you're trying to read (and, converting-from is a kind of reading) metadata and the text is coming out wrong: the issue may be downstream of how by default we attempt to decode as UTF-8.
 
@@ -346,14 +344,14 @@ rustup default stable
 Once those prerequisites are in place, building is straightforward:
 
 ```sh
-make
+make optimized
 ```
 
 At which point you could go find your newly-compiled program in `dist-newstyle/`. Or use `cabal run slap --` to run it from the project root, e.g. `cabal run slap -- info path/to/patch.ebp`. Or, and I like this approach more: `make install`; this allows using it without qualifiers, e.g. `slap info path/to/patch.rfc-vcdiff`.
 
 Thank you for trying it out!
 
-## Running the tests 🧪
+## Running the tests
 
 `make test` runs the test suite. Large segments of it are about patching copyrighted material I will not be providing. If you want to run the tests:
 

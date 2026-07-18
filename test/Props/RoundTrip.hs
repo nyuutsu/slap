@@ -1339,7 +1339,7 @@ vcdiffAddressModesShrinkTheAddressSection =
         , CoverLiteral (Offset 22) (Length 2)
         , CoverCopy    (Length 10) (Offset 200) ]
       copyOffsets          = [ n | CoverCopy _ (Offset n) <- coverSegments coverPlan ]
-      selfOnlyAddressBytes = sum [ minimalVcdiffVarintLength (fromIntegral n) | n <- copyOffsets ]
+      selfOnlyAddressBytes = sum [ minimalVcdiffVarintLength n | n <- copyOffsets ]
       patch = case createFromCover (InputFileContents source) (OutputFileContents target) coverPlan of
                 CreateResult (PatchFileContents bytes) _ -> bytes
   in do
@@ -1495,7 +1495,7 @@ vcdiffDenseShrinksInstructionSection =
       -- The instruction section a coded-size-only encoder would emit for
       -- the same instructions: one opcode plus a size varint each.
       codedOnlyBytes = sum
-        [ 1 + minimalVcdiffVarintLength (fromIntegral n)
+        [ 1 + minimalVcdiffVarintLength n
         | instruction <- coverToInstructions target coverPlan
         , let Length n = instructionOutputLength instruction ]
   in do

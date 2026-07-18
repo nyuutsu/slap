@@ -545,14 +545,15 @@ crc16 = CRC16 . ByteString.foldl' updateChecksum 0
   where
     updateChecksum :: Word16 -> Word8 -> Word16
     updateChecksum checksum byte =
-      let tableIndex = fromIntegral ((checksum `xor` fromIntegral byte) .&. 0xFF)
+      let tableIndex = (checksum `xor` fromIntegral byte) .&. 0xFF
       in (checksum `shiftR` 8) `xor` (crc16Table ! tableIndex)
 
 crc16Table :: Array Word16 Word16
 crc16Table = listArray (0, 255) [computeEntry entry | entry <- [0..255]]
   where
+    -- One reflection per bit of the byte a table entry digests.
     computeEntry :: Word16 -> Word16
-    computeEntry initial = iterate reflect initial !! 8
+    computeEntry = reflect . reflect . reflect . reflect . reflect . reflect . reflect . reflect
     reflect :: Word16 -> Word16
     reflect checksum
       | testBit checksum 0 = (checksum `shiftR` 1) `xor` 0xA001

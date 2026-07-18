@@ -71,9 +71,9 @@ parseBPSBody :: ByteParser BPSBody
 parseBPSBody = do
   rawSourceSize <- byuuVarint
   rawTargetSize <- byuuVarint
-  let sourceSize = FileSize (fromIntegral rawSourceSize)
-      targetSize = FileSize (fromIntegral rawTargetSize)
-  metadataLength <- fromIntegral <$> byuuVarint
+  let sourceSize = FileSize rawSourceSize
+      targetSize = FileSize rawTargetSize
+  metadataLength <- byuuVarint
   metadata       <- BPSMetadata <$> getBytes (Length metadataLength)
   parsedStream   <- parseActions
   pure BPSBody
@@ -140,7 +140,7 @@ parseActions = walkActions [] []
 decodeOneAction :: ByteParser BPSDecodedAction
 decodeOneAction = do
   packedCommandAndLength <- byuuVarint
-  let dataLength = Length (fromIntegral (shiftR packedCommandAndLength 2) + 1)
+  let dataLength = Length (shiftR packedCommandAndLength 2 + 1)
   case packedCommandAndLength .&. 3 of
     0 -> pure BPSDecodedAction
            { bpsDecodedActionValue    = SourceRead dataLength
@@ -164,7 +164,7 @@ decodeOneAction = do
 decodeCopyAction :: BPSCopyKind -> Length -> ByteParser BPSDecodedAction
 decodeCopyAction copyKind dataLength = do
   offsetEncoded <- byuuVarint
-  let delta = Delta (fromIntegral (decodeSignedVarint offsetEncoded))
+  let delta = Delta (decodeSignedVarint offsetEncoded)
       action = case copyKind of
         CopyFromSource -> SourceCopy dataLength delta
         CopyFromTarget -> TargetCopy dataLength delta

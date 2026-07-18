@@ -392,7 +392,7 @@ parseControl metadataEncoding noVerifyFlag compressionPosture controlSegment dat
       instructions <- parseInstructions instructionCount
       pure ParsedControlBody
         { parsedControlTargetMD5    = toMD5
-        , parsedControlTargetLength = FileSize (fromIntegral targetLength)
+        , parsedControlTargetLength = FileSize targetLength
         , parsedControlSources      = sources
         , parsedControlInstructions = instructions
         }
@@ -401,7 +401,7 @@ parseControl metadataEncoding noVerifyFlag compressionPosture controlSegment dat
 -- 'validateSourceFlags' decodes them afterwards.
 parseOneSource :: ByteParser RawSourceRecord
 parseOneSource = do
-  nameLength <- fromIntegral <$> edsioVarint
+  nameLength <- edsioVarint
   sourceName <- getBytes (Length nameLength)
   md5Bytes <- MD5Hash <$> getBytes (Length 16)
   sourceLength <- edsioVarint
@@ -410,7 +410,7 @@ parseOneSource = do
   pure RawSourceRecord
     { rawSourceName           = sourceName
     , rawSourceMD5            = md5Bytes
-    , rawSourceLength         = FileSize (fromIntegral sourceLength)
+    , rawSourceLength         = FileSize sourceLength
     , rawSourceKindByte       = sourceKindByte
     , rawSourceOffsetModeByte = offsetModeByte
     }
@@ -486,7 +486,7 @@ parseInstructions 0 = pure []
 parseInstructions count = do
   wireIndex <- edsioVarint
   offset <- offsetFromParsed <$> edsioVarint
-  instructionLength <- FileSize . fromIntegral <$> edsioVarint
+  instructionLength <- FileSize <$> edsioVarint
   rest <- parseInstructions (count - 1)
   pure (ParsedInstruction wireIndex offset instructionLength : rest)
 

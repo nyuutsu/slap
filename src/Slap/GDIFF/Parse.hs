@@ -47,7 +47,7 @@ parseGDIFF (PatchFileContents input)
         252 -> copy (fromIntegral <$> word32BE) (fromIntegral <$> getByte)
         253 -> copy (fromIntegral <$> word32BE) (fromIntegral <$> word16BE)
         254 -> copy (fromIntegral <$> word32BE) (fromIntegral <$> word32BE)
-        255 -> copy (fromIntegral <$> int64BE)  (fromIntegral <$> word32BE)
+        255 -> copy int64BE                     (fromIntegral <$> word32BE)
         -- DATA whose opcode is itself the length (1-246 bytes);
         -- 0 and 247-255 are matched above, so this arm is exactly that range.
         _   -> dataCommand (pure (fromIntegral opcode))

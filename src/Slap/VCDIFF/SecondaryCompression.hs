@@ -204,7 +204,7 @@ readContribution kind (CarriedCompressed sectionBytes) =
           Left (MalformedVCDIFF (VCDIFFCompressedSectionDeclaresEmptyOutput kind))
       | otherwise ->
           Right (CompressedContribution CompressedPiece
-            { pieceDeclaredOutputSize = Length (fromIntegral declaredSize)
+            { pieceDeclaredOutputSize = Length declaredSize
             , pieceStreamSlice        = ByteString.drop consumed sectionBytes
             })
 

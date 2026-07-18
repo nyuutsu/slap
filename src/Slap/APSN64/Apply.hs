@@ -50,7 +50,7 @@ applyAPSN64 (APSN64Patch header records) (InputFileContents source) =
       where
         applyRecords :: ActionIndex -> [APSN64Record] -> IO (Maybe ApplyError)
         applyRecords !_actionIndex [] = pure Nothing
-        applyRecords !actionIndex (record : remainingRecords) =
+        applyRecords actionIndex (record : remainingRecords) =
           case record of
             APSN64Normal writeOffset writePayload ->
               let writeLength = byteLength writePayload

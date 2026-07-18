@@ -51,7 +51,7 @@ parsePackedInteger commandIndex field = do
 -- | Decode a length-prefixed byte string: a VLV count, then that many bytes.
 parsePackedByteString :: ActionIndex -> FieldName -> ByteParser ByteString
 parsePackedByteString commandIndex field = do
-  dataLength <- fromIntegral <$> parsePackedInteger commandIndex field
+  dataLength <- parsePackedInteger commandIndex field
   getBytes (Length dataLength)
 
 ----------------------------------------------------------------------------
@@ -157,8 +157,8 @@ parseFileCommand :: ActionIndex -> NINJA2Patch -> ExceptT SlapError ByteParser N
 parseFileCommand commandIndex patch = do
   _filename   <- lift (parsePackedByteString commandIndex FieldFileName)
   romTypeByte <- lift getByte
-  sourceSize  <- FileSize . fromIntegral <$> lift (parsePackedInteger commandIndex FieldSourceSize)
-  targetSize  <- FileSize . fromIntegral <$> lift (parsePackedInteger commandIndex FieldTargetSize)
+  sourceSize  <- FileSize <$> lift (parsePackedInteger commandIndex FieldSourceSize)
+  targetSize  <- FileSize <$> lift (parsePackedInteger commandIndex FieldTargetSize)
   sourceMD5   <- MD5Hash <$> lift (getBytes (Length 16))
   targetMD5   <- MD5Hash <$> lift (getBytes (Length 16))
   (overflowType, overflowData) <- if sourceSize == targetSize

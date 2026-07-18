@@ -357,7 +357,7 @@ decodeVarint input = case getByuuVarint 0 input of
 -- corner; the roundtrip props now carry it.
 prop_varintRoundTrip :: Property
 prop_varintRoundTrip =
-  forAll (chooseInt64 (0, 2^(62 :: Int))) $ \value ->
+  forAll (chooseInt64 (0, 2 ^ (62 :: Int))) $ \value ->
     let encoded = encodeVarint value
     in case decodeVarint encoded of
       Left errorMessage -> counterexample ("decode failed: " ++ errorMessage) (property False)
@@ -368,7 +368,7 @@ prop_varintRoundTrip =
 -- non-canonical encoding issues.
 prop_varintDecodeEncodeRoundTrip :: Property
 prop_varintDecodeEncodeRoundTrip =
-  forAll (chooseInt64 (0, 2^(62 :: Int))) $ \value ->
+  forAll (chooseInt64 (0, 2 ^ (62 :: Int))) $ \value ->
     let encoded = encodeVarint value
     in case decodeVarint encoded of
       Left _ -> discard

@@ -60,7 +60,7 @@ applyDPS patch (InputFileContents source)
       where
         applyRecordStream :: ActionIndex -> [DPSRecord] -> IO (Maybe ApplyError)
         applyRecordStream !_recordIndex [] = pure Nothing
-        applyRecordStream !recordIndex (record : remainingRecords) =
+        applyRecordStream recordIndex (record : remainingRecords) =
           handleRecord recordIndex record remainingRecords
 
         handleRecord :: ActionIndex -> DPSRecord -> [DPSRecord] -> IO (Maybe ApplyError)

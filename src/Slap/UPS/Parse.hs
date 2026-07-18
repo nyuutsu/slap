@@ -75,8 +75,8 @@ parseUPSBody = do
   -- position — same pattern as BPS/Parse.hs's action vector.
   blocks  <- parseBlocks
   pure UPSBody
-    { upsBodySourceSize = FileSize (fromIntegral rawSourceSize)
-    , upsBodyTargetSize = FileSize (fromIntegral rawTargetSize)
+    { upsBodySourceSize = FileSize rawSourceSize
+    , upsBodyTargetSize = FileSize rawTargetSize
     , upsBodyBlocks     = Vector.fromList blocks
     }
 
@@ -85,7 +85,7 @@ parseBlocks = do
   done <- atEnd
   if done then pure []
   else do
-    skipCount <- Length . fromIntegral <$> byuuVarint
+    skipCount <- Length <$> byuuVarint
     xorData   <- getUntilByte 0x00
     remaining <- parseBlocks
     pure (UPSBlock skipCount xorData : remaining)
