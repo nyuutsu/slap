@@ -120,9 +120,8 @@ fromNINJA1RomType (RomUnknown value) = value
 -- reach the encoder (via 'Slap.Platform.platformToNINJA1'), so RAW is a dead fallback.
 fromNINJA1RomType (RomUnknownName _)  = 0
 
--- | True for the ROM types NINJA1 defines a normalization for — a header
--- strip or deinterleave — that slap does not yet run: SNES, Sega Megadrive,
--- and Game Boy (@docs/ninja1/upstream/ninja1-filespec10.txt@). The rest have none.
+-- | Whether NINJA1 defines a header strip or deinterleave for this ROM type;
+-- the procedure lives in "Slap.Normalize".
 ninja1RomTypeNeedsNormalization :: NINJA1RomType -> Bool
 ninja1RomTypeNeedsNormalization romType = case romType of
   RomSNES    -> True
@@ -208,16 +207,8 @@ subFormatName NINJA1BinaryCompressed = "binary, compressed"
 subFormatName NINJA1Text             = "text"
 subFormatName NINJA1TextCompressed   = "text, compressed"
 
--- | NINJA1 declines (source, target) pairs whose target is shorter than
--- the source. NINJA1 records only write bytes at offsets; the reference
--- maker emits a trailing record to grow a longer target but has no
--- truncate directive and no output-size field, so a shorter output has
--- no representation — applying the offset-writes to the source yields a
--- file no smaller than the source. Growth is fine. See
--- @docs\/ninja1\/upstream\/ninja1-filespec10.txt@.
---
--- Consumed by 'Slap.Convert.rejectIncompatibleSizeChange' through its
--- 'CreateNINJA1' arm.
+-- | Reject a shrinking (source, target) pair: NINJA1 has no truncate directive and no output-size field,
+-- so its offset-writes can only leave a file no shorter than the source. Growth encodes fine.
 ninja1RejectIncompatibleSizeChange
   :: FileSize -> FileSize -> Either SlapError ()
 ninja1RejectIncompatibleSizeChange sourceSize targetSize
