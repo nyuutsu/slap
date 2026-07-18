@@ -7,7 +7,7 @@ export RUSTFLAGS += -C target-cpu=native
 
 # Two flavors, one dist-newstyle. `make` iterates at -O0 with info-table provenance (both declared in cabal.project);
 # `make optimized` asks for -O2, which cabal keeps in its own output directory, so the flavors never disturb each other.
-.PHONY: all build optimized rusty-slap staticlib-wiring install man test haddock wasm wasm-optimized wasm-staticlib-wiring wasm-link-check wasm-parity-check wasm-worker-rig rusty-slap-wasm clean
+.PHONY: all build optimized rusty-slap staticlib-wiring install man test haddock wasm wasm-optimized wasm-staticlib-wiring wasm-link-check wasm-parity-check wasm-worker-rig rusty-slap-wasm web web-optimized web-check web-rig web-deploy clean
 
 all: build
 
@@ -140,6 +140,42 @@ wasm-worker-rig: wasm
 	cp "$$(. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal -v0 list-bin slap-web-reactor $(WASM_CABAL_FLAGS))" web-reactor/slap-web-reactor.wasm
 	@echo "the rig is at http://127.0.0.1:8000/web-reactor/worker-rig.html"
 	@python3 -m http.server --bind 127.0.0.1 8000
+
+# Assemble the page and its reactor into dist-web/ — the tree slap.nyuu.page serves verbatim.
+# `make web` carries the everyday -O0 reactor for quick iteration; the deploy ships the -O2 one,
+# which runs the heavy analyses at full speed and weighs half as much on the wire.
+define assemble-web
+	@if [ ! -f vendor/browser_wasi_shim/dist/index.js ]; then git submodule update --init vendor/browser_wasi_shim; fi
+	rm -rf dist-web
+	mkdir -p dist-web/reactor dist-web/vendor/browser_wasi_shim
+	cp -r web-page/. dist-web/
+	cp web-reactor/reactor-client.mjs web-reactor/envelope-worker.mjs dist-web/reactor/
+	cp "$$(. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal -v0 list-bin slap-web-reactor $(1) $(WASM_CABAL_FLAGS))" dist-web/reactor/slap-web-reactor.wasm
+	cp -r vendor/browser_wasi_shim/dist dist-web/vendor/browser_wasi_shim/
+	cd dist-web && node boot-check.mjs
+endef
+
+web: wasm
+	. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal build slap-web-reactor $(WASM_CABAL_FLAGS)
+	$(call assemble-web,)
+
+web-optimized: wasm
+	. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal build slap-web-reactor -O2 $(WASM_CABAL_FLAGS)
+	$(call assemble-web,-O2)
+
+# Every fixture's real envelopes through every read renderer; a shape surprise throws here, not in a browser.
+web-check: build
+	@workdir="$$(mktemp -d)"; trap 'rm -rf "$$workdir"' EXIT; \
+	 printf 'not a patch' > "$$workdir/unrecognized"; \
+	 node web-page/check.mjs "$$(cabal -v0 list-bin slap-web-reactor)" test/data/dm4y/patch.* "$$workdir/unrecognized"
+
+web-rig: web
+	@echo "the page is at http://127.0.0.1:8001/"
+	@python3 -m http.server --bind 127.0.0.1 --directory dist-web 8001
+
+web-deploy: web-optimized
+	rsync -az --delete dist-web/ droplet:/var/slap/
+	@echo "deployed to https://slap.nyuu.page"
 
 # Scrub 🧼
 clean:

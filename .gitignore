@@ -6,6 +6,9 @@ rusty-slap/target/
 
 # make wasm-worker-rig places the built reactor beside the rig page
 web-reactor/slap-web-reactor.wasm
+
+# make web assembles the servable tree here
+dist-web/
 *.hi
 *.o
 *.dyn_hi
