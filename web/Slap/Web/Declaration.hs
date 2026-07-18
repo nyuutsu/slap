@@ -8,10 +8,15 @@ module Slap.Web.Declaration
   , DeclaredUndoRequest(..)
   , DeclaredCreateRequest(..)
   , DeclaredConvertRequest(..)
+  , DeclaredIdentifyRequest(..)
+  , DeclaredInspectRequest(..)
+  , DeclaredAnalyzeRequest(..)
   , applyRequestOf
   , undoRequestOf
   , createRequestOf
   , convertRequestOf
+  , inspectRequestOf
+  , analyzeRequestOf
   , decodedDeclaration
   ) where
 
@@ -25,7 +30,8 @@ import Slap.FileContents (InputFileContents, OutputFileContents, PatchFileConten
 import Slap.Header (InputHeaderDirective)
 import Slap.Text (EncodingName)
 import Slap.Verify (VerificationPolicy)
-import Slap.Web (ApplyRequest(..), ConvertRequest(..), CreateRequest(..), MatchedRom(..), UndoRequest(..))
+import Slap.Web (AnalyzeRequest(..), ApplyRequest(..), ConvertRequest(..), CreateRequest(..),
+                 InspectRequest(..), MatchedRom(..), UndoRequest(..))
 
 -- | The page is a declaration's only author, so bytes that do not decode are its own defect — answered loudly, never absorbed into a refusal.
 decodedDeclaration :: FromJSON declaration => ByteString -> declaration
@@ -114,3 +120,39 @@ convertRequestOf declared patchBytes handedSource = ConvertRequest
       (Just framing, Just source) -> Just (MatchedRom source framing)
       (Just _, Nothing)           -> error "Slap.Web: the declaration says a source rides, but none was handed"
       (Nothing, Just _)           -> error "Slap.Web: a source was handed that the declaration does not speak of"
+
+-- | 'Slap.Web.identifyPatch' takes these two as its own leading arguments, so no builder marries them to the patch bytes.
+data DeclaredIdentifyRequest = DeclaredIdentifyRequest
+  { declaredIdentifyDialects         :: RequestedDialects
+  , declaredIdentifyMetadataEncoding :: EncodingName
+  }
+  deriving (Generic)
+  deriving (FromJSON) via Generically DeclaredIdentifyRequest
+
+data DeclaredInspectRequest = DeclaredInspectRequest
+  { declaredInspectMetadataEncoding :: EncodingName
+  , declaredInspectDialects         :: RequestedDialects
+  }
+  deriving (Generic)
+  deriving (FromJSON) via Generically DeclaredInspectRequest
+
+inspectRequestOf :: DeclaredInspectRequest -> PatchFileContents -> InspectRequest
+inspectRequestOf declared patchBytes = InspectRequest
+  { inspectPatchBytes       = patchBytes
+  , inspectMetadataEncoding = declaredInspectMetadataEncoding declared
+  , inspectDialects         = declaredInspectDialects declared
+  }
+
+data DeclaredAnalyzeRequest = DeclaredAnalyzeRequest
+  { declaredAnalyzeMetadataEncoding :: EncodingName
+  , declaredAnalyzeDialects         :: RequestedDialects
+  }
+  deriving (Generic)
+  deriving (FromJSON) via Generically DeclaredAnalyzeRequest
+
+analyzeRequestOf :: DeclaredAnalyzeRequest -> PatchFileContents -> AnalyzeRequest
+analyzeRequestOf declared patchBytes = AnalyzeRequest
+  { analyzePatchBytes       = patchBytes
+  , analyzeMetadataEncoding = declaredAnalyzeMetadataEncoding declared
+  , analyzeDialects         = declaredAnalyzeDialects declared
+  }

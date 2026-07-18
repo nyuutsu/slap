@@ -2,6 +2,7 @@
 
 module Slap.NINJA2.Describe
   ( ninja2Meta
+  , ninja2UndeclaredTextFields
   , analyzeNINJA2
   , makeNINJA2Region
   ) where
@@ -15,6 +16,9 @@ import Slap.Display.Analysis (PatchAnalysis(..), AnalysisSection(..), AnalysisRe
                      AnalysisPayload(..), XORDeltaBytes(..), AnalysisSummary(..), SummaryInfo(..),
                      Annotation(..), OffsetKind(..))
 import Slap.Text (encodedTextContent)
+
+import Data.Maybe (isJust)
+import Data.Text (Text)
 
 import qualified Data.ByteString as ByteString
 
@@ -69,6 +73,18 @@ ninja2Meta patch = concat
 ----------------------------------------------------------------------------
 -- Analyze
 ----------------------------------------------------------------------------
+
+-- | Mode-0 text arrives with no declared codepage, so only there does the viewing encoding govern a reading;
+-- a UTF-8-mode patch reads the same under every @--metadata-encoding@.
+ninja2UndeclaredTextFields :: NINJA2Patch -> [Text]
+ninja2UndeclaredTextFields patch = case ninja2TextMode patch of
+  TextModeUTF8       -> []
+  TextModeUndeclared ->
+    [ label
+    | (label, field) <- [ ("title", ninja2Title), ("author", ninja2Author), ("version", ninja2Version)
+                        , ("date", ninja2Date), ("genre", ninja2Genre), ("language", ninja2Language)
+                        , ("website", ninja2Website), ("description", ninja2Description) ]
+    , isJust (field (ninja2Header patch)) ]
 
 analyzeNINJA2 :: NINJA2Patch -> PatchAnalysis
 analyzeNINJA2 patch = PatchAnalysis

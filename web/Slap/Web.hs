@@ -10,6 +10,8 @@ module Slap.Web
   , describeSurface
   , DroppedFileClass(..)
   , classifyDroppedFile
+  , DroppedFileAnswer(..)
+  , droppedFileAnswerFor
   , PatchIdentity(..)
   , UndoAnswer(..)
   , identifyPatch
@@ -70,7 +72,7 @@ import Slap.Convert (CreateFormat(..), DifferentialCreate(CreateXDelta1),
                      rejectIncompatibleMetadataRequests, rejectIncompatibleSizeChange,
                      rejectUnencodableSecondaryCompressor, verdictOnDirectConversion)
 import qualified Slap.Create as Create
-import Slap.Detect (DroppedFileClass(..), classifyDroppedFile)
+import Slap.Detect (DroppedFileAnswer(..), DroppedFileClass(..), classifyDroppedFile, droppedFileAnswerFor)
 import Slap.Dialect (Dialect)
 import Slap.Display.Analysis (PatchAnalysis)
 import Slap.Display.Info (InputSideVerdict(..), OutputSideVerdict(..), PatchInfo)
@@ -173,7 +175,8 @@ data RomFacts = RomFacts
   , romMD5   :: MD5Hash
   , romSHA1  :: SHA1Hash
   }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically RomFacts
 
 describeRom :: InputFileContents -> RomFacts
 describeRom (InputFileContents romBytes) = RomFacts

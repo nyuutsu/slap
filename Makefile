@@ -111,9 +111,12 @@ wasm-parity-check: build wasm
 	           echo "envelope parity holds on $$*"; }; \
 	 printf 'not a patch' > "$$workdir/unrecognized"; \
 	 agree surface; \
+	 agree describe-rom test/data/dm4y/base.gbc; \
 	 for patch in test/data/dm4y/patch.* "$$workdir/unrecognized"; do \
-	   agree inspect "$$patch"; \
-	   agree analyze "$$patch"; \
+	   agree classify "$$patch"; \
+	   agree identify "$$patch" test/data/web/identify.json; \
+	   agree inspect "$$patch" test/data/web/inspect.json; \
+	   agree analyze "$$patch" test/data/web/analyze.json; \
 	 done; \
 	 agree check-apply   test/data/dm4y/patch.bps test/data/dm4y/base.gbc  test/data/web/apply.json; \
 	 agree check-undo    test/data/dm4y/patch.bps test/data/dm4y/base.gbc  test/data/web/undo.json; \

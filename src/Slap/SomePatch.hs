@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Slap.SomePatch
@@ -24,8 +25,10 @@ import Slap.Convert (PatchContents(..), emptyContents, RequestedPatchMetadata(..
                      EmbeddedBlobContents(..), EmbeddedBlobRequest(..),
                      noMetadataRequested, acceptedDialects)
 import Slap.Text (EncodedText, EncodingName, encodedTextContent)
+import Data.Aeson (ToJSON)
 import Data.Text (Text)
 import qualified Data.Text as Text
+import GHC.Generics (Generic, Generically(..))
 import Slap.Binary (replicateLength)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Hunk(..),
                      Cursor(..), byteLength, splitUndoHunkFromParsed)
@@ -154,7 +157,8 @@ data UndoAnswer
   | PatchCarriesUndoData
   | AuthorOmittedUndoData
   | FormatHasNoUndo
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically UndoAnswer
 
 undoAnswerFor :: UndoAvailability -> UndoAnswer
 undoAnswerFor availability = case availability of
@@ -311,6 +315,7 @@ parseSomePatchFromPPF1 (Parsed patch parseAdvisories) =
           { infoFormat   = FormatHeader LabelPPF1 Nothing
           , infoLines    = PPF1.ppf1Meta patch
           , infoEmbedded = []
+          , infoUndeclaredTextFields = PPF1.ppf1UndeclaredTextFields patch
           , infoTally    = Tally (length records)
           , infoUnit     = Records
           , infoBytes    = Just (TotalPayloadBytes
@@ -349,6 +354,7 @@ parseSomePatchFromPPF2 (Parsed patch parseAdvisories) =
           { infoFormat   = FormatHeader LabelPPF2 Nothing
           , infoLines    = PPF2.ppf2Meta patch
           , infoEmbedded = PPF2.ppf2EmbeddedContent patch
+          , infoUndeclaredTextFields = PPF2.ppf2UndeclaredTextFields patch
           , infoTally    = Tally (length records)
           , infoUnit     = Records
           , infoBytes    = Just (TotalPayloadBytes
@@ -399,6 +405,7 @@ parseSomePatchFromPPF3 (Parsed patch parseAdvisories) =
           { infoFormat   = FormatHeader LabelPPF3 Nothing
           , infoLines    = PPF3.ppf3Meta patch
           , infoEmbedded = PPF3.ppf3EmbeddedContent patch
+          , infoUndeclaredTextFields = PPF3.ppf3UndeclaredTextFields patch
           , infoTally    = Tally (length records)
           , infoUnit     = Records
           , infoBytes    = Just (TotalPayloadBytes
@@ -444,6 +451,7 @@ parseSomePatchFromPPF4 metadataEncoding patchContents = do
           { infoFormat   = FormatHeader LabelPPF4 (Just " (Pyriel internal format)")
           , infoLines    = PPF4.ppf4Meta patch
           , infoEmbedded = []
+          , infoUndeclaredTextFields = PPF4.ppf4UndeclaredTextFields patch
           , infoTally    = Tally totalRecords
           , infoUnit     = Records
           , infoBytes    = Just (TotalPayloadBytes
@@ -491,6 +499,7 @@ parseSomePatchFromIPS variant patchContents = do
                 { infoFormat   = FormatHeader armLabel Nothing
                 , infoLines    = metaLines
                 , infoEmbedded = []
+                , infoUndeclaredTextFields = []
                 , infoTally    = Tally (Vector.length records)
                 , infoUnit     = Records
                 , infoBytes    = Nothing
@@ -536,6 +545,7 @@ parseSomePatchFromBPS metadataEncoding patchContents = do
         { infoFormat   = FormatHeader LabelBPS Nothing
         , infoLines    = BPS.bpsMeta patch
         , infoEmbedded = BPS.bpsEmbeddedContent metadataEncoding patch
+        , infoUndeclaredTextFields = BPS.bpsUndeclaredTextFields patch
         , infoTally    = Tally (Vector.length actions)
         , infoUnit     = Actions
         , infoBytes    = Just (TotalOutputBytes (BPS.bpsTargetSize patch))
@@ -568,6 +578,7 @@ parseSomePatchFromUPS patchContents = do
         { infoFormat   = FormatHeader LabelUPS Nothing
         , infoLines    = UPS.upsMeta patch
         , infoEmbedded = []
+        , infoUndeclaredTextFields = []
         , infoTally    = Tally (Vector.length blocks)
         , infoUnit     = Blocks
         , infoBytes    = Just (TotalOutputBytes (UPS.upsTargetSize patch))
@@ -614,6 +625,7 @@ parseSomePatchFromVCDIFF metadataEncoding patchContents = do
         { infoFormat   = FormatHeader LabelVCDIFF (vcdiffFlavorQualifier patch)
         , infoLines    = VCDIFFDescribe.vcdiffMeta patch
         , infoEmbedded = VCDIFFDescribe.vcdiffEmbeddedContent metadataEncoding patch
+        , infoUndeclaredTextFields = VCDIFFDescribe.vcdiffUndeclaredTextFields patch
         , infoTally    = Tally windowCount
         , infoUnit     = Windows
         , infoBytes    = Just (TotalOutputBytes totalOutputSize)
@@ -686,6 +698,7 @@ parseSomePatchFromAPSN64 metadataEncoding patchContents = do
         { infoFormat   = FormatHeader LabelAPSN64 Nothing
         , infoLines    = APSN64.apsN64Meta patch
         , infoEmbedded = []
+        , infoUndeclaredTextFields = APSN64.apsN64UndeclaredTextFields patch
         , infoTally    = Tally (Vector.length records)
         , infoUnit     = Records
         , infoBytes    = Just (TotalOutputBytes (APSN64.apsN64DestinationSizeAsFileSize (APSN64.apsN64DestinationSize header)))
@@ -748,6 +761,7 @@ parseSomePatchFromNINJA2 metadataEncoding patchContents = do
         { infoFormat   = FormatHeader LabelNINJA2 Nothing
         , infoLines    = NINJA2.ninja2Meta patch
         , infoEmbedded = []
+        , infoUndeclaredTextFields = NINJA2.ninja2UndeclaredTextFields patch
         , infoTally    = Tally (length (NINJA2.ninja2Records patch))
         , infoUnit     = Records
         , infoBytes    = Nothing
@@ -823,6 +837,7 @@ parseSomePatchFromNINJA1 patchContents = do
             (Just (" (" <> NINJA1.subFormatName (NINJA1.ninja1SubFormat patch) <> ")"))
         , infoLines    = NINJA1.ninja1Meta patch
         , infoEmbedded = []
+        , infoUndeclaredTextFields = []
         , infoTally    = Tally (length records)
         , infoUnit     = Records
         , infoBytes    = Just (TotalPayloadBytes
@@ -853,6 +868,7 @@ parseSomePatchFromBSDiff patchContents = do
         { infoFormat   = FormatHeader LabelBSDiff Nothing
         , infoLines    = BSDiff.bsdiffMeta patch
         , infoEmbedded = []
+        , infoUndeclaredTextFields = []
         , infoTally    = Tally (length (BSDiff.bsdiffInstructions patch))
         , infoUnit     = Instructions
         , infoBytes    = Just (TotalOutputBytes (BSDiff.bsdiffTargetSize patch))
@@ -871,6 +887,7 @@ parseSomePatchFromGDIFF patchContents = do
         { infoFormat   = FormatHeader LabelGDIFF Nothing
         , infoLines    = GDIFF.gdiffMeta patch
         , infoEmbedded = []
+        , infoUndeclaredTextFields = []
         , infoTally    = Tally (length (GDIFF.gdiffCommands patch))
         , infoUnit     = Commands
         , infoBytes    = Nothing
@@ -905,6 +922,7 @@ parseSomePatchFromXDelta1 metadataEncoding patchContents = do
         { infoFormat   = FormatHeader LabelXDelta1 Nothing
         , infoLines    = XDelta1.xdelta1Meta patch
         , infoEmbedded = []
+        , infoUndeclaredTextFields = XDelta1.xdelta1UndeclaredTextFields patch
         , infoTally    = Tally (length (XDelta1.xdelta1Instructions patch))
         , infoUnit     = Instructions
         , infoBytes    = Just (TotalOutputBytes (XDelta1.xdelta1TargetLength patch))
@@ -948,6 +966,7 @@ parseSomePatchFromPMSR patchContents = do
         { infoFormat   = FormatHeader LabelPMSR Nothing
         , infoLines    = PMSR.pmsrMeta patch
         , infoEmbedded = []
+        , infoUndeclaredTextFields = []
         , infoTally    = Tally (Vector.length records)
         , infoUnit     = Records
         , infoBytes    = Just (TotalPayloadBytes
@@ -970,6 +989,7 @@ parseSomePatchFromAPSGBA patchContents = do
         { infoFormat   = FormatHeader LabelAPSGBA Nothing
         , infoLines    = APSGBA.apsGBAMeta patch
         , infoEmbedded = []
+        , infoUndeclaredTextFields = []
         , infoTally    = Tally (length records)
         , infoUnit     = Blocks
         , infoBytes    = Just (TotalOutputBytes (APSGBA.apsGbaTargetSize header))
@@ -995,6 +1015,7 @@ parseSomePatchFromDPS metadataEncoding patchContents = do
         { infoFormat   = FormatHeader LabelDPS Nothing
         , infoLines    = DPS.dpsMeta patch
         , infoEmbedded = []
+        , infoUndeclaredTextFields = DPS.dpsUndeclaredTextFields patch
         , infoTally    = Tally (length records)
         , infoUnit     = Records
         , infoBytes    = Nothing

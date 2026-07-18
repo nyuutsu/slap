@@ -2,6 +2,7 @@
 
 module Slap.APSN64.Describe
   ( apsN64Meta
+  , apsN64UndeclaredTextFields
   , analyzeAPSN64
   , makeN64Region
   ) where
@@ -15,6 +16,7 @@ import Slap.Display.Primitives (hexByteString)
 import Slap.Measure (Length(..), FileSize(..), byteLength)
 import Slap.Text (encodedTextContent)
 
+import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Vector as Vector
 
@@ -43,6 +45,10 @@ apsN64Meta (APSN64Patch header _) = concat
     cartField (Just (N64CartId cartId)) = [InfoLine "cart ID" (hexByteString cartId)]
     countryField Nothing        = []
     countryField (Just country) = [InfoLine "country" (apsN64CountryName country)]
+
+apsN64UndeclaredTextFields :: APSN64Patch -> [Text]
+apsN64UndeclaredTextFields (APSN64Patch header _) =
+  ["description" | not (Text.null (encodedTextContent (apsN64Description header)))]
 
 analyzeAPSN64 :: APSN64Patch -> PatchAnalysis
 analyzeAPSN64 (APSN64Patch _header records) = PatchAnalysis

@@ -4,7 +4,8 @@
 module Props.Web (webTests) where
 
 import Slap.Convert (CreateFormat(..), DifferentialCreate(..), DirectCreate(..),
-                     EmbeddedBlobContents(..), EmbeddedBlobRequest(SetEmbeddedBlob), RequestedDialects(..),
+                     EmbeddedBlobContents(..), EmbeddedBlobRequest(SetEmbeddedBlob, SetEmbeddedTypedText),
+                     RequestedDialects(..),
                      RequestedPatchMetadata(..), UndoInclusion(OmitUndoData),
                      advertisedCreateFormats, lookupCreateFormatToken, noConstraintsRequested,
                      noDialectsRequested, noMetadataRequested)
@@ -13,7 +14,7 @@ import Slap.Constraint (Constraint(..))
 import qualified Slap.Create as Create
 import Slap.Dialect (Dialect(..))
 import Slap.Display.Analysis (renderAnalysisFull)
-import Slap.Display.Info (InputSideVerdict(..), OutputSideVerdict(..))
+import Slap.Display.Info (InputSideVerdict(..), OutputSideVerdict(..), infoUndeclaredTextFields)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Header (HeaderAdjustment(HeaderComesOff), InputHeaderDirective(TakeInputAsIs))
@@ -28,9 +29,10 @@ import Slap.Text (EncodedText(..), EncodingName(..), resolveEncodingName)
 import Slap.VCDIFF.SecondaryCompression (secondaryCompressorTokens)
 import Slap.Verify (VerificationPolicy(EnforceVerification), VerificationVerdict(..))
 import Slap.Web
-import Slap.Web.Declaration (applyRequestOf, createRequestOf)
-import Slap.Web.Envelope (encodeEnvelope, encodeEnvelopeAndTail,
-                          speakCreatedPatch, speakPatchedRom, speakRevertedRom)
+import Slap.Web.Declaration (DeclaredIdentifyRequest(..), analyzeRequestOf, applyRequestOf,
+                             createRequestOf, inspectRequestOf)
+import Slap.Web.Envelope (encodeEnvelope, encodeEnvelopeAndTail, speakCreatedPatch,
+                          speakPatchIdentity, speakPatchedRom, speakRevertedRom)
 import Slap.XDelta1.Types (XDelta1FromName(..))
 
 import qualified Data.Aeson as Aeson
@@ -56,6 +58,7 @@ webTests = testGroup "Web"
   , testCase "the console census covers every header once"         test_consoleCensusCoversEveryHeader
   , testCase "a created BPS identifies across the boundary"        test_identifyCreatedBPS
   , testCase "unrecognized bytes refuse with the engine's own error" test_identifyUnrecognizedBytes
+  , testCase "a dropped file sorts by recognition alone"           test_classifySortsBothWays
   , testCase "describeRom reproduces the published digests of a known input" test_describeRomKnownAnswers
   , testGroup "apply and undo"
       [ testCase "the right rom reports a match with no rescue"           test_checkApplyMatches
@@ -95,6 +98,7 @@ webTests = testGroup "Web"
       , testCase "the chosen encoding reaches the reading"           test_inspectThreadsEncoding
       , testCase "an unparseable patch is the Left on both reads"    test_readsRefuseUnrecognized
       , testCase "a stale dialect refuses both reads, as the CLI"    test_readsRefuseStaleDialect
+      , testCase "encoding-governed readings announce themselves"    test_undeclaredTextSignal
       ]
   , testGroup "envelope"
       [ testCase "the info crosses as structure under Right"                 test_envelopeCarriesInfo
@@ -102,6 +106,8 @@ webTests = testGroup "Web"
       , testCase "an advisory crosses with severity and sentence beside it"  test_envelopeSpeaksAdvisory
       , testCase "byte fields cross as base64"                               test_envelopeBytesAsBase64
       , testCase "a lone nullary constructor crosses as its name"            test_envelopeNamesLoneConstructor
+      , testCase "the identity crosses with its undo answer spoken by name"  test_envelopeCarriesIdentity
+      , testCase "the sorting answer crosses as its name"                    test_envelopeNamesSortingAnswer
       , testCase "the surface crosses with the engine's own format census"   test_envelopeCarriesSurface
       , testCase "the explanation crosses: info beside the structured walk"  test_envelopeCarriesExplanation
       ]
@@ -109,6 +115,8 @@ webTests = testGroup "Web"
       [ testCase "a declaration beside handed bytes drives the same check"    test_declarationDrivesCheckApply
       , testCase "omitted Maybe fields decode as unrequested metadata"        test_declarationTerseMetadata
       , testCase "an encoding name arrives resolved, as the CLI resolves it"  test_declarationEncodingName
+      , testCase "the identify declaration drives the same identity"          test_declarationDrivesIdentify
+      , testCase "the read declarations drive the same envelopes"             test_declarationDrivesReads
       , testCase "blob bytes arrive through base64"                           test_declarationBlobBase64
       ]
   , testGroup "tail"
@@ -152,6 +160,12 @@ test_identifyUnrecognizedBytes :: Assertion
 test_identifyUnrecognizedBytes =
   identifyPatch noDialectsRequested EncodingUtf8 (PatchFileContents "this file is nobody's patch")
     @?= Left UnrecognizedFormat
+
+test_classifySortsBothWays :: Assertion
+test_classifySortsBothWays = do
+  PatchFileContents patchBytes <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
+  droppedFileAnswerFor (classifyDroppedFile patchBytes)                      @?= SortsAsPatch
+  droppedFileAnswerFor (classifyDroppedFile "this file is nobody's patch") @?= SortsAsRom
 
 fixtureSourceBytes, fixtureTargetBytes :: ByteString
 fixtureSourceBytes = ByteString.pack [0 .. 63]
@@ -510,6 +524,20 @@ test_readsRefuseStaleDialect = do
     Left refusal -> refusal @?= staleRefusal
     Right _      -> assertFailure "analyze accepted a stale dialect"
 
+-- | The per-patch gate for a frontend's encoding control:
+-- a patch with no undeclared-encoding text announces nothing, and only the blob-carrying BPS names its one governed reading.
+test_undeclaredTextSignal :: Assertion
+test_undeclaredTextSignal = do
+  upsPatch  <- createdFixturePatch (CreateDifferential CreateUPS) noMetadataRequested
+  bpsQuiet  <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
+  bpsNoted  <- createdFixturePatch (CreateDifferential CreateBPS)
+                 noMetadataRequested { requestedEmbeddedBlob = SetEmbeddedTypedText "a note" }
+  let announcedBy patchBytes =
+        fmap infoUndeclaredTextFields (outcomeValue (inspectPatch (plainInspectRequest patchBytes)))
+  announcedBy upsPatch @?= Right []
+  announcedBy bpsQuiet @?= Right []
+  announcedBy bpsNoted @?= Right ["embedded data"]
+
 -- | The nine digits are the CRC catalogs' standard check input; every digest below is the published one.
 -- The field newtypes already forbid swapping one hash for another; this catches hashing the wrong bytes.
 test_describeRomKnownAnswers :: Assertion
@@ -590,6 +618,24 @@ test_envelopeNamesLoneConstructor = do
   Aeson.toJSON PPF1OriginAxis              @?= Aeson.String "PPF1OriginAxis"
   Aeson.toJSON VCDIFFNestedCustomCodeTable @?= Aeson.String "VCDIFFNestedCustomCodeTable"
 
+test_envelopeCarriesIdentity :: Assertion
+test_envelopeCarriesIdentity = do
+  upsPatch <- createdFixturePatch (CreateDifferential CreateUPS) noMetadataRequested
+  identity <- either (assertFailureT . renderSlapError) pure (identifyPatch noDialectsRequested EncodingUtf8 upsPatch)
+  envelope <- maybe (assertFailure "the identity envelope is not readable JSON") pure
+                    (Aeson.decodeStrict (encodeEnvelope (noAdvisories (Right (speakPatchIdentity identity)))))
+  crossedFormat <- jsonPath ["envelopeAnswer", "Right", "spokenIdentityFormat"] envelope
+  crossedFormat @?= Aeson.String "LabelUPS"
+  crossedName <- jsonPath ["envelopeAnswer", "Right", "spokenIdentityFormatName"] envelope
+  crossedName @?= Aeson.String "UPS"
+  crossedUndo <- jsonPath ["envelopeAnswer", "Right", "spokenIdentityUndo"] envelope
+  crossedUndo @?= Aeson.String "PatchIsItsOwnReverse"
+
+test_envelopeNamesSortingAnswer :: Assertion
+test_envelopeNamesSortingAnswer = do
+  Aeson.toJSON SortsAsPatch @?= Aeson.String "SortsAsPatch"
+  Aeson.toJSON SortsAsRom   @?= Aeson.String "SortsAsRom"
+
 test_declarationDrivesCheckApply :: Assertion
 test_declarationDrivesCheckApply = do
   bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
@@ -622,6 +668,28 @@ test_declarationBlobBase64 :: Assertion
 test_declarationBlobBase64 = do
   decoded <- decodedFromJSON "{\"tag\":\"SetEmbeddedBlob\",\"contents\":\"qg==\"}"
   decoded @?= SetEmbeddedBlob (EmbeddedBlobContents (ByteString.pack [0xAA]))
+
+test_declarationDrivesIdentify :: Assertion
+test_declarationDrivesIdentify = do
+  bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
+  declared <- decodedFromJSON "{\"declaredIdentifyDialects\":{\"requestedPPF1Origin\":\"PPF1OriginPC\"},\
+                              \\"declaredIdentifyMetadataEncoding\":\"utf-8\"}"
+  identifyPatch (declaredIdentifyDialects declared) (declaredIdentifyMetadataEncoding declared) bpsPatch
+    @?= identifyPatch noDialectsRequested EncodingUtf8 bpsPatch
+
+-- The envelopes' bytes are the wire meaning, so byte equality is exactly the claim:
+-- a declaration beside handed bytes drives the same read the directly built request does.
+test_declarationDrivesReads :: Assertion
+test_declarationDrivesReads = do
+  bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
+  declaredInspect <- decodedFromJSON "{\"declaredInspectMetadataEncoding\":\"utf-8\",\
+                                     \\"declaredInspectDialects\":{\"requestedPPF1Origin\":\"PPF1OriginPC\"}}"
+  declaredAnalyze <- decodedFromJSON "{\"declaredAnalyzeMetadataEncoding\":\"utf-8\",\
+                                     \\"declaredAnalyzeDialects\":{\"requestedPPF1Origin\":\"PPF1OriginPC\"}}"
+  encodeEnvelope (inspectPatch (inspectRequestOf declaredInspect bpsPatch))
+    @?= encodeEnvelope (inspectPatch (plainInspectRequest bpsPatch))
+  encodeEnvelope (analyzePatch (analyzeRequestOf declaredAnalyze bpsPatch))
+    @?= encodeEnvelope (analyzePatch (plainAnalyzeRequest bpsPatch))
 
 decodedFromJSON :: Aeson.FromJSON value => ByteString -> IO value
 decodedFromJSON json = either (assertFailure . ("did not decode: " <>)) pure (Aeson.eitherDecodeStrict json)

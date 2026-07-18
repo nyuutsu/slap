@@ -11,6 +11,7 @@
 module Slap.VCDIFF.Describe
   ( vcdiffMeta
   , vcdiffEmbeddedContent
+  , vcdiffUndeclaredTextFields
   , vcdiffAppHeaderNotes
   , analyzeVCDIFF
   , makeVCDIFFRegion
@@ -117,6 +118,11 @@ vcdiffEmbeddedContent metadataEncoding patch = case patch of
     appHeaderField AppHeaderAbsent          = FieldAbsent
     appHeaderField AppHeaderEmpty           = FieldEmpty
     appHeaderField (AppHeaderPresent bytes) = readEmbeddedContent metadataEncoding bytes
+
+vcdiffUndeclaredTextFields :: VCDIFFPatch -> [Text]
+vcdiffUndeclaredTextFields patch = case patch of
+  PatchXDelta3 header _ | AppHeaderPresent _ <- classifyAppHeader (xdelta3AppHeader header) -> ["app header"]
+  _ -> []
 
 -- | RFC 3284 leaves the application header application-defined, so slap reports only its substitution count.
 vcdiffAppHeaderNotes :: EncodingName -> VCDIFFPatch -> [SlapAdvisory]

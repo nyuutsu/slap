@@ -22,20 +22,21 @@ import System.IO.Error (catchIOError, isFullError)
 import Data.Aeson (FromJSON)
 
 import Slap.Checksum (CRC32(unCRC32))
-import Slap.Convert (noDialectsRequested)
 import Slap.FileContents (InputFileContents(InputFileContents), OutputFileContents(OutputFileContents),
                           PatchFileContents(PatchFileContents))
 import Slap.Status (SlapError(ReactorMemoryExhausted), noAdvisories)
-import Slap.Text (EncodingName(EncodingUtf8))
-import Slap.Web (AnalyzeRequest(..), InspectRequest(..), RomFacts(romCRC32),
-                 analyzePatch, applyPatch, checkApply, checkConvert, checkCreate, checkUndo,
-                 convertPatch, createPatch, describeRom, describeSurface, inspectPatch, undoPatch)
-import Slap.Web.Declaration (DeclaredApplyRequest, DeclaredConvertRequest(declaredConvertSourceFraming),
-                             DeclaredCreateRequest, DeclaredUndoRequest,
-                             applyRequestOf, convertRequestOf, createRequestOf,
-                             decodedDeclaration, undoRequestOf)
+import Slap.Web (RomFacts(romCRC32),
+                 analyzePatch, applyPatch, checkApply, checkConvert, checkCreate, checkUndo, classifyDroppedFile,
+                 convertPatch, createPatch, describeRom, describeSurface, droppedFileAnswerFor, identifyPatch,
+                 inspectPatch, undoPatch)
+import Slap.Web.Declaration (DeclaredAnalyzeRequest, DeclaredApplyRequest,
+                             DeclaredConvertRequest(declaredConvertSourceFraming),
+                             DeclaredCreateRequest, DeclaredIdentifyRequest(..), DeclaredInspectRequest,
+                             DeclaredUndoRequest,
+                             analyzeRequestOf, applyRequestOf, convertRequestOf, createRequestOf,
+                             decodedDeclaration, inspectRequestOf, undoRequestOf)
 import Slap.Web.Envelope (encodeEnvelope, encodeEnvelopeAndTail,
-                          speakCreatedPatch, speakPatchedRom, speakRevertedRom)
+                          speakCreatedPatch, speakPatchIdentity, speakPatchedRom, speakRevertedRom)
 
 foreign export ccall "slap_web_link_check" slapWebLinkCheck :: IO Word32
 
@@ -71,19 +72,43 @@ foreign export ccall "slap_web_describe_surface" slapWebDescribeSurface :: IO (P
 slapWebDescribeSurface :: IO (Ptr Word8)
 slapWebDescribeSurface = answerEnvelope surfaceEnvelope
 
-foreign export ccall "slap_web_inspect_patch" slapWebInspectPatch :: Ptr Word8 -> Int -> IO (Ptr Word8)
+foreign export ccall "slap_web_classify_dropped_file" slapWebClassifyDroppedFile :: Ptr Word8 -> Int -> IO (Ptr Word8)
 
-slapWebInspectPatch :: Ptr Word8 -> Int -> IO (Ptr Word8)
-slapWebInspectPatch patchPointer patchLength = do
-  patchBytes <- packBuffer patchPointer patchLength
-  answerEnvelope (inspectEnvelope patchBytes)
+slapWebClassifyDroppedFile :: Ptr Word8 -> Int -> IO (Ptr Word8)
+slapWebClassifyDroppedFile filePointer fileLength = do
+  fileBytes <- packBuffer filePointer fileLength
+  answerEnvelope (classifyEnvelope fileBytes)
 
-foreign export ccall "slap_web_analyze_patch" slapWebAnalyzePatch :: Ptr Word8 -> Int -> IO (Ptr Word8)
+foreign export ccall "slap_web_identify_patch" slapWebIdentifyPatch :: Ptr Word8 -> Int -> Ptr Word8 -> Int -> IO (Ptr Word8)
 
-slapWebAnalyzePatch :: Ptr Word8 -> Int -> IO (Ptr Word8)
-slapWebAnalyzePatch patchPointer patchLength = do
-  patchBytes <- packBuffer patchPointer patchLength
-  answerEnvelope (analyzeEnvelope patchBytes)
+slapWebIdentifyPatch :: Ptr Word8 -> Int -> Ptr Word8 -> Int -> IO (Ptr Word8)
+slapWebIdentifyPatch patchPointer patchLength declarationPointer declarationLength = do
+  declared   <- decodedDeclaration <$> packBuffer declarationPointer declarationLength
+  patchBytes <- PatchFileContents <$> packBuffer patchPointer patchLength
+  answerEnvelope (identifyEnvelope declared patchBytes)
+
+foreign export ccall "slap_web_describe_rom" slapWebDescribeRom :: Ptr Word8 -> Int -> IO (Ptr Word8)
+
+slapWebDescribeRom :: Ptr Word8 -> Int -> IO (Ptr Word8)
+slapWebDescribeRom romPointer romLength = do
+  romBytes <- InputFileContents <$> packBuffer romPointer romLength
+  answerEnvelope (describeRomEnvelope romBytes)
+
+foreign export ccall "slap_web_inspect_patch" slapWebInspectPatch :: Ptr Word8 -> Int -> Ptr Word8 -> Int -> IO (Ptr Word8)
+
+slapWebInspectPatch :: Ptr Word8 -> Int -> Ptr Word8 -> Int -> IO (Ptr Word8)
+slapWebInspectPatch patchPointer patchLength declarationPointer declarationLength = do
+  declared   <- decodedDeclaration <$> packBuffer declarationPointer declarationLength
+  patchBytes <- PatchFileContents <$> packBuffer patchPointer patchLength
+  answerEnvelope (inspectEnvelope declared patchBytes)
+
+foreign export ccall "slap_web_analyze_patch" slapWebAnalyzePatch :: Ptr Word8 -> Int -> Ptr Word8 -> Int -> IO (Ptr Word8)
+
+slapWebAnalyzePatch :: Ptr Word8 -> Int -> Ptr Word8 -> Int -> IO (Ptr Word8)
+slapWebAnalyzePatch patchPointer patchLength declarationPointer declarationLength = do
+  declared   <- decodedDeclaration <$> packBuffer declarationPointer declarationLength
+  patchBytes <- PatchFileContents <$> packBuffer patchPointer patchLength
+  answerEnvelope (analyzeEnvelope declared patchBytes)
 
 foreign export ccall "slap_web_check_apply" slapWebCheckApply
   :: Ptr Word8 -> Int -> Ptr Word8 -> Int -> Ptr Word8 -> Int -> IO (Ptr Word8)
@@ -179,21 +204,22 @@ packBuffer pointer bufferLength = ByteString.packCStringLen (castPtr pointer, bu
 surfaceEnvelope :: ByteString
 surfaceEnvelope = encodeEnvelope (noAdvisories (Right describeSurface))
 
--- Both reads parse under UTF-8 with no dialect toggles, the read verbs' defaults.
+-- | Classification cannot refuse either — an unrecognized file is a rom, not an error.
+classifyEnvelope :: ByteString -> ByteString
+classifyEnvelope fileBytes = encodeEnvelope (noAdvisories (Right (droppedFileAnswerFor (classifyDroppedFile fileBytes))))
 
-inspectEnvelope :: ByteString -> ByteString
-inspectEnvelope patchBytes = encodeEnvelope $ inspectPatch InspectRequest
-  { inspectPatchBytes       = PatchFileContents patchBytes
-  , inspectMetadataEncoding = EncodingUtf8
-  , inspectDialects         = noDialectsRequested
-  }
+identifyEnvelope :: DeclaredIdentifyRequest -> PatchFileContents -> ByteString
+identifyEnvelope declared patchBytes = encodeEnvelope (noAdvisories (speakPatchIdentity <$>
+  identifyPatch (declaredIdentifyDialects declared) (declaredIdentifyMetadataEncoding declared) patchBytes))
 
-analyzeEnvelope :: ByteString -> ByteString
-analyzeEnvelope patchBytes = encodeEnvelope $ analyzePatch AnalyzeRequest
-  { analyzePatchBytes       = PatchFileContents patchBytes
-  , analyzeMetadataEncoding = EncodingUtf8
-  , analyzeDialects         = noDialectsRequested
-  }
+describeRomEnvelope :: InputFileContents -> ByteString
+describeRomEnvelope romBytes = encodeEnvelope (noAdvisories (Right (describeRom romBytes)))
+
+inspectEnvelope :: DeclaredInspectRequest -> PatchFileContents -> ByteString
+inspectEnvelope declared patchBytes = encodeEnvelope (inspectPatch (inspectRequestOf declared patchBytes))
+
+analyzeEnvelope :: DeclaredAnalyzeRequest -> PatchFileContents -> ByteString
+analyzeEnvelope declared patchBytes = encodeEnvelope (analyzePatch (analyzeRequestOf declared patchBytes))
 
 checkApplyEnvelope :: DeclaredApplyRequest -> PatchFileContents -> InputFileContents -> ByteString
 checkApplyEnvelope declared patchBytes romBytes =
@@ -266,9 +292,23 @@ main :: IO ()
 main = do
   arguments <- getArgs
   case arguments of
-    ["surface"]            -> ByteString.putStr surfaceEnvelope
-    ["inspect", patchPath] -> ByteString.putStr . inspectEnvelope =<< ByteString.readFile patchPath
-    ["analyze", patchPath] -> ByteString.putStr . analyzeEnvelope =<< ByteString.readFile patchPath
+    ["surface"]              -> ByteString.putStr surfaceEnvelope
+    ["classify", filePath]   -> ByteString.putStr . classifyEnvelope =<< ByteString.readFile filePath
+    ["identify", patchPath, declarationPath] -> do
+      declared   <- declarationFrom declarationPath
+      patchBytes <- PatchFileContents <$> ByteString.readFile patchPath
+      ByteString.putStr (identifyEnvelope declared patchBytes)
+    ["describe-rom", romPath] -> do
+      romBytes <- InputFileContents <$> ByteString.readFile romPath
+      ByteString.putStr (describeRomEnvelope romBytes)
+    ["inspect", patchPath, declarationPath] -> do
+      declared   <- declarationFrom declarationPath
+      patchBytes <- PatchFileContents <$> ByteString.readFile patchPath
+      ByteString.putStr (inspectEnvelope declared patchBytes)
+    ["analyze", patchPath, declarationPath] -> do
+      declared   <- declarationFrom declarationPath
+      patchBytes <- PatchFileContents <$> ByteString.readFile patchPath
+      ByteString.putStr (analyzeEnvelope declared patchBytes)
     ["check-apply", patchPath, romPath, declarationPath] -> do
       declared   <- declarationFrom declarationPath
       patchBytes <- PatchFileContents <$> ByteString.readFile patchPath
@@ -310,7 +350,8 @@ main = do
       handedSource <- traverse (fmap InputFileContents . ByteString.readFile) (listToMaybe maybeSourcePath)
       ByteString.putStr =<< convertEnvelopeAndTail declared patchBytes handedSource
     _ -> die ("usage: slap-web-reactor VERB...  (writes the verb's envelope — an act's, with its byte tail — to stdout)\n"
-           ++ "  surface | inspect PATCH | analyze PATCH\n"
+           ++ "  surface | classify FILE | identify PATCH DECLARATION | describe-rom ROM\n"
+           ++ "  inspect PATCH DECLARATION | analyze PATCH DECLARATION\n"
            ++ "  check-apply PATCH ROM DECLARATION | check-undo PATCH PATCHED DECLARATION\n"
            ++ "  check-create ORIGINAL MODIFIED DECLARATION | check-convert PATCH DECLARATION [SOURCE]\n"
            ++ "  apply PATCH ROM DECLARATION | undo PATCH PATCHED DECLARATION\n"

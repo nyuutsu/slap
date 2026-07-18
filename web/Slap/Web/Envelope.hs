@@ -10,6 +10,8 @@ module Slap.Web.Envelope
   , SpokenAdvisory(..)
   , envelopeOf
   , encodeEnvelope
+  , SpokenPatchIdentity(..)
+  , speakPatchIdentity
   , SpokenPatchedRom(..)
   , SpokenRevertedRom(..)
   , SpokenCreatedPatch(..)
@@ -25,15 +27,18 @@ import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
+import Data.Set (Set)
 import Data.Text (Text)
 import GHC.Generics (Generic, Generically(..))
 
 import Slap.Convert (CreateFormat)
+import Slap.Dialect (Dialect)
 import Slap.Display.Info (InputSideVerdict, OutputSideVerdict)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
+import Slap.FormatLabel (FormatLabel, formatLabelName)
 import Slap.Status (Outcome(..), Severity, SlapAdvisory, SlapError,
                     renderSlapAdvisory, renderSlapError, slapAdvisorySeverity)
-import Slap.Web (CreatedPatch(..), PatchedRom(..), RevertedRom(..), VerdictStanding)
+import Slap.Web (CreatedPatch(..), PatchIdentity(..), PatchedRom(..), RevertedRom(..), UndoAnswer, VerdictStanding)
 
 -- | A refusal beside the sentence slap speaks for it.
 data SpokenError = SpokenError
@@ -79,6 +84,25 @@ envelopeOf (Outcome answer advisories) = Envelope
 
 encodeEnvelope :: ToJSON answer => Outcome (Either SlapError answer) -> ByteString
 encodeEnvelope = LazyByteString.toStrict . Aeson.encode . envelopeOf
+
+-- | 'Slap.SomePatch.PatchIdentity', spoken for the crossing with the format's display name beside its label:
+-- the name table ('formatLabelName') is engine knowledge, not a page's to re-type.
+data SpokenPatchIdentity = SpokenPatchIdentity
+  { spokenIdentityFormat     :: FormatLabel
+  , spokenIdentityFormatName :: Text
+  , spokenIdentityDialects   :: Set Dialect
+  , spokenIdentityUndo       :: UndoAnswer
+  }
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically SpokenPatchIdentity
+
+speakPatchIdentity :: PatchIdentity -> SpokenPatchIdentity
+speakPatchIdentity identity = SpokenPatchIdentity
+  { spokenIdentityFormat     = identifiedFormat identity
+  , spokenIdentityFormatName = formatLabelName (identifiedFormat identity)
+  , spokenIdentityDialects   = applicableDialects identity
+  , spokenIdentityUndo       = identifiedUndo identity
+  }
 
 -- The acts' answers, split for the crossing: each Spoken form is its answer minus the output bytes,
 -- which are megabytes with no structure to keep — they ride behind the envelope as a raw tail, never base64 inside it.

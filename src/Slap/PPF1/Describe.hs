@@ -7,6 +7,7 @@
 -- both consume.
 module Slap.PPF1.Describe
   ( ppf1Meta
+  , ppf1UndeclaredTextFields
   , analyzePPF1
   , ppf1RecordsRange
   ) where
@@ -30,12 +31,17 @@ import Slap.Display.Analysis
   )
 import Slap.Text (encodedTextContent)
 
+import Data.Text (Text)
 import qualified Data.Text as Text
 
 ppf1Meta :: PPF1Patch -> [InfoLine]
 ppf1Meta patch =
   let description = encodedTextContent (ppf1Description patch)
   in [InfoLine "description" description | not (Text.null description)]
+
+ppf1UndeclaredTextFields :: PPF1Patch -> [Text]
+ppf1UndeclaredTextFields patch =
+  ["description" | not (Text.null (encodedTextContent (ppf1Description patch)))]
 
 analyzePPF1 :: PPF1Patch -> PatchAnalysis
 analyzePPF1 patch = PatchAnalysis

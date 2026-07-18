@@ -7,17 +7,20 @@ import { WASI } from 'node:wasi';
 // Per verb: the export it calls, and its argv paths rearranged into the export's own buffer order.
 // A null entry crosses as (0, 0) — check-convert's seat for a source the declaration does not speak of.
 const shapes = {
-  surface:         { export: 'slap_web_describe_surface', buffers: () => [] },
-  inspect:         { export: 'slap_web_inspect_patch',    buffers: ([patch]) => [patch] },
-  analyze:         { export: 'slap_web_analyze_patch',    buffers: ([patch]) => [patch] },
-  'check-apply':   { export: 'slap_web_check_apply',      buffers: ([patch, rom, declaration]) => [patch, rom, declaration] },
-  'check-undo':    { export: 'slap_web_check_undo',       buffers: ([patch, patched, declaration]) => [patch, patched, declaration] },
-  'check-create':  { export: 'slap_web_check_create',     buffers: ([original, modified, declaration]) => [original, modified, declaration] },
-  'check-convert': { export: 'slap_web_check_convert',    buffers: ([patch, declaration, source]) => [patch, source ?? null, declaration] },
-  apply:           { export: 'slap_web_apply_patch',      buffers: ([patch, rom, declaration]) => [patch, rom, declaration] },
-  undo:            { export: 'slap_web_undo_patch',       buffers: ([patch, patched, declaration]) => [patch, patched, declaration] },
-  create:          { export: 'slap_web_create_patch',     buffers: ([original, modified, declaration]) => [original, modified, declaration] },
-  convert:         { export: 'slap_web_convert_patch',    buffers: ([patch, declaration, source]) => [patch, source ?? null, declaration] },
+  surface:         { export: 'slap_web_describe_surface',      buffers: () => [] },
+  classify:        { export: 'slap_web_classify_dropped_file', buffers: ([file]) => [file] },
+  identify:        { export: 'slap_web_identify_patch',        buffers: ([patch, declaration]) => [patch, declaration] },
+  'describe-rom':  { export: 'slap_web_describe_rom',          buffers: ([rom]) => [rom] },
+  inspect:         { export: 'slap_web_inspect_patch',         buffers: ([patch, declaration]) => [patch, declaration] },
+  analyze:         { export: 'slap_web_analyze_patch',         buffers: ([patch, declaration]) => [patch, declaration] },
+  'check-apply':   { export: 'slap_web_check_apply',           buffers: ([patch, rom, declaration]) => [patch, rom, declaration] },
+  'check-undo':    { export: 'slap_web_check_undo',            buffers: ([patch, patched, declaration]) => [patch, patched, declaration] },
+  'check-create':  { export: 'slap_web_check_create',          buffers: ([original, modified, declaration]) => [original, modified, declaration] },
+  'check-convert': { export: 'slap_web_check_convert',         buffers: ([patch, declaration, source]) => [patch, source ?? null, declaration] },
+  apply:           { export: 'slap_web_apply_patch',           buffers: ([patch, rom, declaration]) => [patch, rom, declaration] },
+  undo:            { export: 'slap_web_undo_patch',            buffers: ([patch, patched, declaration]) => [patch, patched, declaration] },
+  create:          { export: 'slap_web_create_patch',          buffers: ([original, modified, declaration]) => [original, modified, declaration] },
+  convert:         { export: 'slap_web_convert_patch',         buffers: ([patch, declaration, source]) => [patch, source ?? null, declaration] },
 };
 
 const [reactorPath, verb, ...verbArgs] = process.argv.slice(2);

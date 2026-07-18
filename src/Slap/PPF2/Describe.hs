@@ -6,6 +6,7 @@
 module Slap.PPF2.Describe
   ( ppf2Meta
   , ppf2EmbeddedContent
+  , ppf2UndeclaredTextFields
   , analyzePPF2
   , ppf2RecordsRange
   ) where
@@ -34,6 +35,8 @@ import Slap.Display.EmbeddedContent (EmbeddedContent(..), EmbeddedField(..), Emb
 import Slap.Text (encodedTextContent)
 
 import qualified Data.ByteString as ByteString
+import Data.Maybe (isJust)
+import Data.Text (Text)
 import qualified Data.Text as Text
 
 ppf2Meta :: PPF2Patch -> [InfoLine]
@@ -49,6 +52,12 @@ ppf2Meta patch = concat
       "BIN block at "
       <> renderOffsetAsHex ppf2ValidationOffset
       <> " (" <> renderAsText (ByteString.length validationBlockBytes) <> " bytes)"
+
+ppf2UndeclaredTextFields :: PPF2Patch -> [Text]
+ppf2UndeclaredTextFields patch = concat
+  [ ["description" | not (Text.null (encodedTextContent (ppf2Description patch)))]
+  , ["file_id.diz" | isJust (ppf2FileId patch)]
+  ]
 
 ppf2EmbeddedContent :: PPF2Patch -> [EmbeddedContent]
 ppf2EmbeddedContent patch = case ppf2FileId patch of

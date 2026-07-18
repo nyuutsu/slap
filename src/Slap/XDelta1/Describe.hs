@@ -2,6 +2,7 @@
 
 module Slap.XDelta1.Describe
   ( xdelta1Meta
+  , xdelta1UndeclaredTextFields
   , analyzeXDelta1
   , makeXDelta1Region
   , makeXDelta1DataRecordText
@@ -34,6 +35,7 @@ import Slap.Measure (Length(..), FileSize(..))
 import Slap.Text (EncodedText(..), EncodingName(..), encodedTextContent)
 
 import Data.Text (Text)
+import qualified Data.Text as Text
 import qualified Data.ByteString as ByteString
 import qualified Data.Text.Encoding as TextEncoding
 
@@ -88,6 +90,13 @@ xdelta1Meta patch =
 ----------------------------------------------------------------------------
 -- Analyze
 ----------------------------------------------------------------------------
+
+xdelta1UndeclaredTextFields :: XDelta1Patch -> [Text]
+xdelta1UndeclaredTextFields patch = concat
+  [ ["from" | named (unXDelta1FromName (xdelta1FromName patch))]
+  , ["to"   | named (unXDelta1ToName   (xdelta1ToName   patch))]
+  ]
+  where named = not . Text.null . encodedTextContent
 
 analyzeXDelta1 :: XDelta1Patch -> PatchAnalysis
 analyzeXDelta1 patch = PatchAnalysis

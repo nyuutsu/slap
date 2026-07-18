@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Slap.Detect
@@ -6,11 +7,15 @@ module Slap.Detect
   , recognizePatchFile
   , DroppedFileClass(..)
   , classifyDroppedFile
+  , DroppedFileAnswer(..)
+  , droppedFileAnswerFor
   ) where
 
+import Data.Aeson (ToJSON)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.List (find)
+import GHC.Generics (Generic, Generically(..))
 import qualified Slap.APSGBA.Parse as APSGBA (isAPSGBAStructured)
 import Slap.APSGBA.Types (apsGbaMagicBytes)
 import Slap.APSN64.Types (apsN64MagicBytes)
@@ -147,3 +152,15 @@ classifyDroppedFile rawBytes = case recognizePatchFile candidate of
     Nothing -> DroppedRom (InputFileContents rawBytes)
   where
     candidate = PatchFileContents rawBytes
+
+-- | 'DroppedFileClass' with the minted contents left behind: which seat the file sorts to,
+-- speakable across a boundary whose caller kept the bytes.
+data DroppedFileAnswer
+  = SortsAsPatch
+  | SortsAsRom
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically DroppedFileAnswer
+
+droppedFileAnswerFor :: DroppedFileClass -> DroppedFileAnswer
+droppedFileAnswerFor (DroppedPatch _) = SortsAsPatch
+droppedFileAnswerFor (DroppedRom _)   = SortsAsRom

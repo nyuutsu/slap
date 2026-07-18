@@ -3,6 +3,7 @@
 module Slap.BPS.Describe
   ( bpsMeta
   , bpsEmbeddedContent
+  , bpsUndeclaredTextFields
   , bpsMetadataNotes
   , analyzeBPS
   , BPSRegionState(..)
@@ -32,6 +33,7 @@ import Slap.Measure (Offset(..), FileSize(..),
 import qualified Data.ByteString as ByteString
 import Data.Char (isControl, isSpace)
 import Data.List (mapAccumL)
+import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Vector as Vector
 
@@ -52,6 +54,10 @@ bpsEmbeddedContent metadataEncoding patch
   | otherwise = [EmbeddedContent "embedded data" (readEmbeddedContent metadataEncoding metadataBytes)]
   where
     metadataBytes = unBPSMetadata (bpsMetadata patch)
+
+bpsUndeclaredTextFields :: BPSPatch -> [Text]
+bpsUndeclaredTextFields patch =
+  ["embedded data" | not (ByteString.null (unBPSMetadata (bpsMetadata patch)))]
 
 -- | The remark on the metadata blob, measured against UTF-8 — the encoding the BPS spec recommends.
 -- Conformance is a fact about the format, so the @--metadata-encoding@ viewing preference does not move it:

@@ -8,6 +8,7 @@
 module Slap.PPF3.Describe
   ( ppf3Meta
   , ppf3EmbeddedContent
+  , ppf3UndeclaredTextFields
   , analyzePPF3
   , ppf3RecordsRange
   ) where
@@ -37,6 +38,8 @@ import Slap.Display.EmbeddedContent (EmbeddedContent(..), EmbeddedField(..), Emb
 import Slap.Text (encodedTextContent)
 
 import qualified Data.ByteString as ByteString
+import Data.Maybe (isJust)
+import Data.Text (Text)
 import qualified Data.Text as Text
 
 ppf3Meta :: PPF3Patch -> [InfoLine]
@@ -54,6 +57,12 @@ ppf3Meta patch = concat
         <> " block at "
         <> renderOffsetAsHex (ppf3ValidationOffset (ppf3ImageType patch))
         <> " (" <> renderAsText (ByteString.length blockBytes) <> " bytes)"
+
+ppf3UndeclaredTextFields :: PPF3Patch -> [Text]
+ppf3UndeclaredTextFields patch = concat
+  [ ["description" | not (Text.null (encodedTextContent (ppf3Description patch)))]
+  , ["file_id.diz" | isJust (ppf3FileId patch)]
+  ]
 
 ppf3EmbeddedContent :: PPF3Patch -> [EmbeddedContent]
 ppf3EmbeddedContent patch = case ppf3FileId patch of

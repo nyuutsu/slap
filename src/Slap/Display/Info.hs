@@ -44,6 +44,10 @@ data PatchInfo = PatchInfo
   { infoFormat   :: !FormatHeader
   , infoLines    :: ![InfoLine]
   , infoEmbedded :: ![EmbeddedContent]
+  , infoUndeclaredTextFields :: ![Text]
+    -- ^ The labels of this patch's text whose encoding the format leaves undeclared — the readings @--metadata-encoding@ governs.
+    -- Empty when nothing in this particular patch would re-read,
+    -- so a frontend can withhold its encoding control instead of offering a knob that turns nothing.
   , infoTally    :: !Tally
   , infoUnit     :: !CountUnit
   , infoBytes    :: !(Maybe ByteCount)

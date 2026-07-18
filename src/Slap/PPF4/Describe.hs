@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Slap.PPF4.Describe
-  ( ppf4Meta, analyzePPF4
+  ( ppf4Meta, ppf4UndeclaredTextFields, analyzePPF4
   , ppf4ReplacesRange
   ) where
 
@@ -24,6 +24,7 @@ import Slap.Display.Analysis
 
 import Slap.Text (encodedTextContent)
 
+import Data.Text (Text)
 import qualified Data.Text as Text
 
 -- | All key-value metadata carried by a PPF4 patch header. PPF4 has
@@ -33,6 +34,10 @@ ppf4Meta :: PPF4Patch -> [InfoLine]
 ppf4Meta patch =
   let description = encodedTextContent (ppf4Description patch)
   in [InfoLine "description" description | not (Text.null description)]
+
+ppf4UndeclaredTextFields :: PPF4Patch -> [Text]
+ppf4UndeclaredTextFields patch =
+  ["description" | not (Text.null (encodedTextContent (ppf4Description patch)))]
 
 totalPayloadBytes :: PPF4Patch -> Length
 totalPayloadBytes patch =

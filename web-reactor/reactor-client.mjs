@@ -4,17 +4,20 @@
 
 // Per verb: the export it calls, its seats in the export's own order, and whether output bytes ride behind the envelope.
 const reactorVerbs = {
-  surface:         { reactorExport: 'slap_web_describe_surface', seatOrder: [],                                        answersWithTail: false },
-  inspect:         { reactorExport: 'slap_web_inspect_patch',    seatOrder: ['patch'],                                 answersWithTail: false },
-  analyze:         { reactorExport: 'slap_web_analyze_patch',    seatOrder: ['patch'],                                 answersWithTail: false },
-  'check-apply':   { reactorExport: 'slap_web_check_apply',      seatOrder: ['patch', 'rom', 'declaration'],           answersWithTail: false },
-  'check-undo':    { reactorExport: 'slap_web_check_undo',       seatOrder: ['patch', 'patched', 'declaration'],       answersWithTail: false },
-  'check-create':  { reactorExport: 'slap_web_check_create',     seatOrder: ['original', 'modified', 'declaration'],   answersWithTail: false },
-  'check-convert': { reactorExport: 'slap_web_check_convert',    seatOrder: ['patch', 'source', 'declaration'],        answersWithTail: false },
-  apply:           { reactorExport: 'slap_web_apply_patch',      seatOrder: ['patch', 'rom', 'declaration'],           answersWithTail: true },
-  undo:            { reactorExport: 'slap_web_undo_patch',       seatOrder: ['patch', 'patched', 'declaration'],       answersWithTail: true },
-  create:          { reactorExport: 'slap_web_create_patch',     seatOrder: ['original', 'modified', 'declaration'],   answersWithTail: true },
-  convert:         { reactorExport: 'slap_web_convert_patch',    seatOrder: ['patch', 'source', 'declaration'],        answersWithTail: true },
+  surface:         { reactorExport: 'slap_web_describe_surface',      seatOrder: [],                                      answersWithTail: false },
+  classify:        { reactorExport: 'slap_web_classify_dropped_file', seatOrder: ['file'],                                answersWithTail: false },
+  identify:        { reactorExport: 'slap_web_identify_patch',        seatOrder: ['patch', 'declaration'],                answersWithTail: false },
+  'describe-rom':  { reactorExport: 'slap_web_describe_rom',          seatOrder: ['rom'],                                 answersWithTail: false },
+  inspect:         { reactorExport: 'slap_web_inspect_patch',         seatOrder: ['patch', 'declaration'],                answersWithTail: false },
+  analyze:         { reactorExport: 'slap_web_analyze_patch',         seatOrder: ['patch', 'declaration'],                answersWithTail: false },
+  'check-apply':   { reactorExport: 'slap_web_check_apply',           seatOrder: ['patch', 'rom', 'declaration'],         answersWithTail: false },
+  'check-undo':    { reactorExport: 'slap_web_check_undo',            seatOrder: ['patch', 'patched', 'declaration'],     answersWithTail: false },
+  'check-create':  { reactorExport: 'slap_web_check_create',          seatOrder: ['original', 'modified', 'declaration'], answersWithTail: false },
+  'check-convert': { reactorExport: 'slap_web_check_convert',         seatOrder: ['patch', 'source', 'declaration'],      answersWithTail: false },
+  apply:           { reactorExport: 'slap_web_apply_patch',           seatOrder: ['patch', 'rom', 'declaration'],         answersWithTail: true },
+  undo:            { reactorExport: 'slap_web_undo_patch',            seatOrder: ['patch', 'patched', 'declaration'],     answersWithTail: true },
+  create:          { reactorExport: 'slap_web_create_patch',          seatOrder: ['original', 'modified', 'declaration'], answersWithTail: true },
+  convert:         { reactorExport: 'slap_web_convert_patch',         seatOrder: ['patch', 'source', 'declaration'],      answersWithTail: true },
 };
 
 export class ReactorJobCancelled extends Error {}

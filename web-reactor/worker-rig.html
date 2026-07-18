@@ -23,6 +23,10 @@
 <section>
   <h2>inspect</h2>
   <p><input id="inspect-patch" type="file"> <button id="inspect-run">inspect</button></p>
+  <textarea id="inspect-declaration">{
+  "declaredInspectMetadataEncoding": "utf-8",
+  "declaredInspectDialects": { "requestedPPF1Origin": "PPF1OriginPC" }
+}</textarea>
   <pre id="inspect-envelope"></pre>
 </section>
 
@@ -59,7 +63,8 @@
   element('inspect-run').onclick = async () => {
     const [patch] = element('inspect-patch').files;
     if (!patch) return;
-    showEnvelope('inspect-envelope', (await startReactorJob(reactor, 'inspect', { patch }).answered).envelope);
+    const declaration = JSON.parse(element('inspect-declaration').value);
+    showEnvelope('inspect-envelope', (await startReactorJob(reactor, 'inspect', { patch, declaration }).answered).envelope);
   };
 
   let cancelRunningApply = null;

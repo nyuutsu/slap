@@ -2,6 +2,7 @@
 
 module Slap.DPS.Describe
   ( dpsMeta
+  , dpsUndeclaredTextFields
   , analyzeDPS
   , makeDPSRegion
   ) where
@@ -55,6 +56,14 @@ dpsMeta patch = concat
 ----------------------------------------------------------------------------
 -- Analyze
 ----------------------------------------------------------------------------
+
+dpsUndeclaredTextFields :: DPSPatch -> [Text]
+dpsUndeclaredTextFields patch = concat
+  [ ["name"    | present (dpsName patch)]
+  , ["author"  | present (dpsAuthor patch)]
+  , ["version" | present (dpsVersion patch)]
+  ]
+  where present = not . Text.null . encodedTextContent
 
 analyzeDPS :: DPSPatch -> PatchAnalysis
 analyzeDPS patch = PatchAnalysis
