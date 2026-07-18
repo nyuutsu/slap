@@ -84,7 +84,8 @@ import Slap.Constraint (Constraint(..))
 import Slap.Dialect (Dialect(..))
 import Slap.IPS.Types (SMCShapeRequirement(..))
 import Slap.PPF1.Types (PPF1Origin(..))
-import Slap.Create (createPatch)
+import Slap.NINJA2.Types (NINJA2CreateMetadata(..), TextMode(..))
+import Slap.Create (createPatch, createNINJA2)
 import qualified Data.Set as Set
 
 import Data.Bits (xor, (.|.))
@@ -119,6 +120,7 @@ failureModeTests tier getTargets = do
   let smcMaybes = map WillRun smcShapeConstraintTests
       xdelta1ShapeMaybes = map WillRun xdelta1SourceShapeTests
       dialectMaybes = map WillRun dialectAxisRejectionTests
+      ninja2MissingEndMaybes = map WillRun ninja2MissingEndTests
 
   xdelta1NoVerifyMaybes <- requireFixture stadium2SizeChange $ \_ ->
                              pure (map WillRun (xdelta1NoVerifyTests stadium2SizeChange))
@@ -159,7 +161,7 @@ failureModeTests tier getTargets = do
     ]
 
   pure (namedGroup "failure-mode"
-          (smcMaybes ++ xdelta1ShapeMaybes ++ dialectMaybes
+          (smcMaybes ++ xdelta1ShapeMaybes ++ dialectMaybes ++ ninja2MissingEndMaybes
             ++ xdelta1NoVerifyMaybes ++ xdelta1InputPreCompressionMaybes
             ++ corruptCrcMaybes ++ vcdiffAdlerMaybes ++ fullTierMaybes))
 
@@ -691,6 +693,52 @@ smcShapeConstraintTests =
               ("setup: parse failed: " ++ Text.unpack (renderSlapError slapError))
               >> error "unreachable"
             Right parsed -> pure parsed
+
+----------------------------------------------------------------------------
+-- 7. NINJA2 command stream without its END command
+----------------------------------------------------------------------------
+
+-- | A NINJA2 command stream must end with its END command (byte 0x00).
+-- A patch whose bytes stop before it is truncated; slap refuses rather than
+-- take a cut-short patch as complete, mirroring NINJA1's missing-footer
+-- rejection. Every created patch ends with the END byte, so dropping the last
+-- byte is exactly that malformation.
+ninja2MissingEndTests :: [TestTree]
+ninja2MissingEndTests =
+  [ testCase "ninja2-missing-end/stream without its END command rejects" $
+      case createNINJA2 (InputFileContents source) (OutputFileContents target) emptyNINJA2Metadata of
+        Left slapError -> assertFailure
+          ("setup: NINJA2 create failed: " ++ Text.unpack (renderSlapError slapError))
+        Right (CreateResult (PatchFileContents patchBytes) _) -> do
+          -- Control: the intact patch parses.
+          case parseSome noDialectsRequested EncodingUtf8 (PatchFileContents patchBytes) of
+            Left slapError -> assertFailure
+              ("intact NINJA2 patch should parse: " ++ Text.unpack (renderSlapError slapError))
+            Right _ -> pure ()
+          -- With the trailing END command removed, it refuses.
+          case parseSome noDialectsRequested EncodingUtf8
+                 (PatchFileContents (ByteString.init patchBytes)) of
+            Left NINJA2MissingEndCommand -> pure ()
+            Left other -> assertFailure
+              ("expected NINJA2MissingEndCommand, got: " ++ Text.unpack (renderSlapError other))
+            Right _ -> assertFailure
+              "expected refusal for a NINJA2 stream lacking its END command"
+  ]
+  where
+    source = ByteString.replicate 4096 0x00
+    target = ByteString.pack [if i == 100 then 0xAA else 0x00 | i <- [0 .. 4095 :: Int]]
+    emptyNINJA2Metadata = NINJA2CreateMetadata
+      { ninja2CreateMetadataAuthor      = Nothing
+      , ninja2CreateMetadataVersion     = Nothing
+      , ninja2CreateMetadataTitle       = Nothing
+      , ninja2CreateMetadataGenre       = Nothing
+      , ninja2CreateMetadataLanguage    = Nothing
+      , ninja2CreateMetadataDate        = Nothing
+      , ninja2CreateMetadataWebsite     = Nothing
+      , ninja2CreateMetadataDescription = Nothing
+      , ninja2CreateTextMode            = TextModeUTF8
+      , ninja2CreateMetadataPlatform    = Nothing
+      }
 
 ----------------------------------------------------------------------------
 -- xdelta1 source-list shapes

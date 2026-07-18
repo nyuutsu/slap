@@ -71,10 +71,8 @@ import GHC.Generics (Generic, Generically(..))
 -- Types
 ----------------------------------------------------------------------------
 
--- | Overflow mode: how size changes between source and target are handled.
--- 'A' (0x41) = append extra bytes, 'M' (0x4D) = truncate.
--- Spec does not mention XOR-with-0xFF encoding of overflow data;
--- that is a RomPatcher.js convention which we follow for compatibility.
+-- | How a file's size change is carried: 'A' (0x41) appends the target's extra tail, 'M' (0x4D) truncates to the shorter target.
+-- The overflow bytes are stored XORed with 0xFF — a convention the spec sheet omits, but is used by every implementation we looked at.
 data OverflowMode = OverflowAppend | OverflowTruncate
   deriving (Show, Eq)
 
@@ -158,9 +156,8 @@ fromNINJA2RomType NINJA2PCEngine                 = 8
 fromNINJA2RomType NINJA2Lynx                     = 9
 fromNINJA2RomType (NINJA2UnknownRomType value)   = value
 
--- | True for the ROM types NINJA2 defines a normalization for that slap does
--- not yet run: NES, SNES, N64, Game Boy, SMS and Game Gear, Genesis, PC-Engine,
--- and Lynx (@docs/ninja2/upstream/ninja2-convroms.txt@). Raw and FDS have none.
+-- | Whether NINJA2 defines a header strip or deinterleave for this ROM type;
+-- the procedure lives in "Slap.Normalize".
 ninja2RomTypeNeedsNormalization :: NINJA2RomType -> Bool
 ninja2RomTypeNeedsNormalization romType = case romType of
   NINJA2NES         -> True

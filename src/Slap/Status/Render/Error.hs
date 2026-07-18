@@ -167,6 +167,9 @@ renderSlapError (UnsupportedNINJA1Subformat (NINJA1SubformatIdentifier subformat
 renderSlapError NINJA1BinaryMissingEOFFooter =
   formatLabelName LabelNINJA1 <> ": the patch ends without its closing marker (an EOF footer)"
 
+renderSlapError NINJA2MissingEndCommand =
+  formatLabelName LabelNINJA2 <> ": the patch ends without its closing marker (the END command, byte 0x00)"
+
 renderSlapError (NegativeSize label name (ParsedSizeValue value)) =
   formatLabelName label <> ": the patch declares a "
   <> fieldNameLabel name <> " of " <> renderAsText value

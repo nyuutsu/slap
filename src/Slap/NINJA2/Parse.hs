@@ -137,13 +137,13 @@ parseNINJA2 metadataEncoding (PatchFileContents input)
       , ninja2TextMode = textMode
       }
 
--- | The walk runs over an 'ExceptT' 'SlapError' channel
--- so a format-semantic refusal within a command — an unknown overflow mode — surfaces as itself.
--- Byte-level framing failures (an unknown command code, a short read) stay on the parser's own 'ByteParserError'.
+-- | The walk runs over an 'ExceptT' 'SlapError' channel, so format-semantic refusals surface as themselves:
+-- an unknown overflow mode within a command, or a command stream that ends without its terminating END command.
+-- Byte-level framing failures — an unknown command code, a short read mid-field — stay on the parser's own 'ByteParserError'.
 parseCommands :: ActionIndex -> NINJA2Patch -> ExceptT SlapError ByteParser NINJA2Patch
 parseCommands commandIndex patch = do
   done <- lift atEnd
-  if done then pure patch
+  if done then throwE NINJA2MissingEndCommand
   else do
     code <- lift getByte
     case code of

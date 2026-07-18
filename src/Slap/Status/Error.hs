@@ -164,6 +164,8 @@ data SlapError
 
   | NINJA1BinaryMissingEOFFooter
 
+  | NINJA2MissingEndCommand
+
   -- | A byte-parser failure surfaced from the named format's parser.
   | ParseError FormatLabel ByteParserError
 
