@@ -29,12 +29,18 @@ export const mismatchSentence = (mismatch) => {
   }
 };
 
-// Refusals the page speaks for, keyed by the error's own tag.
+// The same mismatch means a rom that isn't the patch's source on apply, and one that isn't its product on undo — hence a row per verb.
 const refusalOverrides = {
-  VerificationFatal: (mismatch) => html`
-    <p class="said">That rom isn't the one this patch declares — so nothing was written.</p>
-    <p class="said">${mismatchSentence(mismatch)}</p>
-    <p class="said"><i>skip verification</i>, up in the options, applies it anyway — the mismatches become warnings.</p>`,
+  VerificationFatal: {
+    apply: (mismatch) => html`
+      <p class="said">That rom isn't the one this patch declares — so nothing was written.</p>
+      <p class="said">${mismatchSentence(mismatch)}</p>
+      <p class="said"><i>skip verification</i>, up in the options, applies it anyway — the mismatches become warnings.</p>`,
+    undo: (mismatch) => html`
+      <p class="said">The rom doesn't match what this patch declares — so nothing was written.</p>
+      <p class="said">${mismatchSentence(mismatch)}</p>
+      <p class="said"><i>skip verification</i>, up in the options, peels it anyway — the mismatches become warnings.</p>`,
+  },
 };
 
 // Advisories the page speaks for, likewise.
@@ -42,8 +48,8 @@ const advisoryOverrides = {
   DeclaredCheckMismatched: (mismatch) => mismatchSentence(mismatch),
 };
 
-export const spokenRefusalMarkup = (spokenError, sentence) =>
-  refusalOverrides[spokenError?.tag]?.(spokenError.contents) ?? html`<p class="refusal">${sentence}</p>`;
+export const spokenRefusalMarkup = (spokenError, sentence, verbName) =>
+  refusalOverrides[spokenError?.tag]?.[verbName]?.(spokenError.contents) ?? html`<p class="refusal">${sentence}</p>`;
 
 export const spokenAdvisorySentence = (advisory) =>
   advisoryOverrides[advisory.spokenAdvisory.tag]?.(advisory.spokenAdvisory.contents)

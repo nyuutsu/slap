@@ -91,6 +91,7 @@ button { font: inherit; cursor: pointer; }
 /* ---------------------------------------------------------- sentence ---- */
 
 .sentence { font-family: var(--mono); font-size: 18px; line-height: 2.5; color: #4A4238; margin: 4px 0 8px; }
+.swap-line { margin: -4px 0 2px; }
 .slot { background: none; border: none; padding: 0 5px; font: inherit; line-height: 1.45; }
 .slot.empty { color: var(--whisper); border-bottom: 2px dashed #D8C7AE; }
 .slot.empty:hover { color: var(--grape); border-bottom-color: var(--grape); }

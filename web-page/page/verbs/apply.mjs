@@ -2,8 +2,8 @@
 // this module owns only apply's shape and voice.
 
 import { html } from './../dom.mjs';
-import { groupMarkup, toggleMarkup, seatSlotMarkup } from './../controls.mjs';
-import { factsCardMarkup } from './../facts-card.mjs';
+import { groupMarkup, toggleMarkup, seatSlotMarkup, heldSeatMarkup, swapSeatsMarkup } from './../controls.mjs';
+import { applyFactsCardMarkup } from './../facts-card.mjs';
 import { voiceLines, plainVoice, workingVoice, patchedVoice, refusalVoice } from './../answer-surface.mjs';
 import { verbWord, flagWord, valueWord, fileWord, namedOr, placeholderWord } from './../command-tutor.mjs';
 import { dialectControls, dialectTogglesMarkup } from './../dialect-controls.mjs';
@@ -63,6 +63,13 @@ export const makeApplyVerb = (host) => {
       .catch(host.askFailed);
   };
 
+  // Superseding drops even a sibling seat's in-flight answer, and an answer dropped without a re-ask never comes back.
+  const askUnanswered = () => {
+    if (!apply.patchIdentity) askIdentity();
+    if (!apply.romFacts) askRomFacts();
+    if (!apply.sourceReport) askPreflight();
+  };
+
   /* ------------------------------------------------------------ seats ---- */
 
   const abandonOutcome = () => {
@@ -71,6 +78,7 @@ export const makeApplyVerb = (host) => {
   };
 
   const admitFile = (seat, file) => {
+    if (apply.running) return;
     host.supersedeAsks();
     abandonOutcome();
     if (seat === 'patch') {
@@ -84,15 +92,12 @@ export const makeApplyVerb = (host) => {
     }
     apply.sourceReport = null;
     host.fellow.nod();
-    if (seat === 'patch') { askIdentity(); } else { askRomFacts(); }
-    askPreflight();
+    askUnanswered();
     host.render();
   };
 
   /* --------------------------------------------------------- settings ---- */
-  /* Three lanes, by what the change invalidates.
-     The verification policy is not a comparison input — a held report stays true under either policy —
-     so that toggle only redraws. */
+  /* The verification policy is not a comparison input — a held report stays true under either policy — so its toggle only redraws. */
 
   const restateQuietly = (change) => {
     change();
@@ -103,7 +108,7 @@ export const makeApplyVerb = (host) => {
     host.supersedeAsks();
     change();
     apply.sourceReport = null;
-    askPreflight();
+    askUnanswered();
     host.render();
   };
 
@@ -112,8 +117,7 @@ export const makeApplyVerb = (host) => {
     change();
     apply.patchIdentity = null;
     apply.sourceReport = null;
-    askIdentity();
-    askPreflight();
+    askUnanswered();
     host.render();
   };
 
@@ -169,9 +173,12 @@ export const makeApplyVerb = (host) => {
 
   const chipWord = () => apply.patchIdentity?.answered?.spokenIdentityFormatName ?? null;
 
+  const slotFor = (seat, roleWord, file, slotChipWord) =>
+    apply.running ? heldSeatMarkup(file, slotChipWord) : seatSlotMarkup(seat, roleWord, file, slotChipWord);
+
   const sentenceMarkup = () => html`<p class="sentence">apply
-    ${seatSlotMarkup('patch', 'patch', apply.patch, chipWord())} to
-    ${seatSlotMarkup('rom', 'rom', apply.rom, null)}</p>`;
+    ${slotFor('patch', 'patch', apply.patch, chipWord())} to
+    ${slotFor('rom', 'rom', apply.rom, null)}</p>`;
 
   const headerControlMarkup = () => {
     const chosenMode = apply.framing.tag;
@@ -209,7 +216,8 @@ export const makeApplyVerb = (host) => {
 
     return html`
       ${sentenceMarkup()}
-      ${factsCardMarkup(apply, host.surface()?.surfaceConsoleHeaders ?? [])}
+      ${operandsSatisfied && !apply.running && swapSeatsMarkup}
+      ${applyFactsCardMarkup(apply, host.surface()?.surfaceConsoleHeaders ?? [])}
       ${headerControlSurfaces && headerControlMarkup()}
       ${operandsSatisfied && optionsMarkup()}`;
   };
@@ -218,8 +226,8 @@ export const makeApplyVerb = (host) => {
 
   const voiceMarkup = () => {
     if (apply.outcome?.patched) return patchedVoice(apply.outcome.patched);
-    if (apply.outcome?.refused) return refusalVoice(apply.outcome.refused);
-    if (apply.outcome?.failed) return refusalVoice(apply.outcome.failed);
+    if (apply.outcome?.refused) return refusalVoice(apply.outcome.refused, 'apply');
+    if (apply.outcome?.failed) return refusalVoice(apply.outcome.failed, 'apply');
     if (apply.running) return workingVoice();
     if (host.notice()) return plainVoice(host.notice());
     if (apply.patchIdentity?.refused)
@@ -254,18 +262,26 @@ export const makeApplyVerb = (host) => {
 
   /* ---------------------------------------------------------- surface ---- */
 
+  // Dark only on a fact the page already holds; a question still in flight never darkens it.
+  const refusalCertain = () => {
+    if (apply.patchIdentity?.refused) return true;
+    if (apply.verificationPolicy === 'SkipVerification') return false;
+    if (apply.sourceReport?.sourceVerdict?.tag !== 'VerdictDiffers') return false;
+    return !(apply.framing.tag === 'TakeInputAsIs' && apply.sourceReport.sourceRescue.length === 1);
+  };
+
   return {
     stageMarkup,
     voiceMarkup,
     commandWords,
     actMarkup: () => {
       if (apply.outcome || apply.running) return html``;
-      const ready = host.hasSession() && apply.patch && apply.rom;
+      const ready = host.hasSession() && apply.patch && apply.rom && !refusalCertain();
       return html`<button class="run" data-action="run" ${!ready && html`disabled`}>${runLabel}</button>`;
     },
     admitDroppedFile: (sorting, file) => admitFile(sorting === 'SortsAsPatch' ? 'patch' : 'rom', file),
     admitPickedFile: admitFile,
-    askAgain: () => { askRomFacts(); askIdentity(); askPreflight(); },
+    askAgain: askUnanswered,
     actions: {
       'set-framing': ({ framing }) => reweighSource(() => {
         apply.framing = framing === 'TakeInputAsIs'
@@ -278,6 +294,19 @@ export const makeApplyVerb = (host) => {
       }),
       run: runApply,
       'cancel-run': () => apply.running?.cancel(),
+      'swap-seats': () => {
+        if (apply.running) return;
+        host.supersedeAsks();
+        abandonOutcome();
+        [apply.patch, apply.rom] = [apply.rom, apply.patch];
+        apply.patchIdentity = null;
+        apply.romFacts = null;
+        apply.sourceReport = null;
+        apply.ppf1Origin = 'PPF1OriginPC';
+        host.fellow.nod();
+        askUnanswered();
+        host.render();
+      },
       'start-over': () => {
         host.supersedeAsks();
         abandonOutcome();

@@ -1,13 +1,28 @@
 // What slap knows, said the moment it knows it: the rom's facts appear when the rom does,
-// and the verdict — is this the rom the patch expects? — the moment a patch sits beside it.
-// The verdict is the engine's ('checkApply'); the card only puts it into sentences.
+// and the verdict the moment a patch sits beside it — apply asks "is this the rom the patch expects?",
+// undo asks "did this rom come out of it?". The verdicts are the engine's ('checkApply' / 'checkUndo');
+// the cards only put them into sentences.
 
 import { html } from './dom.mjs';
-import { base64ToHex, crc32Hex, checkKindNoun, humanByteSize, proseList } from './readouts.mjs';
+import { base64ToHex, crc32Hex, checkKindNoun, humanByteSize, matchVerbFor, proseList } from './readouts.mjs';
 import { mismatchSentence } from './verification-speech.mjs';
 
-// Consoles cross as engine names; the surface's console rows carry the display names beside
-// them, so the join is a lookup, never a guess.
+const factsFrame = (file, facts, verdictRow) => html`<div class="facts-card">
+  <div class="file-line">
+    <span class="file-name">${file.name}</span>
+    <span class="file-size">${humanByteSize(file.size)}</span>
+  </div>
+  ${facts && html`<div class="hashes">
+    CRC32&nbsp; <b>${crc32Hex(facts.romCRC32)}</b><br>
+    MD5&nbsp;&nbsp;&nbsp; <b>${base64ToHex(facts.romMD5)}</b><br>
+    SHA1&nbsp;&nbsp; <b>${base64ToHex(facts.romSHA1)}</b>
+  </div>`}
+  ${verdictRow}
+</div>`;
+
+/* ------------------------------------------------------------------ apply ---- */
+
+// Consoles cross as engine names; the surface's rows carry the display names beside them, so the join is a lookup, never a guess.
 const consolePhrase = (engineNames, consoleRows) =>
   engineNames
     .map((engineName) => consoleRows.find((row) => row.describedConsoleHeader === engineName)?.consoleName ?? engineName)
@@ -34,7 +49,7 @@ const rescueStory = (rescue, consoleRows, verificationEnforced, framingUntouched
     header ${rescueMotion(find)} — but verification is off, so slap will apply to these bytes exactly as handed.</p>`;
 };
 
-const verdictRow = (apply, consoleRows) => {
+const applyVerdictRow = (apply, consoleRows) => {
   if (!apply.patch)
     return html`<div class="verdict waiting"><span class="mark">·</span>
       <span>Pick a patch and slap will check this rom against it.</span></div>`;
@@ -46,7 +61,8 @@ const verdictRow = (apply, consoleRows) => {
 
   if (verdict.tag === 'VerdictMatches')
     return html`<div class="verdict good"><span class="mark">✓</span>
-      <span>This is the rom <b>${patchName}</b> expects — its ${proseList(verdict.contents.map(checkKindNoun))} match.</span></div>`;
+      <span>This is the rom <b>${patchName}</b> expects —
+        its ${proseList(verdict.contents.map(checkKindNoun))} ${matchVerbFor(verdict.contents)}.</span></div>`;
 
   if (verdict.tag === 'VerdictUncheckable')
     return html`<div class="verdict shrug"><span class="mark">~</span>
@@ -61,19 +77,39 @@ const verdictRow = (apply, consoleRows) => {
     </span></div>`;
 };
 
-export const factsCardMarkup = (apply, consoleRows) => {
-  if (!apply.rom) return html``;
-  const facts = apply.romFacts;
-  return html`<div class="facts-card">
-    <div class="file-line">
-      <span class="file-name">${apply.rom.name}</span>
-      <span class="file-size">${humanByteSize(apply.rom.size)}</span>
-    </div>
-    ${facts && html`<div class="hashes">
-      CRC32&nbsp; <b>${crc32Hex(facts.romCRC32)}</b><br>
-      MD5&nbsp;&nbsp;&nbsp; <b>${base64ToHex(facts.romMD5)}</b><br>
-      SHA1&nbsp;&nbsp; <b>${base64ToHex(facts.romSHA1)}</b>
-    </div>`}
-    ${verdictRow(apply, consoleRows)}
-  </div>`;
+export const applyFactsCardMarkup = (apply, consoleRows) =>
+  apply.rom ? factsFrame(apply.rom, apply.romFacts, applyVerdictRow(apply, consoleRows)) : html``;
+
+/* ------------------------------------------------------------------- undo ---- */
+
+const undoVerdictRow = (undo, patchPeels) => {
+  if (!undo.patch)
+    return html`<div class="verdict waiting"><span class="mark">·</span>
+      <span>Pick a patch and slap will check whether this rom came out of it.</span></div>`;
+  // the eligibility story is the voice's
+  if (undo.patchIdentity && !patchPeels) return null;
+  if (!undo.verdict)
+    return html`<div class="verdict waiting"><span class="mark">·</span><span>checking…</span></div>`;
+
+  const patchName = undo.patch.name;
+
+  if (undo.verdict.tag === 'VerdictMatches')
+    return html`<div class="verdict good"><span class="mark">✓</span>
+      <span>This is the rom <b>${patchName}</b> produces —
+        its ${proseList(undo.verdict.contents.map(checkKindNoun))} ${matchVerbFor(undo.verdict.contents)}.</span></div>`;
+
+  if (undo.verdict.tag === 'VerdictUncheckable')
+    return html`<div class="verdict shrug"><span class="mark">~</span>
+      <span><b>${patchName}</b> doesn't record what it produces, so slap can't check this rom against it.</span></div>`;
+
+  return html`<div class="verdict puzzled"><span class="mark">!</span>
+    <span><b>${patchName}</b> doesn't recognize this as a rom it produces.
+      ${undo.verdict.contents.map((mismatch) => html`<span class="mismatch-line">${mismatchSentence(mismatch)}</span>`)}
+      <p class="rescue-line">${undo.verificationPolicy === 'EnforceVerification'
+        ? html`You can still <i>skip verification</i> below and peel it as handed.`
+        : html`Verification is off, so slap will peel these bytes exactly as handed.`}</p>
+    </span></div>`;
 };
+
+export const undoFactsCardMarkup = (undo, patchPeels) =>
+  undo.patched ? factsFrame(undo.patched, undo.patchedFacts, undoVerdictRow(undo, patchPeels)) : html``;

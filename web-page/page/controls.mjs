@@ -13,7 +13,14 @@ export const toggleMarkup = ({ id, setting, checked, label, why }) => html`<div 
 
 export const inertSlotMarkup = (roleWord) => html`<span class="slot empty inert">${roleWord}</span>`;
 
+export const swapSeatsMarkup = html`<p class="swap-line"><button class="quiet-button"
+  data-action="swap-seats">the wrong way round? swap them</button></p>`;
+
 export const seatSlotMarkup = (seat, roleWord, file, chipWord) => file
   ? html`<button class="slot filled" data-action="pick-file" data-seat="${seat}">${file.name}</button>${
       chipWord && html`<span class="format-chip">${chipWord}</span>`}`
   : html`<button class="slot empty" data-action="pick-file" data-seat="${seat}">${roleWord}</button>`;
+
+// While an act runs, the seats it reads are held: shown, not clickable.
+export const heldSeatMarkup = (file, chipWord) => html`<span class="slot filled inert">${file.name}</span>${
+  chipWord && html`<span class="format-chip">${chipWord}</span>`}`;

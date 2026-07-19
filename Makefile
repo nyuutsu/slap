@@ -163,11 +163,11 @@ web-optimized: wasm
 	. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal build slap-web-reactor -O2 $(WASM_CABAL_FLAGS)
 	$(call assemble-web,-O2)
 
-# Every fixture's real envelopes through every read renderer; a shape surprise throws here, not in a browser.
+# Every fixture's real envelopes through the page's renderers; a shape surprise throws here, not in a browser.
 web-check: build
 	@workdir="$$(mktemp -d)"; trap 'rm -rf "$$workdir"' EXIT; \
 	 printf 'not a patch' > "$$workdir/unrecognized"; \
-	 node web-page/check.mjs "$$(cabal -v0 list-bin slap-web-reactor)" test/data/dm4y/patch.* "$$workdir/unrecognized"
+	 node web-page/check.mjs "$$(cabal -v0 list-bin slap-web-reactor)" test/data/dm4y/base.gbc test/data/dm4y/patch.* "$$workdir/unrecognized"
 
 web-rig: web
 	@echo "the page is at http://127.0.0.1:8001/"

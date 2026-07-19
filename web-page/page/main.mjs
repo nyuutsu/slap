@@ -9,6 +9,7 @@ import { seatMascot } from './mascot.mjs';
 import { voiceLines, plainVoice } from './answer-surface.mjs';
 import { commandMarkup } from './command-tutor.mjs';
 import { makeApplyVerb } from './verbs/apply.mjs';
+import { makeUndoVerb } from './verbs/undo.mjs';
 import { makeInfoVerb, makeExplainVerb } from './verbs/reads.mjs';
 import { makeUnwiredVerb } from './verbs/unwired.mjs';
 
@@ -71,9 +72,9 @@ const host = {
 
 const verbs = {
   apply: makeApplyVerb(host),
+  undo: makeUndoVerb(host),
   info: makeInfoVerb(host),
   explain: makeExplainVerb(host),
-  undo: makeUnwiredVerb(host, 'undo'),
   create: makeUnwiredVerb(host, 'create'),
   convert: makeUnwiredVerb(host, 'convert'),
 };

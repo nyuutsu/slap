@@ -19,6 +19,9 @@ export const proseList = (words) =>
   words.length <= 1 ? (words[0] ?? '')
   : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
 
+// "its CRC matches" / "its size and CRC match"
+export const matchVerbFor = (nouns) => nouns.length === 1 ? 'matches' : 'match';
+
 // The engine speaks DeclaredCheckKind constructor names; the page says them with the same
 // nouns the CLI's report uses (declaredCheckKindNoun, Slap.Status.Vocabulary).
 const checkKindNouns = {

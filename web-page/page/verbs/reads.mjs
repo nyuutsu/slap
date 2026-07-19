@@ -62,6 +62,7 @@ const makeReadCore = (host, { verbName, wireVerb, declaration, restingLine, read
     change(read);
     read.reading = null;
     read.walkRowsShown = walkRowsAtFirst;
+    if (!read.identity) askIdentity();
     askReading();
     host.render();
   };
@@ -100,7 +101,6 @@ const makeReadCore = (host, { verbName, wireVerb, declaration, restingLine, read
     dialect: (checked) => rereadPatch(() => {
       read.ppf1Origin = checked ? 'PPF1OriginAmiga' : 'PPF1OriginPC';
       read.identity = null;
-      askIdentity();
     }),
   };
 
