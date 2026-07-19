@@ -30,3 +30,43 @@ export const roleWhisperedSlotMarkup = (seat, roleWord, file) => file
   ? html`<span class="slot-stack"><button class="slot filled" data-action="pick-file"
       data-seat="${seat}">${file.name}</button><span class="role-whisper">${roleWord}</span></span>`
   : html`<button class="slot empty" data-action="pick-file" data-seat="${seat}">${roleWord}</button>`;
+
+// The header directive control: apply's source and convert's --with wear the same one.
+export const headerControlMarkup = (framing, consoleRows) => {
+  const chosenMode = framing.tag;
+  const modeChip = (tag, label) => html`<button class="chip${chosenMode === tag ? ' on' : ''}"
+    aria-pressed="${chosenMode === tag}" data-action="set-framing" data-framing="${tag}">${label}</button>`;
+  return groupMarkup("the rom's header", html`
+    <div class="choice-row">
+      ${modeChip('TakeInputAsIs', 'take it as it is')}
+      ${modeChip('RemoveHeader', 'it has one — take it off')}
+      ${modeChip('AddHeader', "it hasn't got one — pretend it has")}
+    </div>
+    ${chosenMode !== 'TakeInputAsIs' && html`
+      <p class="choice-label">which console</p>
+      <div class="choice-row">${consoleRows.map((row) => html`<button
+        class="chip${framing.console?.consoleToken === row.consoleToken ? ' on' : ''}"
+        aria-pressed="${framing.console?.consoleToken === row.consoleToken}"
+        data-action="set-console" data-console="${row.consoleToken}">${row.consoleName}</button>`)}</div>
+      <p class="aside">slap can't know whether your copy is headered — you can. It'll say what it did.</p>`}`);
+};
+
+// The console a fresh directive starts on; snes, because headered roms usually are snes roms.
+export const preseededConsoleRow = (consoleRows) =>
+  consoleRows.find((row) => row.consoleToken === 'snes') ?? consoleRows[0];
+
+// The encoding chips wait behind a fold: the explainer above it says whether you need them at all.
+export const encodingFoldMarkup = (encodingFamilies, chosenEncoding, foldOpen) => groupMarkup('text encoding', html`
+  <p class="aside explainer">Some formats store text — descriptions, author names — without
+  recording its encoding, and slap reads it as UTF-8. If a patch came from, say, a Japanese release and
+  its text looks wrong, that's something slap can't know but you might: pick the encoding and slap re-reads.</p>
+  <details class="fold" data-setting="encoding-fold" ${(foldOpen || chosenEncoding !== 'utf-8') && html`open`}>
+    <summary>choose an encoding${chosenEncoding !== 'utf-8' ? html` — <b>${chosenEncoding}</b>` : ''}</summary>
+    ${encodingFamilies.map((family) => html`<div class="encoding-family">
+      <span class="family-label">${family.advertisedFamilyLabel}</span>
+      <div class="choice-row">${family.advertisedFamilyMembers.map((token) => html`<button
+        class="chip${chosenEncoding === token ? ' on' : ''}"
+        aria-pressed="${chosenEncoding === token}"
+        data-action="set-encoding" data-token="${token}">${token}</button>`)}</div>
+    </div>`)}
+  </details>`);

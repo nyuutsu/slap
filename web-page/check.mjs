@@ -13,7 +13,8 @@ import { infoReadoutMarkup, embeddedContentsOf, embeddedContentMarkup,
          heatModel, heatBarMarkup, heatCaption, walkMarkup, structureOverviewMarkup,
          analysisRegionsOf, analysisAsidesMarkup } from './page/read-panels.mjs';
 import { applyFactsCardMarkup, undoFactsCardMarkup } from './page/facts-card.mjs';
-import { patchedVoice, revertedVoice, bottledVoice, blockedVoice } from './page/answer-surface.mjs';
+import { patchedVoice, revertedVoice, bottledVoice, convertedVoice, blockedVoice,
+         advisoryMarkup } from './page/answer-surface.mjs';
 
 const [probePath, romPath, ...patchPaths] = process.argv.slice(2);
 if (!probePath || !romPath || patchPaths.length === 0) {
@@ -170,4 +171,65 @@ if (!('Right' in createdAct.envelope.envelopeAnswer))
 if (createdAct.tail.length === 0) throw new Error('the census create wrote no patch bytes');
 mustRender('bottled voice', bottledVoice({ formatName: 'BPS', advisories: [], downloadName: 'grown.bps', downloadHref: '' }));
 
-console.log(`render census: ${renderedCount} patches rendered whole, ${peeledCount} peels spoken, ${refusedCount} refused with a sentence, create checked both ways and bottled`);
+// The convert lanes: the minted BPS asks for its source and converts with it; a minted IPS converts alone.
+// The probe seats the convert pair as PATCH DECLARATION [SOURCE].
+const plainConvertDeclaration = (formatTag, formatConstructor, sourceFraming) => ({
+  declaredConvertTargetFormat: { tag: formatTag, contents: formatConstructor },
+  declaredConvertSourceFraming: sourceFraming,
+  declaredConvertVerificationPolicy: 'EnforceVerification',
+  declaredConvertMetadata: { requestedFileIdDiz: { tag: 'InheritFileIdDiz' },
+                             requestedEmbeddedBlob: { tag: 'InheritEmbeddedBlob' } },
+  declaredConvertConstraints: { requestedSMCShape: 'AllowAnyTruncationShape' },
+  declaredConvertMetadataEncoding: 'utf-8',
+  declaredConvertDialects: { requestedPPF1Origin: 'PPF1OriginPC' },
+});
+
+const mintedBpsPath = join(declarationDir, 'minted.bps');
+writeFileSync(mintedBpsPath, createdAct.tail);
+const sourcelessUpsDecl = declarationPathFor('convert-to-ups',
+                                             plainConvertDeclaration('CreateDifferential', 'CreateUPS', null));
+const withSourceUpsDecl = declarationPathFor('convert-to-ups-with-source',
+                                             plainConvertDeclaration('CreateDifferential', 'CreateUPS', { tag: 'TakeInputAsIs' }));
+
+const blockedConvert = JSON.parse(probeBytes('check-convert', mintedBpsPath, sourcelessUpsDecl).toString()).envelopeAnswer.Right;
+if (blockedConvert.tag !== 'SpokenBlocked')
+  throw new Error('a source-less BPS conversion judged Ready in the census');
+mustRender('blocked convert voice', blockedVoice(blockedConvert.contents));
+
+const readyConvert = JSON.parse(probeBytes('check-convert', mintedBpsPath, withSourceUpsDecl, romPath).toString()).envelopeAnswer.Right;
+if (readyConvert.tag !== 'SpokenReady')
+  throw new Error(`the census BPS does not convert with its source in hand: ${JSON.stringify(readyConvert)}`);
+
+const convertedWithSource = splitAct(probeBytes('convert', mintedBpsPath, withSourceUpsDecl, romPath));
+if (!('Right' in convertedWithSource.envelope.envelopeAnswer))
+  throw new Error(`the census with-source convert refused — ${convertedWithSource.envelope.envelopeAnswer.Left.spokenErrorSentence}`);
+if (convertedWithSource.tail.length === 0) throw new Error('the with-source convert wrote no patch bytes');
+
+const mintedIpsDecl = declarationPathFor('create-ips', plainCreateDeclaration('CreateDirect', 'CreateIPS'));
+const mintedIpsAct = splitAct(probeBytes('create', romPath, grownPath, mintedIpsDecl));
+if (!('Right' in mintedIpsAct.envelope.envelopeAnswer))
+  throw new Error(`the census IPS create refused — ${mintedIpsAct.envelope.envelopeAnswer.Left.spokenErrorSentence}`);
+const mintedIpsPath = join(declarationDir, 'minted.ips');
+writeFileSync(mintedIpsPath, mintedIpsAct.tail);
+const directDecl = declarationPathFor('convert-to-ips32', plainConvertDeclaration('CreateDirect', 'CreateIPS32', null));
+const convertedDirect = splitAct(probeBytes('convert', mintedIpsPath, directDecl));
+if (!('Right' in convertedDirect.envelope.envelopeAnswer))
+  throw new Error(`the census direct convert refused — ${convertedDirect.envelope.envelopeAnswer.Left.spokenErrorSentence}`);
+if (convertedDirect.tail.length === 0) throw new Error('the direct convert wrote no patch bytes');
+mustRender('converted voice', convertedVoice({ formatName: 'IPS32', advisories: [], downloadName: 'minted.ips32', downloadHref: '' }));
+
+// A forewarning lane: an over-long title toward NINJA2 answers Ready with the coming truncation spoken beside it.
+const forewarnedDecl = declarationPathFor('check-create-forewarned', {
+  ...plainCreateDeclaration('CreateDifferential', 'CreateNINJA2'),
+  declaredCreateMetadata: { requestedFileIdDiz: { tag: 'InheritFileIdDiz' },
+                            requestedEmbeddedBlob: { tag: 'InheritEmbeddedBlob' },
+                            requestedTitle: { encodedTextEncoding: 'utf-8',
+                                              encodedTextContent: 'T'.repeat(4000) } },
+});
+const forewarned = JSON.parse(probeBytes('check-create', romPath, grownPath, forewarnedDecl).toString());
+if (forewarned.envelopeAdvisories.length === 0)
+  throw new Error('the over-long NINJA2 title raised no forewarning');
+for (const advisory of advisoryMarkup(forewarned.envelopeAdvisories)) mustRender('forewarning', advisory);
+
+console.log(`render census: ${renderedCount} patches rendered whole, ${peeledCount} peels spoken, ${refusedCount} refused with a sentence, `
+  + 'create checked both ways and bottled with a forewarning spoken, convert asked both ways and re-bottled both lanes');

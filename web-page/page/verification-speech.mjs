@@ -29,7 +29,8 @@ export const mismatchSentence = (mismatch) => {
   }
 };
 
-// The same mismatch means a rom that isn't the patch's source on apply, and one that isn't its product on undo — hence a row per verb.
+// The same mismatch means a rom that isn't the patch's source on apply and convert's with lane,
+// and one that isn't its product on undo — hence a row per verb.
 const refusalOverrides = {
   VerificationFatal: {
     apply: (mismatch) => html`
@@ -40,6 +41,10 @@ const refusalOverrides = {
       <p class="said">The rom doesn't match what this patch declares — so nothing was written.</p>
       <p class="said">${mismatchSentence(mismatch)}</p>
       <p class="said"><i>skip verification</i>, up in the options, peels it anyway — the mismatches become warnings.</p>`,
+    convert: (mismatch) => html`
+      <p class="said">That rom isn't the one this patch declares — so nothing was written.</p>
+      <p class="said">${mismatchSentence(mismatch)}</p>
+      <p class="said"><i>skip verification</i>, up in the options, converts with it anyway — the mismatches become warnings.</p>`,
   },
 };
 

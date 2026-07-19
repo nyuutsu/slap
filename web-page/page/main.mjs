@@ -8,8 +8,9 @@ import { commandMarkup } from './command-tutor.mjs';
 import { makeApplyVerb } from './verbs/apply.mjs';
 import { makeUndoVerb } from './verbs/undo.mjs';
 import { makeCreateVerb } from './verbs/create.mjs';
+import { makeConvertVerb } from './verbs/convert.mjs';
 import { makeInfoVerb, makeExplainVerb } from './verbs/reads.mjs';
-import { makeUnwiredVerb } from './verbs/unwired.mjs';
+import { wireMetadataBenchListeners } from './metadata-form.mjs';
 
 // apply, create and explain are what slap is for; the rest are welcome, just quieter.
 const headlinerVerbs = ['apply', 'create', 'explain'];
@@ -84,8 +85,11 @@ const verbs = {
   create: makeCreateVerb(host),
   info: makeInfoVerb(host),
   explain: makeExplainVerb(host),
-  convert: makeUnwiredVerb(host, 'convert'),
+  convert: makeConvertVerb(host),
 };
+
+// The emit verbs' stories and byte counters ride data attributes, so one wiring serves whichever is mounted.
+wireMetadataBenchListeners(host, () => verbs[currentVerb].storiesQuiet?.() ?? false);
 
 /* --------------------------------------------------------------- render ---- */
 
@@ -140,6 +144,13 @@ document.addEventListener('change', (event) => {
   const control = event.target;
   verbs[currentVerb].settings[setting]?.(control.type === 'checkbox' ? control.checked : control.value, control.dataset);
 });
+
+// A details fold speaks through 'toggle', not 'change'; its value is whether it stands open.
+document.addEventListener('toggle', (event) => {
+  const setting = event.target.dataset?.setting;
+  if (!setting) return;
+  verbs[currentVerb].settings[setting]?.(event.target.open, event.target.dataset);
+}, true);
 
 filePicker.addEventListener('change', () => {
   const [file] = filePicker.files;

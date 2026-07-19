@@ -1,6 +1,12 @@
 // Small renderers for values the engine hands across:
 // counts read decimal, positions and checksums read hex, and byte hashes arrive base64.
 
+// A derived name's stem, split exactly as the terminal splits extensions (a lone leading dot counts), so page and terminal derive one name.
+export const stemOf = (fileName) => {
+  const lastDot = fileName.lastIndexOf('.');
+  return lastDot >= 0 ? fileName.slice(0, lastDot) : fileName;
+};
+
 export const humanByteSize = (byteCount) =>
   byteCount < 1024 ? `${byteCount} B`
   : byteCount < 1048576 ? `${(byteCount / 1024).toFixed(1)} KB`

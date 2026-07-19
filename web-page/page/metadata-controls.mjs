@@ -18,10 +18,22 @@ export const toggleRequests = {
   MetadataStability:             'UnstablePatch',
 };
 
-// The blob and the DIZ each offer two lanes; the file lane's flag rides the roster, the typed lane's is spelled here.
+// The blob and the DIZ ride lanes of their own; the file lane's flag rides the roster, the typed and drop lanes' flags are spelled here.
 export const typedTextFlags = {
   MetadataEmbeddedBlob: '--metadata-text',
   MetadataFileIdDiz:    '--diz-text',
+};
+
+export const dropFlags = {
+  MetadataEmbeddedBlob: '--drop-metadata',
+  MetadataFileIdDiz:    '--drop-diz',
+};
+
+// The engine's own labels for carried content (an inspect's infoEmbedded rows), joined to the field whose convert intent governs them.
+export const carriedFieldLabels = {
+  'file_id.diz':   'MetadataFileIdDiz',
+  'embedded data': 'MetadataEmbeddedBlob',
+  'app header':    'MetadataEmbeddedBlob',
 };
 
 // The CLI's own @--window-size@ suffixes, so the tutor prints the very value the person typed.

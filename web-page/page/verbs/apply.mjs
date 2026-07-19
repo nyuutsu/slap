@@ -2,7 +2,8 @@
 // this module owns only apply's shape and voice.
 
 import { html } from './../dom.mjs';
-import { groupMarkup, toggleMarkup, seatSlotMarkup, heldSeatMarkup, swapSeatsMarkup } from './../controls.mjs';
+import { groupMarkup, toggleMarkup, seatSlotMarkup, heldSeatMarkup, swapSeatsMarkup,
+         headerControlMarkup, preseededConsoleRow } from './../controls.mjs';
 import { applyFactsCardMarkup } from './../facts-card.mjs';
 import { voiceLines, plainVoice, workingVoice, patchedVoice, refusalVoice } from './../answer-surface.mjs';
 import { verbWord, flagWord, valueWord, fileWord, namedOr, placeholderWord } from './../command-tutor.mjs';
@@ -123,11 +124,6 @@ export const makeApplyVerb = (host) => {
     host.render();
   };
 
-  const snesRow = () => {
-    const consoleRows = host.surface().surfaceConsoleHeaders;
-    return consoleRows.find((row) => row.consoleToken === 'snes') ?? consoleRows[0];
-  };
-
   /* ---------------------------------------------------------- the act ---- */
 
   const runApply = () => {
@@ -182,25 +178,6 @@ export const makeApplyVerb = (host) => {
     ${slotFor('patch', 'patch', apply.patch, chipWord())} to
     ${slotFor('rom', 'rom', apply.rom, null)}</p>`;
 
-  const headerControlMarkup = () => {
-    const chosenMode = apply.framing.tag;
-    const modeChip = (tag, label) => html`<button class="chip${chosenMode === tag ? ' on' : ''}"
-      aria-pressed="${chosenMode === tag}" data-action="set-framing" data-framing="${tag}">${label}</button>`;
-    return groupMarkup("the rom's header", html`
-      <div class="choice-row">
-        ${modeChip('TakeInputAsIs', 'take it as it is')}
-        ${modeChip('RemoveHeader', 'it has one — take it off')}
-        ${modeChip('AddHeader', "it hasn't got one — pretend it has")}
-      </div>
-      ${chosenMode !== 'TakeInputAsIs' && html`
-        <p class="choice-label">which console</p>
-        <div class="choice-row">${host.surface().surfaceConsoleHeaders.map((row) => html`<button
-          class="chip${apply.framing.console?.consoleToken === row.consoleToken ? ' on' : ''}"
-          aria-pressed="${apply.framing.console?.consoleToken === row.consoleToken}"
-          data-action="set-console" data-console="${row.consoleToken}">${row.consoleName}</button>`)}</div>
-        <p class="aside">slap can't know whether your copy is headered — you can. It'll say what it did.</p>`}`);
-  };
-
   const optionsMarkup = () => groupMarkup('options', html`
     ${toggleMarkup({ id: 'skip-verification', setting: 'verification',
                      checked: apply.verificationPolicy === 'SkipVerification',
@@ -221,7 +198,7 @@ export const makeApplyVerb = (host) => {
       ${sentenceMarkup()}
       ${operandsSatisfied && !apply.running && swapSeatsMarkup}
       ${applyFactsCardMarkup(apply, host.surface()?.surfaceConsoleHeaders ?? [])}
-      ${headerControlSurfaces && headerControlMarkup()}
+      ${headerControlSurfaces && headerControlMarkup(apply.framing, host.surface().surfaceConsoleHeaders)}
       ${operandsSatisfied && !impedimentSpoken() && optionsMarkup()}`;
   };
 
@@ -291,7 +268,7 @@ export const makeApplyVerb = (host) => {
       'set-framing': ({ framing }) => reweighSource(() => {
         apply.framing = framing === 'TakeInputAsIs'
           ? { tag: 'TakeInputAsIs', console: null }
-          : { tag: framing, console: apply.framing.console ?? snesRow() };
+          : { tag: framing, console: apply.framing.console ?? preseededConsoleRow(host.surface().surfaceConsoleHeaders) };
       }),
       'set-console': ({ console: consoleToken }) => reweighSource(() => {
         apply.framing.console = host.surface().surfaceConsoleHeaders

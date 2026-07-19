@@ -2,7 +2,7 @@
 // explain answers "what does it do to the bytes" as info-plus — the same readout, then the structure.
 
 import { html } from './../dom.mjs';
-import { groupMarkup, toggleMarkup, seatSlotMarkup } from './../controls.mjs';
+import { groupMarkup, toggleMarkup, seatSlotMarkup, encodingFoldMarkup } from './../controls.mjs';
 import { voiceLines, plainVoice, advisoryMarkup } from './../answer-surface.mjs';
 import { verbWord, flagWord, valueWord, namedOr } from './../command-tutor.mjs';
 import { dialectControls, dialectTogglesMarkup } from './../dialect-controls.mjs';
@@ -198,25 +198,9 @@ export const makeExplainVerb = (host) => {
     readLine: voiceLines.explainRead,
   });
 
-  // The encoding chips wait behind a fold: the explainer above it says whether you need them at all.
   const textEncodingGroupMarkup = () => {
     const read = core.state();
-    const encodingFamilies = host.surface()?.surfaceEncodings ?? [];
-    return groupMarkup('text encoding', html`
-      <p class="aside explainer">Some formats store text — descriptions, author names — without
-      recording its encoding, and slap reads it as UTF-8. If a patch came from, say, a Japanese release and
-      its text looks wrong, that's something slap can't know but you might: pick the encoding and slap re-reads.</p>
-      <details class="fold" data-role="encoding-fold"
-        ${(read.encodingFoldOpen || read.metadataEncoding !== 'utf-8') && html`open`}>
-        <summary>choose an encoding${read.metadataEncoding !== 'utf-8' ? html` — <b>${read.metadataEncoding}</b>` : ''}</summary>
-        ${encodingFamilies.map((family) => html`<div class="encoding-family">
-          <span class="family-label">${family.advertisedFamilyLabel}</span>
-          <div class="choice-row">${family.advertisedFamilyMembers.map((token) => html`<button
-            class="chip${read.metadataEncoding === token ? ' on' : ''}"
-            aria-pressed="${read.metadataEncoding === token}"
-            data-action="set-encoding" data-token="${token}">${token}</button>`)}</div>
-        </div>`)}
-      </details>`);
+    return encodingFoldMarkup(host.surface()?.surfaceEncodings ?? [], read.metadataEncoding, read.encodingFoldOpen);
   };
 
   const structurePanelMarkup = (explanation) => {
@@ -259,8 +243,7 @@ export const makeExplainVerb = (host) => {
       ${read.everyRecord && html`<div class="results">${walkMarkup(regions, read.walkRowsShown)}</div>`}`;
   };
 
-  // The heat bar's hover caption updates in place — a hover is not a state change —
-  // and the encoding fold's open state must survive re-renders; both wire once, against the stage.
+  // The heat bar's hover caption updates in place — a hover is not a state change; wired once, against the stage.
   host.stage().addEventListener('mouseover', (event) => {
     const cell = event.target.closest('.heat-cell');
     const model = core.state().reading?.model;
@@ -268,9 +251,6 @@ export const makeExplainVerb = (host) => {
     const caption = host.stage().querySelector('[data-role="heat-caption"]');
     if (caption) caption.textContent = heatCaption(model, Number(cell.dataset.bucket));
   });
-  host.stage().addEventListener('toggle', (event) => {
-    if (event.target.dataset?.role === 'encoding-fold') core.state().encodingFoldOpen = event.target.open;
-  }, true);
 
   return {
     stageMarkup,
@@ -287,6 +267,8 @@ export const makeExplainVerb = (host) => {
     settings: {
       ...core.settings,
       records: (checked) => { core.state().everyRecord = checked; host.render(); },
+      // the fold's open state must survive re-renders; the DOM already shows it, so no render here
+      'encoding-fold': (open) => { core.state().encodingFoldOpen = open; },
     },
   };
 };
