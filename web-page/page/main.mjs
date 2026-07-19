@@ -1,12 +1,9 @@
-// slap's page root. One shared footing — the verb on stage, the session, the ask epoch, the transient notice —
-// and a table of verb modules, each the same small shape, the way slap's formats are each the same family of declarations.
-// The root owns wiring and IO; every verb owns its own state, stage, voice, and tutor fold;
-// and every fact on screen is asked of the engine through the session, because the page holds opinions, never knowledge.
+// slap's page root. Every fact on screen is asked of the engine: the page holds opinions, never knowledge.
 
 import { markupOf, html } from './dom.mjs';
-import { openReactorSession, answerOf, advisoriesOf, ReactorJobCancelled } from './reactor-session.mjs';
+import { openReactorSession, classifyBootFailure, answerOf, advisoriesOf, ReactorJobCancelled } from './reactor-session.mjs';
 import { seatMascot } from './mascot.mjs';
-import { voiceLines, plainVoice } from './answer-surface.mjs';
+import { voiceLines, bootFailureVoice } from './answer-surface.mjs';
 import { commandMarkup } from './command-tutor.mjs';
 import { makeApplyVerb } from './verbs/apply.mjs';
 import { makeUndoVerb } from './verbs/undo.mjs';
@@ -20,7 +17,7 @@ const quieterVerbs = ['undo', 'convert', 'info'];
 const allVerbs = [...headlinerVerbs, ...quieterVerbs];
 
 let currentVerb = 'apply';
-let session = null;
+let sessionStanding = { tag: 'SessionOpening' };
 let epoch = 0;
 let noticeLine = null;   // one transient line (e.g. "cancelled"); any fresh interaction retires it
 let fellow = null;
@@ -34,10 +31,12 @@ const element = (id) => document.getElementById(id);
 
 const openEnvelope = (envelope) => ({ ...answerOf(envelope), advisories: advisoriesOf(envelope) });
 
+const sessionIfOpen = () => sessionStanding.tag === 'SessionOpen' ? sessionStanding.session : null;
+
 const host = {
-  // resolves to the opened envelope — { answered | refused, advisories } — or null before the session is up
-  ask: (wireVerb, seats) => session && session.ask(wireVerb, seats).then(({ envelope }) => openEnvelope(envelope)),
-  startJob: (wireVerb, seats) => session && session.startJob(wireVerb, seats),
+  // resolves to the opened envelope: { answered | refused, advisories }
+  ask: (wireVerb, seats) => sessionIfOpen()?.ask(wireVerb, seats).then(({ envelope }) => openEnvelope(envelope)),
+  startJob: (wireVerb, seats) => sessionIfOpen()?.startJob(wireVerb, seats),
   openEnvelope,
   wasCancelled: (jobFailure) => jobFailure instanceof ReactorJobCancelled,
 
@@ -60,8 +59,8 @@ const host = {
   notice: () => noticeLine,
   setNotice: (line) => { noticeLine = line; },
   render: () => render(),
-  surface: () => session?.surface ?? null,
-  hasSession: () => session !== null,
+  surface: () => sessionIfOpen()?.surface ?? null,
+  hasSession: () => sessionStanding.tag === 'SessionOpen',
   fellow: Object.fromEntries(['nod', 'lean', 'smile', 'droop', 'settle', 'beginFidgeting']
     .map((mood) => [mood, () => fellow?.[mood]()])),
   download: (href, downloadName) => {
@@ -103,7 +102,10 @@ const render = () => {
   const verb = verbs[currentVerb];
   element('verbs').innerHTML = markupOf(verbTabsMarkup());
   element('stage').innerHTML = markupOf(verb.stageMarkup());
-  element('voice').innerHTML = markupOf(verb.voiceMarkup());
+  // a failed boot owns the voice box: a verb's voice would put a friendly face on a dead page
+  element('voice').innerHTML = markupOf(sessionStanding.tag === 'SessionFailedToOpen'
+    ? bootFailureVoice(sessionStanding.bootFailureShape)
+    : verb.voiceMarkup());
   element('command').innerHTML = markupOf(commandMarkup(verb.commandWords()));
   element('act').innerHTML = markupOf(verb.actMarkup());
 };
@@ -150,7 +152,12 @@ filePicker.addEventListener('change', () => {
 
 /* Drop anywhere: the whole page is the target, and slap sorts the files itself. */
 const routeDroppedFiles = async (files) => {
-  if (!session) return;
+  if (sessionStanding.tag === 'SessionFailedToOpen') return;   // the boot-failure card is already the answer
+  if (sessionStanding.tag === 'SessionOpening') {
+    noticeLine = voiceLines.stillGettingSet;
+    render();
+    return;
+  }
   noticeLine = null;
   for (const file of [...files].slice(0, 2)) {
     const { answered } = await host.ask('classify', { file });
@@ -194,11 +201,14 @@ currentVerb = verbNamedByHash() ?? 'apply';
 render();
 seatMascot(element('fellow')).then((seated) => { fellow = seated; }).catch(console.error);
 openReactorSession().then((openedSession) => {
-  session = openedSession;
-  element('format-count').textContent = countWord(session.surface.surfaceFormats.length);
+  sessionStanding = { tag: 'SessionOpen', session: openedSession };
+  noticeLine = null;   // a "still getting set" answer is stale the moment the page is set
+  element('format-count').textContent = countWord(openedSession.surface.surfaceFormats.length);
   Object.values(verbs).forEach((verb) => verb.askAgain());
   render();
 }).catch((bootFailure) => {
   console.error(bootFailure);
-  element('voice').innerHTML = markupOf(plainVoice(voiceLines.bootFailed));
+  sessionStanding = { tag: 'SessionFailedToOpen', bootFailureShape: classifyBootFailure(bootFailure) };
+  fellow?.droop();
+  render();
 });

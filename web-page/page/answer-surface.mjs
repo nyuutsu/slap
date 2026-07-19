@@ -2,6 +2,7 @@
 // advisories riding either — lands in this box, and the fellow beside it gives it a face.
 
 import { html } from './dom.mjs';
+import { buildStamp } from './build-stamp.mjs';
 import { checkKindNoun, crc32Hex, matchVerbFor, proseList } from './readouts.mjs';
 import { spokenRefusalMarkup, spokenAdvisorySentence } from './verification-speech.mjs';
 import { dialectControls } from './dialect-controls.mjs';
@@ -11,6 +12,7 @@ import { fieldLabel } from './metadata-controls.mjs';
 // The fellow's short lines, lowercase and unhurried. One clause each; the cards carry the detail.
 export const voiceLines = {
   gettingSet: 'getting set up…',
+  stillGettingSet: 'still getting set — hold that thought.',
   resting: 'drop a patch and a rom — i\'ll sort out which is which.',
   romOnly: 'got the rom — now the patch that goes on it.',
   patchOnly: 'got the patch — now the rom it\'s for.',
@@ -33,7 +35,6 @@ export const voiceLines = {
   working: 'working…',
   cancelled: 'cancelled — nothing was written.',
   unwired: 'this tab isn\'t wired up yet — the terminal does it today.',
-  bootFailed: 'this browser couldn\'t start slap — it needs WebAssembly and module workers.',
   infoResting: 'hand me a patch — i\'ll tell you what it says about itself.',
   explainResting: 'hand me a patch — i\'ll show you what it does.',
   reading: 'reading…',
@@ -52,6 +53,26 @@ export const plainVoice = (line) => html`<p class="plain-line">${line}</p>`;
 export const workingVoice = () => html`
   <p class="plain-line">${voiceLines.working}</p>
   <div class="afterward"><button class="quiet-button" data-action="cancel-run">cancel</button></div>`;
+
+const bootFailureSentences = (bootFailureShape) => {
+  switch (bootFailureShape.tag) {
+    case 'WebAssemblySwitchedOff': return html`
+      <p class="plain-line">webassembly is switched off in this browser, so slap can't start.</p>
+      <p class="advisory note">that's nearly always a setting, not the browser's age — in edge it's the enhanced
+        security mode, and adding this site to that mode's exceptions turns webassembly back on.
+        the slap command line has no such ceiling.</p>`;
+    case 'ReactorNeverArrived': return html`
+      <p class="plain-line">slap's engine didn't download — a reload usually fixes this.</p>
+      <p class="refusal">${bootFailureShape.detail}</p>`;
+    case 'BootFell': return html`
+      <p class="plain-line">slap couldn't start in this browser.</p>
+      <p class="refusal">${bootFailureShape.detail}</p>`;
+  }
+};
+
+export const bootFailureVoice = (bootFailureShape) => html`
+  ${bootFailureSentences(bootFailureShape)}
+  <p class="boot-stamp">${buildStamp}</p>`;
 
 export const advisoryMarkup = (advisories) => advisories.map((advisory) => html`
   <p class="advisory${advisory.spokenAdvisorySeverity === 'SeverityNote' ? ' note' : ''}">${spokenAdvisorySentence(advisory)}</p>`);

@@ -21,8 +21,16 @@ const reactorVerbs = {
 };
 
 export class ReactorJobCancelled extends Error {}
+export class ReactorNeverArrived extends Error {}
 
-export const compileReactor = (reactorUrl) => WebAssembly.compileStreaming(fetch(reactorUrl));
+// The fetch is judged before the compile sees it, so a failed download is its own type rather than one more TypeError.
+export const compileReactor = async (reactorUrl) => {
+  const reactorResponse = await fetch(reactorUrl).catch((downloadFailure) => {
+    throw new ReactorNeverArrived(String(downloadFailure));
+  });
+  if (!reactorResponse.ok) throw new ReactorNeverArrived(`the server answered ${reactorResponse.status} for slap's engine`);
+  return WebAssembly.compileStreaming(reactorResponse);
+};
 
 // Seats arrive named ({ patch, rom, declaration, … }): a File crosses as a handle, an absent seat crosses as null,
 // and a plain object — a declaration — is JSON-encoded here.

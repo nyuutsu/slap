@@ -144,11 +144,13 @@ wasm-worker-rig: wasm
 # Assemble the page and its reactor into dist-web/ — the tree slap.nyuu.page serves verbatim.
 # `make web` carries the everyday -O0 reactor for quick iteration; the deploy ships the -O2 one,
 # which runs the heavy analyses at full speed and weighs half as much on the wire.
+# The stamp keeps describe to hash and "-dirty": a tag name could carry an apostrophe into the stamp's quoted JS literal.
 define assemble-web
 	@if [ ! -f vendor/browser_wasi_shim/dist/index.js ]; then git submodule update --init vendor/browser_wasi_shim; fi
 	rm -rf dist-web
 	mkdir -p dist-web/reactor dist-web/vendor/browser_wasi_shim
 	cp -r web-page/. dist-web/
+	printf "export const buildStamp = 'this page was built on %s (%s)';\n" "$$(date +%F)" "$$(git describe --always --dirty --exclude='*')" > dist-web/page/build-stamp.mjs
 	cp web-reactor/reactor-client.mjs web-reactor/envelope-worker.mjs dist-web/reactor/
 	cp "$$(. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal -v0 list-bin slap-web-reactor $(1) $(WASM_CABAL_FLAGS))" dist-web/reactor/slap-web-reactor.wasm
 	cp -r vendor/browser_wasi_shim/dist dist-web/vendor/browser_wasi_shim/
