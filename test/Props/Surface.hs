@@ -5,7 +5,7 @@ module Props.Surface (surfaceTests) where
 
 import Slap.MetadataField (DroppableField, MetadataField, TypedTextField,
                            dropFlagName, metadataFieldFlagName, typedTextFlagName, requestFlagName)
-import Slap.Surface (MetadataFieldKind(..), metadataFieldKind, romTypeTokens)
+import Slap.Surface (MetadataFieldKind(..), choiceVocabularyTokens, metadataFieldKind, romTypeTokens)
 import Slap.Convert (metadataRequests, noMetadataRequested,
                      RequestedPatchMetadata(..), EmbeddedBlobContents(..), EmbeddedBlobRequest(..))
 
@@ -40,7 +40,8 @@ test_choiceVocabularies = sequence_
        assertEqual (show field <> ": duplicate-free") (length tokens) (length (nub tokens))
        assertBool (show field <> ": lowercase") (all (all (not . isUpper)) tokens)
   | field <- allMetadataFields
-  , ChoiceField tokens <- [metadataFieldKind field]
+  , ChoiceField vocabulary <- [metadataFieldKind field]
+  , let tokens = choiceVocabularyTokens vocabulary
   ]
 
 test_romTypeCensus :: IO ()

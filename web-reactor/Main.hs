@@ -24,19 +24,22 @@ import Data.Aeson (FromJSON)
 import Slap.Checksum (CRC32(unCRC32))
 import Slap.FileContents (InputFileContents(InputFileContents), OutputFileContents(OutputFileContents),
                           PatchFileContents(PatchFileContents))
-import Slap.Status (SlapError(ReactorMemoryExhausted), noAdvisories)
+import Slap.Convert (fieldTruncationForewarnings)
+import Slap.Status (Outcome(Outcome), SlapError(ReactorMemoryExhausted), noAdvisories)
 import Slap.Web (RomFacts(romCRC32),
                  analyzePatch, applyPatch, checkApply, checkConvert, checkCreate, checkUndo, classifyDroppedFile,
                  convertPatch, createPatch, describeRom, describeSurface, droppedFileAnswerFor, identifyPatch,
                  inspectPatch, undoPatch)
 import Slap.Web.Declaration (DeclaredAnalyzeRequest, DeclaredApplyRequest,
-                             DeclaredConvertRequest(declaredConvertSourceFraming),
-                             DeclaredCreateRequest, DeclaredIdentifyRequest(..), DeclaredInspectRequest,
+                             DeclaredConvertRequest(declaredConvertMetadata, declaredConvertSourceFraming,
+                                                    declaredConvertTargetFormat),
+                             DeclaredCreateRequest(declaredCreateMetadata, declaredCreateTargetFormat),
+                             DeclaredIdentifyRequest(..), DeclaredInspectRequest,
                              DeclaredUndoRequest,
                              analyzeRequestOf, applyRequestOf, convertRequestOf, createRequestOf,
                              decodedDeclaration, inspectRequestOf, undoRequestOf)
 import Slap.Web.Envelope (encodeEnvelope, encodeEnvelopeAndTail,
-                          speakCreatedPatch, speakPatchIdentity, speakPatchedRom, speakRevertedRom)
+                          speakCreatedPatch, speakPatchIdentity, speakPatchedRom, speakRevertedRom, speakVerdict)
 
 foreign export ccall "slap_web_link_check" slapWebLinkCheck :: IO Word32
 
@@ -231,11 +234,16 @@ checkUndoEnvelope declared patchBytes patchedBytes =
 
 checkCreateEnvelope :: DeclaredCreateRequest -> InputFileContents -> OutputFileContents -> ByteString
 checkCreateEnvelope declared originalBytes modifiedBytes =
-  encodeEnvelope (noAdvisories (Right (checkCreate (createRequestOf declared originalBytes modifiedBytes))))
+  encodeEnvelope (Outcome
+    (Right (speakVerdict (checkCreate (createRequestOf declared originalBytes modifiedBytes))))
+    (fieldTruncationForewarnings (declaredCreateTargetFormat declared) (declaredCreateMetadata declared)))
 
+-- | Forewarns on the request's own metadata, as the judgments judge it — an inherited field's fate stays the act's to narrate.
 checkConvertEnvelope :: DeclaredConvertRequest -> PatchFileContents -> Maybe InputFileContents -> ByteString
 checkConvertEnvelope declared patchBytes handedSource =
-  encodeEnvelope (noAdvisories (checkConvert (convertRequestOf declared patchBytes handedSource)))
+  encodeEnvelope (Outcome
+    (speakVerdict <$> checkConvert (convertRequestOf declared patchBytes handedSource))
+    (fieldTruncationForewarnings (declaredConvertTargetFormat declared) (declaredConvertMetadata declared)))
 
 applyEnvelopeAndTail :: DeclaredApplyRequest -> PatchFileContents -> InputFileContents -> IO ByteString
 applyEnvelopeAndTail declared patchBytes romBytes =

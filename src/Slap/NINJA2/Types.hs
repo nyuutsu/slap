@@ -58,7 +58,7 @@ import Slap.Measure (Length(..), Offset(..), FileSize(..))
 import Slap.PlatformType (PlatformType)
 import Slap.Text (EncodedText)
 
-import Data.Aeson (FromJSON)
+import Data.Aeson (FromJSON, ToJSON)
 import Data.ByteString (ByteString)
 import Data.ByteString.Builder (Builder, word8)
 import Data.Bits ((.&.), shiftR)
@@ -99,7 +99,7 @@ data TextMode
   = TextModeUTF8
   | TextModeUndeclared
   deriving (Show, Eq, Generic)
-  deriving (FromJSON) via Generically TextMode
+  deriving (ToJSON, FromJSON) via Generically TextMode
 
 -- | Resolve a raw PATCH_ENC byte;
 -- 'Left' carries the unrecognized byte for the 'NINJA2UnrecognizedTextMode' rejection.

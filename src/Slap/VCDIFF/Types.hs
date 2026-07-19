@@ -36,7 +36,7 @@ module Slap.VCDIFF.Types
   , RFCWindowing(..)
   ) where
 
-import Data.Aeson (FromJSON(..))
+import Data.Aeson (FromJSON(..), ToJSON)
 import Slap.Measure (Offset, Length(..), FileSize(..))
 import Slap.Checksum (Adler32)
 import Slap.VCDIFF.CodeTable (CodeTable)
@@ -212,6 +212,7 @@ data SegmentOrigin = FromSourceFile | FromProducedTarget
 -- Positive by 'emissionWindowSizeOfBytes', the only constructor, so a partition that could not terminate is unrepresentable.
 newtype EmissionWindowSize = EmissionWindowSize { unEmissionWindowSize :: Int }
   deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
 
 -- | Through 'emissionWindowSizeOfBytes', never around it, so the positivity invariant holds for JSON-built values too.
 instance FromJSON EmissionWindowSize where

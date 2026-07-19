@@ -12,6 +12,9 @@ module Slap.Web.Envelope
   , encodeEnvelope
   , SpokenPatchIdentity(..)
   , speakPatchIdentity
+  , SpokenVerdict(..)
+  , SpokenGap(..)
+  , speakVerdict
   , SpokenPatchedRom(..)
   , SpokenRevertedRom(..)
   , SpokenCreatedPatch(..)
@@ -27,6 +30,8 @@ import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
+import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NonEmpty
 import Data.Set (Set)
 import Data.Text (Text)
 import GHC.Generics (Generic, Generically(..))
@@ -38,7 +43,8 @@ import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFi
 import Slap.FormatLabel (FormatLabel, formatLabelName)
 import Slap.Status (Outcome(..), Severity, SlapAdvisory, SlapError,
                     renderSlapAdvisory, renderSlapError, slapAdvisorySeverity)
-import Slap.Web (CreatedPatch(..), PatchIdentity(..), PatchedRom(..), RevertedRom(..), UndoAnswer, VerdictStanding)
+import Slap.Web (CreatedPatch(..), Gap(..), PatchIdentity(..), PatchedRom(..), Resolution,
+                 RevertedRom(..), UndoAnswer, Verdict(..), VerdictStanding)
 
 -- | A refusal beside the sentence slap speaks for it.
 data SpokenError = SpokenError
@@ -107,6 +113,29 @@ speakPatchIdentity identity = SpokenPatchIdentity
   , spokenIdentityUndo       = identifiedUndo identity
   , spokenIdentityImpediment = speakError <$> identifiedImpediment identity
   }
+
+-- | An emit check's 'Verdict', spoken for the crossing; the resolutions stay structural — they name controls, not prose.
+data SpokenVerdict
+  = SpokenReady
+  | SpokenBlocked (NonEmpty SpokenGap)
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically SpokenVerdict
+
+data SpokenGap = SpokenGap
+  { spokenGapReason      :: SpokenError
+  , spokenGapResolutions :: NonEmpty Resolution
+  }
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically SpokenGap
+
+speakVerdict :: Verdict -> SpokenVerdict
+speakVerdict Ready          = SpokenReady
+speakVerdict (Blocked gaps) = SpokenBlocked (NonEmpty.map speakGap gaps)
+  where
+    speakGap gap = SpokenGap
+      { spokenGapReason      = speakError (gapReason gap)
+      , spokenGapResolutions = gapResolutions gap
+      }
 
 -- The acts' answers, split for the crossing: each Spoken form is its answer minus the output bytes,
 -- which are megabytes with no structure to keep — they ride behind the envelope as a raw tail, never base64 inside it.

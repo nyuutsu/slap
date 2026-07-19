@@ -42,7 +42,7 @@ import Slap.Status
   , DecompressionFailure(..), CompressionAlgorithm(..) )
 
 import Control.Monad (when)
-import Data.Aeson (FromJSON)
+import Data.Aeson (FromJSON, ToJSON)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Builder (toLazyByteString)
@@ -64,7 +64,7 @@ data XDelta3SecondaryCompressor
   | SecondaryLZMA  -- ^ xz\/LZMA2 as liblzma emits it.
   | SecondaryFGK   -- ^ Adaptive Huffman; xd3's own demonstration codec.
   deriving (Eq, Show, Generic)
-  deriving (FromJSON) via Generically XDelta3SecondaryCompressor
+  deriving (ToJSON, FromJSON) via Generically XDelta3SecondaryCompressor
 
 -- | Maps a compressor id to its algorithm (docs/vcdiff/xdelta3/secondary-compression.md "Catalog").
 -- The ids are registered nowhere but here, so an unknown id is 'Nothing' —

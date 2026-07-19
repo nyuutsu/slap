@@ -38,7 +38,7 @@ module Slap.PPF3.Types
   , ppf3RejectIncompatibleSizeChange
   ) where
 
-import Data.Aeson (FromJSON)
+import Data.Aeson (FromJSON, ToJSON)
 import Data.ByteString (ByteString)
 import Data.Word (Word8)
 import GHC.Generics (Generic, Generically(..))
@@ -59,7 +59,7 @@ import Slap.Text (EncodedText, EncodingName(..),
 -- offset where the BIN sampling would land in valid data).
 data PPF3ImageType = BIN | GI
   deriving (Show, Eq, Generic)
-  deriving (FromJSON) via Generically PPF3ImageType
+  deriving (ToJSON, FromJSON) via Generically PPF3ImageType
 
 fromImageType :: PPF3ImageType -> Word8
 fromImageType BIN = 0x00

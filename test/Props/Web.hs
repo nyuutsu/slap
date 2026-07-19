@@ -4,11 +4,13 @@
 module Props.Web (webTests) where
 
 import Slap.Convert (CreateFormat(..), DifferentialCreate(..), DirectCreate(..),
+                     CompressionInclusion(OmitCompression),
                      EmbeddedBlobContents(..), EmbeddedBlobRequest(SetEmbeddedBlob, SetEmbeddedTypedText),
+                     FileIdDizRequest(SetFileIdDizFromText),
                      RequestedDialects(..),
                      RequestedPatchMetadata(..), UndoInclusion(OmitUndoData),
-                     advertisedCreateFormats, lookupCreateFormatToken, noConstraintsRequested,
-                     noDialectsRequested, noMetadataRequested)
+                     advertisedCreateFormats, fieldTruncationForewarnings, lookupCreateFormatToken,
+                     noConstraintsRequested, noDialectsRequested, noMetadataRequested)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.Constraint (Constraint(..))
 import qualified Slap.Create as Create
@@ -25,16 +27,20 @@ import qualified Slap.NINJA2.Types as NINJA2
 import Slap.PPF1.Types (PPF1Origin(PPF1OriginAmiga))
 import Slap.SomePatch (parseSome, patchAdvisories, patchAnalysis, patchInfo)
 import Slap.Status (CarriedFileCount(..), CreateResult(..), Outcome(..), SlapAdvisory(..), SlapError(..),
-                    SourceRequiredCause(..), noAdvisories, renderSlapAdvisory, renderSlapError)
+                    SourceRequiredCause(..), UnencodeabilityReason(..),
+                    noAdvisories, renderSlapAdvisory, renderSlapError)
 import Slap.Status.VCDIFF (VCDIFFShapeViolation(..))
+import Slap.Surface (metadataFieldKind)
 import Slap.Text (EncodedText(..), EncodingName(..), resolveEncodingName)
-import Slap.VCDIFF.SecondaryCompression (secondaryCompressorTokens)
+import Slap.FieldName (FieldName(FieldFileIdDiz))
+import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor(SecondaryDJW), secondaryCompressorTokens)
+import Slap.VCDIFF.Types (defaultXDelta3WindowSize)
 import Slap.Verify (VerificationPolicy(EnforceVerification), VerificationVerdict(..))
 import Slap.Web
 import Slap.Web.Declaration (DeclaredIdentifyRequest(..), analyzeRequestOf, applyRequestOf,
                              createRequestOf, inspectRequestOf)
 import Slap.Web.Envelope (encodeEnvelope, encodeEnvelopeAndTail, speakCreatedPatch,
-                          speakPatchIdentity, speakPatchedRom, speakRevertedRom)
+                          speakPatchIdentity, speakPatchedRom, speakRevertedRom, speakVerdict)
 import Slap.XDelta1.Types (XDelta1FromName(..))
 
 import qualified Data.Aeson as Aeson
@@ -42,7 +48,7 @@ import qualified Data.Aeson.Key as AesonKey
 import qualified Data.Aeson.KeyMap as AesonKeyMap
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import Data.List (nub)
+import Data.List (isPrefixOf, nub)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.Set as Set
 import qualified Data.Text as Text
@@ -56,7 +62,11 @@ webTests :: TestTree
 webTests = testGroup "Web"
   [ testCase "the format census is the advertised token list"      test_formatCensusMatchesAdvertisedTokens
   , testCase "every format row's token names its own target"       test_tokenNamesItsOwnTarget
+  , testCase "every format row carries a name and a dotted extension" test_formatRowNamesAndExtensions
   , testCase "xdelta3 is the one row with secondary choices"       test_secondaryChoicesCensus
+  , testCase "the metadata field roster covers every field once"   test_metadataFieldRosterCensus
+  , testCase "the window default crosses on exactly the vcdiff rows" test_formatWindowDefaults
+  , testCase "text ceilings cross beside the fields they bound"    test_formatTextCeilingCensus
   , testCase "the console census covers every header once"         test_consoleCensusCoversEveryHeader
   , testCase "a created BPS identifies across the boundary"        test_identifyCreatedBPS
   , testCase "unrecognized bytes refuse with the engine's own error" test_identifyUnrecognizedBytes
@@ -81,6 +91,11 @@ webTests = testGroup "Web"
       [ testCase "a plain BPS create is Ready"                          test_checkCreateBPSReady
       , testCase "a title aimed at IPS gaps with its own drop"          test_checkCreateTitleOnIPS
       , testCase "a growing PPF1 pair gaps toward a different format"   test_checkCreatePPF1Grow
+      , testCase "a PPF2 source below the validation floor gaps early"  test_checkCreatePPF2Floor
+      , testCase "an over-cap FILE_ID.DIZ gaps toward amendment"        test_checkCreateOverCapDiz
+      , testCase "a compressor beside no-compress gaps with either drop" test_checkCreateCompressorPair
+      , testCase "an IPS grow past record reach gaps on sizes alone"    test_checkCreateIPSGrowPastReach
+      , testCase "forewarnings speak the act's own losses"              test_forewarningsMatchActLosses
       , testCase "IPS to bps without a source asks for one"             test_checkConvertIPSToBPSNeedsSource
       , testCase "the same conversion with a source in hand is Ready"   test_checkConvertIPSToBPSWithSource
       , testCase "a differential source without a source rom asks too"  test_checkConvertBPSToIPSNeedsSource
@@ -111,6 +126,8 @@ webTests = testGroup "Web"
       [ testCase "the info crosses as structure under Right"                 test_envelopeCarriesInfo
       , testCase "a refusal crosses spoken: its tag beside slap's sentence"  test_envelopeSpeaksRefusal
       , testCase "an advisory crosses with severity and sentence beside it"  test_envelopeSpeaksAdvisory
+      , testCase "a blocked check crosses each gap spoken"                   test_envelopeSpeaksBlockedVerdict
+      , testCase "a choice field crosses as token-value pairs"               test_envelopeChoicePairs
       , testCase "byte fields cross as base64"                               test_envelopeBytesAsBase64
       , testCase "a lone nullary constructor crosses as its name"            test_envelopeNamesLoneConstructor
       , testCase "the identity crosses with its undo answer spoken by name"  test_envelopeCarriesIdentity
@@ -142,11 +159,33 @@ test_tokenNamesItsOwnTarget = sequence_
   [ assertEqual (formatToken row) (Just (formatCreateTarget row)) (lookupCreateFormatToken (formatToken row))
   | row <- surfaceFormats describeSurface ]
 
+test_formatRowNamesAndExtensions :: Assertion
+test_formatRowNamesAndExtensions = sequence_
+  [ do assertBool (formatToken row <> " has no display name")       (not (Text.null (formatDisplayName row)))
+       assertBool (formatToken row <> " has an undotted extension") ("." `isPrefixOf` formatFileExtension row)
+  | row <- surfaceFormats describeSurface ]
+
+test_metadataFieldRosterCensus :: Assertion
+test_metadataFieldRosterCensus =
+  map describedMetadataField (surfaceMetadataFields describeSurface) @?= [minBound .. maxBound]
+
+test_formatTextCeilingCensus :: Assertion
+test_formatTextCeilingCensus =
+  [ (formatToken row, length (formatTextFieldCeilings row))
+  | row <- surfaceFormats describeSurface, not (null (formatTextFieldCeilings row)) ]
+    @?= [("ppf1", 1), ("ppf2", 1), ("ppf3", 1), ("dps", 3), ("ninja2", 8), ("aps-n64", 1)]
+
+test_formatWindowDefaults :: Assertion
+test_formatWindowDefaults =
+  [ (formatToken row, windowDefault)
+  | row <- surfaceFormats describeSurface, Just windowDefault <- [formatWindowDefault row] ]
+    @?= [("rfc-vcdiff", OneWindowWholeTarget), ("xdelta3", WindowsOfBytes defaultXDelta3WindowSize)]
+
 test_secondaryChoicesCensus :: Assertion
 test_secondaryChoicesCensus = do
   [formatToken row | row <- surfaceFormats describeSurface, not (null (formatSecondaryChoices row))] @?= ["xdelta3"]
   sequence_
-    [ formatSecondaryChoices row @?= map fst secondaryCompressorTokens
+    [ formatSecondaryChoices row @?= secondaryCompressorTokens
     | row <- surfaceFormats describeSurface, formatToken row == "xdelta3" ]
 
 test_consoleCensusCoversEveryHeader :: Assertion
@@ -381,6 +420,84 @@ test_checkCreatePPF1Grow =
       { createOriginal = InputFileContents (ByteString.replicate 4 0x00)
       , createModified = OutputFileContents (ByteString.replicate 8 0xFF)
       }
+
+test_checkCreatePPF2Floor :: Assertion
+test_checkCreatePPF2Floor = do
+  gapRefusal <- case checkCreate request of
+    Blocked (Gap refusal@(SourceTooSmallForPPF2Validation {}) (ChooseDifferentFormat :| []) :| []) -> pure refusal
+    other -> assertFailure ("unexpected verdict: " <> show other)
+  case Create.createPatch (CreateDirect CreatePPF2) Nothing (createOriginal request) (createModified request)
+                          (createMetadata request) Nothing noConstraintsRequested noDialectsRequested of
+    Left actRefusal -> actRefusal @?= gapRefusal
+    Right _         -> assertFailure "the act emitted below the floor"
+  where
+    request = plainCreateRequest (CreateDirect CreatePPF2)
+
+test_checkCreateOverCapDiz :: Assertion
+test_checkCreateOverCapDiz =
+  case checkCreate request of
+    Blocked (Gap (FieldTooLong LabelPPF3 FieldFileIdDiz _ _) resolutions :| []) ->
+      resolutions @?= AmendMetadataField MetadataFileIdDiz :| []
+    other -> assertFailure ("unexpected verdict: " <> show other)
+  where
+    request = (plainCreateRequest (CreateDirect CreatePPF3))
+      { createMetadata = noMetadataRequested
+          { requestedFileIdDiz = SetFileIdDizFromText (EncodedText EncodingUtf8 (Text.replicate 4000 "D")) } }
+
+test_checkCreateCompressorPair :: Assertion
+test_checkCreateCompressorPair =
+  checkCreate request @?= Blocked
+    (Gap SecondaryCompressorRequestedWithCompressionOff
+         (DropMetadataField MetadataSecondaryCompressor :| [DropMetadataField MetadataPatchCompression]) :| [])
+  where
+    request = (plainCreateRequest (CreateDifferential CreateXDelta3))
+      { createMetadata = noMetadataRequested
+          { requestedPatchCompression    = Just OmitCompression
+          , requestedSecondaryCompressor = Just SecondaryDJW } }
+
+test_checkCreateIPSGrowPastReach :: Assertion
+test_checkCreateIPSGrowPastReach = do
+  case checkCreate (grownTo 0x100FFFF) of
+    Blocked (Gap (UnencodeablePair LabelIPS (GrowthReachesPastAddressableRange _ _)) resolutions :| []) ->
+      resolutions @?= ChooseDifferentFormat :| []
+    other -> assertFailure ("unexpected verdict: " <> show other)
+  checkCreate (grownTo 0x100FFFE) @?= Ready
+  where
+    grownTo grownSize = (plainCreateRequest (CreateDirect CreateIPS))
+      { createModified = OutputFileContents (ByteString.replicate grownSize 0x00) }
+
+test_forewarningsMatchActLosses :: Assertion
+test_forewarningsMatchActLosses = sequence_
+  [ do let forewarnings = fieldTruncationForewarnings format overLongEverywhere
+       assertBool (show format <> ": nothing forewarned") (not (null forewarnings))
+       actAdvisories <- case Create.createPatch format Nothing sourceSeat targetSeat overLongEverywhere
+                                                Nothing noConstraintsRequested noDialectsRequested of
+         Left slapError -> assertFailureT ("create: " <> renderSlapError slapError)
+         Right (CreateResult _ advisories) -> pure advisories
+       [advisory | advisory <- actAdvisories, isFieldLoss advisory] @?= forewarnings
+  | (format, sourceSeat, targetSeat) <- formatSeats ]
+  where
+    longText = Just (EncodedText EncodingUtf8 (Text.replicate 3000 "x"))
+    overLongEverywhere = noMetadataRequested
+      { requestedTitle = longText, requestedAuthor = longText, requestedVersion = longText
+      , requestedDescription = longText, requestedGenre = longText, requestedLanguage = longText
+      , requestedDate = longText, requestedWebsite = longText }
+    isFieldLoss advisory = case advisory of
+      FieldTruncated {}          -> True
+      FieldEncodedSubstituted {} -> True
+      _                          -> False
+    plainSource = InputFileContents fixtureSourceBytes
+    plainTarget = OutputFileContents fixtureTargetBytes
+    ppf2Source  = InputFileContents  (ByteString.replicate 40000 0x00)
+    ppf2Target  = OutputFileContents (ByteString.replicate 40000 0x01)
+    formatSeats =
+      [ (CreateDirect CreatePPF1,         plainSource, plainTarget)
+      , (CreateDirect CreatePPF2,         ppf2Source,  ppf2Target)
+      , (CreateDirect CreatePPF3,         plainSource, plainTarget)
+      , (CreateDirect CreateAPSN64,       plainSource, plainTarget)
+      , (CreateDifferential CreateDPS,    plainSource, plainTarget)
+      , (CreateDifferential CreateNINJA2, plainSource, plainTarget)
+      ]
 
 test_checkConvertIPSToBPSNeedsSource :: Assertion
 test_checkConvertIPSToBPSNeedsSource = do
@@ -653,6 +770,31 @@ test_envelopeSpeaksAdvisory = do
   carriedTag      @?= Aeson.String "IPS32TrailingBytes"
   carriedSeverity @?= Aeson.String "SeverityWarning"
   carriedSentence @?= Aeson.String (renderSlapAdvisory spokenFirst)
+
+test_envelopeSpeaksBlockedVerdict :: Assertion
+test_envelopeSpeaksBlockedVerdict = do
+  envelope <- decodedEnvelope (noAdvisories (Right (speakVerdict (checkCreate request))))
+  verdictTag <- jsonPath ["envelopeAnswer", "Right", "tag"] envelope
+  verdictTag @?= Aeson.String "SpokenBlocked"
+  gaps <- jsonPath ["envelopeAnswer", "Right", "contents"] envelope
+  firstGap <- case gaps of
+    Aeson.Array elements -> case Vector.toList elements of
+      firstElement : _ -> pure firstElement
+      []               -> assertFailure "the blocked verdict carries no gaps"
+    other -> assertFailure ("expected a gap array: " <> show other)
+  gapSentence    <- jsonPath ["spokenGapReason", "spokenErrorSentence"] firstGap
+  gapResolutions <- jsonPath ["spokenGapResolutions"] firstGap
+  gapSentence    @?= Aeson.String (renderSlapError (MetadataFieldRejected (SetField MetadataTitle :| []) LabelIPS))
+  gapResolutions @?= Aeson.toJSON [DropMetadataField MetadataTitle]
+  where
+    request = (plainCreateRequest (CreateDirect CreateIPS))
+      { createMetadata = noMetadataRequested { requestedTitle = Just (EncodedText EncodingUtf8 "title") } }
+
+test_envelopeChoicePairs :: Assertion
+test_envelopeChoicePairs = do
+  pinnedShape <- maybe (assertFailure "the pinned shape is not readable JSON") pure (Aeson.decode
+    "{\"tag\":\"ChoiceField\",\"contents\":{\"tag\":\"ImageTypeChoices\",\"contents\":[[\"bin\",\"BIN\"],[\"gi\",\"GI\"]]}}")
+  Aeson.toJSON (metadataFieldKind MetadataImageType) @?= (pinnedShape :: Aeson.Value)
 
 test_envelopeBytesAsBase64 :: Assertion
 test_envelopeBytesAsBase64 = Aeson.toJSON (ActualMagic "PATCH") @?= Aeson.String "UEFUQ0g="

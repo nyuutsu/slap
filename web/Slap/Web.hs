@@ -6,6 +6,10 @@ module Slap.Web
   ( -- * What exists
     Surface(..)
   , FormatDescription(..)
+  , MetadataFieldDescription(..)
+  , MetadataFieldKind(..)
+  , ChoiceVocabulary(..)
+  , WindowDefault(..)
   , ConsoleHeaderDescription(..)
   , describeSurface
   , DroppedFileClass(..)
@@ -62,15 +66,18 @@ import GHC.Generics (Generic, Generically(..))
 import Slap.Binary (md5, sha1)
 import Slap.Checksum (CRC32, MD5Hash, SHA1Hash)
 import Slap.Constraint (Constraint)
-import Slap.Convert (CreateFormat(..), DifferentialCreate(CreateXDelta1),
+import Slap.Convert (CreateFormat(..), DifferentialCreate(CreateXDelta1, CreateXDelta3, CreateRFCVCDIFF),
+                     DirectCreate(CreatePPF2, CreatePPF3), FileIdDizRequest(..),
                      RequestedConstraints, RequestedDialects, RequestedPatchMetadata(..),
                      TokenVisibility(Canonical), acceptedConstraints, acceptedDialects,
                      acceptedMetadataFields, convertDirect, createDefaultAdvisories,
-                     createFormatTokens, mergeRequestedMetadata, metadataRequests,
+                     createFormatTokens, formatExtension, formatName, mergeRequestedMetadata, metadataRequests,
                      noDialectsRequested, rejectCrossPlatformRomTypeRetag,
                      rejectIncompatibleConstraints, rejectIncompatibleDialects,
                      rejectIncompatibleMetadataRequests, rejectIncompatibleSizeChange,
-                     rejectUnencodableSecondaryCompressor, verdictOnDirectConversion)
+                     rejectSourceBelowPPF2ValidationFloor,
+                     rejectUnencodableSecondaryCompressor, verdictOnDirectConversion,
+                     boundedTextField, boundedTextFieldRows, boundedTextWidth)
 import qualified Slap.Create as Create
 import Slap.Detect (DroppedFileAnswer(..), DroppedFileClass(..), classifyDroppedFile, droppedFileAnswerFor)
 import Slap.Dialect (Dialect)
@@ -84,7 +91,9 @@ import Slap.Header (ConsoleHeader, InputHeaderDirective, consoleHeaderLength,
                     consoleHeaderName, consoleHeaderToken)
 import Slap.Apply (PatchedRom(..), VerdictStanding(..), runPreparedApply)
 import Slap.Measure (FileSize, Length, byteFileSize)
-import Slap.MetadataField (MetadataField(..), requestField)
+import Slap.MetadataField (MetadataField(..), metadataFieldFlagName, requestField)
+import Slap.PPF2.Types (narrowPPF2FileId)
+import Slap.PPF3.Types (narrowPPF3FileId)
 import Slap.PatchField (PatchField)
 import qualified Slap.Preflight as Preflight
 import Slap.Preflight (HeaderRescueCandidate(..), PreparedApplySource(..), SourceReport(..),
@@ -95,8 +104,10 @@ import Slap.SomePatch (PatchIdentity(..), PatchKind(..), SomePatch, UndoAnswer(.
                        patchInfo, patchKind, patchSourceAdvisories, patchUndo, patchVerification, runUndo)
 import Slap.Status (CreateResult(..), Outcome(..), SlapAdvisory, SlapError(..),
                     SourceRequiredCause(..))
+import Slap.Surface (ChoiceVocabulary(..), MetadataFieldKind(..), metadataFieldKind)
 import Slap.Text (AdvertisedEncodingFamily, EncodingName(EncodingUtf8), advertisedEncodings)
-import Slap.VCDIFF.SecondaryCompression (secondaryCompressorTokens)
+import Slap.VCDIFF.Types (EmissionWindowSize, defaultXDelta3WindowSize)
+import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor, secondaryCompressorTokens)
 import Slap.Verify (VerificationPolicy, VerificationVerdict, Weighing, flipSpokenSides,
                     judgeWeighing, verdictOnWeighing, weighSource)
 import Slap.XDelta1.Types (ResolvedXDelta1FileNames, requireXDelta1FileNames,
@@ -109,6 +120,7 @@ import Slap.XDelta1.Types (ResolvedXDelta1FileNames, requireXDelta1FileNames,
 -- | Everything a front end builds its controls from, read off the engine's own tables so what the page offers cannot drift from what slap accepts.
 data Surface = Surface
   { surfaceFormats        :: [FormatDescription]
+  , surfaceMetadataFields :: [MetadataFieldDescription]
   , surfaceEncodings      :: [AdvertisedEncodingFamily]
   , surfaceConsoleHeaders :: [ConsoleHeaderDescription]
   }
@@ -116,16 +128,38 @@ data Surface = Surface
   deriving (ToJSON) via Generically Surface
 
 data FormatDescription = FormatDescription
-  { formatCreateTarget     :: CreateFormat
-  , formatToken            :: String
-  , formatAcceptedFields   :: Set MetadataField
-  , formatConstraints      :: Set Constraint
-  , formatSecondaryChoices :: [String]
+  { formatCreateTarget      :: CreateFormat
+  , formatToken             :: String
+  , formatDisplayName       :: Text
+  , formatFileExtension     :: String  -- ^ dot included
+  , formatAcceptedFields    :: Set MetadataField
+  , formatConstraints       :: Set Constraint
+  , formatWindowDefault     :: Maybe WindowDefault
+  , formatTextFieldCeilings :: [(MetadataField, Length)]
+    -- ^ The byte width each bounded text field is cut to, so a control can count against it live.
+  , formatSecondaryChoices  :: [(String, XDelta3SecondaryCompressor)]
     -- ^ What @--compress-with@ can choose when this is the target; empty for a format without a secondary compressor.
     -- Per-format rather than one global vocabulary, so a second compressor-bearing format's own algorithms would have a home.
   }
   deriving (Eq, Show, Generic)
   deriving (ToJSON) via Generically FormatDescription
+
+-- | What a VCDIFF arc does when no window size is requested.
+data WindowDefault
+  = WindowsOfBytes EmissionWindowSize
+  | OneWindowWholeTarget
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically WindowDefault
+
+-- | A field's control kind and flag never vary by the format that accepts it,
+-- so one roster serves every 'formatAcceptedFields' membership.
+data MetadataFieldDescription = MetadataFieldDescription
+  { describedMetadataField   :: MetadataField
+  , metadataFieldControlKind :: MetadataFieldKind
+  , metadataFieldFlag        :: Text
+  }
+  deriving (Eq, Show, Generic)
+  deriving (ToJSON) via Generically MetadataFieldDescription
 
 data ConsoleHeaderDescription = ConsoleHeaderDescription
   { describedConsoleHeader :: ConsoleHeader
@@ -139,20 +173,36 @@ data ConsoleHeaderDescription = ConsoleHeaderDescription
 describeSurface :: Surface
 describeSurface = Surface
   { surfaceFormats        = [describeCreateTarget token target | (token, target, Canonical) <- createFormatTokens]
+  , surfaceMetadataFields = map describeMetadataField [minBound .. maxBound]
   , surfaceEncodings      = advertisedEncodings
   , surfaceConsoleHeaders = map describeConsoleHeader [minBound .. maxBound]
   }
 
 describeCreateTarget :: String -> CreateFormat -> FormatDescription
 describeCreateTarget token target = FormatDescription
-  { formatCreateTarget     = target
-  , formatToken            = token
-  , formatAcceptedFields   = acceptedMetadataFields target
-  , formatConstraints      = acceptedConstraints target
-  , formatSecondaryChoices =
+  { formatCreateTarget      = target
+  , formatToken             = token
+  , formatDisplayName       = formatName target
+  , formatFileExtension     = formatExtension target
+  , formatAcceptedFields    = acceptedMetadataFields target
+  , formatConstraints       = acceptedConstraints target
+  , formatWindowDefault     = case target of
+      CreateDifferential CreateXDelta3   -> Just (WindowsOfBytes defaultXDelta3WindowSize)
+      CreateDifferential CreateRFCVCDIFF -> Just OneWindowWholeTarget
+      _                                  -> Nothing
+  , formatTextFieldCeilings =
+      [ (boundedTextField row, boundedTextWidth row) | row <- boundedTextFieldRows target ]
+  , formatSecondaryChoices  =
       if MetadataSecondaryCompressor `Set.member` acceptedMetadataFields target
-        then map fst secondaryCompressorTokens
+        then secondaryCompressorTokens
         else []
+  }
+
+describeMetadataField :: MetadataField -> MetadataFieldDescription
+describeMetadataField field = MetadataFieldDescription
+  { describedMetadataField   = field
+  , metadataFieldControlKind = metadataFieldKind field
+  , metadataFieldFlag        = metadataFieldFlagName field
   }
 
 describeConsoleHeader :: ConsoleHeader -> ConsoleHeaderDescription
@@ -334,8 +384,7 @@ data ConvertRequest = ConvertRequest
 data Verdict
   = Ready
   | Blocked (NonEmpty Gap)  -- ^ @Blocked []@ would be representable and meaningless; the 'NonEmpty' closes it
-  deriving (Eq, Show, Generic)
-  deriving (ToJSON) via Generically Verdict
+  deriving (Eq, Show)
 
 -- | A reason the emit would be incorrect, beside the amendments that would close it.
 -- A gap can close more than one way: handing over the source ROM can dissolve a requirement rather than satisfy it by typing.
@@ -343,8 +392,7 @@ data Gap = Gap
   { gapReason      :: SlapError            -- ^ slap's own words; the UI composes no sentence of its own
   , gapResolutions :: NonEmpty Resolution  -- ^ computed, not guessed
   }
-  deriving (Eq, Show, Generic)
-  deriving (ToJSON) via Generically Gap
+  deriving (Eq, Show)
 
 data Resolution
   = ProvideSourceRom
@@ -368,8 +416,10 @@ checkCreate :: CreateRequest -> Verdict
 checkCreate request = verdictOf $ catMaybes
   [ metadataRequestsGap    (createTargetFormat request) (createMetadata request)
   , secondaryCompressorGap (createTargetFormat request) (createMetadata request)
+  , fileIdDizLengthGap     (createTargetFormat request) (createMetadata request)
   , constraintsGap         (createTargetFormat request) (createConstraints request)
   , sizeChangeGap          (createTargetFormat request) (createOriginal request) (createModified request)
+  , ppf2ValidationFloorGap (createTargetFormat request) (createOriginal request)
   , xdelta1CreateNamesGap  request
   ]
 
@@ -422,10 +472,14 @@ metadataRequestsGap target meta =
     Left foreignRefusal -> refusalOutsideJudgmentVocabulary foreignRefusal
 
 -- | Dropping the selection resolves the refusal: the fallback is LZMA, which slap encodes with.
+-- The do-nothing pair closes from either side, so it offers both drops.
 secondaryCompressorGap :: CreateFormat -> RequestedPatchMetadata -> Maybe Gap
 secondaryCompressorGap target meta =
   case rejectUnencodableSecondaryCompressor target meta of
     Right () -> Nothing
+    Left refusal@SecondaryCompressorRequestedWithCompressionOff ->
+      Just (Gap refusal (DropMetadataField MetadataSecondaryCompressor
+                          :| [DropMetadataField MetadataPatchCompression]))
     Left refusal -> Just (Gap refusal (DropMetadataField MetadataSecondaryCompressor :| []))
 
 constraintsGap :: CreateFormat -> RequestedConstraints -> Maybe Gap
@@ -442,6 +496,29 @@ sizeChangeGap (CreateDirect target) (InputFileContents originalBytes) (OutputFil
   case rejectIncompatibleSizeChange target (byteFileSize originalBytes) (byteFileSize modifiedBytes) of
     Right () -> Nothing
     Left refusal -> Just (Gap refusal (ChooseDifferentFormat :| []))
+
+ppf2ValidationFloorGap :: CreateFormat -> InputFileContents -> Maybe Gap
+ppf2ValidationFloorGap (CreateDirect CreatePPF2) (InputFileContents originalBytes) =
+  case rejectSourceBelowPPF2ValidationFloor (byteFileSize originalBytes) of
+    Right () -> Nothing
+    Left refusal -> Just (Gap refusal (ChooseDifferentFormat :| []))
+ppf2ValidationFloorGap _ _ = Nothing
+
+fileIdDizLengthGap :: CreateFormat -> RequestedPatchMetadata -> Maybe Gap
+fileIdDizLengthGap target meta = do
+  narrowRequested <- case target of
+    CreateDirect CreatePPF2 -> Just (\dizText -> () <$ narrowPPF2FileId dizText)
+    CreateDirect CreatePPF3 -> Just (\dizText -> () <$ narrowPPF3FileId dizText)
+    _                       -> Nothing
+  requestedText <- case requestedFileIdDiz meta of
+    SetFileIdDiz dizText         -> Just dizText
+    SetFileIdDizFromText dizText -> Just dizText
+    InheritFileIdDiz             -> Nothing
+    DropFileIdDiz                -> Nothing
+  case narrowRequested requestedText of
+    Right () -> Nothing
+    Left refusal@(FieldTooLong {}) -> Just (Gap refusal (AmendMetadataField MetadataFileIdDiz :| []))
+    Left foreignRefusal -> refusalOutsideJudgmentVocabulary foreignRefusal
 
 dialectsGap :: FormatLabel -> RequestedDialects -> Maybe Gap
 dialectsGap sourceFormat dialects =
