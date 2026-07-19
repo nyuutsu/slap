@@ -68,16 +68,17 @@ import Slap.Checksum (CRC32, MD5Hash, SHA1Hash)
 import Slap.Constraint (Constraint)
 import Slap.Convert (CreateFormat(..),
                      DifferentialCreate(CreateXDelta1, CreateXDelta3, CreateRFCVCDIFF, CreateNINJA2),
-                     DirectCreate(CreatePPF2, CreatePPF3, CreateNINJA1), FileIdDizRequest(..),
+                     DirectCreate(CreatePPF2, CreatePPF3, CreateNINJA1),
                      RequestedConstraints, RequestedDialects, RequestedPatchMetadata(..),
                      TokenVisibility(Canonical), acceptedConstraints, acceptedDialects,
                      acceptedMetadataFields, convertDirect, createDefaultAdvisories,
-                     createFormatTokens, formatExtension, formatName, mergeRequestedMetadata, metadataRequests,
+                     createFormatTokens, effectiveFileIdDiz, formatExtension, formatName,
+                     mergeRequestedMetadata, metadataRequests,
                      noDialectsRequested, rejectCrossPlatformRomTypeRetag,
                      rejectIncompatibleConstraints, rejectIncompatibleDialects,
                      rejectIncompatibleMetadataRequests, rejectIncompatibleSizeChange,
                      rejectSourceBelowPPF2ValidationFloor,
-                     rejectUnencodableSecondaryCompressor, verdictOnDirectConversion,
+                     rejectUnencodableSecondaryCompressor, suppliedFileIdDiz, verdictOnDirectConversion,
                      boundedTextField, boundedTextFieldRows, boundedTextWidth)
 import qualified Slap.Create as Create
 import Slap.Detect (DroppedFileAnswer(..), DroppedFileClass(..), classifyDroppedFile, droppedFileAnswerFor)
@@ -88,10 +89,10 @@ import Slap.FFI (crc32)
 import Slap.FieldName (FieldName(FieldXDelta1FromName, FieldXDelta1ToName))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents)
 import Slap.FormatLabel (FormatLabel)
-import Slap.Header (ConsoleHeader, InputHeaderDirective, consoleHeaderLength,
+import Slap.Header (ConsoleHeader, InputHeaderDirective(TakeInputAsIs), consoleHeaderLength,
                     consoleHeaderName, consoleHeaderToken)
 import Slap.Apply (PatchedRom(..), VerdictStanding(..), runPreparedApply)
-import Slap.Measure (FileSize, Length, byteFileSize)
+import Slap.Measure (FileSize(..), Length(..), byteFileSize)
 import Slap.MetadataField (MetadataField(..), metadataFieldFlagName, requestField)
 import Slap.NINJA2.Types (ninja2DefaultTextMode)
 import Slap.PPF2.Types (narrowPPF2FileId)
@@ -100,7 +101,7 @@ import Slap.PatchField (PatchField)
 import Slap.PlatformType (PlatformType(PlatformRaw))
 import qualified Slap.Preflight as Preflight
 import Slap.Preflight (HeaderRescueCandidate(..), PreparedApplySource(..), SourceReport(..),
-                       prepareApplySource, weighUndoInput)
+                       prepareApplySource, reframeInput, weighUndoInput)
 import Slap.SomePatch (PatchIdentity(..), PatchKind(..), SomePatch, UndoAnswer(..), clearToRun,
                        UndoAvailability(..), UndoStrategy, parseSome, patchAdvisories,
                        patchAnalysis, patchContentsOf, patchExtractedMeta, patchFormat, patchIdentity,
@@ -109,11 +110,11 @@ import Slap.Status (CreateResult(..), Outcome(..), SlapAdvisory, SlapError(..),
                     SourceRequiredCause(..))
 import Slap.Surface (ChoiceVocabulary(..), MetadataFieldKind(..), imageTypeTokens, metadataFieldKind,
                      romTypeTokens, textModeTokens)
-import Slap.Text (AdvertisedEncodingFamily, EncodingName(EncodingUtf8), advertisedEncodings)
+import Slap.Text (AdvertisedEncodingFamily, EncodedText, EncodingName(EncodingUtf8), advertisedEncodings)
 import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor, secondaryCompressorTokens,
                                          xdelta3DefaultSecondaryCompressor)
 import Slap.VCDIFF.Types (EmissionWindowSize, defaultXDelta3WindowSize)
-import Slap.Verify (VerificationPolicy, VerificationVerdict, Weighing, flipSpokenSides,
+import Slap.Verify (VerificationPolicy(EnforceVerification), VerificationVerdict, Weighing, flipSpokenSides,
                     judgeWeighing, verdictOnWeighing, weighSource)
 import Slap.XDelta1.Types (ResolvedXDelta1FileNames, requireXDelta1FileNames,
                            resolveXDelta1FileNames, unXDelta1FromName, unXDelta1ToName)
@@ -438,13 +439,13 @@ data Resolution
 
 checkCreate :: CreateRequest -> Verdict
 checkCreate request = verdictOf $ catMaybes
-  [ metadataRequestsGap    (createTargetFormat request) (createMetadata request)
-  , secondaryCompressorGap (createTargetFormat request) (createMetadata request)
-  , fileIdDizLengthGap     (createTargetFormat request) (createMetadata request)
-  , constraintsGap         (createTargetFormat request) (createConstraints request)
-  , sizeChangeGap          (createTargetFormat request) (createOriginal request) (createModified request)
-  , ppf2ValidationFloorGap (createTargetFormat request) (createOriginal request)
-  , xdelta1CreateNamesGap  request
+  [ metadataRequestsGap        (createTargetFormat request) (createMetadata request)
+  , secondaryCompressorGap     (createTargetFormat request) (createMetadata request)
+  , createFileIdDizLengthGap   (createTargetFormat request) (createMetadata request)
+  , constraintsGap             (createTargetFormat request) (createConstraints request)
+  , sizeChangeGap              (createTargetFormat request) (createOriginal request) (createModified request)
+  , ppf2ValidationFloorGap     (createTargetFormat request) (createOriginal request)
+  , xdelta1CreateNamesGap      request
   ]
 
 -- | A parse failure is the 'Left', never a 'Gap': a gap means the named emit would be incorrect and the request can be amended toward it;
@@ -468,13 +469,15 @@ judgeConvert request = do
     { judgedPatch      = parsed
     , judgedMergedMeta = mergedMeta
     , judgedVerdict    = verdictOf $ catMaybes
-        [ metadataRequestsGap    (convertTargetFormat request) (convertMetadata request)
-        , secondaryCompressorGap (convertTargetFormat request) (convertMetadata request)
-        , constraintsGap         (convertTargetFormat request) (convertConstraints request)
-        , dialectsGap            (patchFormat parsed) (convertDialects request)
-        , romTypeRetagGap        (convertMetadata request) (patchExtractedMeta parsed)
-        , xdelta1NamesGap        (convertTargetFormat request) (patchFormat parsed) mergedMeta
-        , conversionPathGap      request parsed mergedMeta
+        [ metadataRequestsGap        (convertTargetFormat request) (convertMetadata request)
+        , secondaryCompressorGap     (convertTargetFormat request) (convertMetadata request)
+        , convertFileIdDizLengthGap  (convertTargetFormat request) parsed mergedMeta
+        , constraintsGap             (convertTargetFormat request) (convertConstraints request)
+        , dialectsGap                (patchFormat parsed) (convertDialects request)
+        , romTypeRetagGap            (convertMetadata request) (patchExtractedMeta parsed)
+        , xdelta1NamesGap            (convertTargetFormat request) (patchFormat parsed) mergedMeta
+        , framedSourcePPF2FloorGap   request
+        , conversionPathGap          request parsed mergedMeta
         ]
     }
 
@@ -522,26 +525,64 @@ sizeChangeGap (CreateDirect target) (InputFileContents originalBytes) (OutputFil
     Left refusal -> Just (Gap refusal (ChooseDifferentFormat :| []))
 
 ppf2ValidationFloorGap :: CreateFormat -> InputFileContents -> Maybe Gap
-ppf2ValidationFloorGap (CreateDirect CreatePPF2) (InputFileContents originalBytes) =
-  case rejectSourceBelowPPF2ValidationFloor (byteFileSize originalBytes) of
+ppf2ValidationFloorGap target (InputFileContents originalBytes) =
+  ppf2FloorGapAtSize target (byteFileSize originalBytes)
+
+ppf2FloorGapAtSize :: CreateFormat -> FileSize -> Maybe Gap
+ppf2FloorGapAtSize (CreateDirect CreatePPF2) sourceSize =
+  case rejectSourceBelowPPF2ValidationFloor sourceSize of
     Right () -> Nothing
     Left refusal -> Just (Gap refusal (ChooseDifferentFormat :| []))
-ppf2ValidationFloorGap _ _ = Nothing
+ppf2FloorGapAtSize _ _ = Nothing
 
-fileIdDizLengthGap :: CreateFormat -> RequestedPatchMetadata -> Maybe Gap
-fileIdDizLengthGap target meta = do
-  narrowRequested <- case target of
+-- | The floor is judged at the size the run will frame. Under 'TakeInputAsIs' the proven header rescue may still reframe,
+-- so the gap is claimed only when no size within a header's reach clears the floor, and its refusal quotes the handed size.
+framedSourcePPF2FloorGap :: ConvertRequest -> Maybe Gap
+framedSourcePPF2FloorGap request = case (convertTargetFormat request, convertSourceRom request) of
+  (target@(CreateDirect CreatePPF2), Just matchedRom) ->
+    let handedSize = byteFileSize (unInputFileContents (matchedRomBytes matchedRom)) in
+    case matchedRomFraming matchedRom of
+      TakeInputAsIs
+        | EnforceVerification <- convertVerificationPolicy request ->
+            ppf2FloorGapAtSize target (headerReachBeyond handedSize) *> ppf2FloorGapAtSize target handedSize
+        | otherwise -> ppf2FloorGapAtSize target handedSize
+      directive -> do
+        framedBytes <- either (const Nothing) Just . outcomeValue $
+          reframeInput directive (unInputFileContents (matchedRomBytes matchedRom))
+        ppf2FloorGapAtSize target (byteFileSize framedBytes)
+  _ -> Nothing
+
+headerReachBeyond :: FileSize -> FileSize
+headerReachBeyond size = FileSize (unFileSize size + unLength largestConsoleHeader)
+  where largestConsoleHeader = maximum (map consoleHeaderLength [minBound .. maxBound])
+
+createFileIdDizLengthGap :: CreateFormat -> RequestedPatchMetadata -> Maybe Gap
+createFileIdDizLengthGap target meta =
+  fileIdDizLengthGap target (suppliedFileIdDiz (requestedFileIdDiz meta))
+                     (AmendMetadataField MetadataFileIdDiz :| [])
+
+-- | Convert judges the DIZ its emit will write ('Slap.Convert.effectiveFileIdDiz'): the request's own, else the patch's carried one.
+-- A parse tolerates a DIZ past the cap, so inheritance alone can hand the emit a refusable one.
+-- Dropping the field closes the gap whichever way the DIZ arrived.
+convertFileIdDizLengthGap :: CreateFormat -> SomePatch -> RequestedPatchMetadata -> Maybe Gap
+convertFileIdDizLengthGap target parsed mergedMeta =
+  fileIdDizLengthGap target dizToEmit
+                     (AmendMetadataField MetadataFileIdDiz :| [DropMetadataField MetadataFileIdDiz])
+  where
+    dizToEmit = case patchContentsOf parsed of
+      Just contents -> effectiveFileIdDiz mergedMeta contents
+      Nothing       -> suppliedFileIdDiz (requestedFileIdDiz mergedMeta)
+
+fileIdDizLengthGap :: CreateFormat -> Maybe EncodedText -> NonEmpty Resolution -> Maybe Gap
+fileIdDizLengthGap target dizToEmit resolutions = do
+  narrowForTarget <- case target of
     CreateDirect CreatePPF2 -> Just (\dizText -> () <$ narrowPPF2FileId dizText)
     CreateDirect CreatePPF3 -> Just (\dizText -> () <$ narrowPPF3FileId dizText)
     _                       -> Nothing
-  requestedText <- case requestedFileIdDiz meta of
-    SetFileIdDiz dizText         -> Just dizText
-    SetFileIdDizFromText dizText -> Just dizText
-    InheritFileIdDiz             -> Nothing
-    DropFileIdDiz                -> Nothing
-  case narrowRequested requestedText of
+  dizText <- dizToEmit
+  case narrowForTarget dizText of
     Right () -> Nothing
-    Left refusal@(FieldTooLong {}) -> Just (Gap refusal (AmendMetadataField MetadataFileIdDiz :| []))
+    Left refusal@(FieldTooLong {}) -> Just (Gap refusal resolutions)
     Left foreignRefusal -> refusalOutsideJudgmentVocabulary foreignRefusal
 
 dialectsGap :: FormatLabel -> RequestedDialects -> Maybe Gap

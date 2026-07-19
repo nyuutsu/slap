@@ -6,10 +6,10 @@ module Props.Web (webTests) where
 import Slap.Convert (CreateFormat(..), DifferentialCreate(..), DirectCreate(..),
                      CompressionInclusion(OmitCompression),
                      EmbeddedBlobContents(..), EmbeddedBlobRequest(SetEmbeddedBlob, SetEmbeddedTypedText),
-                     FileIdDizRequest(SetFileIdDizFromText),
+                     FileIdDizRequest(SetFileIdDizFromText, DropFileIdDiz),
                      RequestedDialects(..),
                      RequestedPatchMetadata(..), UndoInclusion(OmitUndoData),
-                     advertisedCreateFormats, fieldTruncationForewarnings, lookupCreateFormatToken,
+                     advertisedCreateFormats, convertDirect, fieldTruncationForewarnings, lookupCreateFormatToken,
                      noConstraintsRequested, noDialectsRequested, noMetadataRequested)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.Constraint (Constraint(..))
@@ -28,7 +28,7 @@ import qualified Slap.NINJA2.Types as NINJA2
 import Slap.Platform (platformToNINJA1, platformToNINJA2)
 import Slap.PlatformType (PlatformType(PlatformRaw))
 import Slap.PPF1.Types (PPF1Origin(PPF1OriginAmiga))
-import Slap.SomePatch (parseSome, patchAdvisories, patchAnalysis, patchInfo)
+import Slap.SomePatch (parseSome, patchAdvisories, patchAnalysis, patchContentsOf, patchInfo)
 import Slap.Status (CarriedFileCount(..), CreateResult(..), Outcome(..), SlapAdvisory(..), SlapError(..),
                     SourceRequiredCause(..), UnencodeabilityReason(..),
                     noAdvisories, renderSlapAdvisory, renderSlapError)
@@ -105,6 +105,9 @@ webTests = testGroup "Web"
       , testCase "a differential source without a source rom asks too"  test_checkConvertBPSToIPSNeedsSource
       , testCase "a stale Amiga toggle gaps with its own drop"          test_checkConvertStaleAmigaToggle
       , testCase "an unparseable patch is the Left, not a gap"          test_checkConvertUnrecognized
+      , testCase "an over-cap DIZ typed at convert gaps before the act" test_checkConvertTypedOverCapDiz
+      , testCase "an inherited over-cap DIZ gaps, and dropping it clears" test_checkConvertInheritedOverCapDiz
+      , testCase "the with-source PPF2 floor is judged at the framed size" test_checkConvertWithSourcePPF2Floor
       ]
   , testGroup "emit acts"
       [ testCase "the create act mirrors the engine create byte for byte" test_createActMirrorsEngine
@@ -551,6 +554,59 @@ test_checkConvertUnrecognized :: Assertion
 test_checkConvertUnrecognized =
   checkConvert (plainConvertRequest (PatchFileContents "this file is nobody's patch") (CreateDifferential CreateBPS))
     @?= Left UnrecognizedFormat
+
+-- | The check and the engine emission judge one DIZ view, so their refusals must be one refusal.
+assertDizGapMatchesEmission :: ConvertRequest -> Assertion
+assertDizGapMatchesEmission request = do
+  gapRefusal <- case checkConvert request of
+    Right (Blocked (Gap refusal@(FieldTooLong LabelPPF3 FieldFileIdDiz _ _) resolutions :| [])) -> do
+      resolutions @?= AmendMetadataField MetadataFileIdDiz :| [DropMetadataField MetadataFileIdDiz]
+      pure refusal
+    other -> assertFailure ("unexpected verdict: " <> show other)
+  parsed   <- either (assertFailureT . renderSlapError) pure
+                     (parseSome noDialectsRequested EncodingUtf8 (convertPatchBytes request))
+  contents <- maybe (assertFailure "the source patch carries no contents") pure (patchContentsOf parsed)
+  case convertDirect contents (convertTargetFormat request) (convertMetadata request)
+                     noConstraintsRequested noDialectsRequested of
+    Left actRefusal -> actRefusal @?= gapRefusal
+    Right _         -> assertFailure "the emission wrote an over-cap DIZ"
+
+test_checkConvertTypedOverCapDiz :: Assertion
+test_checkConvertTypedOverCapDiz = do
+  ipsPatch <- createdFixturePatch (CreateDirect CreateIPS) noMetadataRequested
+  assertDizGapMatchesEmission (plainConvertRequest ipsPatch (CreateDirect CreatePPF3))
+    { convertMetadata = noMetadataRequested
+        { requestedFileIdDiz = SetFileIdDizFromText (EncodedText EncodingUtf8 (Text.replicate 4000 "D")) } }
+
+test_checkConvertInheritedOverCapDiz :: Assertion
+test_checkConvertInheritedOverCapDiz = do
+  PatchFileContents cleanPPF3 <- createdFixturePatch (CreateDirect CreatePPF3) noMetadataRequested
+  -- 'createPatch' refuses an over-cap DIZ, so the wild shape is built by hand:
+  -- 3073 content bytes, one past the cap, spelled little-endian in the trailer's length field.
+  let overCapTrailer = "@BEGIN_FILE_ID.DIZ" <> ByteString.replicate 3073 0x44
+                       <> "@END_FILE_ID.DIZ" <> ByteString.pack [0x01, 0x0C]
+      dizPatch = PatchFileContents (cleanPPF3 <> overCapTrailer)
+  assertDizGapMatchesEmission (plainConvertRequest dizPatch (CreateDirect CreatePPF3))
+  checkConvert (plainConvertRequest dizPatch (CreateDirect CreatePPF3))
+      { convertMetadata = noMetadataRequested { requestedFileIdDiz = DropFileIdDiz } }
+    @?= Right Ready
+
+test_checkConvertWithSourcePPF2Floor :: Assertion
+test_checkConvertWithSourcePPF2Floor = do
+  ipsPatch <- createdFixturePatch (CreateDirect CreateIPS) noMetadataRequested
+  let request = (plainConvertRequest ipsPatch (CreateDirect CreatePPF2))
+        { convertSourceRom = Just (MatchedRom (InputFileContents fixtureSourceBytes) TakeInputAsIs) }
+  gapRefusal <- case checkConvert request of
+    Right (Blocked (Gap refusal@(SourceTooSmallForPPF2Validation {}) (ChooseDifferentFormat :| []) :| [])) ->
+      pure refusal
+    other -> assertFailure ("unexpected verdict: " <> show other)
+  parsed <- either (assertFailureT . renderSlapError) pure
+                   (parseSome noDialectsRequested EncodingUtf8 ipsPatch)
+  case Create.createPatch (CreateDirect CreatePPF2) Nothing (InputFileContents fixtureSourceBytes)
+                          (OutputFileContents fixtureTargetBytes) noMetadataRequested (patchContentsOf parsed)
+                          noConstraintsRequested noDialectsRequested of
+    Left actRefusal -> actRefusal @?= gapRefusal
+    Right _         -> assertFailure "the act emitted below the floor"
 
 test_createActMirrorsEngine :: Assertion
 test_createActMirrorsEngine = do

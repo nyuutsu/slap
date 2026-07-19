@@ -218,16 +218,19 @@ resolveCreateFileIdDiz (FileIdDizFromFile path) =
 resolveCreateFileIdDiz (FileIdDizFromText typed) =
   pure (SetFileIdDizFromText (EncodedText EncodingUtf8 typed))
 
+-- | @--metadata-encoding@ decodes bytes, so only the @--diz FILE@ lane consults it; typed text arrives already decoded, and is tagged UTF-8.
 resolveConvertMetadata :: EncodingName -> ConvertMetadataInputs -> IO RequestedPatchMetadata
 resolveConvertMetadata metadataEncoding inputs = do
   embeddedBlob <- case convertEmbeddedBlobIntent inputs of
-    SetBlobFromFile path -> SetEmbeddedBlob . EmbeddedBlobContents <$> readInputFile path
-    DropBlob             -> pure DropEmbeddedBlob
-    CarryBlob            -> pure InheritEmbeddedBlob
+    SetBlobFromFile path       -> SetEmbeddedBlob . EmbeddedBlobContents <$> readInputFile path
+    SetBlobFromTypedText typed -> pure (SetEmbeddedTypedText typed)
+    DropBlob                   -> pure DropEmbeddedBlob
+    CarryBlob                  -> pure InheritEmbeddedBlob
   fileIdDiz <- case convertDizIntent inputs of
-    SetDizFromFile path -> SetFileIdDiz . fst . decodeTextLenient metadataEncoding <$> readInputFile path
-    DropDiz             -> pure DropFileIdDiz
-    CarryDiz            -> pure InheritFileIdDiz
+    SetDizFromFile path       -> SetFileIdDiz . fst . decodeTextLenient metadataEncoding <$> readInputFile path
+    SetDizFromTypedText typed -> pure (SetFileIdDizFromText (EncodedText EncodingUtf8 typed))
+    DropDiz                   -> pure DropFileIdDiz
+    CarryDiz                  -> pure InheritFileIdDiz
   pure (convertParsedMetadata inputs)
     { requestedEmbeddedBlob = embeddedBlob
     , requestedFileIdDiz    = fileIdDiz

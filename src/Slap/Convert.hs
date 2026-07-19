@@ -9,6 +9,8 @@ module Slap.Convert
   , CreateFormat(..)
   , RequestedPatchMetadata(..)
   , FileIdDizRequest(..)
+  , suppliedFileIdDiz
+  , effectiveFileIdDiz
   , EmbeddedBlobRequest(..)
   , EmbeddedBlobContents(..)
   , embeddedBlobContentBytes
@@ -992,13 +994,17 @@ droppedEmbeddedBlobAdvisories format meta =
   , MetadataEmbeddedBlob `Set.notMember` acceptedMetadataFields format
   ]
 
+suppliedFileIdDiz :: FileIdDizRequest -> Maybe EncodedText
+suppliedFileIdDiz (SetFileIdDiz diz)         = Just diz
+suppliedFileIdDiz (SetFileIdDizFromText diz) = Just diz
+suppliedFileIdDiz InheritFileIdDiz           = Nothing
+suppliedFileIdDiz DropFileIdDiz              = Nothing
+
 -- | The FILE_ID.DIZ to emit: the request overrides the source-inherited DIZ.
 effectiveFileIdDiz :: RequestedPatchMetadata -> PatchContents -> Maybe EncodedText
 effectiveFileIdDiz meta contents = case requestedFileIdDiz meta of
-  InheritFileIdDiz         -> contentsFileIdDiz contents
-  SetFileIdDiz diz         -> Just diz
-  SetFileIdDizFromText diz -> Just diz
-  DropFileIdDiz            -> Nothing
+  InheritFileIdDiz -> contentsFileIdDiz contents
+  request          -> suppliedFileIdDiz request
 
 -- | Warn when undo / verification are included by default (no CLI flag, no inherited source value) —
 -- the same pattern as rom-type defaulting to RAW.

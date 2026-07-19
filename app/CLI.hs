@@ -153,13 +153,15 @@ data ConvertWithSource = ConvertWithSource
 data EmbeddedBlobIntent
   = CarryBlob
   | SetBlobFromFile FilePath
+  | SetBlobFromTypedText Text
   | DropBlob
   deriving (Show, Eq)
 
--- | The convert-side FILE_ID.DIZ choice: carry the source patch's, set it from a file, or drop it.
+-- | The FILE_ID.DIZ counterpart to 'EmbeddedBlobIntent'.
 data DizIntent
   = CarryDiz
   | SetDizFromFile FilePath
+  | SetDizFromTypedText Text
   | DropDiz
   deriving (Show, Eq)
 
@@ -217,13 +219,15 @@ convertMetadataRequests inputs = sortOn requestField $
   metadataRequests (convertParsedMetadata inputs) ++ blobRequest ++ dizRequest
   where
     blobRequest = case convertEmbeddedBlobIntent inputs of
-      SetBlobFromFile _ -> [SetField MetadataEmbeddedBlob]
-      DropBlob          -> [DropField DroppableEmbeddedBlob]
-      CarryBlob         -> []
+      SetBlobFromFile _      -> [SetField MetadataEmbeddedBlob]
+      SetBlobFromTypedText _ -> [SetFieldFromText TypedTextEmbeddedBlob]
+      DropBlob               -> [DropField DroppableEmbeddedBlob]
+      CarryBlob              -> []
     dizRequest = case convertDizIntent inputs of
-      SetDizFromFile _ -> [SetField MetadataFileIdDiz]
-      DropDiz          -> [DropField DroppableFileIdDiz]
-      CarryDiz         -> []
+      SetDizFromFile _      -> [SetField MetadataFileIdDiz]
+      SetDizFromTypedText _ -> [SetFieldFromText TypedTextFileIdDiz]
+      DropDiz               -> [DropField DroppableFileIdDiz]
+      CarryDiz              -> []
 
 -- | Whether to refuse writing over an existing output file.
 data OverwritePolicy
@@ -808,24 +812,25 @@ convertMetadataInputsParser = ConvertMetadataInputs
   <*> embeddedBlobIntentParser
   <*> dizIntentParser
 
--- | Parse the embedded-blob intent for @slap convert@.
--- @--metadata FILE@ selects 'SetBlobFromFile', @--drop-metadata@ selects 'DropBlob', neither selects 'CarryBlob'.
--- The three are mutually exclusive: passing both flags leaves one unconsumed and the top-level parser rejects the command.
+-- | The set and drop flags are mutually exclusive: a pair of them leaves one unconsumed and the top-level parser rejects the command.
 embeddedBlobIntentParser :: Parser EmbeddedBlobIntent
 embeddedBlobIntentParser = asum
   [ SetBlobFromFile <$> pathOption (metadataFlag MetadataEmbeddedBlob <> metavar "FILE"
       <> help "Override the embedded metadata with bytes from FILE")
+  , SetBlobFromTypedText <$> option str (typedTextFlag TypedTextEmbeddedBlob <> metavar "TEXT"
+      <> help "Override the embedded metadata with TEXT")
   , DropBlob <$ flag' () (dropFlag DroppableEmbeddedBlob
       <> help "Discard the source patch's embedded metadata (default is to inherit)")
   , pure CarryBlob
   ]
 
--- | The FILE_ID.DIZ counterpart to 'embeddedBlobIntentParser' — @--diz@ sets it,
--- @--drop-diz@ drops it, and neither carries the source patch's through.
+-- | The FILE_ID.DIZ counterpart to 'embeddedBlobIntentParser'.
 dizIntentParser :: Parser DizIntent
 dizIntentParser = asum
   [ SetDizFromFile <$> pathOption (metadataFlag MetadataFileIdDiz <> metavar "FILE"
       <> help "Set the FILE_ID.DIZ from FILE (PPF2/PPF3 target)")
+  , SetDizFromTypedText <$> option str (typedTextFlag TypedTextFileIdDiz <> metavar "TEXT"
+      <> help "Set the FILE_ID.DIZ to TEXT (PPF2/PPF3 target)")
   , DropDiz <$ flag' () (dropFlag DroppableFileIdDiz
       <> help "Discard the source patch's FILE_ID.DIZ (default is to inherit)")
   , pure CarryDiz

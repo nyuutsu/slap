@@ -1137,9 +1137,47 @@ metadataTextTests base bps =
                     "--metadata", blob, "--metadata-text", "x"]
           "metadata-text/mutex" "invalid"
 
-  , testCase "metadata-text/convert does not offer the flag (it is create-only by design)" $
-      expectFail ["convert", "no-such-patch.bps", "--to", "bps", "--metadata-text", "x", "-o", "out.bps"]
-        "metadata-text/convert-absent" "invalid"
+  , testCase "metadata-text/convert offers the typed lane too, wearing create's own jacket" $
+      withPatchedTarget $ \target ->
+      withTempFile "slap-plainbps"  $ \plainPatch ->
+      withTempFile "slap-converted" $ \convertedPatch -> do
+        expectOk ["create", "--format", "bps", base, target, plainPatch, "--force"]
+          "metadata-text/convert-plain" "wrote"
+        expectOk ["convert", plainPatch, "--to", "bps", "--with", base, "-o", convertedPatch,
+                  "--metadata-text", "typed at convert", "--force"]
+          "metadata-text/convert" "converted to"
+        extracted <- extractEmbeddedMetadata convertedPatch
+        assertEqual "expected the typed text inside the XML jacket"
+          (Just (ByteString8.pack
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<patch>typed at convert</patch>"))
+          extracted
+
+  , testCase "metadata-text/convert's file and typed lanes are mutually exclusive too" $
+      withTempFile "slap-blob" $ \blob -> do
+        ByteString.writeFile blob (ByteString8.pack "x")
+        expectFail ["convert", "no-such-patch.bps", "--to", "bps", "-o", "out.bps",
+                    "--metadata", blob, "--metadata-text", "x"]
+          "metadata-text/convert-mutex" "invalid"
+
+  , testCase "diz-text/convert sets the FILE_ID.DIZ from the flag, byte for byte" $
+      withPatchedTarget $ \target ->
+      withTempFile "slap-ips"    $ \ipsPatch ->
+      withTempFile "slap-ppf"    $ \ppfPatch ->
+      withTempFile "slap-dizout" $ \dizOut -> do
+        expectOk ["create", "--format", "ips", base, target, ipsPatch, "--force"]
+          "diz-text/create" "wrote"
+        expectOk ["convert", ipsPatch, "--to", "ppf3", "-o", ppfPatch,
+                  "--diz-text", "typed diz at convert", "--force"]
+          "diz-text/convert" "converted to"
+        expectOk ["info", ppfPatch, "--extract-diz", dizOut, "--force"]
+          "diz-text/extract" "wrote"
+        extractedDiz <- ByteString.readFile dizOut
+        assertEqual "the typed DIZ should land byte for byte"
+          (ByteString8.pack "typed diz at convert") extractedDiz
+
+  , testCase "diz-text/convert refuses under its own name where the target carries no DIZ" $
+      expectFail ["convert", "no-such-patch.ips", "--to", "bps", "--diz-text", "x", "-o", "out.bps"]
+        "diz-text/convert-cross-format" "--diz-text is not accepted"
   ]
   where
     withPatchedTarget :: (FilePath -> IO a) -> IO a
@@ -1244,7 +1282,7 @@ dizExtractByteExactTests base bps =
         assertEqual "extracted FILE_ID.DIZ matches the bytes create embedded" dizBytes extracted
   ]
 
--- | @--diz-text TEXT@ is the FILE_ID.DIZ counterpart to @--metadata-text@: typed at the flag, create-only,
+-- | @--diz-text TEXT@ is the FILE_ID.DIZ counterpart to @--metadata-text@: typed at the flag,
 -- mutually exclusive with @--diz FILE@; and non-ASCII content is noted, not refused.
 dizTextTests :: FilePath -> FilePath -> [TestTree]
 dizTextTests base bps =
@@ -1266,10 +1304,6 @@ dizTextTests base bps =
         expectFail ["create", "--format", "ppf3", "no-base", "no-target", "out.ppf3",
                     "--diz", dizFile, "--diz-text", "y"]
           "diz-text/mutex" "invalid"
-
-  , testCase "diz-text/convert does not offer the flag (create-only, like --metadata-text)" $
-      expectFail ["convert", "no-such-patch.bps", "--to", "ppf3", "--diz-text", "x", "-o", "out.ppf3"]
-        "diz-text/convert-absent" "invalid"
 
   , testCase "diz-text/refused under its own name where the target has no FILE_ID.DIZ channel" $
       expectFail ["create", "--format", "ips", "no-such-base", "no-such-target", "out.ips",
