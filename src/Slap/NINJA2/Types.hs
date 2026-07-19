@@ -4,6 +4,7 @@
 
 module Slap.NINJA2.Types
   ( NINJA2Patch(..)
+  , NINJA2FurtherFile(..)
   , NINJA2Record(..)
   , NINJA2Info(..)
   , NINJA2CreateMetadata(..)
@@ -191,6 +192,15 @@ data NINJA2Patch = NINJA2Patch
   , ninja2Records        :: [NINJA2Record]
   , ninja2Overflow       :: Maybe ByteString  -- on-disk overflow data (XOR'd with 0xFF)
   , ninja2OverflowType   :: Maybe OverflowMode
+  , ninja2FurtherFiles   :: [NINJA2FurtherFile]
+  } deriving (Show)
+
+-- | A file after the first: each @OPEN_NEW_FILE@ past the first opens another, closing the one before it.
+-- The parse reads every section whole and keeps what display needs; the acts refuse a patch that has any.
+data NINJA2FurtherFile = NINJA2FurtherFile
+  { furtherFileOpen         :: !NINJA2OpenNewFile
+  , furtherFileRecordCount  :: !Int
+  , furtherFileOverflowType :: !(Maybe OverflowMode)
   } deriving (Show)
 
 -- | Fields populated by NINJA2's @OPEN_NEW_FILE@ command. The patch

@@ -6,6 +6,7 @@ import Slap.SomePatch
   ( SomePatch(..)
   , PatchKind(..)
   , patchContentsOf
+  , clearToRun
   , UndoStrategy(..)
   , UndoAvailability(..)
   , parseSome
@@ -455,6 +456,7 @@ doConvert parsedCommand = do
             (patchFormat parsed)
             (convertDialects parsedCommand))
   orBail (rejectCrossPlatformRomTypeRetag cliMeta (patchExtractedMeta parsed))
+  orBail (clearToRun parsed)
   emitAdvisories (patchAdvisories parsed)
   let (outputFile, overwritePolicy) = case convertOutput parsedCommand of
         ConvertToExplicitFile explicit policy -> (explicit, policy)

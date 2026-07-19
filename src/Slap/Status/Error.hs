@@ -39,7 +39,7 @@ import Slap.Status.Decompression (DecompressionFailure, XDelta1DiffCause, BSDiff
 import Slap.Status.VCDIFF (VCDIFFShapeViolation, VCDIFFCodeTableMalformation,
                            VCDIFFIndicatorKind, ReservedBitsSet, VCDIFFMalformation,
                            VCDIFFRFCFeature, VCDIFFXDelta3Feature)
-import Slap.Status.Vocabulary (ExtractionSubject, CompressionAlgorithm,
+import Slap.Status.Vocabulary (ExtractionSubject, CompressionAlgorithm, CarriedFileCount,
                                BSDiffHeaderMalformation, APSN64HeaderMalformation,
                                NINJA1Malformation, NINJA1SubformatIdentifier)
 import Slap.Status.XDelta1 (XDelta1KnownUnsupportedVersion, XDelta1ShapeViolation,
@@ -271,6 +271,10 @@ data SlapError
   | PatchCarriesNoUndoData FormatLabel
 
   | NoUndoForFormat FormatLabel
+
+  -- | The patch bundles several files. slap reads it whole and shows it, but no act runs it:
+  -- 'Slap.SomePatch.patchImpediment' carries this to every door.
+  | PatchCarriesMultipleFiles FormatLabel CarriedFileCount
 
   -- Create / Encode
 

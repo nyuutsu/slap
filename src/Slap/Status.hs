@@ -43,6 +43,7 @@ module Slap.Status
   , OverlapCount(..)
   , ClippedRecordCount(..)
   , OOBBlockCount(..)
+  , CarriedFileCount(..)
   , UndoRecordCount(..)
   , ControlSectionSize(..)
   , DiffSectionSize(..)

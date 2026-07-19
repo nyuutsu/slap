@@ -129,12 +129,14 @@ parseNINJA2 metadataEncoding (PatchFileContents input)
       let (info, headerAdvisories) = parseFixedHeader metadataEncoding textMode headerBytes
       runExceptT $ do
         patch <- parseCommands firstAction (emptyPatch info textMode)
-        pure (patch { ninja2Records = reverse (ninja2Records patch) }, headerAdvisories)
+        pure ( patch { ninja2Records      = reverse (ninja2Records patch)
+                     , ninja2FurtherFiles = reverse (ninja2FurtherFiles patch) }
+             , headerAdvisories )
 
     emptyPatch info textMode = NINJA2Patch
       { ninja2Header = info, ninja2Records = [], ninja2Overflow = Nothing
       , ninja2OverflowType = Nothing, ninja2OpenNewFile = Nothing
-      , ninja2TextMode = textMode
+      , ninja2FurtherFiles = [], ninja2TextMode = textMode
       }
 
 -- | The walk runs over an 'ExceptT' 'SlapError' channel, so format-semantic refusals surface as themselves:
@@ -152,7 +154,8 @@ parseCommands commandIndex patch = do
       0x00 -> pure patch
       _    -> lift (throwByteParserError (ByteParserUnknownCommandByte commandIndex code))
 
--- | The OPEN_NEW_FILE command. An unknown overflow-mode byte is refused as 'UnknownFlag'.
+-- | The OPEN_NEW_FILE command: the first opens the file slap models, and each one after opens a further file.
+-- An unknown overflow-mode byte is refused as 'UnknownFlag'.
 parseFileCommand :: ActionIndex -> NINJA2Patch -> ExceptT SlapError ByteParser NINJA2Patch
 parseFileCommand commandIndex patch = do
   _filename   <- lift (parsePackedByteString commandIndex FieldFileName)
@@ -170,20 +173,28 @@ parseFileCommand commandIndex patch = do
         Just mode -> do
           payload <- lift (parsePackedByteString commandIndex FieldOverflowData)
           pure (Just mode, Just payload)
-  pure patch { ninja2OpenNewFile  = Just NINJA2OpenNewFile
-                 { openNewFileSourceMD5  = sourceMD5
-                 , openNewFileTargetMD5  = targetMD5
-                 , openNewFileSourceSize = sourceSize
-                 , openNewFileTargetSize = targetSize
-                 , openNewFileRomType    = toNINJA2RomType romTypeByte
-                 }
-             , ninja2Overflow     = overflowData
-             , ninja2OverflowType = overflowType
-             }
+  let opened = NINJA2OpenNewFile
+        { openNewFileSourceMD5  = sourceMD5
+        , openNewFileTargetMD5  = targetMD5
+        , openNewFileSourceSize = sourceSize
+        , openNewFileTargetSize = targetSize
+        , openNewFileRomType    = toNINJA2RomType romTypeByte
+        }
+  pure $ case ninja2OpenNewFile patch of
+    Nothing -> patch { ninja2OpenNewFile  = Just opened
+                     , ninja2Overflow     = overflowData
+                     , ninja2OverflowType = overflowType
+                     }
+    Just _  -> patch { ninja2FurtherFiles = NINJA2FurtherFile opened 0 overflowType : ninja2FurtherFiles patch }
 
--- | The XOR-record command.
+-- | The XOR-record command. A record belongs to the file most recently opened.
 parseXorRecord :: ActionIndex -> NINJA2Patch -> ByteParser NINJA2Patch
 parseXorRecord commandIndex patch = do
   recordOffset <- offsetFromParsed <$> parsePackedInteger commandIndex FieldRecordOutputOffset
   xorPayload <- parsePackedByteString commandIndex FieldRecordLength
-  pure patch { ninja2Records = NINJA2Record recordOffset xorPayload : ninja2Records patch }
+  pure $ case ninja2FurtherFiles patch of
+    []                    -> patch { ninja2Records = NINJA2Record recordOffset xorPayload : ninja2Records patch }
+    currentFile : earlier -> patch { ninja2FurtherFiles = countRecord currentFile : earlier }
+  where
+    countRecord furtherFile =
+      furtherFile { furtherFileRecordCount = furtherFileRecordCount furtherFile + 1 }

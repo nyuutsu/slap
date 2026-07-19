@@ -16,6 +16,7 @@ module Slap.Status.Vocabulary
   , OverlapCount(..)
   , ClippedRecordCount(..)
   , OOBBlockCount(..)
+  , CarriedFileCount(..)
   , UndoRecordCount(..)
   , MarkerOvershootBytes(..)
   , OOBOvershootBytes(..)
@@ -145,6 +146,11 @@ newtype ClippedRecordCount = ClippedRecordCount { unClippedRecordCount :: Int }
 -- | The number of UPS blocks whose write region extends past the declared target file size.
 -- Never zero: 'Slap.Status.ApplyOOBBlocksSkipped' only fires when at least one block was out of bounds.
 newtype OOBBlockCount = OOBBlockCount { unOOBBlockCount :: Int }
+  deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
+
+-- | How many files a patch bundles. Never one: 'Slap.Status.PatchCarriesMultipleFiles' only fires past the first.
+newtype CarriedFileCount = CarriedFileCount { unCarriedFileCount :: Int }
   deriving (Eq, Ord, Show)
   deriving newtype (ToJSON)
 

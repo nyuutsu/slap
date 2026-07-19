@@ -89,7 +89,7 @@ import Slap.PatchField (PatchField)
 import qualified Slap.Preflight as Preflight
 import Slap.Preflight (HeaderRescueCandidate(..), PreparedApplySource(..), SourceReport(..),
                        prepareApplySource, weighUndoInput)
-import Slap.SomePatch (PatchIdentity(..), PatchKind(..), SomePatch, UndoAnswer(..),
+import Slap.SomePatch (PatchIdentity(..), PatchKind(..), SomePatch, UndoAnswer(..), clearToRun,
                        UndoAvailability(..), UndoStrategy, parseSome, patchAdvisories,
                        patchAnalysis, patchContentsOf, patchExtractedMeta, patchFormat, patchIdentity,
                        patchInfo, patchKind, patchSourceAdvisories, patchUndo, patchVerification, runUndo)
@@ -235,6 +235,7 @@ checkApply request = do
 checkUndo :: UndoRequest -> Either SlapError VerificationVerdict
 checkUndo request = do
   parsed <- parseForRun (undoDialects request) (undoPatchBytes request)
+  clearToRun parsed
   pure (Preflight.checkUndo parsed (unOutputFileContents (undoPatchedRom request)))
 
 -- | No standing field: undo neither normalizes nor restores, so its verdicts always describe the files exchanged.
@@ -387,6 +388,7 @@ data JudgedConvert = JudgedConvert
 judgeConvert :: ConvertRequest -> Either SlapError JudgedConvert
 judgeConvert request = do
   parsed <- parseSome (convertDialects request) (convertMetadataEncoding request) (convertPatchBytes request)
+  clearToRun parsed
   let mergedMeta = mergeRequestedMetadata (convertMetadata request) (patchExtractedMeta parsed)
   pure JudgedConvert
     { judgedPatch      = parsed

@@ -45,7 +45,7 @@ import Slap.Status.VCDIFF (VCDIFFShapeViolation(..), VCDIFFCodeTableMalformation
                            vcdiffSectionName, ReservedBitsSet(..), VCDIFFOnDemandSection(..),
                            VCDIFFMalformation(..), VCDIFFRFCFeature(..), VCDIFFXDelta3Feature(..))
 import Slap.Status.Vocabulary (ExtractionSubject(..), compressionAlgorithmName,
-                               slapAddressableCeiling,
+                               slapAddressableCeiling, CarriedFileCount(..),
                                ControlSectionSize(..), DiffSectionSize(..), TargetSectionSize(..),
                                BSDiffHeaderMalformation(..), APSN64HeaderMalformation(..),
                                NINJA1Malformation(..), NINJA1SubformatIdentifier(..),
@@ -549,6 +549,11 @@ renderSlapError (PatchCarriesNoUndoData label) = case label of
 
 renderSlapError (NoUndoForFormat label) =
   "no undo for " <> formatLabelName label <> " patches"
+
+renderSlapError (PatchCarriesMultipleFiles label (CarriedFileCount fileCount)) =
+  "this " <> formatLabelName label <> " patch carries " <> renderAsText fileCount <> " files\n"
+  <> "a " <> formatLabelName label <> " patch can bundle several files;"
+  <> " slap reads the whole bundle and shows it, and applies, undoes, and converts single-file patches only"
 
 renderSlapError (UnencodeablePair label reason) =
   formatLabelName label <> ": can't encode this input and output as a patch: "

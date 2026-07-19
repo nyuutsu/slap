@@ -21,7 +21,7 @@ import Slap.Header (ConsoleHeader, HeaderAdjustment(..), InputHeaderDirective(..
                     addHeader, removeHeader, consoleHeaderLength)
 import Slap.Measure (ActualSize(..), byteFileSize)
 import Slap.Normalize (NormalizedSource(..), normalizeApplySource)
-import Slap.SomePatch (SomePatch(..))
+import Slap.SomePatch (SomePatch(..), clearToRun)
 import Slap.Status (SlapError(..), SlapAdvisory(..), Outcome(..), DeclaredCheckKind)
 import Slap.Verify (VerificationPolicy(..), VerificationVerdict(..), Weighing,
                     flipSpokenSides, verdictOnWeighing, weighSource, weighTarget)
@@ -109,7 +109,8 @@ data SourceReport = SourceReport
 -- | Is this the file the patch expects? Answered through the same reframe-normalize-weigh pipeline
 -- the apply itself runs, so the answer and the act cannot disagree.
 checkApply :: SomePatch -> InputHeaderDirective -> ByteString -> Either SlapError SourceReport
-checkApply parsed directive handedBytes =
+checkApply parsed directive handedBytes = do
+  clearToRun parsed
   reportOnWeighing parsed directive handedBytes . arrangedWeighing
     <$> arrangeUnderDirective parsed directive handedBytes
 
@@ -142,6 +143,7 @@ data PreparedApplySource = PreparedApplySource
 prepareApplySource
   :: VerificationPolicy -> SomePatch -> InputHeaderDirective -> ByteString -> Either SlapError PreparedApplySource
 prepareApplySource verificationPolicy parsed directive handedBytes = do
+  clearToRun parsed
   arranged <- arrangeUnderDirective parsed directive handedBytes
   let report = reportOnWeighing parsed directive handedBytes (arrangedWeighing arranged)
   case (verificationPolicy, sourceRescue report) of

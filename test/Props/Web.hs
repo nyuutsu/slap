@@ -13,16 +13,18 @@ import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.Constraint (Constraint(..))
 import qualified Slap.Create as Create
 import Slap.Dialect (Dialect(..))
-import Slap.Display.Analysis (renderAnalysisFull)
-import Slap.Display.Info (InputSideVerdict(..), OutputSideVerdict(..), infoUndeclaredTextFields)
+import Slap.Display.Analysis (PatchAnalysis(..), renderAnalysisFull)
+import Slap.Display.Common (InfoLine(..), Tally(..))
+import Slap.Display.Info (InputSideVerdict(..), OutputSideVerdict(..), infoLines, infoTally, infoUndeclaredTextFields)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Header (HeaderAdjustment(HeaderComesOff), InputHeaderDirective(TakeInputAsIs))
 import Slap.Measure (ActualMagic(..), FileSize(..))
 import Slap.MetadataField (MetadataField(..), MetadataRequest(..))
+import qualified Slap.NINJA2.Types as NINJA2
 import Slap.PPF1.Types (PPF1Origin(PPF1OriginAmiga))
 import Slap.SomePatch (parseSome, patchAdvisories, patchAnalysis, patchInfo)
-import Slap.Status (CreateResult(..), Outcome(..), SlapAdvisory(..), SlapError(..),
+import Slap.Status (CarriedFileCount(..), CreateResult(..), Outcome(..), SlapAdvisory(..), SlapError(..),
                     SourceRequiredCause(..), noAdvisories, renderSlapAdvisory, renderSlapError)
 import Slap.Status.VCDIFF (VCDIFFShapeViolation(..))
 import Slap.Text (EncodedText(..), EncodingName(..), resolveEncodingName)
@@ -69,6 +71,11 @@ webTests = testGroup "Web"
       , testCase "undo peels a UPS back to the original"                  test_undoPeelsUPS
       , testCase "the two undo refusals arrive distinct"                  test_undoRefusalsDistinct
       , testCase "a stale toggle refuses the act exactly as its check"    test_applyDialectAgreement
+      ]
+  , testGroup "a multi-file bundle"
+      [ testCase "its identity carries the impediment"          test_multiFileIdentity
+      , testCase "info counts the bundle; explain offers no walk" test_multiFileDisplay
+      , testCase "every act and check refuses with the one impediment" test_multiFileActsRefuse
       ]
   , testGroup "emit checks"
       [ testCase "a plain BPS create is Ready"                          test_checkCreateBPSReady
@@ -152,9 +159,10 @@ test_identifyCreatedBPS :: Assertion
 test_identifyCreatedBPS = do
   bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
   identifyPatch noDialectsRequested EncodingUtf8 bpsPatch
-    @?= Right PatchIdentity { identifiedFormat   = LabelBPS
-                            , applicableDialects = Set.empty
-                            , identifiedUndo     = FormatHasNoUndo }
+    @?= Right PatchIdentity { identifiedFormat       = LabelBPS
+                            , applicableDialects     = Set.empty
+                            , identifiedUndo         = FormatHasNoUndo
+                            , identifiedImpediment   = Nothing }
 
 test_identifyUnrecognizedBytes :: Assertion
 test_identifyUnrecognizedBytes =
@@ -271,6 +279,61 @@ test_applyDialectAgreement = do
     (Left checkRefusal, Left actRefusal) -> actRefusal @?= checkRefusal
     other -> assertFailure ("expected two refusals: " <> show other)
 
+-- | Two files in one patch: a one-record file, then a two-record file. slap's own create never writes one.
+multiFileNINJA2Wire :: ByteString
+multiFileNINJA2Wire =
+     NINJA2.ninja2MagicBytes
+  <> ByteString.pack [0]           -- PATCH_ENC: encoding undeclared
+  <> ByteString.replicate 2041 0   -- the fixed header's text fields, all empty
+  <> openFileCommand 4
+  <> xorRecordCommand 0 0xAA
+  <> openFileCommand 2
+  <> xorRecordCommand 0 0xBB
+  <> xorRecordCommand 1 0xCC
+  <> ByteString.pack [0x00]        -- END
+  where
+    openFileCommand size = ByteString.pack
+      [ 0x01                       -- OPEN_NEW_FILE
+      , 0x00                       -- file name, zero length
+      , 0x00                       -- rom type: raw
+      , 0x01, size, 0x01, size     -- source and target size, equal so no overflow follows
+      ] <> ByteString.replicate 32 0   -- both MD5s absent
+    xorRecordCommand offset maskByte = ByteString.pack
+      [ 0x02, 0x01, offset, 0x01, 0x01, maskByte ]   -- one XOR byte at the offset
+
+multiFileImpediment :: SlapError
+multiFileImpediment = PatchCarriesMultipleFiles LabelNINJA2 (CarriedFileCount 2)
+
+test_multiFileIdentity :: Assertion
+test_multiFileIdentity =
+  identifyPatch noDialectsRequested EncodingUtf8 (PatchFileContents multiFileNINJA2Wire)
+    @?= Right PatchIdentity { identifiedFormat       = LabelNINJA2
+                            , applicableDialects     = Set.empty
+                            , identifiedUndo         = PatchIsItsOwnReverse
+                            , identifiedImpediment   = Just multiFileImpediment }
+
+test_multiFileDisplay :: Assertion
+test_multiFileDisplay =
+  case parseSome noDialectsRequested EncodingUtf8 (PatchFileContents multiFileNINJA2Wire) of
+    Left refusal -> assertFailureT ("parse: " <> renderSlapError refusal)
+    Right parsed -> do
+      infoTally (patchInfo parsed) @?= Tally 3
+      elem (InfoLine "files" "2") (infoLines (patchInfo parsed)) @? "no files row in info"
+      null (analysisSections (patchAnalysis parsed)) @? "a bundle offered a walk"
+
+test_multiFileActsRefuse :: Assertion
+test_multiFileActsRefuse = do
+  let patchBytes = PatchFileContents multiFileNINJA2Wire
+  checkApply (plainApplyRequest patchBytes fixtureSourceBytes) @?= Left multiFileImpediment
+  checkUndo (plainUndoRequest patchBytes fixtureTargetBytes) @?= Left multiFileImpediment
+  checkConvert (plainConvertRequest patchBytes (CreateDifferential CreateBPS)) @?= Left multiFileImpediment
+  Outcome applied _advisories <- applyPatch (plainApplyRequest patchBytes fixtureSourceBytes)
+  case applied of
+    Left refusal -> refusal @?= multiFileImpediment
+    Right _      -> assertFailure "apply ran a multi-file bundle"
+  outcomeValue (undoPatch (plainUndoRequest patchBytes fixtureTargetBytes))
+    @?= Left multiFileImpediment
+
 plainCreateRequest :: CreateFormat -> CreateRequest
 plainCreateRequest target = CreateRequest
   { createTargetFormat = target
@@ -380,9 +443,10 @@ test_xdelta1NameFallback = do
   case outcomeValue (createPatch request) of
     Left refusal  -> assertFailureT ("create: " <> renderSlapError refusal)
     Right created -> identifyPatch noDialectsRequested EncodingUtf8 (createdPatchBytes created)
-                       @?= Right PatchIdentity { identifiedFormat   = LabelXDelta1
-                                               , applicableDialects = Set.empty
-                                               , identifiedUndo     = FormatHasNoUndo }
+                       @?= Right PatchIdentity { identifiedFormat       = LabelXDelta1
+                                               , applicableDialects     = Set.empty
+                                               , identifiedUndo         = FormatHasNoUndo
+                                               , identifiedImpediment   = Nothing }
 
 test_xdelta1OverlongName :: Assertion
 test_xdelta1OverlongName =

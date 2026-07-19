@@ -48,6 +48,8 @@ export const makeUndoVerb = (host) => {
     return answer === 'PatchIsItsOwnReverse' || answer === 'PatchCarriesUndoData';
   };
 
+  const impedimentSpoken = () => undo.patchIdentity?.answered?.spokenIdentityImpediment ?? null;
+
   /* ------------------------------------------------------------- asks ---- */
 
   const askPatchedFacts = () => {
@@ -66,7 +68,7 @@ export const makeUndoVerb = (host) => {
 
   // The weighing feeds the act alone, so a patch that cannot peel is never weighed.
   const askWeighing = () => {
-    if (!undo.patch || !undo.patched || !patchPeels()) return;
+    if (!undo.patch || !undo.patched || !patchPeels() || impedimentSpoken()) return;
     host.ask('check-undo', { patch: undo.patch, patched: undo.patched, declaration: declaration() })
       ?.then(host.wheneverStillCurrent(({ answered }) => { undo.verdict = answered; }))
       .catch(host.askFailed);
@@ -183,8 +185,8 @@ export const makeUndoVerb = (host) => {
       ${sentenceMarkup()}
       ${operandsSatisfied && !undo.running && swapSeatsMarkup}
       ${!undo.patch && peelNoteMarkup}
-      ${undoFactsCardMarkup(undo, patchPeels())}
-      ${operandsSatisfied && patchPeels() && optionsMarkup()}`;
+      ${undoFactsCardMarkup(undo, patchPeels() && !impedimentSpoken())}
+      ${operandsSatisfied && patchPeels() && !impedimentSpoken() && optionsMarkup()}`;
   };
 
   /* ------------------------------------------------------------ voice ---- */
@@ -197,6 +199,8 @@ export const makeUndoVerb = (host) => {
     if (host.notice()) return plainVoice(host.notice());
     if (undo.patchIdentity?.refused)
       return html`<p class="refusal">${undo.patchIdentity.refused.spokenErrorSentence}</p>`;
+    const blocked = impedimentSpoken();
+    if (blocked) return html`<p class="refusal">${blocked.spokenErrorSentence}</p>`;
     const answer = undoAnswer();
     if (answer === 'FormatHasNoUndo') return plainVoice(voiceLines.undoOneWay);
     if (answer === 'AuthorOmittedUndoData') return plainVoice(voiceLines.undoDataOmitted);
@@ -227,7 +231,7 @@ export const makeUndoVerb = (host) => {
   /* ---------------------------------------------------------- surface ---- */
 
   const refusalCertain = () => {
-    if (undo.patchIdentity?.refused) return true;
+    if (undo.patchIdentity?.refused || impedimentSpoken()) return true;
     const answer = undoAnswer();
     if (answer === 'FormatHasNoUndo' || answer === 'AuthorOmittedUndoData') return true;
     if (undo.verificationPolicy === 'SkipVerification') return false;

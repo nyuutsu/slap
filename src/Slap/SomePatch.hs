@@ -11,6 +11,7 @@ module Slap.SomePatch
   , UndoAnswer(..)
   , undoAnswerFor
   , parseSome
+  , clearToRun
   , PatchIdentity(..)
   , patchIdentity
   ) where
@@ -114,7 +115,7 @@ import Slap.Display.Common (FormatHeader(..),
 import Slap.Display.Info (PatchInfo(..))
 import Slap.Status (SlapError(..), SlapAdvisory(..), DecompressionFailure(..),
                    Parsed(..), Outcome(..), noAdvisories,
-                   EmptyUnit(..), NINJA1SubformatConversion(..))
+                   EmptyUnit(..), NINJA1SubformatConversion(..), CarriedFileCount(..))
 import Slap.FormatLabel (FormatLabel(..))
 import qualified Slap.Compression.Stream as Stream
 
@@ -194,6 +195,8 @@ data SomePatch = SomePatch
   , patchKind           :: PatchKind
   , patchApply          :: ApplyStrategy
   , patchUndo           :: UndoAvailability
+  , patchImpediment     :: Maybe SlapError
+    -- ^ Why the patch, though fully read, cannot be run; every act's door refuses with it.
   , patchVerification   :: Verification
   , patchSourceNormalization :: Maybe SourceNormalization
     -- ^ 'Just' when the patch's ROM type has a normalization procedure ("Slap.Normalize").
@@ -252,6 +255,8 @@ data PatchIdentity = PatchIdentity
   , applicableDialects :: !(Set.Set Dialect)
     -- ^ 'acceptedDialects' of the format — the read-side pruning: a PPF1 origin toggle belongs on screen only when a PPF1 is in hand.
   , identifiedUndo     :: !UndoAnswer
+  , identifiedImpediment :: !(Maybe SlapError)
+    -- ^ Carried beside the undo answer so a frontend can darken every act before one is asked for.
   }
   deriving (Eq, Show)
 
@@ -260,7 +265,12 @@ patchIdentity parsed = PatchIdentity
   { identifiedFormat   = patchFormat parsed
   , applicableDialects = acceptedDialects (patchFormat parsed)
   , identifiedUndo     = undoAnswerFor (patchUndo parsed)
+  , identifiedImpediment = patchImpediment parsed
   }
+
+-- | The act-door question, asked before any run: 'Left' is the impediment.
+clearToRun :: SomePatch -> Either SlapError ()
+clearToRun = maybe (Right ()) Left . patchImpediment
 
 patchContentsOf :: SomePatch -> Maybe PatchContents
 patchContentsOf parsed = case patchKind parsed of
@@ -281,6 +291,7 @@ bareSomePatch format analysis kind applyStrategy advisories info = SomePatch
   , patchKind                = kind
   , patchApply               = applyStrategy
   , patchUndo                = UndoUnsupportedByFormat
+  , patchImpediment          = Nothing
   , patchVerification        = noVerification
   , patchAdvisories          = advisories
   , patchInfo                = info
@@ -751,10 +762,19 @@ parseSomePatchFromNINJA2 metadataEncoding patchContents = do
                 Nothing -> NoSourceChecksumToConfirm
             }
         | otherwise = Nothing
+      impediment = case NINJA2.ninja2FurtherFiles patch of
+        []      -> Nothing
+        further -> Just (PatchCarriesMultipleFiles LabelNINJA2 (CarriedFileCount (1 + length further)))
+      recordTotal = length (NINJA2.ninja2Records patch)
+                  + sum (map NINJA2.furtherFileRecordCount (NINJA2.ninja2FurtherFiles patch))
       applyStrategy = ApplyStrategy
-          { runApply = \source -> pure (fmap noAdvisories (NINJA2.applyNINJA2 patch source)) }
+          { runApply = \source -> pure $ case impediment of
+              Just blocked -> Left blocked
+              Nothing      -> fmap noAdvisories (NINJA2.applyNINJA2 patch source) }
       -- All that can go missing in reverse is the tail a shrink cut off, and only truncate-mode overflow carries it.
-      undoStrategy = UndoStrategy (fmap noAdvisories . NINJA2.undoNINJA2 patch)
+      undoStrategy = UndoStrategy $ \modified -> case impediment of
+        Just blocked -> Left blocked
+        Nothing      -> fmap noAdvisories (NINJA2.undoNINJA2 patch modified)
       undoAvailability = case openNewFile of
         Just open | NINJA2.openNewFileSourceSize open > NINJA2.openNewFileTargetSize open ->
           case NINJA2.ninja2OverflowType patch of
@@ -762,7 +782,7 @@ parseSomePatchFromNINJA2 metadataEncoding patchContents = do
             _                            -> UndoAbsentFromPatch
         _ -> UndoBySelfInversion undoStrategy
       advisories = parseAdvisories
-                 ++ [EmptyPatch LabelNINJA2 EmptyRecords | null (NINJA2.ninja2Records patch)]
+                 ++ [EmptyPatch LabelNINJA2 EmptyRecords | recordTotal == 0]
                  ++ platformAdvisories
                  ++ romTypeAdvisories
       info = PatchInfo
@@ -770,17 +790,21 @@ parseSomePatchFromNINJA2 metadataEncoding patchContents = do
         , infoLines    = NINJA2.ninja2Meta patch
         , infoEmbedded = []
         , infoUndeclaredTextFields = NINJA2.ninja2UndeclaredTextFields patch
-        , infoTally    = Tally (length (NINJA2.ninja2Records patch))
+        , infoTally    = Tally recordTotal
         , infoUnit     = Records
         , infoBytes    = Nothing
         , infoRange    = Nothing
         }
   Right (bareSomePatch LabelNINJA2 (NINJA2.analyzeNINJA2 patch) Differential applyStrategy advisories info)
-    { patchVerification = noVerification
-        { verifySourceMD5 = sourceMD5ForVerification
-        , verifyTargetMD5 = filterZeroMD5 (fmap NINJA2.openNewFileTargetMD5 openNewFile)
-        }
+    { patchVerification = case impediment of
+        -- the first file's MD5s say nothing about a bundle; a multi-file patch declares no single pair to weigh
+        Just _  -> noVerification
+        Nothing -> noVerification
+          { verifySourceMD5 = sourceMD5ForVerification
+          , verifyTargetMD5 = filterZeroMD5 (fmap NINJA2.openNewFileTargetMD5 openNewFile)
+          }
     , patchUndo = undoAvailability
+    , patchImpediment = impediment
     , patchSourceNormalization = sourceNormalization
     , patchExtractedMeta =
         let headerFields = NINJA2.ninja2Header patch

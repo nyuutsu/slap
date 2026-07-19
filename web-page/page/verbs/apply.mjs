@@ -49,6 +49,8 @@ export const makeApplyVerb = (host) => {
       .catch(host.askFailed);
   };
 
+  const impedimentSpoken = () => apply.patchIdentity?.answered?.spokenIdentityImpediment ?? null;
+
   const askIdentity = () => {
     if (!apply.patch) return;
     host.ask('identify', { patch: apply.patch, declaration: identifyDeclaration(apply.ppf1Origin, 'utf-8') })
@@ -57,7 +59,7 @@ export const makeApplyVerb = (host) => {
   };
 
   const askPreflight = () => {
-    if (!apply.patch || !apply.rom) return;
+    if (!apply.patch || !apply.rom || impedimentSpoken()) return;
     host.ask('check-apply', { patch: apply.patch, rom: apply.rom, declaration: declaration() })
       ?.then(host.wheneverStillCurrent(({ answered }) => { apply.sourceReport = answered; }))
       .catch(host.askFailed);
@@ -219,7 +221,7 @@ export const makeApplyVerb = (host) => {
       ${operandsSatisfied && !apply.running && swapSeatsMarkup}
       ${applyFactsCardMarkup(apply, host.surface()?.surfaceConsoleHeaders ?? [])}
       ${headerControlSurfaces && headerControlMarkup()}
-      ${operandsSatisfied && optionsMarkup()}`;
+      ${operandsSatisfied && !impedimentSpoken() && optionsMarkup()}`;
   };
 
   /* ------------------------------------------------------------ voice ---- */
@@ -232,6 +234,8 @@ export const makeApplyVerb = (host) => {
     if (host.notice()) return plainVoice(host.notice());
     if (apply.patchIdentity?.refused)
       return html`<p class="refusal">${apply.patchIdentity.refused.spokenErrorSentence}</p>`;
+    const blocked = impedimentSpoken();
+    if (blocked) return html`<p class="refusal">${blocked.spokenErrorSentence}</p>`;
     if (!apply.patch && !apply.rom) return plainVoice(voiceLines.resting);
     if (!apply.patch) return plainVoice(voiceLines.romOnly);
     if (!apply.rom) return plainVoice(voiceLines.patchOnly);
@@ -264,7 +268,7 @@ export const makeApplyVerb = (host) => {
 
   // Dark only on a fact the page already holds; a question still in flight never darkens it.
   const refusalCertain = () => {
-    if (apply.patchIdentity?.refused) return true;
+    if (apply.patchIdentity?.refused || impedimentSpoken()) return true;
     if (apply.verificationPolicy === 'SkipVerification') return false;
     if (apply.sourceReport?.sourceVerdict?.tag !== 'VerdictDiffers') return false;
     return !(apply.framing.tag === 'TakeInputAsIs' && apply.sourceReport.sourceRescue.length === 1);

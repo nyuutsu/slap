@@ -10,6 +10,7 @@ module Slap.NINJA2.Describe
 import Slap.NINJA2.Types
 import Slap.Checksum (MD5Hash(..))
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), renderAsText)
+import Slap.Display.Glyph (spacePaddedRightwardsArrow)
 import Slap.Display.Primitives (hexByteString)
 import Slap.Measure (FileSize(..), byteLength)
 import Slap.Display.Analysis (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
@@ -37,11 +38,29 @@ ninja2Meta patch = concat
   , optionalField "website"     (ninja2Website     header)
   , optionalField "description" (ninja2Description header)
   , [InfoLine "text mode" (ninja2TextModeName (ninja2TextMode patch))]
+  , fileCountField
   , openNewFileFields
   , overflowField
+  , furtherFileFields
   ]
   where
     header = ninja2Header patch
+
+    -- In a bundle, the size and MD5 lines above describe the first file; each further file gets a row of its own.
+    fileCountField = case ninja2FurtherFiles patch of
+      [] -> []
+      further -> [InfoLine "files" (renderAsText (1 + length further))]
+
+    furtherFileFields =
+      [ InfoLine ("file " <> renderAsText fileNumber) (furtherFileGlance furtherFile)
+      | (fileNumber, furtherFile) <- zip [2 :: Int ..] (ninja2FurtherFiles patch) ]
+
+    furtherFileGlance furtherFile =
+      renderAsText (unFileSize (openNewFileSourceSize opened))
+        <> spacePaddedRightwardsArrow <> renderAsText (unFileSize (openNewFileTargetSize opened))
+        <> " bytes, " <> renderAsText (furtherFileRecordCount furtherFile) <> " records"
+      where
+        opened = furtherFileOpen furtherFile
 
     optionalField _     Nothing      = []
     optionalField label (Just value) =
@@ -86,13 +105,16 @@ ninja2UndeclaredTextFields patch = case ninja2TextMode patch of
                         , ("website", ninja2Website), ("description", ninja2Description) ]
     , isJust (field (ninja2Header patch)) ]
 
+-- | A multi-file bundle's records name offsets in several files' address spaces, so no single walk describes them;
+-- its analysis carries the record total and no regions.
 analyzeNINJA2 :: NINJA2Patch -> PatchAnalysis
 analyzeNINJA2 patch = PatchAnalysis
-  { analysisSections = [SectionRegions (map makeNINJA2Region (ninja2Records patch))]
-  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records Nothing)
+  { analysisSections = [SectionRegions (map makeNINJA2Region (ninja2Records patch)) | null (ninja2FurtherFiles patch)]
+  , analysisSummary  = Summary (SummaryInfo (Tally recordTotal) Records Nothing)
   }
   where
-    recordCount = length (ninja2Records patch)
+    recordTotal = length (ninja2Records patch)
+                + sum (map furtherFileRecordCount (ninja2FurtherFiles patch))
 
 makeNINJA2Region :: NINJA2Record -> AnalysisRegion
 makeNINJA2Region (NINJA2Record recordOffset deltaBytes) = AnalysisRegion

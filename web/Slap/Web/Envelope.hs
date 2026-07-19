@@ -66,16 +66,18 @@ data Envelope answer = Envelope
 
 deriving via Generically (Envelope answer) instance ToJSON answer => ToJSON (Envelope answer)
 
+speakError :: SlapError -> SpokenError
+speakError refusal = SpokenError
+  { spokenError         = refusal
+  , spokenErrorSentence = renderSlapError refusal
+  }
+
 envelopeOf :: Outcome (Either SlapError answer) -> Envelope answer
 envelopeOf (Outcome answer advisories) = Envelope
   { envelopeAnswer     = first speakError answer
   , envelopeAdvisories = map speakAdvisory advisories
   }
   where
-    speakError refusal = SpokenError
-      { spokenError         = refusal
-      , spokenErrorSentence = renderSlapError refusal
-      }
     speakAdvisory advisory = SpokenAdvisory
       { spokenAdvisory         = advisory
       , spokenAdvisorySeverity = slapAdvisorySeverity advisory
@@ -92,6 +94,7 @@ data SpokenPatchIdentity = SpokenPatchIdentity
   , spokenIdentityFormatName :: Text
   , spokenIdentityDialects   :: Set Dialect
   , spokenIdentityUndo       :: UndoAnswer
+  , spokenIdentityImpediment :: Maybe SpokenError
   }
   deriving (Eq, Show, Generic)
   deriving (ToJSON) via Generically SpokenPatchIdentity
@@ -102,6 +105,7 @@ speakPatchIdentity identity = SpokenPatchIdentity
   , spokenIdentityFormatName = formatLabelName (identifiedFormat identity)
   , spokenIdentityDialects   = applicableDialects identity
   , spokenIdentityUndo       = identifiedUndo identity
+  , spokenIdentityImpediment = speakError <$> identifiedImpediment identity
   }
 
 -- The acts' answers, split for the crossing: each Spoken form is its answer minus the output bytes,

@@ -53,6 +53,8 @@ const applyVerdictRow = (apply, consoleRows) => {
   if (!apply.patch)
     return html`<div class="verdict waiting"><span class="mark">·</span>
       <span>Pick a patch and slap will check this rom against it.</span></div>`;
+  // the impediment story is the voice's
+  if (apply.patchIdentity?.answered?.spokenIdentityImpediment) return null;
   if (!apply.sourceReport)
     return html`<div class="verdict waiting"><span class="mark">·</span><span>checking…</span></div>`;
 
