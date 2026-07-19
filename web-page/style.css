@@ -188,6 +188,9 @@ button { font: inherit; cursor: pointer; }
 .field .why, .choice-label .why { color: var(--whisper); font-family: var(--body); font-size: 12.5px; flex: none; }
 .byte-count { font-family: var(--mono); font-size: 11px; color: var(--whisper); flex: none; }
 .byte-count.over-ceiling { color: var(--caution-ink); }
+.chip-stack { display: inline-block; position: relative; }
+.chip-stack .role-whisper { margin-top: 2px; }
+.choice-row:has(.chip-stack) { margin-bottom: 16px; }
 .choice-gloss { color: var(--ink-soft); font-size: 12.5px; margin: 4px 0 2px; }
 .has-story { text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: var(--hairline); cursor: help; }
 .field-input, .field-textarea {

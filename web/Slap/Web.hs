@@ -66,8 +66,9 @@ import GHC.Generics (Generic, Generically(..))
 import Slap.Binary (md5, sha1)
 import Slap.Checksum (CRC32, MD5Hash, SHA1Hash)
 import Slap.Constraint (Constraint)
-import Slap.Convert (CreateFormat(..), DifferentialCreate(CreateXDelta1, CreateXDelta3, CreateRFCVCDIFF),
-                     DirectCreate(CreatePPF2, CreatePPF3), FileIdDizRequest(..),
+import Slap.Convert (CreateFormat(..),
+                     DifferentialCreate(CreateXDelta1, CreateXDelta3, CreateRFCVCDIFF, CreateNINJA2),
+                     DirectCreate(CreatePPF2, CreatePPF3, CreateNINJA1), FileIdDizRequest(..),
                      RequestedConstraints, RequestedDialects, RequestedPatchMetadata(..),
                      TokenVisibility(Canonical), acceptedConstraints, acceptedDialects,
                      acceptedMetadataFields, convertDirect, createDefaultAdvisories,
@@ -92,9 +93,11 @@ import Slap.Header (ConsoleHeader, InputHeaderDirective, consoleHeaderLength,
 import Slap.Apply (PatchedRom(..), VerdictStanding(..), runPreparedApply)
 import Slap.Measure (FileSize, Length, byteFileSize)
 import Slap.MetadataField (MetadataField(..), metadataFieldFlagName, requestField)
+import Slap.NINJA2.Types (ninja2DefaultTextMode)
 import Slap.PPF2.Types (narrowPPF2FileId)
-import Slap.PPF3.Types (narrowPPF3FileId)
+import Slap.PPF3.Types (narrowPPF3FileId, ppf3DefaultImageType)
 import Slap.PatchField (PatchField)
+import Slap.PlatformType (PlatformType(PlatformRaw))
 import qualified Slap.Preflight as Preflight
 import Slap.Preflight (HeaderRescueCandidate(..), PreparedApplySource(..), SourceReport(..),
                        prepareApplySource, weighUndoInput)
@@ -104,10 +107,12 @@ import Slap.SomePatch (PatchIdentity(..), PatchKind(..), SomePatch, UndoAnswer(.
                        patchInfo, patchKind, patchSourceAdvisories, patchUndo, patchVerification, runUndo)
 import Slap.Status (CreateResult(..), Outcome(..), SlapAdvisory, SlapError(..),
                     SourceRequiredCause(..))
-import Slap.Surface (ChoiceVocabulary(..), MetadataFieldKind(..), metadataFieldKind)
+import Slap.Surface (ChoiceVocabulary(..), MetadataFieldKind(..), imageTypeTokens, metadataFieldKind,
+                     romTypeTokens, textModeTokens)
 import Slap.Text (AdvertisedEncodingFamily, EncodingName(EncodingUtf8), advertisedEncodings)
+import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor, secondaryCompressorTokens,
+                                         xdelta3DefaultSecondaryCompressor)
 import Slap.VCDIFF.Types (EmissionWindowSize, defaultXDelta3WindowSize)
-import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor, secondaryCompressorTokens)
 import Slap.Verify (VerificationPolicy, VerificationVerdict, Weighing, flipSpokenSides,
                     judgeWeighing, verdictOnWeighing, weighSource)
 import Slap.XDelta1.Types (ResolvedXDelta1FileNames, requireXDelta1FileNames,
@@ -137,6 +142,8 @@ data FormatDescription = FormatDescription
   , formatWindowDefault     :: Maybe WindowDefault
   , formatTextFieldCeilings :: [(MetadataField, Length)]
     -- ^ The byte width each bounded text field is cut to, so a control can count against it live.
+  , formatChoiceDefaults    :: [(MetadataField, String)]
+    -- ^ The token an unset choice field falls to — each row reads the emission's own default.
   , formatSecondaryChoices  :: [(String, XDelta3SecondaryCompressor)]
     -- ^ What @--compress-with@ can choose when this is the target; empty for a format without a secondary compressor.
     -- Per-format rather than one global vocabulary, so a second compressor-bearing format's own algorithms would have a home.
@@ -192,11 +199,28 @@ describeCreateTarget token target = FormatDescription
       _                                  -> Nothing
   , formatTextFieldCeilings =
       [ (boundedTextField row, boundedTextWidth row) | row <- boundedTextFieldRows target ]
+  , formatChoiceDefaults    = case target of
+      CreateDirect CreatePPF3         -> [(MetadataImageType, tokenOf imageTypeTokens ppf3DefaultImageType)]
+      CreateDirect CreateNINJA1       -> [(MetadataRomType, tokenOf romTypeTokens PlatformRaw)]
+      CreateDifferential CreateNINJA2 ->
+        [ (MetadataRomType,  tokenOf romTypeTokens PlatformRaw)
+        , (MetadataTextMode, tokenOf textModeTokens ninja2DefaultTextMode)
+        ]
+      CreateDifferential CreateXDelta3 ->
+        [(MetadataSecondaryCompressor, tokenOf secondaryCompressorTokens xdelta3DefaultSecondaryCompressor)]
+      _ -> []
   , formatSecondaryChoices  =
       if MetadataSecondaryCompressor `Set.member` acceptedMetadataFields target
         then secondaryCompressorTokens
         else []
   }
+
+-- | The token a vocabulary spells a value by; a miss is a broken table, answered loudly.
+tokenOf :: Eq value => [(String, value)] -> value -> String
+tokenOf vocabulary value =
+  case [token | (token, candidate) <- vocabulary, candidate == value] of
+    token : _ -> token
+    []        -> error "Slap.Web: a choice default has no token in its own vocabulary"
 
 describeMetadataField :: MetadataField -> MetadataFieldDescription
 describeMetadataField field = MetadataFieldDescription

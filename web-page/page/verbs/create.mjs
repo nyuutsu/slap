@@ -354,13 +354,18 @@ export const makeCreateVerb = (host) => {
 
   const choiceRowMarkup = (row, choicePairs) => {
     const fieldName = row.describedMetadataField;
-    const gloss = choiceGloss(fieldName, create.chosenChoices[fieldName]);
+    const defaultToken = (surfaceRow()?.formatChoiceDefaults ?? [])
+      .find(([defaultField]) => defaultField === fieldName)?.[1] ?? null;
+    const gloss = choiceGloss(fieldName, create.chosenChoices[fieldName], defaultToken);
+    const chip = (token) => html`<button
+      class="chip${create.chosenChoices[fieldName] === token ? ' on' : ''}"
+      aria-pressed="${create.chosenChoices[fieldName] === token}"
+      data-action="choose-meta" data-field="${fieldName}" data-token="${token}">${token}</button>`;
     return html`<div>
       <p class="choice-label">${storiedText(fieldName, fieldLabel(fieldName, row.metadataFieldFlag))}${whySpan(fieldName)}</p>
-      <div class="choice-row">${choicePairs.map(([token]) => html`<button
-        class="chip${create.chosenChoices[fieldName] === token ? ' on' : ''}"
-        aria-pressed="${create.chosenChoices[fieldName] === token}"
-        data-action="choose-meta" data-field="${fieldName}" data-token="${token}">${token}</button>`)}</div>
+      <div class="choice-row">${choicePairs.map(([token]) => (token === defaultToken
+        ? html`<span class="chip-stack">${chip(token)}<span class="role-whisper">default</span></span>`
+        : chip(token)))}</div>
       ${gloss && html`<p class="choice-gloss">${gloss}</p>`}</div>`;
   };
 

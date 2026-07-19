@@ -23,7 +23,10 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Header (HeaderAdjustment(HeaderComesOff), InputHeaderDirective(TakeInputAsIs))
 import Slap.Measure (ActualMagic(..), FileSize(..))
 import Slap.MetadataField (MetadataField(..), MetadataRequest(..))
+import qualified Slap.NINJA1.Types as NINJA1
 import qualified Slap.NINJA2.Types as NINJA2
+import Slap.Platform (platformToNINJA1, platformToNINJA2)
+import Slap.PlatformType (PlatformType(PlatformRaw))
 import Slap.PPF1.Types (PPF1Origin(PPF1OriginAmiga))
 import Slap.SomePatch (parseSome, patchAdvisories, patchAnalysis, patchInfo)
 import Slap.Status (CarriedFileCount(..), CreateResult(..), Outcome(..), SlapAdvisory(..), SlapError(..),
@@ -67,6 +70,7 @@ webTests = testGroup "Web"
   , testCase "the metadata field roster covers every field once"   test_metadataFieldRosterCensus
   , testCase "the window default crosses on exactly the vcdiff rows" test_formatWindowDefaults
   , testCase "text ceilings cross beside the fields they bound"    test_formatTextCeilingCensus
+  , testCase "choice defaults cross on exactly the defaulting rows" test_formatChoiceDefaultCensus
   , testCase "the console census covers every header once"         test_consoleCensusCoversEveryHeader
   , testCase "a created BPS identifies across the boundary"        test_identifyCreatedBPS
   , testCase "unrecognized bytes refuse with the engine's own error" test_identifyUnrecognizedBytes
@@ -174,6 +178,19 @@ test_formatTextCeilingCensus =
   [ (formatToken row, length (formatTextFieldCeilings row))
   | row <- surfaceFormats describeSurface, not (null (formatTextFieldCeilings row)) ]
     @?= [("ppf1", 1), ("ppf2", 1), ("ppf3", 1), ("dps", 3), ("ninja2", 8), ("aps-n64", 1)]
+
+test_formatChoiceDefaultCensus :: Assertion
+test_formatChoiceDefaultCensus = do
+  [ (formatToken row, formatChoiceDefaults row)
+    | row <- surfaceFormats describeSurface, not (null (formatChoiceDefaults row)) ]
+    @?= [ ("ppf3",    [(MetadataImageType, "bin")])
+        , ("ninja1",  [(MetadataRomType, "raw")])
+        , ("ninja2",  [(MetadataRomType, "raw"), (MetadataTextMode, "utf8")])
+        , ("xdelta3", [(MetadataSecondaryCompressor, "lzma")])
+        ]
+  -- the raw rows claim what the emissions' own absent arms produce
+  platformToNINJA1 PlatformRaw @?= (NINJA1.RomRAW, [])
+  platformToNINJA2 PlatformRaw @?= (NINJA2.NINJA2Raw, [])
 
 test_formatWindowDefaults :: Assertion
 test_formatWindowDefaults =

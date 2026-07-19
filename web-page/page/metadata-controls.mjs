@@ -65,13 +65,12 @@ const fieldWords = {
 export const fieldLabel = (fieldName, fallbackWord) => fieldWords[fieldName]?.label ?? fallbackWord ?? fieldName;
 export const fieldWhy = (fieldName) => fieldWords[fieldName]?.why ?? null;
 
-// A gloss describes the chosen token; the resting line speaks when nothing is chosen yet.
+// A gloss describes the chosen token; at rest, a crossed default speaks for itself.
 // Only some choices carry words — a token that says enough for itself stays bare. (All of this copy: DRAFT.)
 const choiceWords = {
   MetadataSecondaryCompressor: {
-    resting: 'lzma unless you choose otherwise.',
     tokens: {
-      lzma: "xz-style LZMA2 — the default, and the canonical tool's own pick.",
+      lzma: "xz-style LZMA2 — the canonical tool's own pick.",
       djw:  "xdelta3's own static Huffman coder.",
       fgk:  "adaptive Huffman — xdelta3's demonstration codec.",
     },
@@ -90,10 +89,9 @@ const choiceWords = {
   },
 };
 
-export const choiceGloss = (fieldName, chosenToken) => {
-  const words = choiceWords[fieldName];
-  if (!words) return null;
-  return chosenToken ? (words.tokens[chosenToken] ?? null) : (words.resting ?? null);
+export const choiceGloss = (fieldName, chosenToken, defaultToken) => {
+  if (chosenToken) return choiceWords[fieldName]?.tokens[chosenToken] ?? null;
+  return defaultToken ? `${defaultToken} unless you say otherwise.` : null;
 };
 
 // The longer stories the fellow tells when a control is hovered or focused. (All DRAFT.)

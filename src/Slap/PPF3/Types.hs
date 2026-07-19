@@ -14,6 +14,7 @@ module Slap.PPF3.Types
   , PPF3Record(..)
   , PPF3ValidationBlock(..)
   , PPF3ImageType(..)
+  , ppf3DefaultImageType
   , PPF3CarriedFileId(..)
   , PPF3FileId
   , unPPF3FileId
@@ -131,6 +132,10 @@ ppf3PreambleLength = Length 6
 
 ppf3DescriptionLength :: Length
 ppf3DescriptionLength = Length 50
+
+-- | The image type a PPF3 emit assumes when none is chosen.
+ppf3DefaultImageType :: PPF3ImageType
+ppf3DefaultImageType = BIN
 
 -- | Flag and padding bytes after the description: 1 image type
 -- + 1 block-check flag + 1 undo flag + 1 dummy = 4 bytes.

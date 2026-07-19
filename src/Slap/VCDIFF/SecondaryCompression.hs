@@ -14,6 +14,7 @@ module Slap.VCDIFF.SecondaryCompression
   , secondaryCompressorCatalog
   , secondaryCompressorId
   , secondaryCompressorTokens
+  , xdelta3DefaultSecondaryCompressor
   , compressionAlgorithmOf
     -- * The decode paths
   , SectionCarriage(..)
@@ -92,6 +93,10 @@ secondaryCompressorTokens =
   , ("djw",  SecondaryDJW)
   , ("fgk",  SecondaryFGK)
   ]
+
+-- | The compressor an xdelta3 emit uses when none is chosen — the canonical tool's own default.
+xdelta3DefaultSecondaryCompressor :: XDelta3SecondaryCompressor
+xdelta3DefaultSecondaryCompressor = SecondaryLZMA
 
 -- | Each catalog entry under 'Slap.Status''s broader compression vocabulary, for the
 -- error arms that carry an algorithm name across module layers.

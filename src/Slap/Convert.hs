@@ -75,7 +75,7 @@ import Slap.PPF2.Types (PPF2ValidationBlock(..),
                         ppf2RejectIncompatibleSizeChange)
 import qualified Slap.PPF3.Create as PPF3
 import Slap.PPF3.Types (PPF3ImageType(..), PPF3ValidationBlock(..),
-                        narrowPPF3FileId, ppf3DescriptionLength, ppf3MaxRecordPayload, ppf3Limits,
+                        narrowPPF3FileId, ppf3DefaultImageType, ppf3DescriptionLength, ppf3MaxRecordPayload, ppf3Limits,
                         ppf3ValidationOffset, ppf3ValidationSize,
                         ppf3RejectIncompatibleSizeChange)
 import qualified Slap.PPF4.Create as PPF4
@@ -105,7 +105,8 @@ import Slap.VCDIFF.Create (WindowCompressionEmission(..))
 import Slap.VCDIFF.Types (EmissionWindowSize, unEmissionWindowSize, RFCWindowing(..),
                           defaultXDelta3WindowSize, xdelta3ReferenceDecoderWindowCap)
 import Slap.VCDIFF.SecondaryCompression
-  (XDelta3SecondaryCompressor(..), encodableSectionCompressor, compressionAlgorithmOf)
+  (XDelta3SecondaryCompressor(..), encodableSectionCompressor, compressionAlgorithmOf,
+   xdelta3DefaultSecondaryCompressor)
 import qualified Slap.XDelta1.Create as XDelta1
 import Slap.XDelta1.Types (ResolvedXDelta1FileNames,
                            XDelta1FromName(..), XDelta1ToName(..))
@@ -638,8 +639,7 @@ rejectIncompatibleMetadata
 rejectIncompatibleMetadata format = rejectIncompatibleMetadataRequests format . metadataRequests
 
 -- | Fold the two compression requests into xdelta3's emission choice:
--- @--no-compress@ wins, a selected compressor is honored when slap can encode with it,
--- and the default is LZMA — the canonical tool's own default.
+-- @--no-compress@ wins, and a selected compressor is honored when slap can encode with it.
 -- The one refusal is a compressor slap decodes but does not yet encode
 -- ('Slap.VCDIFF.SecondaryCompression.encodableSectionCompressor' knows which).
 xdelta3CompressionEmission :: RequestedPatchMetadata -> Either SlapError WindowCompressionEmission
@@ -647,7 +647,7 @@ xdelta3CompressionEmission meta =
   case fromMaybe IncludeCompression (requestedPatchCompression meta) of
     OmitCompression    -> Right EmitSectionsPlain
     IncludeCompression ->
-      let algorithm = fromMaybe SecondaryLZMA (requestedSecondaryCompressor meta)
+      let algorithm = fromMaybe xdelta3DefaultSecondaryCompressor (requestedSecondaryCompressor meta)
       in case encodableSectionCompressor algorithm of
            Just compressor -> Right (CompressSectionsWith compressor)
            Nothing         -> Left (XDelta3CompressorEncodingUnsupported (compressionAlgorithmOf algorithm))
@@ -1278,7 +1278,7 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     ebpAuthor = resolveEBPField cliAuthor (ebpSource >>= ebpMetadataAuthor)
     -- CLI flag > PatchContents > format default
     (ninja1Type, platformAdvisories) = maybe (NINJA1.RomRAW, []) platformToNINJA1 (requestedRomType meta <|> contentsRomType contents)
-    imageType   = fromMaybe BIN (requestedImageType meta <|> contentsImageType contents)
+    imageType   = fromMaybe ppf3DefaultImageType (requestedImageType meta <|> contentsImageType contents)
 
 ----------------------------------------------------------------------------
 -- Create
@@ -1331,7 +1331,7 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
   CreateNINJA2 -> do
     -- Pick the wire @PATCH_ENC@ byte for the output patch. The CLI flag wins outright; otherwise UTF-8,
     -- the portable default (the field bytes are written UTF-8 regardless, so a UTF-8 declaration matches the bytes).
-    let detectedTextMode = fromMaybe TextModeUTF8 (requestedTextMode meta)
+    let detectedTextMode = fromMaybe NINJA2.ninja2DefaultTextMode (requestedTextMode meta)
         ninja2Meta = NINJA2.NINJA2CreateMetadata
           { NINJA2.ninja2CreateMetadataAuthor      = requestedAuthor      meta
           , NINJA2.ninja2CreateMetadataVersion     = requestedVersion     meta
@@ -1395,7 +1395,7 @@ ppf3ValidationBlockFrom meta source
       Just (viewBytesInRange validationOffset ppf3ValidationSize source)
   | otherwise = Nothing
   where
-    validationOffset = ppf3ValidationOffset (fromMaybe BIN (requestedImageType meta))
+    validationOffset = ppf3ValidationOffset (fromMaybe ppf3DefaultImageType (requestedImageType meta))
 
 buildContents :: DirectCreate -> InputFileContents -> OutputFileContents
               -> RequestedPatchMetadata -> Maybe PatchContents -> PatchContents

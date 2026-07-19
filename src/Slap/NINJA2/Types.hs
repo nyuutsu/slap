@@ -14,6 +14,7 @@ module Slap.NINJA2.Types
   , toOverflowMode
   , fromOverflowMode
   , TextMode(..)
+  , ninja2DefaultTextMode
   , toTextMode
   , fromTextMode
   , ninja2TextModeName
@@ -100,6 +101,10 @@ data TextMode
   | TextModeUndeclared
   deriving (Show, Eq, Generic)
   deriving (ToJSON, FromJSON) via Generically TextMode
+
+-- | The @PATCH_ENC@ an emit declares when none is chosen: UTF-8 matches the field bytes, which are written UTF-8 regardless.
+ninja2DefaultTextMode :: TextMode
+ninja2DefaultTextMode = TextModeUTF8
 
 -- | Resolve a raw PATCH_ENC byte;
 -- 'Left' carries the unrecognized byte for the 'NINJA2UnrecognizedTextMode' rejection.
