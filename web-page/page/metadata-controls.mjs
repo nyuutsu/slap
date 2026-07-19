@@ -24,6 +24,13 @@ export const typedTextFlags = {
   MetadataFileIdDiz:    '--diz-text',
 };
 
+// The CLI's own @--window-size@ suffixes, so the tutor prints the very value the person typed.
+export const windowUnits = [
+  { token: 'bytes', suffix: '',  bytesPer: 1 },
+  { token: 'KiB',   suffix: 'k', bytesPer: 1024 },
+  { token: 'MiB',   suffix: 'm', bytesPer: 1024 * 1024 },
+];
+
 // A choice field the toggle conceals: with the toggle on, the choice would do nothing,
 // so the control steps aside and its selection stays out of the declaration.
 // A DOM-hacked pair still meets the engine's own refusal.
@@ -52,7 +59,7 @@ const fieldWords = {
   MetadataEmbeddedBlob:          { label: 'embedded metadata' },
   MetadataXDelta1FromName:       { label: 'source name', why: "recorded in the patch; defaults to the file's own" },
   MetadataXDelta1ToName:         { label: 'target name', why: "recorded in the patch; defaults to the file's own" },
-  MetadataWindowSize:            { label: 'window size', why: 'in bytes; empty means the format decides' },
+  MetadataWindowSize:            { label: 'window size', why: 'empty means the format decides' },
 };
 
 export const fieldLabel = (fieldName, fallbackWord) => fieldWords[fieldName]?.label ?? fallbackWord ?? fieldName;

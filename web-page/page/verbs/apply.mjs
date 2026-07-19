@@ -185,7 +185,7 @@ export const makeApplyVerb = (host) => {
   const headerControlMarkup = () => {
     const chosenMode = apply.framing.tag;
     const modeChip = (tag, label) => html`<button class="chip${chosenMode === tag ? ' on' : ''}"
-      data-action="set-framing" data-framing="${tag}">${label}</button>`;
+      aria-pressed="${chosenMode === tag}" data-action="set-framing" data-framing="${tag}">${label}</button>`;
     return groupMarkup("the rom's header", html`
       <div class="choice-row">
         ${modeChip('TakeInputAsIs', 'take it as it is')}
@@ -196,6 +196,7 @@ export const makeApplyVerb = (host) => {
         <p class="choice-label">which console</p>
         <div class="choice-row">${host.surface().surfaceConsoleHeaders.map((row) => html`<button
           class="chip${apply.framing.console?.consoleToken === row.consoleToken ? ' on' : ''}"
+          aria-pressed="${apply.framing.console?.consoleToken === row.consoleToken}"
           data-action="set-console" data-console="${row.consoleToken}">${row.consoleName}</button>`)}</div>
         <p class="aside">slap can't know whether your copy is headered — you can. It'll say what it did.</p>`}`);
   };

@@ -93,6 +93,7 @@ const verbs = {
 const verbTabsMarkup = () => {
   const tab = (verbName, quieter) => html`<button
     class="verb${quieter ? ' lesser' : ''}${verbName === currentVerb ? ' on' : ''}"
+    ${verbName === currentVerb && html`aria-current="page"`}
     data-action="choose-verb" data-verb="${verbName}">${verbName}</button>`;
   return html`${headlinerVerbs.map((verbName) => tab(verbName, false))}<span class="verb-gap"></span>
     ${quieterVerbs.map((verbName) => tab(verbName, true))}`;

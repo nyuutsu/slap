@@ -97,7 +97,7 @@ const downloadRowMarkup = (downloadName, downloadHref) => html`
   </div>`;
 
 export const patchedVoice = ({ spoken, advisories, downloadName, downloadHref, romCrc32, inputReframed }) => html`
-  <p class="headline">patched! <span class="sparkle">✦ ✧</span></p>
+  <p class="headline">patched! <span class="sparkle" aria-hidden="true">✦ ✧</span></p>
   ${verdictSentences(spoken, romCrc32 === null ? null : crc32Hex(romCrc32), inputReframed)}
   ${advisoryMarkup(advisories)}
   ${downloadRowMarkup(downloadName, downloadHref)}
@@ -135,7 +135,7 @@ const revertedSentences = (spoken) => {
 };
 
 export const revertedVoice = ({ spoken, advisories, downloadName, downloadHref }) => html`
-  <p class="headline">peeled! <span class="sparkle">✦ ✧</span></p>
+  <p class="headline">peeled! <span class="sparkle" aria-hidden="true">✦ ✧</span></p>
   ${revertedSentences(spoken)}
   ${advisoryMarkup(advisories)}
   ${downloadRowMarkup(downloadName, downloadHref)}
@@ -147,7 +147,7 @@ export const refusalVoice = ({ spokenError, sentence, advisories }, verbName) =>
   <div class="afterward"><button class="chip" data-action="start-over">start over</button></div>`;
 
 export const bottledVoice = ({ formatName, advisories, downloadName, downloadHref }) => html`
-  <p class="headline">bottled! <span class="sparkle">✦ ✧</span></p>
+  <p class="headline">bottled! <span class="sparkle" aria-hidden="true">✦ ✧</span></p>
   <p class="said">Here's your ${formatName} patch — the difference between your two files,
     ready to hand to anyone.</p>
   ${advisoryMarkup(advisories)}

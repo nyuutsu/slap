@@ -9,7 +9,7 @@ import { voiceLines, plainVoice, workingVoice, bottledVoice, blockedVoice, refus
          advisoryMarkup } from './../answer-surface.mjs';
 import { verbWord, flagWord, valueWord, quotedWord, fileWord, namedOr, placeholderWord } from './../command-tutor.mjs';
 import { requestKeyOf, utf8Text, toggleRequests, typedTextFlags, fieldLabel, fieldWhy,
-         choiceGloss, fieldStories, concealedWhileToggled } from './../metadata-controls.mjs';
+         choiceGloss, fieldStories, concealedWhileToggled, windowUnits } from './../metadata-controls.mjs';
 import { constraintControls } from './../constraint-controls.mjs';
 import { humanByteSize } from './../readouts.mjs';
 
@@ -43,6 +43,7 @@ const atRest = () => ({
   formatToken: null,   // the format is an operand: nothing is chosen for you, and the workflow appears once you choose
   moreFormatsOpen: false,
   fieldValues: {},     // free-text and number fields, as typed
+  windowUnit: 'bytes',
   toggledFields: {},
   chosenChoices: {},   // choice fields, by chosen token; the engine value is looked up at declaration time
   blob: { lane: 'typed', text: '', file: null, fileBase64: null },
@@ -100,6 +101,15 @@ export const makeCreateVerb = (host) => {
     return { tag: 'InheritFileIdDiz' };
   };
 
+  const chosenWindowUnit = () => windowUnits.find((unit) => unit.token === create.windowUnit);
+
+  const windowSizeBytes = () => {
+    const counted = wholePositive(create.fieldValues.MetadataWindowSize);
+    if (!counted) return null;
+    const scaledBytes = counted * chosenWindowUnit().bytesPer;
+    return Number.isSafeInteger(scaledBytes) ? scaledBytes : null;
+  };
+
   const chosenChoiceValue = (fieldName, choicePairs) => {
     const chosenToken = create.chosenChoices[fieldName];
     const chosenPair = choicePairs.find(([token]) => token === chosenToken);
@@ -117,8 +127,10 @@ export const makeCreateVerb = (host) => {
       if (kind.tag === 'FreeTextField') {
         if (create.fieldValues[fieldName]) requested[requestKeyOf(fieldName)] = utf8Text(create.fieldValues[fieldName]);
       } else if (kind.tag === 'NumberField') {
-        const byteCount = wholePositive(create.fieldValues[fieldName]);
-        if (byteCount) requested[requestKeyOf(fieldName)] = byteCount;
+        const declaredCount = fieldName === 'MetadataWindowSize'
+          ? windowSizeBytes()
+          : wholePositive(create.fieldValues[fieldName]);
+        if (declaredCount) requested[requestKeyOf(fieldName)] = declaredCount;
       } else if (kind.tag === 'ToggleField') {
         if (create.toggledFields[fieldName] && toggleRequests[fieldName])
           requested[requestKeyOf(fieldName)] = toggleRequests[fieldName];
@@ -272,6 +284,7 @@ export const makeCreateVerb = (host) => {
 
   const tileMarkup = (row, curio) => html`<button
     class="tile${curio ? ' curio' : ''}${row.formatToken === create.formatToken ? ' on' : ''}"
+    aria-pressed="${row.formatToken === create.formatToken}"
     data-action="choose-format" data-token="${row.formatToken}">
     <span class="tile-name">${row.formatDisplayName}</span>
     <span class="tile-copy">${tileCopy[row.formatToken] ?? ''}</span></button>`;
@@ -293,6 +306,7 @@ export const makeCreateVerb = (host) => {
         ${moreOpen ? 'fewer formats' : `more formats (${quieterRows.length})`}</button>`}
       ${moreOpen && html`<div class="choice-row">${quieterRows.map((row) => html`<button
         class="chip${row.formatToken === create.formatToken ? ' on' : ''}"
+        aria-pressed="${row.formatToken === create.formatToken}"
         data-action="choose-format" data-token="${row.formatToken}">${row.formatToken}</button>`)}</div>`}`);
   };
 
@@ -309,6 +323,11 @@ export const makeCreateVerb = (host) => {
   const storiedAttribute = (fieldName) => fieldStories[fieldName] && html`data-story-field="${fieldName}"`;
   const whySpan = (fieldName) => fieldWhy(fieldName) && html` <span class="why">— ${fieldWhy(fieldName)}</span>`;
 
+  // The story trigger hugs its words — a block label's empty width must not speak — and takes focus so a keyboard hears it too.
+  const storiedText = (fieldName, labelText) => (fieldStories[fieldName]
+    ? html`<span class="has-story" tabindex="0" data-story-field="${fieldName}">${labelText}</span>`
+    : labelText);
+
   const fieldCeiling = (fieldName) =>
     (surfaceRow()?.formatTextFieldCeilings ?? []).find(([ceilingField]) => ceilingField === fieldName)?.[1] ?? null;
   const byteCountOf = (typed) => new TextEncoder().encode(typed).length;
@@ -317,14 +336,18 @@ export const makeCreateVerb = (host) => {
     const fieldName = row.describedMetadataField;
     const ceiling = inputType === 'text' ? fieldCeiling(fieldName) : null;
     const typed = create.fieldValues[fieldName] ?? '';
-    return html`<div class="field" ${storiedAttribute(fieldName)}>
-      <label class="field-label${fieldStories[fieldName] ? ' has-story' : ''}"
-        for="meta-${fieldName}">${fieldLabel(fieldName, row.metadataFieldFlag)}</label>
+    return html`<div class="field">
+      <label class="field-label" for="meta-${fieldName}">${storiedText(fieldName, fieldLabel(fieldName, row.metadataFieldFlag))}</label>
       <input class="field-input" type="${inputType}" ${inputType === 'number' && html`min="1" step="1"`}
         ${fieldPlaceholder(fieldName) && html`placeholder="${fieldPlaceholder(fieldName)}"`}
-        ${ceiling && html`data-ceiling="${ceiling}"`}
+        ${ceiling && html`data-ceiling="${ceiling}" aria-describedby="meta-${fieldName}-count"`}
+        ${storiedAttribute(fieldName)}
         id="meta-${fieldName}" data-setting="field" data-field="${fieldName}" value="${typed}">
-      ${ceiling && html`<span class="byte-count${byteCountOf(typed) > ceiling ? ' over-ceiling' : ''}">${byteCountOf(typed)} / ${ceiling} bytes</span>`}
+      ${ceiling && html`<span class="byte-count${byteCountOf(typed) > ceiling ? ' over-ceiling' : ''}"
+        id="meta-${fieldName}-count">${byteCountOf(typed)} / ${ceiling} bytes</span>`}
+      ${fieldName === 'MetadataWindowSize' && html`<span class="choice-row">${windowUnits.map((unit) => html`<button
+        class="chip${create.windowUnit === unit.token ? ' on' : ''}" aria-pressed="${create.windowUnit === unit.token}"
+        data-action="window-unit" data-unit="${unit.token}">${unit.token}</button>`)}</span>`}
       ${whySpan(fieldName)}
     </div>`;
   };
@@ -332,21 +355,24 @@ export const makeCreateVerb = (host) => {
   const choiceRowMarkup = (row, choicePairs) => {
     const fieldName = row.describedMetadataField;
     const gloss = choiceGloss(fieldName, create.chosenChoices[fieldName]);
-    return html`<div ${storiedAttribute(fieldName)}>
-      <p class="choice-label${fieldStories[fieldName] ? ' has-story' : ''}">${fieldLabel(fieldName, row.metadataFieldFlag)}${whySpan(fieldName)}</p>
+    return html`<div>
+      <p class="choice-label">${storiedText(fieldName, fieldLabel(fieldName, row.metadataFieldFlag))}${whySpan(fieldName)}</p>
       <div class="choice-row">${choicePairs.map(([token]) => html`<button
         class="chip${create.chosenChoices[fieldName] === token ? ' on' : ''}"
+        aria-pressed="${create.chosenChoices[fieldName] === token}"
         data-action="choose-meta" data-field="${fieldName}" data-token="${token}">${token}</button>`)}</div>
       ${gloss && html`<p class="choice-gloss">${gloss}</p>`}</div>`;
   };
 
   const laneChips = (laneAction, currentLane) => html`<div class="choice-row">
-    <button class="chip${currentLane === 'typed' ? ' on' : ''}" data-action="${laneAction}" data-lane="typed">type it</button>
-    <button class="chip${currentLane === 'file' ? ' on' : ''}" data-action="${laneAction}" data-lane="file">use a file</button>
+    <button class="chip${currentLane === 'typed' ? ' on' : ''}" aria-pressed="${currentLane === 'typed'}"
+      data-action="${laneAction}" data-lane="typed">type it</button>
+    <button class="chip${currentLane === 'file' ? ' on' : ''}" aria-pressed="${currentLane === 'file'}"
+      data-action="${laneAction}" data-lane="file">use a file</button>
   </div>`;
 
   const blobLanesMarkup = () => html`
-    <p class="choice-label has-story" ${storiedAttribute('MetadataEmbeddedBlob')}>${fieldLabel('MetadataEmbeddedBlob')}</p>
+    <p class="choice-label">${storiedText('MetadataEmbeddedBlob', fieldLabel('MetadataEmbeddedBlob'))}</p>
     ${laneChips('blob-lane', create.blob.lane)}
     ${create.blob.lane === 'typed'
       ? html`<textarea class="field-textarea" data-setting="blob-text"
@@ -356,7 +382,7 @@ export const makeCreateVerb = (host) => {
         <p class="aside">Any file at all; the bytes go in exactly as they are.</p>`}`;
 
   const dizLanesMarkup = () => html`
-    <p class="choice-label has-story" ${storiedAttribute('MetadataFileIdDiz')}>${fieldLabel('MetadataFileIdDiz')}</p>
+    <p class="choice-label">${storiedText('MetadataFileIdDiz', fieldLabel('MetadataFileIdDiz'))}</p>
     ${laneChips('diz-lane', create.diz.lane)}
     ${create.diz.lane === 'typed'
       ? html`<textarea class="field-textarea" data-setting="diz-text"
@@ -450,8 +476,10 @@ export const makeCreateVerb = (host) => {
       const flag = `--${row.metadataFieldFlag}`;
       if (kind.tag === 'FreeTextField' && create.fieldValues[fieldName])
         words.push(flagWord(flag), quotedWord(create.fieldValues[fieldName]));
-      if (kind.tag === 'NumberField' && wholePositive(create.fieldValues[fieldName]))
-        words.push(flagWord(flag), valueWord(String(wholePositive(create.fieldValues[fieldName]))));
+      if (kind.tag === 'NumberField' && wholePositive(create.fieldValues[fieldName])) {
+        const suffix = fieldName === 'MetadataWindowSize' ? chosenWindowUnit().suffix : '';
+        words.push(flagWord(flag), valueWord(`${wholePositive(create.fieldValues[fieldName])}${suffix}`));
+      }
       if (kind.tag === 'ToggleField' && create.toggledFields[fieldName] && toggleRequests[fieldName])
         words.push(flagWord(flag));
       if (kind.tag === 'ChoiceField' && create.chosenChoices[fieldName] && !fieldConcealed(fieldName))
@@ -546,6 +574,7 @@ export const makeCreateVerb = (host) => {
       }),
       'blob-lane': ({ lane }) => recheck(() => { create.blob.lane = lane; }),
       'diz-lane': ({ lane }) => recheck(() => { create.diz.lane = lane; }),
+      'window-unit': ({ unit }) => recheck(() => { create.windowUnit = unit; }),
       run: runCreate,
       'cancel-run': () => create.running?.cancel(),
       'look-inside': () => {

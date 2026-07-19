@@ -213,6 +213,7 @@ export const makeExplainVerb = (host) => {
           <span class="family-label">${family.advertisedFamilyLabel}</span>
           <div class="choice-row">${family.advertisedFamilyMembers.map((token) => html`<button
             class="chip${read.metadataEncoding === token ? ' on' : ''}"
+            aria-pressed="${read.metadataEncoding === token}"
             data-action="set-encoding" data-token="${token}">${token}</button>`)}</div>
         </div>`)}
       </details>`);
