@@ -25,6 +25,10 @@
   --coral-ink: #A8431E;
   --amber-ink: #A8680F;
 
+  /* a dash marks what is not filled or opened yet, in the family of the words it stands with */
+  --dash-warm: #A9885C;
+  --dash-grape: #A873C2;
+
   --ok-ink: #3E5A34;     --ok-room: #F2F7EE;      --ok-line: #CFE3C4;
   --caution-ink: #8A5A2F; --caution-room: #FFF3E6; --caution-line: #E7D2A8;
 
@@ -98,7 +102,7 @@ button { font: inherit; cursor: pointer; }
 .sentence { font-family: var(--mono); font-size: 18px; line-height: 2.5; color: #4A4238; margin: 4px 0 8px; }
 .swap-line { margin: -4px 0 2px; }
 .slot { background: none; border: none; padding: 0 5px; font: inherit; line-height: 1.45; }
-.slot.empty { color: var(--whisper); border-bottom: 2px dashed #D8C7AE; }
+.slot.empty { color: var(--whisper); border-bottom: 2px dashed var(--dash-warm); }
 .slot.empty:hover { color: var(--grape); border-bottom-color: var(--grape); }
 .slot.filled { color: var(--ink); border-bottom: 2px solid var(--grape); }
 .slot.inert { cursor: default; }
@@ -200,7 +204,7 @@ button { font: inherit; cursor: pointer; }
 .more-chip {
   font-family: var(--mono); font-size: 12.5px;
   color: var(--grape); background: none;
-  border: 1px dashed #D5B8E3; border-radius: 999px;
+  border: 1px dashed var(--dash-grape); border-radius: 999px;
   padding: 7px 13px;
 }
 .more-chip:hover { border-color: var(--grape); background: var(--grape-tint); }
@@ -216,7 +220,17 @@ button { font: inherit; cursor: pointer; }
 /* the hanging whisper needs headroom when the row wraps, and below the row either way */
 .choice-row:has(.chip-stack) { row-gap: 20px; margin-bottom: 16px; }
 .choice-gloss { color: var(--ink-soft); font-size: 12.5px; margin: 4px 0 2px; }
-.has-story { text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: var(--hairline); cursor: help; }
+/* a story is marked the way a footnote is: the asterisk finds the eye across a form, and hovering
+   the word makes good on it. Raised on a zero line-height, so marking a label never moves one. */
+.has-story { cursor: help; }
+.has-story::after {
+  content: '*'; color: var(--grape); font-weight: 700;
+  vertical-align: super; font-size: 0.8em; line-height: 0; margin-left: 1px;
+}
+.has-story:hover, .has-story:focus-visible {
+  color: var(--grape);
+  text-decoration: underline dotted var(--grape); text-underline-offset: 3px;
+}
 .field-input, .field-textarea {
   font-family: var(--body); font-size: 14px; color: var(--ink);
   background: var(--panel); border: 1px solid var(--hairline); border-radius: 7px; padding: 6px 10px;
@@ -342,7 +356,7 @@ button { font: inherit; cursor: pointer; }
 .quiet-button {
   font-family: var(--mono); font-size: 12.5px; color: var(--whisper);
   background: none; border: none;
-  text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--hairline);
+  text-decoration: underline; text-underline-offset: 3px;
 }
 .quiet-button:hover { color: var(--grape); }
 
