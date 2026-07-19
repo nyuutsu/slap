@@ -10,6 +10,7 @@ import { voiceLines, plainVoice } from './answer-surface.mjs';
 import { commandMarkup } from './command-tutor.mjs';
 import { makeApplyVerb } from './verbs/apply.mjs';
 import { makeUndoVerb } from './verbs/undo.mjs';
+import { makeCreateVerb } from './verbs/create.mjs';
 import { makeInfoVerb, makeExplainVerb } from './verbs/reads.mjs';
 import { makeUnwiredVerb } from './verbs/unwired.mjs';
 
@@ -28,7 +29,8 @@ const element = (id) => document.getElementById(id);
 
 /* ------------------------------------------------------------- the host ---- */
 /* What a verb module may do to the world, and all of it: ask the engine, run a job,
-   guard an answer against staleness, move the fellow, speak a notice, and ask for a render. */
+   guard an answer against staleness, move the fellow, speak a notice or a murmur, ask for a render,
+   and hand a file it minted to explain. */
 
 const openEnvelope = (envelope) => ({ ...answerOf(envelope), advisories: advisoriesOf(envelope) });
 
@@ -67,15 +69,22 @@ const host = {
     link.href = href; link.download = downloadName;
     link.click();
   },
+  // seat the file first, then arrive: the hash change redraws explain already holding it
+  lookInside: (file) => {
+    verbs.explain.admitPickedFile('patch', file);
+    location.hash = 'explain';
+  },
+  // a view-transient line in the voice box; the next render puts the state's voice back
+  murmur: (spokenMarkup) => { element('voice').innerHTML = markupOf(spokenMarkup); },
   stage: () => element('stage'),
 };
 
 const verbs = {
   apply: makeApplyVerb(host),
   undo: makeUndoVerb(host),
+  create: makeCreateVerb(host),
   info: makeInfoVerb(host),
   explain: makeExplainVerb(host),
-  create: makeUnwiredVerb(host, 'create'),
   convert: makeUnwiredVerb(host, 'convert'),
 };
 
@@ -120,11 +129,13 @@ document.addEventListener('click', (event) => {
   verbs[currentVerb].actions[action]?.(control.dataset);
 });
 
+// A setting's value is its checkbox state or its typed text; the dataset rides along for per-field settings.
 document.addEventListener('change', (event) => {
   const setting = event.target.dataset.setting;
   if (!setting) return;
   noticeLine = null;
-  verbs[currentVerb].settings[setting]?.(event.target.checked);
+  const control = event.target;
+  verbs[currentVerb].settings[setting]?.(control.type === 'checkbox' ? control.checked : control.value, control.dataset);
 });
 
 filePicker.addEventListener('change', () => {
@@ -169,6 +180,8 @@ const arriveAtVerb = (verbName) => {
   currentVerb = verbName;
   noticeLine = null;
   fellow?.settle();
+  // an answer dropped while this verb was off stage — another verb's supersede — never comes back by itself
+  verbs[verbName].askAgain();
   render();
 };
 

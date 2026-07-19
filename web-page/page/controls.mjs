@@ -4,8 +4,8 @@ import { html } from './dom.mjs';
 
 export const groupMarkup = (heading, body) => html`<div class="group"><h3>${heading}</h3>${body}</div>`;
 
-export const toggleMarkup = ({ id, setting, checked, label, why }) => html`<div class="toggle">
-  <input type="checkbox" id="${id}" data-setting="${setting}" ${checked && html`checked`}>
+export const toggleMarkup = ({ id, setting, checked, label, why, field }) => html`<div class="toggle">
+  <input type="checkbox" id="${id}" data-setting="${setting}" ${field && html`data-field="${field}"`} ${checked && html`checked`}>
   <label for="${id}">${label}${why && html` <span class="why">— ${why}</span>`}</label>
 </div>`;
 
@@ -24,3 +24,9 @@ export const seatSlotMarkup = (seat, roleWord, file, chipWord) => file
 // While an act runs, the seats it reads are held: shown, not clickable.
 export const heldSeatMarkup = (file, chipWord) => html`<span class="slot filled inert">${file.name}</span>${
   chipWord && html`<span class="format-chip">${chipWord}</span>`}`;
+
+// Two same-type seats keep their role words in view once filled — order alone is ambiguous — as a whisper under the name.
+export const roleWhisperedSlotMarkup = (seat, roleWord, file) => file
+  ? html`<span class="slot-stack"><button class="slot filled" data-action="pick-file"
+      data-seat="${seat}">${file.name}</button><span class="role-whisper">${roleWord}</span></span>`
+  : html`<button class="slot empty" data-action="pick-file" data-seat="${seat}">${roleWord}</button>`;

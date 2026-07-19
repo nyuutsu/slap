@@ -4,6 +4,9 @@
 import { html } from './dom.mjs';
 import { checkKindNoun, crc32Hex, matchVerbFor, proseList } from './readouts.mjs';
 import { spokenRefusalMarkup, spokenAdvisorySentence } from './verification-speech.mjs';
+import { dialectControls } from './dialect-controls.mjs';
+import { constraintLabel } from './constraint-controls.mjs';
+import { fieldLabel } from './metadata-controls.mjs';
 
 // The fellow's short lines, lowercase and unhurried. One clause each; the cards carry the detail.
 export const voiceLines = {
@@ -37,6 +40,11 @@ export const voiceLines = {
   infoRead: 'here\'s what it says about itself.',
   explainRead: 'here\'s the shape of it.',
   sortsAsRom: 'that one reads as a rom — this tab wants a patch.',
+  createResting: 'drop the original and the changed file — first one in counts as the original.',
+  createOriginalOnly: 'got one — now the changed file it became.',
+  createModifiedOnly: 'got the changed one — now the original it came from.',
+  createNeedsFormat: 'now pick a format for it — the tiles say which and why.',
+  createReady: 'all set — bottle it.',
 };
 
 export const plainVoice = (line) => html`<p class="plain-line">${line}</p>`;
@@ -137,3 +145,35 @@ export const refusalVoice = ({ spokenError, sentence, advisories }, verbName) =>
   ${spokenRefusalMarkup(spokenError, sentence, verbName)}
   ${advisoryMarkup(advisories)}
   <div class="afterward"><button class="chip" data-action="start-over">start over</button></div>`;
+
+export const bottledVoice = ({ formatName, advisories, downloadName, downloadHref }) => html`
+  <p class="headline">bottled! <span class="sparkle">✦ ✧</span></p>
+  <p class="said">Here's your ${formatName} patch — the difference between your two files,
+    ready to hand to anyone.</p>
+  ${advisoryMarkup(advisories)}
+  ${downloadRowMarkup(downloadName, downloadHref)}
+  <div class="afterward">
+    <button class="chip" data-action="look-inside">look inside it</button>
+    <button class="chip" data-action="start-over">do another</button>
+  </div>`;
+
+// An emit check's way out, in the words of the page's own controls — total over the engine's sum,
+// and a resolution the page hasn't met yet shows its bare tag rather than nothing.
+const resolutionLine = (resolution) => {
+  switch (resolution.tag) {
+    case 'ProvideSourceRom':       return 'hand over the source rom and slap can compute the rest';
+    case 'ChooseDifferentFormat':  return 'a different format above can hold this pair';
+    case 'ChooseTargetPreserving': return 'another target format would keep it';
+    case 'DropConstraint':         return `un-tick ${constraintLabel(resolution.contents)}`;
+    case 'DropMetadataField':      return `clear ${fieldLabel(resolution.contents)}`;
+    case 'ProvideMetadataField':   return `fill in ${fieldLabel(resolution.contents)}`;
+    case 'AmendMetadataField':     return `a shorter ${fieldLabel(resolution.contents)} would fit`;
+    case 'DropDialect':            return `switch off ${dialectControls[resolution.contents]?.controlLabel ?? resolution.contents}`;
+    default:                       return resolution.tag;
+  }
+};
+
+// A blocked emit is not a refusal of the whole request — each gap speaks slap's sentence, then its ways out.
+export const blockedVoice = (gaps) => html`${gaps.map((gap) => html`
+  <p class="refusal">${gap.spokenGapReason.spokenErrorSentence}</p>
+  ${gap.spokenGapResolutions.map((resolution) => html`<p class="way-out">· ${resolutionLine(resolution)}</p>`)}`)}`;

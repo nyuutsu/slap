@@ -7,14 +7,10 @@ import { voiceLines, plainVoice } from './../answer-surface.mjs';
 import { verbWord, flagWord, placeholderWord } from './../command-tutor.mjs';
 
 const restingSentences = {
-  create: () => html`<p class="sentence">bottle the difference between ${inertSlotMarkup('original')}
-    and ${inertSlotMarkup('modified')} as ${inertSlotMarkup('format')}</p>`,
   convert: () => html`<p class="sentence">convert ${inertSlotMarkup('patch')} to ${inertSlotMarkup('format')}</p>`,
 };
 
 const restingCommandWords = {
-  create: () => [verbWord('slap'), verbWord('create'), flagWord('--format'), placeholderWord('FORMAT'),
-                 placeholderWord('ORIGINAL'), placeholderWord('MODIFIED'), placeholderWord('OUTPUT')],
   convert: () => [verbWord('slap'), verbWord('convert'), placeholderWord('PATCH'), flagWord('--to'),
                   placeholderWord('FORMAT'), placeholderWord('OUTPUT')],
 };

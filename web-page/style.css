@@ -97,6 +97,12 @@ button { font: inherit; cursor: pointer; }
 .slot.empty:hover { color: var(--grape); border-bottom-color: var(--grape); }
 .slot.filled { color: var(--ink); border-bottom: 2px solid var(--grape); }
 .slot.inert { cursor: default; }
+.slot-stack { display: inline-block; position: relative; }
+.role-whisper {
+  position: absolute; left: 0; right: 0; top: 100%; margin-top: -9px;
+  text-align: center; font-family: var(--mono); font-size: 10px; line-height: 1;
+  color: var(--whisper); pointer-events: none;
+}
 .format-chip {
   font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em;
   color: var(--grape); background: var(--grape-tint);
@@ -154,6 +160,46 @@ button { font: inherit; cursor: pointer; }
 .toggle input { accent-color: var(--grape); width: 15px; height: 15px; }
 .toggle label { font-family: var(--mono); font-size: 13px; }
 .toggle .why { color: var(--whisper); font-family: var(--body); font-size: 13px; }
+
+/* ------------------------------------------------------------ create ---- */
+
+.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 4px 0 10px; }
+.tile {
+  display: flex; flex-direction: column; gap: 6px; text-align: left;
+  background: var(--room); border: 1px solid var(--hairline); border-radius: 10px;
+  padding: 12px 13px; font: inherit; cursor: pointer;
+}
+.tile:hover { border-color: var(--grape); }
+.tile.on { border-color: var(--grape); background: var(--grape-tint); }
+.tile-name { font-family: var(--display); font-weight: 700; font-size: 16px; color: var(--ink); }
+.tile.on .tile-name { color: var(--grape); }
+.tile-copy { font-size: 12.5px; color: var(--ink-soft); line-height: 1.45; }
+.tile.curio { width: 100%; flex-direction: row; align-items: baseline; gap: 14px; margin: 0 0 10px; }
+.tile.curio .tile-name { flex: none; }
+
+.format-note { display: flex; gap: 9px; align-items: baseline; font-size: 13px; color: var(--ink-soft); margin: 0 0 12px; }
+.note-mark {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; color: var(--amber);
+  border: 1px solid var(--caution-line); border-radius: 4px; padding: 1px 5px; flex: none;
+}
+
+.field { display: flex; align-items: baseline; gap: 10px; margin: 8px 0; }
+.field-label { font-family: var(--mono); font-size: 12px; color: var(--whisper); flex: 0 0 128px; }
+.field .why, .choice-label .why { color: var(--whisper); font-family: var(--body); font-size: 12.5px; flex: none; }
+.byte-count { font-family: var(--mono); font-size: 11px; color: var(--whisper); flex: none; }
+.byte-count.over-ceiling { color: var(--caution-ink); }
+.choice-gloss { color: var(--ink-soft); font-size: 12.5px; margin: 4px 0 2px; }
+.has-story { text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: var(--hairline); cursor: help; }
+.field-input, .field-textarea {
+  font-family: var(--body); font-size: 14px; color: var(--ink);
+  background: var(--panel); border: 1px solid var(--hairline); border-radius: 7px; padding: 6px 10px;
+}
+.field-input { flex: 1; min-width: 0; }
+.field-input:focus, .field-textarea:focus { outline: none; border-color: var(--grape); }
+.field-input:invalid { border-color: var(--coral-deep); }
+.field-textarea { width: 100%; min-height: 64px; resize: vertical; margin-top: 4px; }
+
+.way-out { margin: 2px 0 6px; font-size: 13.5px; color: var(--ink-soft); }
 
 /* ------------------------------------------------------------ answer ---- */
 
@@ -319,6 +365,9 @@ button { font: inherit; cursor: pointer; }
   .fellow-seat { width: 76px; height: 76px; }
   .run { width: 100%; }
   .signature { flex-direction: column; }
+  .tiles { grid-template-columns: 1fr; }
+  .field { flex-direction: column; align-items: stretch; gap: 3px; }
+  .field-label { flex: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

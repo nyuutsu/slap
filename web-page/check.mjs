@@ -5,7 +5,7 @@
 //   node check.mjs <native-probe> <rom> <patches...>
 
 import { execFileSync } from 'node:child_process';
-import { writeFileSync, mkdtempSync } from 'node:fs';
+import { writeFileSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { markupOf } from './page/dom.mjs';
@@ -13,7 +13,7 @@ import { infoReadoutMarkup, embeddedContentsOf, embeddedContentMarkup,
          heatModel, heatBarMarkup, heatCaption, walkMarkup, structureOverviewMarkup,
          analysisRegionsOf, analysisAsidesMarkup } from './page/read-panels.mjs';
 import { applyFactsCardMarkup, undoFactsCardMarkup } from './page/facts-card.mjs';
-import { patchedVoice, revertedVoice } from './page/answer-surface.mjs';
+import { patchedVoice, revertedVoice, bottledVoice, blockedVoice } from './page/answer-surface.mjs';
 
 const [probePath, romPath, ...patchPaths] = process.argv.slice(2);
 if (!probePath || !romPath || patchPaths.length === 0) {
@@ -40,9 +40,20 @@ const declarationPaths = {
   undo: declarationPathFor('undo', { declaredUndoVerificationPolicy: 'EnforceVerification',
                                      declaredUndoDialects: { requestedPPF1Origin: 'PPF1OriginPC' } }),
 };
+const plainCreateDeclaration = (formatTag, formatConstructor) => ({
+  declaredCreateTargetFormat: { tag: formatTag, contents: formatConstructor },
+  declaredCreateOriginalName: 'original.bin',
+  declaredCreateModifiedName: 'modified.bin',
+  declaredCreateMetadata: { requestedFileIdDiz: { tag: 'InheritFileIdDiz' },
+                            requestedEmbeddedBlob: { tag: 'InheritEmbeddedBlob' } },
+  declaredCreateConstraints: { requestedSMCShape: 'AllowAnyTruncationShape' },
+});
+declarationPaths.create = declarationPathFor('create', plainCreateDeclaration('CreateDifferential', 'CreateBPS'));
+
 // a check reads the act's own declaration
 declarationPaths['check-undo'] = declarationPaths.undo;
 declarationPaths['check-apply'] = declarationPaths.apply;
+declarationPaths['check-create'] = declarationPaths.create;
 
 const probeBytes = (...probeArguments) => execFileSync(probePath, probeArguments, { maxBuffer: 1 << 30 });
 const askProbe = (verb, ...seatPaths) => JSON.parse(probeBytes(verb, ...seatPaths, declarationPaths[verb]).toString());
@@ -138,4 +149,25 @@ for (const patchPath of patchPaths) {
   renderedCount += 1;
 }
 
-console.log(`render census: ${renderedCount} patches rendered whole, ${peeledCount} peels spoken, ${refusedCount} refused with a sentence`);
+// The create lanes: a real pair drives the ready check, the act, and the bottled voice;
+// the same pair grows, so aiming it at PPF1 drives a blocked verdict through the gap renderer.
+const grownPath = join(declarationDir, 'grown.bin');
+writeFileSync(grownPath, Buffer.concat([readFileSync(romPath), Buffer.alloc(16, 0xAB)]));
+
+const readyVerdict = askProbe('check-create', romPath, grownPath).envelopeAnswer.Right;
+if (readyVerdict.tag !== 'SpokenReady')
+  throw new Error(`the census pair does not bottle as BPS: ${JSON.stringify(readyVerdict)}`);
+
+const blockedDeclarationPath = declarationPathFor('check-create-blocked', plainCreateDeclaration('CreateDirect', 'CreatePPF1'));
+const blockedVerdict = JSON.parse(probeBytes('check-create', romPath, grownPath, blockedDeclarationPath).toString()).envelopeAnswer.Right;
+if (blockedVerdict.tag !== 'SpokenBlocked')
+  throw new Error('a growing PPF1 pair judged Ready in the census');
+mustRender('blocked check voice', blockedVoice(blockedVerdict.contents));
+
+const createdAct = splitAct(probeBytes('create', romPath, grownPath, declarationPaths.create));
+if (!('Right' in createdAct.envelope.envelopeAnswer))
+  throw new Error(`the census create refused — ${createdAct.envelope.envelopeAnswer.Left.spokenErrorSentence}`);
+if (createdAct.tail.length === 0) throw new Error('the census create wrote no patch bytes');
+mustRender('bottled voice', bottledVoice({ formatName: 'BPS', advisories: [], downloadName: 'grown.bps', downloadHref: '' }));
+
+console.log(`render census: ${renderedCount} patches rendered whole, ${peeledCount} peels spoken, ${refusedCount} refused with a sentence, create checked both ways and bottled`);
