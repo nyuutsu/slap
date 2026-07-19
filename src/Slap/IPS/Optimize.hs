@@ -50,6 +50,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Int (Int64)
 import Data.List (sort)
+import Data.STRef (newSTRef, readSTRef, writeSTRef)
 import Data.Word (Word8)
 
 ----------------------------------------------------------------------------
@@ -333,6 +334,51 @@ partitionDiffRegion offsetWidth _target region
         :: ST s (STUArray s Int Int)
       writeArray costArray 0 0
 
+      -- The copy-candidate window. A copy transition costs @cost(j) + overhead + (position(i) − position(j))@,
+      -- so for any fixed destination the candidates order by the key @cost(j) − position(j)@ alone.
+      -- The window holds the in-cap seed indices as a monotonic queue — positions and keys both increasing —
+      -- so the head is always the cheapest predecessor, and one head read decides each destination.
+      -- Admitting a new index drops dearer-or-equal tail entries first, so a key tie resolves to the later index —
+      -- equally cheap partitions exist, and which one wins decides the emitted bytes.
+      windowArray <-
+        newArray (0, seedPositionCount - 1) 0
+        :: ST s (STUArray s Int Int)
+      windowHeadRef <- newSTRef 0
+      windowNextRef <- newSTRef 0
+
+      let candidateKey candidateIndex = do
+            candidateCost <- readArray costArray candidateIndex
+            pure (candidateCost - unOffset (seedPositionArray ! candidateIndex))
+
+          admitCandidate candidateIndex = do
+            admittedKey <- candidateKey candidateIndex
+            let dropDearerTail = do
+                  windowHead <- readSTRef windowHeadRef
+                  windowNext <- readSTRef windowNextRef
+                  if windowNext > windowHead
+                    then do
+                      tailIndex <- readArray windowArray (windowNext - 1)
+                      tailKey   <- candidateKey tailIndex
+                      if tailKey >= admittedKey
+                        then writeSTRef windowNextRef (windowNext - 1) >> dropDearerTail
+                        else pure ()
+                    else pure ()
+            dropDearerTail
+            windowNext <- readSTRef windowNextRef
+            writeArray windowArray windowNext candidateIndex
+            writeSTRef windowNextRef (windowNext + 1)
+
+          retireBehindCap destinationPosition = do
+            windowHead <- readSTRef windowHeadRef
+            windowNext <- readSTRef windowNextRef
+            if windowNext > windowHead
+              then do
+                headIndex <- readArray windowArray windowHead
+                if distance (seedPositionArray ! headIndex) destinationPosition > ipsMaxRecordPayload
+                  then writeSTRef windowHeadRef (windowHead + 1) >> retireBehindCap destinationPosition
+                  else pure ()
+              else pure ()
+
       -- Forward DP pass: for each destination from 1 upward, find
       -- the cheapest predecessor (copy candidate or RLE candidate)
       -- and record the winning cost and predecessor in the two DP
@@ -340,36 +386,21 @@ partitionDiffRegion offsetWidth _target region
       let scanDestinations !destinationIndex
             | destinationIndex >= seedPositionCount = pure ()
             | otherwise = do
+                admitCandidate (destinationIndex - 1)
                 let destinationPosition = seedPositionArray ! destinationIndex
+                retireBehindCap destinationPosition
 
-                    -- Copy candidate scan: walk all earlier seed positions
-                    -- whose distance to the destination is within the
-                    -- per-record payload cap, and pick the one whose
-                    -- (predecessor cost + copy-record cost) is smallest.
-                    -- Returns @(bestCost, bestPredecessorIndex)@.
-                    scanCopyCandidates !bestCost !bestPredecessor !predecessorIndex
-                      | not (hasPredecessor predecessorIndex) = pure (bestCost, bestPredecessor)
-                      | recordPayloadLength > ipsMaxRecordPayload =
-                          pure (bestCost, bestPredecessor)
-                      | otherwise = do
-                          predecessorCost <- readArray costArray predecessorIndex
-                          let candidateCost =
-                                predecessorCost
-                                + copyRecordOverheadBytes
-                                + unLength recordPayloadLength
-                          if candidateCost < bestCost
-                            then scanCopyCandidates candidateCost
-                                                    predecessorIndex
-                                                    (predecessorIndex - 1)
-                            else scanCopyCandidates bestCost
-                                                    bestPredecessor
-                                                    (predecessorIndex - 1)
-                      where
-                        recordPayloadLength =
-                          distance (seedPositionArray ! predecessorIndex) destinationPosition
-
-                (copyCandidateCost, copyCandidatePredecessor) <-
-                  scanCopyCandidates impossiblyExpensiveCost noPredecessor (destinationIndex - 1)
+                (copyCandidateCost, copyCandidatePredecessor) <- do
+                  windowHead <- readSTRef windowHeadRef
+                  windowNext <- readSTRef windowNextRef
+                  if windowNext > windowHead
+                    then do
+                      headIndex <- readArray windowArray windowHead
+                      headCost  <- readArray costArray headIndex
+                      pure ( headCost + copyRecordOverheadBytes
+                               + unLength (distance (seedPositionArray ! headIndex) destinationPosition)
+                           , headIndex )
+                    else pure (impossiblyExpensiveCost, noPredecessor)
 
                 -- RLE candidate: only available when the destination's preceding seed position is inside the same maximal run as the destination,
                 -- AND the resulting run length exceeds the break-even 'rleBreakEvenRunLength' — 3 for both variants, so RLE first wins at length 4.
@@ -525,22 +556,20 @@ hasPredecessor candidateIndex = candidateIndex >= 0
 
 -- | For each seed position, the previous seed position in the same maximal byte-run, or 'noPredecessor' when no run spans the gap.
 -- Parallel to the seed list: the @i@-th entry is the predecessor of the @i@-th seed.
+-- Runs are disjoint and ordered and the seed pairs advance with them, so one cursor walks both lists in a single pass;
+-- only the first run reaching a pair's end can span the pair — any later run starts past it.
 computeRLEEligiblePredecessors :: [Offset] -> [ByteRun] -> [Int]
 computeRLEEligiblePredecessors seedPositions runs =
-  noPredecessor : zipWith
-         eligibilityForPair
-         [1 ..]
-         (zip seedPositions (drop 1 seedPositions))
+  noPredecessor : walkPairs 1 runs (zip seedPositions (drop 1 seedPositions))
   where
-    eligibilityForPair :: Int -> (Offset, Offset) -> Int
-    eligibilityForPair currentIndex (previousPosition, currentPosition)
-      | positionsLieInSameRun previousPosition currentPosition =
-          currentIndex - 1
-      | otherwise = noPredecessor
-
-    positionsLieInSameRun :: Offset -> Offset -> Bool
-    positionsLieInSameRun previousPosition currentPosition =
-      any (\run ->
-             byteRunStart run <= previousPosition
-             && currentPosition <= byteRunEndExclusive run)
-          runs
+    walkPairs :: Int -> [ByteRun] -> [(Offset, Offset)] -> [Int]
+    walkPairs _ _ [] = []
+    walkPairs currentIndex remainingRuns ((previousPosition, currentPosition) : remainingPairs) =
+      let reachingRuns = dropWhile (\run -> byteRunEndExclusive run < currentPosition) remainingRuns
+          spansThePair = case reachingRuns of
+            firstReaching : _ ->
+              byteRunStart firstReaching <= previousPosition
+                && currentPosition <= byteRunEndExclusive firstReaching
+            [] -> False
+      in (if spansThePair then currentIndex - 1 else noPredecessor)
+         : walkPairs (currentIndex + 1) reachingRuns remainingPairs
