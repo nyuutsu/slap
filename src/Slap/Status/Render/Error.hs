@@ -537,10 +537,15 @@ renderSlapError (ApplyFailed label applyErr) =
 renderSlapError (UndoFailed label applyErr) =
   formatLabelName label <> " undo: " <> renderApplyError applyErr
 
-renderSlapError (PatchCarriesNoUndoData label) =
-  "this " <> formatLabelName label <> " patch carries no undo data\n"
-  <> formatLabelName label <> " patches can carry the bytes each record replaced,"
-  <> " but including them was up to the patch's author, and this one was made without them"
+renderSlapError (PatchCarriesNoUndoData label) = case label of
+  LabelNINJA2 ->
+    "this NINJA2 patch carries no undo data\n"
+    <> "the patch shrinks its file, but its overflow section is marked append rather than truncate,"
+    <> " so the bytes the shrink discarded were never stored"
+  _ ->
+    "this " <> formatLabelName label <> " patch carries no undo data\n"
+    <> formatLabelName label <> " patches can carry the bytes each record replaced,"
+    <> " but including them was up to the patch's author, and this one was made without them"
 
 renderSlapError (NoUndoForFormat label) =
   "no undo for " <> formatLabelName label <> " patches"

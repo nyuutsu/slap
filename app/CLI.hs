@@ -340,7 +340,7 @@ options = info (commandParser <**> encodingsInfo <**> versionInfo <**> helper)
 commandParser :: Parser Command
 commandParser = subparser
   ( command "apply"   (info (Apply   <$> applyParser     <**> helper) (progDesc "Apply a patch"))
- <> command "undo"    (info (Undo    <$> undoParser      <**> helper) (progDesc "Undo a patch (PPF3 undo data, or UPS self-inverse)"))
+ <> command "undo"    (info (Undo    <$> undoParser      <**> helper) (progDesc "Undo a patch (PPF3 undo data, or UPS/NINJA2 self-inverse)"))
  <> command "create"  (info (Create  <$> createParser    <**> helper) (progDesc "Create a patch from two files"))
  <> command "convert" (info (Convert <$> convertParser   <**> helper) (progDesc "Convert a patch to a different format"))
  <> command "info"    (info (Info    <$> patchInfoParser <**> helper) (progDesc "Display patch information"))

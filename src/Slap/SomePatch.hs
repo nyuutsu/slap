@@ -753,6 +753,14 @@ parseSomePatchFromNINJA2 metadataEncoding patchContents = do
         | otherwise = Nothing
       applyStrategy = ApplyStrategy
           { runApply = \source -> pure (fmap noAdvisories (NINJA2.applyNINJA2 patch source)) }
+      -- All that can go missing in reverse is the tail a shrink cut off, and only truncate-mode overflow carries it.
+      undoStrategy = UndoStrategy (fmap noAdvisories . NINJA2.undoNINJA2 patch)
+      undoAvailability = case openNewFile of
+        Just open | NINJA2.openNewFileSourceSize open > NINJA2.openNewFileTargetSize open ->
+          case NINJA2.ninja2OverflowType patch of
+            Just NINJA2.OverflowTruncate -> UndoFromCarriedData undoStrategy
+            _                            -> UndoAbsentFromPatch
+        _ -> UndoBySelfInversion undoStrategy
       advisories = parseAdvisories
                  ++ [EmptyPatch LabelNINJA2 EmptyRecords | null (NINJA2.ninja2Records patch)]
                  ++ platformAdvisories
@@ -772,6 +780,7 @@ parseSomePatchFromNINJA2 metadataEncoding patchContents = do
         { verifySourceMD5 = sourceMD5ForVerification
         , verifyTargetMD5 = filterZeroMD5 (fmap NINJA2.openNewFileTargetMD5 openNewFile)
         }
+    , patchUndo = undoAvailability
     , patchSourceNormalization = sourceNormalization
     , patchExtractedMeta =
         let headerFields = NINJA2.ninja2Header patch

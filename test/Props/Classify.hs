@@ -79,7 +79,7 @@ identityExpectations =
   , IdentityExpectation "PMSR"       (CreateDirect       CreatePMSR)      standardFixture LabelPMSR   FormatHasNoUndo
   , IdentityExpectation "NINJA1"     (CreateDirect       CreateNINJA1)    standardFixture LabelNINJA1 FormatHasNoUndo
   , IdentityExpectation "DPS"        (CreateDifferential CreateDPS)       standardFixture LabelDPS    FormatHasNoUndo
-  , IdentityExpectation "NINJA2"     (CreateDifferential CreateNINJA2)    standardFixture LabelNINJA2 FormatHasNoUndo
+  , IdentityExpectation "NINJA2"     (CreateDifferential CreateNINJA2)    standardFixture LabelNINJA2 PatchIsItsOwnReverse
   , IdentityExpectation "APS-N64"    (CreateDirect       CreateAPSN64)    standardFixture LabelAPSN64 FormatHasNoUndo
   , IdentityExpectation "APS-GBA"    (CreateDifferential CreateAPSGBA)    standardFixture LabelAPSGBA FormatHasNoUndo
   , IdentityExpectation "GDIFF"      (CreateDifferential CreateGDIFF)     standardFixture LabelGDIFF  FormatHasNoUndo

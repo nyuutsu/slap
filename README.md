@@ -282,7 +282,8 @@ slap explain patch.bps --records --with original.gba
 Where supported by the patch format, put things back the way they were. `undo` understands the same flags as does `apply`.
 
 ```console
-slap undo patch.ppf3 patched.gba
+slap undo patch.ninja2 patched.gba
+slap undo patch-that-has-undo-data.ppf3 patched.gba
 slap undo patch.ups patched.gba
 ```
 

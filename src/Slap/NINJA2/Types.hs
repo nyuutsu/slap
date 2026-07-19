@@ -71,7 +71,8 @@ import GHC.Generics (Generic, Generically(..))
 -- Types
 ----------------------------------------------------------------------------
 
--- | How a file's size change is carried: 'A' (0x41) appends the target's extra tail, 'M' (0x4D) truncates to the shorter target.
+-- | How a file's size change is carried: 'A' (0x41) appends the target's extra tail,
+-- and 'M' (0x4D) truncates to the shorter target, keeping the tail it cut off as the payload.
 -- The overflow bytes are stored XORed with 0xFF — a convention the spec sheet omits, but is used by every implementation we looked at.
 data OverflowMode = OverflowAppend | OverflowTruncate
   deriving (Show, Eq)
