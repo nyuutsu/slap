@@ -2,7 +2,7 @@
 // explain answers "what does it do to the bytes" as info-plus — the same readout, then the structure.
 
 import { html } from './../dom.mjs';
-import { groupMarkup, toggleMarkup, seatSlotMarkup, encodingFoldMarkup } from './../controls.mjs';
+import { groupMarkup, toggleMarkup, seatSlotMarkup, encodingPickerMarkup } from './../controls.mjs';
 import { voiceLines, plainVoice, advisoryMarkup } from './../answer-surface.mjs';
 import { verbWord, flagWord, valueWord, namedOr } from './../command-tutor.mjs';
 import { dialectControls, dialectTogglesMarkup } from './../dialect-controls.mjs';
@@ -21,7 +21,7 @@ const atRest = () => ({
   reading: null,
   everyRecord: false,
   walkRowsShown: walkRowsAtFirst,
-  encodingFoldOpen: false,
+  moreEncodingsOpen: false,
 });
 
 const makeReadCore = (host, { verbName, wireVerb, declaration, restingLine, readLine }) => {
@@ -200,7 +200,7 @@ export const makeExplainVerb = (host) => {
 
   const textEncodingGroupMarkup = () => {
     const read = core.state();
-    return encodingFoldMarkup(host.surface()?.surfaceEncodings ?? [], read.metadataEncoding, read.encodingFoldOpen);
+    return encodingPickerMarkup(host.surface()?.surfaceEncodings ?? [], read.metadataEncoding, read.moreEncodingsOpen);
   };
 
   const structurePanelMarkup = (explanation) => {
@@ -263,12 +263,14 @@ export const makeExplainVerb = (host) => {
     actions: {
       'set-encoding': ({ token }) => core.rereadPatch((read) => { read.metadataEncoding = token; }),
       'walk-more': () => { core.state().walkRowsShown += 2000; host.render(); },
+      'more-encodings': () => {
+        core.state().moreEncodingsOpen = !core.state().moreEncodingsOpen;
+        host.render();
+      },
     },
     settings: {
       ...core.settings,
       records: (checked) => { core.state().everyRecord = checked; host.render(); },
-      // the fold's open state must survive re-renders; the DOM already shows it, so no render here
-      'encoding-fold': (open) => { core.state().encodingFoldOpen = open; },
     },
   };
 };

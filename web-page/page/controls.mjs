@@ -64,18 +64,23 @@ export const headerControlMarkup = (framing, consoleRows) => {
 export const preseededConsoleRow = (consoleRows) =>
   consoleRows.find((row) => row.consoleToken === 'snes') ?? consoleRows[0];
 
-// The encoding chips wait behind a fold: the explainer above it says whether you need them at all.
-export const encodingFoldMarkup = (encodingFamilies, chosenEncoding, foldOpen) => groupMarkup('text encoding', html`
-  <p class="aside explainer">Some formats store text — descriptions, author names — without
-  recording its encoding, and slap reads it as UTF-8. If a patch came from, say, a Japanese release and
-  its text looks wrong, that's something slap can't know but you might: pick the encoding and slap re-reads.</p>
-  <details class="fold" data-setting="encoding-fold" ${(foldOpen || chosenEncoding !== 'utf-8') && html`open`}>
-    <summary>choose an encoding${chosenEncoding !== 'utf-8' ? html` — <b>${chosenEncoding}</b>` : ''}</summary>
-    ${encodingFamilies.map((family) => html`<div class="encoding-family">
+// The encodings unfold the way the quieter formats do, and an encoding already chosen holds them open:
+// the one on show is the answer to "did it take", which a closed drawer would have to repeat.
+export const encodingPickerMarkup = (encodingFamilies, chosenEncoding, moreEncodingsOpen) => {
+  const chosenIsUncommon = chosenEncoding !== 'utf-8';
+  const encodingsOpen = moreEncodingsOpen || chosenIsUncommon;
+  return groupMarkup('text encoding', html`
+    <p class="aside explainer">Some formats store text — descriptions, author names — without
+    recording its encoding, and slap reads it as UTF-8. If a patch came from, say, a Japanese release and
+    its text looks wrong, that's something slap can't know but you might: pick the encoding and slap re-reads.</p>
+    ${!chosenIsUncommon && html`<button class="more-chip${encodingsOpen ? ' open' : ''}"
+      aria-expanded="${encodingsOpen}" data-action="more-encodings">
+      ${encodingsOpen ? 'fewer encodings' : 'choose an encoding'}</button>`}
+    ${encodingsOpen && encodingFamilies.map((family) => html`<div class="encoding-family">
       <span class="family-label">${family.advertisedFamilyLabel}</span>
       <div class="choice-row">${family.advertisedFamilyMembers.map((token) => html`<button
         class="chip${chosenEncoding === token ? ' on' : ''}"
         aria-pressed="${chosenEncoding === token}"
         data-action="set-encoding" data-token="${token}">${token}</button>`)}</div>
-    </div>`)}
-  </details>`);
+    </div>`)}`);
+};

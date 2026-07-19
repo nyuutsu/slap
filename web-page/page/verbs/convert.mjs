@@ -2,7 +2,7 @@
 
 import { html } from './../dom.mjs';
 import { groupMarkup, toggleMarkup, seatSlotMarkup, heldSeatMarkup, inertSlotMarkup,
-         headerControlMarkup, encodingFoldMarkup, preseededConsoleRow } from './../controls.mjs';
+         headerControlMarkup, encodingPickerMarkup, preseededConsoleRow } from './../controls.mjs';
 import { applyFactsCardMarkup } from './../facts-card.mjs';
 import { voiceLines, plainVoice, workingVoice, convertedVoice, blockedVoice, refusalVoice,
          advisoryMarkup } from './../answer-surface.mjs';
@@ -25,7 +25,7 @@ const atRest = () => ({
   verificationPolicy: 'EnforceVerification',
   ppf1Origin: 'PPF1OriginPC',
   metadataEncoding: 'utf-8',
-  encodingFoldOpen: false,
+  moreEncodingsOpen: false,
   blob: { lane: null, text: '', file: null, fileBase64: null },
   diz:  { lane: null, text: '', file: null, fileBytes: null },
   checkAnswer: null,
@@ -377,8 +377,8 @@ export const makeConvertVerb = (host) => {
       ${headerControlSurfaces() && headerControlMarkup(convert.framing, host.surface().surfaceConsoleHeaders)}
       ${bench.metadataGroupMarkup(fileFieldMarkup)}
       ${bench.constraintsGroupMarkup()}
-      ${undeclaredTextFields.length > 0 && encodingFoldMarkup(host.surface()?.surfaceEncodings ?? [],
-                                                              convert.metadataEncoding, convert.encodingFoldOpen)}
+      ${undeclaredTextFields.length > 0 && encodingPickerMarkup(host.surface()?.surfaceEncodings ?? [],
+                                                              convert.metadataEncoding, convert.moreEncodingsOpen)}
       ${convert.patch && !impedimentSpoken() && optionsMarkup()}`;
   };
 
@@ -476,6 +476,7 @@ export const makeConvertVerb = (host) => {
         recheck(() => { convert.formatToken = token; });
       },
       'more-formats': () => { convert.moreFormatsOpen = !convert.moreFormatsOpen; host.render(); },
+      'more-encodings': () => { convert.moreEncodingsOpen = !convert.moreEncodingsOpen; host.render(); },
       'blob-lane': ({ lane }) => recheck(() => { convert.blob.lane = lane; }),
       'diz-lane': ({ lane }) => recheck(() => { convert.diz.lane = lane; }),
       'set-framing': ({ framing }) => reweighSource(() => {
@@ -514,7 +515,6 @@ export const makeConvertVerb = (host) => {
       dialect: (checked) => rereadPatch(() => {
         convert.ppf1Origin = checked ? 'PPF1OriginAmiga' : 'PPF1OriginPC';
       }),
-      'encoding-fold': (open) => { convert.encodingFoldOpen = open; },
     },
   };
 };

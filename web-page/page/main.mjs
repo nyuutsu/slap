@@ -149,13 +149,6 @@ document.addEventListener('change', (event) => {
   verbs[currentVerb].settings[setting]?.(control.type === 'checkbox' ? control.checked : control.value, control.dataset);
 });
 
-// A details fold speaks through 'toggle', not 'change'; its value is whether it stands open.
-document.addEventListener('toggle', (event) => {
-  const setting = event.target.dataset?.setting;
-  if (!setting) return;
-  verbs[currentVerb].settings[setting]?.(event.target.open, event.target.dataset);
-}, true);
-
 filePicker.addEventListener('change', () => {
   const [file] = filePicker.files;
   if (file) {
