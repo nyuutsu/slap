@@ -1397,6 +1397,14 @@ ppf3ValidationBlockFrom meta source
   where
     validationOffset = ppf3ValidationOffset (fromMaybe ppf3DefaultImageType (requestedImageType meta))
 
+-- | PPF2's window never moves; an image type inherited from a PPF3 source patch must not drag it to PPF3's.
+validationBlockFor :: DirectCreate -> RequestedPatchMetadata -> ByteString -> Maybe ByteString
+validationBlockFor CreatePPF2 _ source
+  | fitsWithin ppf2ValidationOffset ppf2ValidationSize (byteFileSize source) =
+      Just (viewBytesInRange ppf2ValidationOffset ppf2ValidationSize source)
+  | otherwise = Nothing
+validationBlockFor _ meta source = ppf3ValidationBlockFrom meta source
+
 buildContents :: DirectCreate -> InputFileContents -> OutputFileContents
               -> RequestedPatchMetadata -> Maybe PatchContents -> PatchContents
 buildContents format inputFileContents@(InputFileContents source) outputFileContents@(OutputFileContents target) meta sourceContents = PatchContents
@@ -1409,7 +1417,7 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
                     then Just (byteFileSize target)
                     else Nothing
   , contentsValidation  = if needs FieldValidation
-                    then ppf3ValidationBlockFrom meta source
+                    then validationBlockFor format meta source
                     else Nothing
   , contentsUndoData    = if needs FieldUndoData
                     then Just (splitUndoHunks ppf3MaxRecordPayload source patchHunks)

@@ -1184,6 +1184,27 @@ withConvertIsApplyTests base bps =
         directSha <- sha1Hex <$> ByteString.readFile directPatch
         assertEqual "the fixed convert should equal converting with the bare rom" directSha fixedSha
 
+  , testCase "with-convert/a GI-typed source patch converts to PPF2 reading PPF2's own validation window" $
+      withTempFile "slap-original" $ \original ->
+      withTempFile "slap-modified" $ \modified ->
+      withTempFile "slap-gippf3"   $ \giPatch ->
+      withTempFile "slap-ppf2"     $ \ppf2Patch ->
+      withTempFile "slap-outrom"   $ \outRom -> do
+        -- a cycling pattern past the validation floor, so the GI and PPF2 windows hold different bytes
+        let originalBytes = ByteString.pack (map fromIntegral [0 :: Int .. 39999])
+        ByteString.writeFile original originalBytes
+        ByteString.writeFile modified (ByteString.map (+ 1) originalBytes)
+        expectOk ["create", "--format", "ppf3", original, modified, giPatch, "--image-type", "gi", "--force"]
+          "gi-to-ppf2/create" "wrote"
+        expectOk ["convert", giPatch, "--to", "ppf2", "--with", original, "-o", ppf2Patch, "--force"]
+          "gi-to-ppf2/convert" "converted to"
+        run <- runExternal SlapBinary ["apply", ppf2Patch, original, "-o", outRom, "--force"] Nothing ""
+        let combined = externalRunStdout run ++ externalRunStderr run
+        assertBool "the emitted PPF2 should verify against the very source it was made from"
+          (not (ciContains "mismatch" combined))
+        patchedBytes <- ByteString.readFile outRom
+        assertEqual "the PPF2 should reproduce the modified file" (ByteString.map (+ 1) originalBytes) patchedBytes
+
   , testCase "with-convert/a typed directive is honored, never second-guessed" $
       withTempFile "slap-headered" $ \headered ->
       withTempFile "slap-out" $ \out -> do
