@@ -38,6 +38,8 @@
   --terminal-verb: #D9ABFA;      --terminal-flag: #7EE787;
   --terminal-value: #FFC66D;
 
+  --label-column: 104px;   /* the field labels' own column, and where the glosses under them start */
+
   --display: 'Baloo 2', system-ui, sans-serif;
   --body: 'Nunito', system-ui, sans-serif;
   --mono: 'Space Mono', ui-monospace, Menlo, Consolas, monospace;
@@ -60,6 +62,12 @@ body {
 
 button { font: inherit; cursor: pointer; }
 :focus-visible { outline: 2px solid var(--grape); outline-offset: 2px; }
+
+/* Only the colours a surface answers a pointer with, and under the tenth of a second that still reads as at once.
+   Nothing that carries a fact moves: what a control says, and when it says it, is unchanged. */
+.chip, .tile, .more-chip, .toggle-chip, .verb, .slot, .quiet-button, .field-input, .field-textarea {
+  transition: background-color 90ms ease-out, border-color 90ms ease-out, color 90ms ease-out;
+}
 
 /* ---------------------------------------------------------- masthead ---- */
 
@@ -210,8 +218,11 @@ button { font: inherit; cursor: pointer; }
 .more-chip:hover { border-color: var(--grape); background: var(--grape-tint); }
 .more-chip.open { border-style: solid; }
 
-.field { display: flex; align-items: baseline; gap: 10px; margin: 8px 0; }
-.field-label { font-family: var(--mono); font-size: 12px; color: var(--whisper); flex: 0 0 128px; }
+.field { display: flex; align-items: baseline; gap: 10px; margin: 8px 0; flex-wrap: wrap; }
+.field-label { font-family: var(--mono); font-size: 12px; color: var(--whisper); flex: 0 0 var(--label-column); }
+/* the gloss takes the whole line under the control it speaks for, standing where the control stands */
+.field-gloss { flex: 0 0 100%; margin: 2px 0 0 calc(var(--label-column) + 10px);
+               color: var(--ink-soft); font-size: 12.5px; }
 .field .why, .choice-label .why { color: var(--whisper); font-family: var(--body); font-size: 12.5px; flex: none; }
 .byte-count { font-family: var(--mono); font-size: 11px; color: var(--whisper); flex: none; }
 .byte-count.over-ceiling { color: var(--caution-ink); }
@@ -236,6 +247,10 @@ button { font: inherit; cursor: pointer; }
   background: var(--panel); border: 1px solid var(--hairline); border-radius: 7px; padding: 6px 10px;
 }
 .field-input { flex: 1; min-width: 0; }
+/* a count is a short word: it takes the width of one, and the browser's steppers step by a byte at a time — useless here */
+.field-input[type="number"] { flex: 0 0 auto; width: 11ch; appearance: textfield; }
+.field-input[type="number"]::-webkit-outer-spin-button,
+.field-input[type="number"]::-webkit-inner-spin-button { appearance: none; margin: 0; }
 .field-input:focus, .field-textarea:focus { outline: none; border-color: var(--grape); }
 .field-input:invalid { border-color: var(--coral-deep); }
 .field-textarea { width: 100%; min-height: 64px; resize: vertical; margin-top: 4px; }

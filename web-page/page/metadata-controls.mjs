@@ -71,7 +71,7 @@ const fieldWords = {
   MetadataEmbeddedBlob:          { label: 'embedded metadata' },
   MetadataXDelta1FromName:       { label: 'source name', why: "recorded in the patch; defaults to the file's own" },
   MetadataXDelta1ToName:         { label: 'target name', why: "recorded in the patch; defaults to the file's own" },
-  MetadataWindowSize:            { label: 'window size', why: 'empty means the format decides' },
+  MetadataWindowSize:            { label: 'window size' },
 };
 
 export const fieldLabel = (fieldName, fallbackWord) => fieldWords[fieldName]?.label ?? fallbackWord ?? fieldName;

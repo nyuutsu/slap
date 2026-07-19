@@ -112,14 +112,15 @@ export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
 
   /* ------------------------------------------------------------ stage ---- */
 
-  // Window size is the one control with a crossed fact to show at rest; any other placeholder would be page words.
-  const fieldPlaceholder = (fieldName) => {
+  // Window size is the one control with a crossed fact to show at rest, and it speaks in the choices' words:
+  // a default belongs beside the control rather than inside it, where typing would erase it.
+  const fieldGloss = (fieldName) => {
     if (fieldName !== 'MetadataWindowSize') return null;
     const windowDefault = surfaceRow()?.formatWindowDefault;
     if (!windowDefault) return null;
     return windowDefault.tag === 'WindowsOfBytes'
-      ? `auto: ${humanByteSize(windowDefault.contents)} windows`
-      : 'auto: one window, the whole file';
+      ? `${humanByteSize(windowDefault.contents)} windows unless you say otherwise.`
+      : 'one window, the whole file, unless you say otherwise.';
   };
 
   const whySpan = (fieldName) => fieldWhy(fieldName) && html` <span class="why">— ${fieldWhy(fieldName)}</span>`;
@@ -134,7 +135,6 @@ export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
     return html`<div class="field">
       <label class="field-label" for="meta-${fieldName}">${storiedText(fieldName, fieldLabel(fieldName, row.metadataFieldFlag))}</label>
       <input class="field-input" type="${inputType}" ${inputType === 'number' && html`min="1" step="1"`}
-        ${fieldPlaceholder(fieldName) && html`placeholder="${fieldPlaceholder(fieldName)}"`}
         ${ceiling && html`data-ceiling="${ceiling}" aria-describedby="meta-${fieldName}-count"`}
         ${storiedAttribute(fieldName)}
         id="meta-${fieldName}" data-setting="field" data-field="${fieldName}" value="${typed}">
@@ -144,6 +144,7 @@ export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
         class="chip${bench.windowUnit === unit.token ? ' on' : ''}" aria-pressed="${bench.windowUnit === unit.token}"
         data-action="window-unit" data-unit="${unit.token}">${unit.token}</button>`)}</span>`}
       ${whySpan(fieldName)}
+      ${fieldGloss(fieldName) && html`<p class="field-gloss">${fieldGloss(fieldName)}</p>`}
     </div>`;
   };
 
