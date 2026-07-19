@@ -24,7 +24,7 @@ import Slap.Measure (Offset, Length, FileSize, ActionIndex,
                      DeclaredTargetSize,
                      RequiredLength, ActualLength,
                      EncodedLength, MaxLength,
-                     ActualOffset, MaxOffset, SentinelOffset,
+                     ActualOffset, MaxOffset, MaxWritableSize, SentinelOffset,
                      ExpectedMagic, ActualMagic, TrailerMarker,
                      ParsedSizeValue, FoundVersion,
                      RawFlagByte, EncodingMethodByte)
@@ -71,6 +71,10 @@ data UnencodeabilityReason
     -- a size past that maximum has no representation.
     -- Without the refusal, the encoder would mask the size to its low bits and emit a patch that applies to a wrongly-sized file,
     -- in a format with no checksum to notice.
+  | GrowthReachesPastAddressableRange !DeclaredTargetSize !MaxWritableSize
+    -- ^ The pair grows, so every byte past the source's end must be written by some record,
+    -- and the topmost target byte lies past the furthest one any record can reach.
+    -- Same-size and shrinking pairs stay content-dependent: their high bytes may need no record at all.
   deriving (Eq, Show, Generic)
   deriving (ToJSON) via Generically UnencodeabilityReason
 
@@ -341,6 +345,10 @@ data SlapError
   -- | The user toggled dialect axes that the target format (for convert, neither side of the chain) admits —
   -- same shape and rationale as 'MetadataFieldRejected'.
   | DialectNotSupported (NonEmpty Dialect) FormatLabel
+
+  -- | @--compress-with@ beside @--no-compress@: with compression off, the chosen compressor would do nothing.
+  -- The CLI parser folds the two flags into one choice, so only a request authored elsewhere can arrive shaped like this.
+  | SecondaryCompressorRequestedWithCompressionOff
 
   -- | The user asked @slap convert@ to retag a patch's ROM type across platforms — the source patch declares one platform,
   -- @--rom-type@ names another. The records were built against the carried platform's normalized form,

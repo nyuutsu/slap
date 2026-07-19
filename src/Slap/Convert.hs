@@ -23,6 +23,10 @@ module Slap.Convert
   , acceptedConstraints
   , rejectIncompatibleConstraints
   , rejectIncompatibleSizeChange
+  , rejectSourceBelowPPF2ValidationFloor
+  , fieldTruncationForewarnings
+  , BoundedTextField(..)
+  , boundedTextFieldRows
   , RequestedDialects(..)
   , noDialectsRequested
   , requestedDialects
@@ -61,17 +65,17 @@ module Slap.Convert
   ) where
 
 import qualified Slap.PPF1.Create as PPF1
-import Slap.PPF1.Types (PPF1Origin(..), ppf1Limits, ppf1MaxRecordPayload,
+import Slap.PPF1.Types (PPF1Origin(..), ppf1DescriptionLength, ppf1Limits, ppf1MaxRecordPayload,
                         ppf1RejectIncompatibleSizeChange)
 import qualified Slap.PPF2.Create as PPF2
 import Slap.PPF2.Types (PPF2ValidationBlock(..),
                         narrowPPF2FileId, narrowPPF2SourceSize,
-                        ppf2Limits, ppf2MaxRecordPayload,
+                        ppf2DescriptionLength, ppf2Limits, ppf2MaxRecordPayload,
                         ppf2ValidationOffset, ppf2ValidationSize,
                         ppf2RejectIncompatibleSizeChange)
 import qualified Slap.PPF3.Create as PPF3
 import Slap.PPF3.Types (PPF3ImageType(..), PPF3ValidationBlock(..),
-                        narrowPPF3FileId, ppf3MaxRecordPayload, ppf3Limits,
+                        narrowPPF3FileId, ppf3DescriptionLength, ppf3MaxRecordPayload, ppf3Limits,
                         ppf3ValidationOffset, ppf3ValidationSize,
                         ppf3RejectIncompatibleSizeChange)
 import qualified Slap.PPF4.Create as PPF4
@@ -139,8 +143,10 @@ import Slap.MetadataInclusion (UndoInclusion(..), VerificationInclusion(..), Com
 import Slap.PatchField (PatchField(..), affectsApplyOutput)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
+import qualified Slap.FieldName as FieldName
+import Slap.FieldName (FieldName)
 import Slap.Text (EncodedText(..), EncodingName(..),
-                  encodedTextContent)
+                  encodedTextContent, encodeLossAdvisories, encodeTextBounded)
 
 import Control.Applicative ((<|>))
 import Data.Aeson (FromJSON, ToJSON)
@@ -646,12 +652,16 @@ xdelta3CompressionEmission meta =
            Just compressor -> Right (CompressSectionsWith compressor)
            Nothing         -> Left (XDelta3CompressorEncodingUnsupported (compressionAlgorithmOf algorithm))
 
--- | The value-level half of the @--compress-with@ gate, beside the concept-level 'rejectIncompatibleMetadata':
--- for an xdelta3 target, refuse a selected compressor slap cannot encode with, before any file is read.
+-- | The value-level half of the @--compress-with@ gate, beside the concept-level 'rejectIncompatibleMetadata', run before any file is read:
+-- an xdelta3 target refuses a selected compressor slap cannot encode with, and a compressor chosen beside a compression opt-out — a do-nothing pair.
+-- Judged on the request as authored, never a merged bag: an inherited compressor beside the user's @--no-compress@ stays the emission's Omit-wins fold.
 -- Other targets pass through — a selection they can't consume is already the concept-level rejection's to make.
 rejectUnencodableSecondaryCompressor :: CreateFormat -> RequestedPatchMetadata -> Either SlapError ()
-rejectUnencodableSecondaryCompressor (CreateDifferential CreateXDelta3) meta =
-  () <$ xdelta3CompressionEmission meta
+rejectUnencodableSecondaryCompressor (CreateDifferential CreateXDelta3) meta
+  | Just OmitCompression <- requestedPatchCompression meta
+  , Just _chosenCompressor <- requestedSecondaryCompressor meta
+  = Left SecondaryCompressorRequestedWithCompressionOff
+  | otherwise = () <$ xdelta3CompressionEmission meta
 rejectUnencodableSecondaryCompressor _ _ = Right ()
 
 ----------------------------------------------------------------------------
@@ -750,6 +760,15 @@ rejectIncompatibleSizeChange CreateNINJA1 = ninja1RejectIncompatibleSizeChange
 rejectIncompatibleSizeChange CreatePMSR   = pmsrRejectIncompatibleSizeChange
 rejectIncompatibleSizeChange CreateIPS    = ipsRejectIncompatibleSizeChange
 rejectIncompatibleSizeChange CreateAPSN64 = acceptsAnySizeChange
+
+-- | PPF2's source floor, judged from the size alone — the same refusal 'encodeDirect' raises when the source cannot fill a validation block,
+-- said here before any bytes are read into a diff.
+rejectSourceBelowPPF2ValidationFloor :: FileSize -> Either SlapError ()
+rejectSourceBelowPPF2ValidationFloor sourceSize
+  | fitsWithin ppf2ValidationOffset ppf2ValidationSize sourceSize = Right ()
+  | otherwise =
+      Left (SourceTooSmallForPPF2Validation LabelPPF2 (ActualSize sourceSize)
+              (ExpectedSize (FileSize (unOffset ppf2ValidationOffset + unLength ppf2ValidationSize))))
 
 -- | Leaf consumed by 'rejectIncompatibleSizeChange' for formats that
 -- impose no source\/target size-pair refusal. Pulled out so the
@@ -894,6 +913,53 @@ defaultAssumptionAdvisories target meta sourceRomType sourceImageType = concat
     | target == CreatePPF3
     , Nothing <- [requestedImageType meta <|> sourceImageType] ]
   ]
+
+-- | One bounded text field of a create's wire — the 'MetadataField' a request sets beside the 'FieldName' its advisories speak.
+data BoundedTextField = BoundedTextField
+  { boundedTextField     :: MetadataField
+  , boundedTextWireField :: FieldName
+  , boundedTextWidth     :: Length
+  , boundedTextReading   :: RequestedPatchMetadata -> Maybe EncodedText
+  }
+
+-- | Which text fields a create truncates, and to what widths.
+-- The emitters cut by these same named constants but do not read the rows, so a format that gains a bounded field must gain its row here too.
+boundedTextFieldRows :: CreateFormat -> [BoundedTextField]
+boundedTextFieldRows format = case format of
+  CreateDirect CreatePPF1         -> [descriptionRow ppf1DescriptionLength]
+  CreateDirect CreatePPF2         -> [descriptionRow ppf2DescriptionLength]
+  CreateDirect CreatePPF3         -> [descriptionRow ppf3DescriptionLength]
+  CreateDirect CreateAPSN64       -> [descriptionRow APSN64.apsN64DescriptionWidth]
+  CreateDifferential CreateDPS    ->
+    [ BoundedTextField MetadataTitle   FieldName.FieldPatchName DPS.dpsFieldWidth requestedTitle
+    , BoundedTextField MetadataAuthor  FieldName.FieldAuthor    DPS.dpsFieldWidth requestedAuthor
+    , BoundedTextField MetadataVersion FieldName.FieldVersion   DPS.dpsFieldWidth requestedVersion
+    ]
+  CreateDifferential CreateNINJA2 ->
+    [ BoundedTextField MetadataAuthor      FieldName.FieldAuthor      NINJA2.ninja2AuthorWidth      requestedAuthor
+    , BoundedTextField MetadataVersion     FieldName.FieldVersion     NINJA2.ninja2VersionWidth     requestedVersion
+    , BoundedTextField MetadataTitle       FieldName.FieldTitle       NINJA2.ninja2TitleWidth       requestedTitle
+    , BoundedTextField MetadataGenre       FieldName.FieldGenre       NINJA2.ninja2GenreWidth       requestedGenre
+    , BoundedTextField MetadataLanguage    FieldName.FieldLanguage    NINJA2.ninja2LanguageWidth    requestedLanguage
+    , BoundedTextField MetadataDate        FieldName.FieldDate        NINJA2.ninja2DateWidth        requestedDate
+    , BoundedTextField MetadataWebsite     FieldName.FieldWebsite     NINJA2.ninja2WebsiteWidth     requestedWebsite
+    , BoundedTextField MetadataDescription FieldName.FieldDescription NINJA2.ninja2DescriptionWidth requestedDescription
+    ]
+  _ -> []
+  where
+    descriptionRow width =
+      BoundedTextField MetadataDescription FieldName.FieldDescription width requestedDescription
+
+-- | The truncations and substitutions an emit's bounded text fields would narrate, said from the request alone.
+-- Spoken by the checks only; the act narrates its own losses, so a run hears each fact once.
+fieldTruncationForewarnings :: CreateFormat -> RequestedPatchMetadata -> [SlapAdvisory]
+fieldTruncationForewarnings format meta = foldMap forewarnRow (boundedTextFieldRows format)
+  where
+    forewarnRow row =
+      foldMap (\fieldText ->
+        encodeLossAdvisories (createFormatLabel format) (boundedTextWireField row)
+          (snd (encodeTextBounded EncodingUtf8 (boundedTextWidth row) (encodedTextContent fieldText))))
+        (boundedTextReading row meta)
 
 -- | Default-assumption notes for the create and --with convert paths,
 -- where no source PatchContents is available but the source file is.

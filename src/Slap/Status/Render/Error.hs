@@ -24,7 +24,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..), ActionIndex(unActionI
                      DeclaredTargetSize(..),
                      RequiredLength(..), ActualLength(..),
                      EncodedLength(..), MaxLength(..),
-                     ActualOffset(..), MaxOffset(..), SentinelOffset(..),
+                     ActualOffset(..), MaxOffset(..), MaxWritableSize(..), SentinelOffset(..),
                      ExpectedMagic(..), ActualMagic(..), TrailerMarker(..),
                      ParsedSizeValue(..), FoundVersion(..),
                      RawFlagByte(..), EncodingMethodByte(..))
@@ -678,6 +678,10 @@ renderSlapError (DialectNotSupported axes target) =
          <> " format does not have these dialect axes:"
          <> Text.concat (map (\d -> "\n  - " <> renderOne d) many)
 
+renderSlapError SecondaryCompressorRequestedWithCompressionOff =
+  "--compress-with is not accepted alongside --no-compress"
+  <> " (with compression switched off, there is nothing for the chosen compressor to do)"
+
 renderSlapError (RomTypeRetagRejected (CarriedRomType carried) (RequestedRomType requested)) =
   "--rom-type: this patch declares ROM type " <> platformName carried
   <> ", and convert does not retag across platforms: the records were built against the "
@@ -757,6 +761,11 @@ renderUnencodeabilityReason _label
   <> " to record the trimmed size, and that marker's field is only 24 bits:"
   <> " it can't name 0x" <> renderHexAsText (unFileSize targetSize)
   <> " bytes, past its 0x" <> renderHexAsText (unOffset markerMaximum) <> " ceiling"
+renderUnencodeabilityReason _label
+  (GrowthReachesPastAddressableRange (DeclaredTargetSize targetSize) (MaxWritableSize writableCeiling)) =
+  "the output is larger than the input, so every byte past the input's end must be written,"
+  <> " but records reach no further than 0x" <> renderHexAsText (unFileSize writableCeiling)
+  <> ": an output of 0x" <> renderHexAsText (unFileSize targetSize) <> " bytes ends out of reach"
 
 -- | The markers in the wild are ASCII-printable (@"EOF"@, @"EEOF"@), so the common case is the literal string;
 -- a marker with a non-printable byte falls back to hex rather than putting control characters in the error stream.

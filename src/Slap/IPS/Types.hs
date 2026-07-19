@@ -68,6 +68,7 @@ import Slap.Measure
   , ActualSize(..)
   , ExpectedSize(..)
   , MaxOffset(..)
+  , MaxWritableSize(..)
   , byteLength
   , offsetToFileSize
   , ipsSentinel
@@ -451,13 +452,15 @@ ebpLimits = ipsLimits { formatLabel = LabelEBP }
 -- 'ipsVariantMaxAddressableOffset' has no representation: encoding
 -- it would mask the size to its low 24 bits and emit a patch that
 -- applies to a wrongly-sized file, with no checksum in the format to
--- notice. Growth and same-size pairs pass — they need no marker.
+-- notice. Same-size pairs pass — they need no marker — and growth
+-- passes when it stays within 'growthStaysWritable''s reach.
 -- Consumed by 'Slap.Convert.rejectIncompatibleSizeChange' through
 -- its 'CreateIPS' arm.
 ipsRejectIncompatibleSizeChange
   :: FileSize -> FileSize -> Either SlapError ()
 ipsRejectIncompatibleSizeChange sourceSize targetSize
-  | targetSize >= sourceSize = Right ()
+  | targetSize > sourceSize  = growthStaysWritable LabelIPS StandardIPS targetSize
+  | targetSize == sourceSize = Right ()
   | targetSize <= offsetToFileSize markerMaximum = Right ()
   | otherwise = Left (UnencodeablePair LabelIPS
       (TruncationTargetUnrepresentable
@@ -469,27 +472,45 @@ ipsRejectIncompatibleSizeChange sourceSize targetSize
 -- | IPS32 declines (source, target) pairs whose target is shorter
 -- than the source. IPS32 has no truncation extension in its wire
 -- vocabulary, so target shrinkage has no on-wire representation.
--- Consumed by 'Slap.Convert.rejectIncompatibleSizeChange' through
--- its 'CreateIPS32' arm.
+-- Growth passes within 'growthStaysWritable''s reach. Consumed by
+-- 'Slap.Convert.rejectIncompatibleSizeChange' through its
+-- 'CreateIPS32' arm.
 ips32RejectIncompatibleSizeChange
   :: FileSize -> FileSize -> Either SlapError ()
 ips32RejectIncompatibleSizeChange sourceSize targetSize
-  | sourceSize <= targetSize = Right ()
+  | targetSize > sourceSize  = growthStaysWritable LabelIPS32 IPS32 targetSize
+  | targetSize == sourceSize = Right ()
   | otherwise                = Left (UnencodeablePair LabelIPS32
       (TargetShrinksBelowSource (ActualSize sourceSize) (ExpectedSize targetSize)))
 
 -- | EBP declines (source, target) pairs whose target is shorter than
 -- the source. EBP is structurally a 'StandardIPS' patch with a JSON
 -- metadata trailer; the trailer slot is claimed by the JSON, leaving
--- no room for a truncation marker. Consumed by
+-- no room for a truncation marker. Growth passes within
+-- 'growthStaysWritable''s reach. Consumed by
 -- 'Slap.Convert.rejectIncompatibleSizeChange' through its
 -- 'CreateEBP' arm.
 ebpRejectIncompatibleSizeChange
   :: FileSize -> FileSize -> Either SlapError ()
 ebpRejectIncompatibleSizeChange sourceSize targetSize
-  | sourceSize <= targetSize = Right ()
+  | targetSize > sourceSize  = growthStaysWritable LabelEBP StandardIPS targetSize
+  | targetSize == sourceSize = Right ()
   | otherwise                = Left (UnencodeablePair LabelEBP
       (TargetShrinksBelowSource (ActualSize sourceSize) (ExpectedSize targetSize)))
+
+-- | Refuse a growing pair whose target ends past the furthest byte the variant's records can write:
+-- a grow must write every byte past the source's end, so the sizes alone decide.
+growthStaysWritable :: FormatLabel -> IPSVariant -> FileSize -> Either SlapError ()
+growthStaysWritable label variant targetSize
+  | targetSize <= writableCeiling = Right ()
+  | otherwise = Left (UnencodeablePair label
+      (GrowthReachesPastAddressableRange
+        (DeclaredTargetSize targetSize)
+        (MaxWritableSize writableCeiling)))
+  where
+    writableCeiling =
+      FileSize (unOffset (ipsVariantMaxAddressableOffset (variantSpec variant))
+                + unLength ipsMaxRecordPayload)
 
 ----------------------------------------------------------------------------
 -- Truncation-marker disposition

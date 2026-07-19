@@ -33,6 +33,7 @@ module Slap.Measure
   , SubstitutionCount(..)
   , ActualOffset(..)
   , MaxOffset(..)
+  , MaxWritableSize(..)
   , SentinelOffset(..)
   , ExpectedMagic(..)
   , ActualMagic(..)
@@ -282,6 +283,12 @@ newtype ActualOffset = ActualOffset { unActualOffset :: Offset }
 -- | The maximum offset a format allows, used in encode-error
 -- contexts where a bare 'Offset' would be ambiguous.
 newtype MaxOffset = MaxOffset { unMaxOffset :: Offset }
+  deriving (Eq, Ord, Show)
+  deriving newtype (ToJSON)
+
+-- | The largest output size a format's records can build — its maximum record offset plus a full payload.
+-- Used in encode-error contexts beside another size, where two bare 'FileSize's would transpose silently.
+newtype MaxWritableSize = MaxWritableSize { unMaxWritableSize :: FileSize }
   deriving (Eq, Ord, Show)
   deriving newtype (ToJSON)
 
