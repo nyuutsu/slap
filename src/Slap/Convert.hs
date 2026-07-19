@@ -1596,7 +1596,7 @@ differentialFormatInfo CreateGDIFF   = FormatInfo ".gdiff"   "GDIFF"     LabelGD
 differentialFormatInfo CreateBSDiff  = FormatInfo ".bsdiff"  "BSDiff"    LabelBSDiff
 differentialFormatInfo CreateXDelta1 = FormatInfo ".xdelta1" "XDelta1"   LabelXDelta1
 differentialFormatInfo CreateRFCVCDIFF = FormatInfo ".rfc-vcdiff" "VCDIFF" LabelVCDIFF
-differentialFormatInfo CreateXDelta3   = FormatInfo ".xdelta"      "xdelta3" LabelVCDIFF
+differentialFormatInfo CreateXDelta3   = FormatInfo ".xdelta3"     "xdelta3" LabelVCDIFF
 
 directExtension :: DirectCreate -> String
 directExtension = formatInfoExtension . directFormatInfo
