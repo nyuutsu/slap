@@ -95,8 +95,8 @@ import Slap.Apply (PatchedRom(..), VerdictStanding(..), runPreparedApply)
 import Slap.Measure (FileSize(..), Length(..), byteFileSize)
 import Slap.MetadataField (MetadataField(..), metadataFieldFlagName, requestField)
 import Slap.NINJA2.Types (ninja2DefaultTextMode)
-import Slap.PPF2.Types (narrowPPF2FileId)
-import Slap.PPF3.Types (narrowPPF3FileId, ppf3DefaultImageType)
+import Slap.PPF2.Types (narrowPPF2FileId, ppf2FileIdMaxContentLength)
+import Slap.PPF3.Types (narrowPPF3FileId, ppf3DefaultImageType, ppf3FileIdMaxContentLength)
 import Slap.PatchField (PatchField)
 import Slap.PlatformType (PlatformType(PlatformRaw))
 import qualified Slap.Preflight as Preflight
@@ -200,6 +200,7 @@ describeCreateTarget token target = FormatDescription
       _                                  -> Nothing
   , formatTextFieldCeilings =
       [ (boundedTextField row, boundedTextWidth row) | row <- boundedTextFieldRows target ]
+      <> fileIdDizCeilingRows target
   , formatChoiceDefaults    = case target of
       CreateDirect CreatePPF3         -> [(MetadataImageType, tokenOf imageTypeTokens ppf3DefaultImageType)]
       CreateDirect CreateNINJA1       -> [(MetadataRomType, tokenOf romTypeTokens PlatformRaw)]
@@ -555,6 +556,15 @@ framedSourcePPF2FloorGap request = case (convertTargetFormat request, convertSou
 headerReachBeyond :: FileSize -> FileSize
 headerReachBeyond size = FileSize (unFileSize size + unLength largestConsoleHeader)
   where largestConsoleHeader = maximum (map consoleHeaderLength [minBound .. maxBound])
+
+-- | The DIZ caps ride beside the bounded-text ceilings so the page can count bytes live.
+-- The kinship ends at the counting: a bounded field truncates at its ceiling with a forewarning,
+-- while an over-long DIZ blocks the emit ('fileIdDizLengthGap') until amended.
+fileIdDizCeilingRows :: CreateFormat -> [(MetadataField, Length)]
+fileIdDizCeilingRows = \case
+  CreateDirect CreatePPF2 -> [(MetadataFileIdDiz, ppf2FileIdMaxContentLength)]
+  CreateDirect CreatePPF3 -> [(MetadataFileIdDiz, ppf3FileIdMaxContentLength)]
+  _                       -> []
 
 createFileIdDizLengthGap :: CreateFormat -> RequestedPatchMetadata -> Maybe Gap
 createFileIdDizLengthGap target meta =

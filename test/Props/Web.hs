@@ -180,7 +180,7 @@ test_formatTextCeilingCensus :: Assertion
 test_formatTextCeilingCensus =
   [ (formatToken row, length (formatTextFieldCeilings row))
   | row <- surfaceFormats describeSurface, not (null (formatTextFieldCeilings row)) ]
-    @?= [("ppf1", 1), ("ppf2", 1), ("ppf3", 1), ("dps", 3), ("ninja2", 8), ("aps-n64", 1)]
+    @?= [("ppf1", 1), ("ppf2", 2), ("ppf3", 2), ("dps", 3), ("ninja2", 8), ("aps-n64", 1)]
 
 test_formatChoiceDefaultCensus :: Assertion
 test_formatChoiceDefaultCensus = do
