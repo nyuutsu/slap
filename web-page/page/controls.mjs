@@ -4,9 +4,18 @@ import { html } from './dom.mjs';
 
 export const groupMarkup = (heading, body) => html`<div class="group"><h3>${heading}</h3>${body}</div>`;
 
+// One garment for every aside the context raises, so text that came from what you just chose looks the part.
+const admonitionFaces = { note: 'art/note.webp', warning: 'art/warning.webp' };
+export const admonitionMarkup = (kind, spokenContents) => html`<p class="advisory${kind === 'note' ? ' note' : ''}">
+  <img class="advisory-face" src="${admonitionFaces[kind]}" alt="" width="20" height="20">
+  <span>${spokenContents}</span></p>`;
+
+// The checkbox is dressed as a chip but kept, hidden and real,
+// so the toggling, the label click and the announced state stay the browser's own.
 export const toggleMarkup = ({ id, setting, checked, label, why, field }) => html`<div class="toggle">
-  <input type="checkbox" id="${id}" data-setting="${setting}" ${field && html`data-field="${field}"`} ${checked && html`checked`}>
-  <label for="${id}">${label}${why && html` <span class="why">— ${why}</span>`}</label>
+  <input class="toggle-input" type="checkbox" id="${id}" data-setting="${setting}" ${field && html`data-field="${field}"`} ${checked && html`checked`}>
+  <label class="chip toggle-chip" for="${id}">${label}</label>
+  ${why && html`<span class="why">— ${why}</span>`}
 </div>`;
 
 // An empty slot wears its role word, so the empty sentence teaches the operation.

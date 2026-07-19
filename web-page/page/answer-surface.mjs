@@ -2,6 +2,7 @@
 // advisories riding either — lands in this box, and the fellow beside it gives it a face.
 
 import { html } from './dom.mjs';
+import { admonitionMarkup } from './controls.mjs';
 import { buildStamp } from './build-stamp.mjs';
 import { checkKindNoun, crc32Hex, matchVerbFor, proseList } from './readouts.mjs';
 import { spokenRefusalMarkup, spokenAdvisorySentence } from './verification-speech.mjs';
@@ -60,9 +61,9 @@ const bootFailureSentences = (bootFailureShape) => {
   switch (bootFailureShape.tag) {
     case 'WebAssemblySwitchedOff': return html`
       <p class="plain-line">webassembly is switched off in this browser, so slap can't start.</p>
-      <p class="advisory note">that's nearly always a setting, not the browser's age — in edge it's the enhanced
+      ${admonitionMarkup('note', html`that's nearly always a setting, not the browser's age — in edge it's the enhanced
         security mode, and adding this site to that mode's exceptions turns webassembly back on.
-        the slap command line has no such ceiling.</p>`;
+        the slap command line has no such ceiling.`)}`;
     case 'ReactorNeverArrived': return html`
       <p class="plain-line">slap's engine didn't download — a reload usually fixes this.</p>
       <p class="refusal">${bootFailureShape.detail}</p>`;
@@ -76,8 +77,8 @@ export const bootFailureVoice = (bootFailureShape) => html`
   ${bootFailureSentences(bootFailureShape)}
   <p class="boot-stamp">${buildStamp}</p>`;
 
-export const advisoryMarkup = (advisories) => advisories.map((advisory) => html`
-  <p class="advisory${advisory.spokenAdvisorySeverity === 'SeverityNote' ? ' note' : ''}">${spokenAdvisorySentence(advisory)}</p>`);
+export const advisoryMarkup = (advisories) => advisories.map((advisory) => admonitionMarkup(
+  advisory.spokenAdvisorySeverity === 'SeverityNote' ? 'note' : 'warning', spokenAdvisorySentence(advisory)));
 
 const verdictSentences = (spoken, romCrcHexValue, inputReframed) => {
   const input = spoken.spokenPatchedRomInputVerdict;

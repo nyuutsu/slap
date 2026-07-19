@@ -7,8 +7,8 @@ import { voiceLines, plainVoice, workingVoice, bottledVoice, blockedVoice, refus
          advisoryMarkup } from './../answer-surface.mjs';
 import { verbWord, flagWord, valueWord, quotedWord, fileWord, namedOr, placeholderWord } from './../command-tutor.mjs';
 import { utf8Text, typedTextFlags, fieldLabel } from './../metadata-controls.mjs';
-import { makeMetadataBench, storiedText, base64OfBuffer } from './../metadata-form.mjs';
-import { formatPickerMarkup, formatNoteMarkup } from './../format-picker.mjs';
+import { makeMetadataBench, storiedText, base64OfBuffer, countedTextareaMarkup } from './../metadata-form.mjs';
+import { formatPickerMarkup } from './../format-picker.mjs';
 import { stemOf } from './../readouts.mjs';
 
 const runLabel = 'Bottle';
@@ -194,8 +194,8 @@ export const makeCreateVerb = (host) => {
     <p class="choice-label">${storiedText('MetadataFileIdDiz', fieldLabel('MetadataFileIdDiz'))}</p>
     ${laneChips('diz-lane', create.diz.lane)}
     ${create.diz.lane === 'typed'
-      ? html`<textarea class="field-textarea" data-setting="diz-text"
-          placeholder="the FILE_ID.DIZ text, as you'd like it carried">${create.diz.text}</textarea>`
+      ? countedTextareaMarkup({ setting: 'diz-text', placeholder: "the FILE_ID.DIZ text, as you'd like it carried",
+          typed: create.diz.text, ceiling: bench.fieldCeiling('MetadataFileIdDiz') })
       : html`<div class="choice-row"><button class="chip" data-action="pick-file"
           data-seat="diz-file">${create.diz.file?.name ?? 'choose a file…'}</button></div>`}`;
 
@@ -210,7 +210,6 @@ export const makeCreateVerb = (host) => {
     return html`
       ${sentenceMarkup()}
       ${create.original && create.modified && !create.running && swapSeatsMarkup}
-      ${formatNoteMarkup(create.formatToken)}
       ${formatPickerMarkup(host.surface()?.surfaceFormats ?? [], create.formatToken, create.moreFormatsOpen)}
       ${bench.metadataGroupMarkup(fileFieldMarkup)}
       ${bench.constraintsGroupMarkup()}`;

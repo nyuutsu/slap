@@ -10,7 +10,10 @@ import { makeUndoVerb } from './verbs/undo.mjs';
 import { makeCreateVerb } from './verbs/create.mjs';
 import { makeConvertVerb } from './verbs/convert.mjs';
 import { makeInfoVerb, makeExplainVerb } from './verbs/reads.mjs';
-import { wireMetadataBenchListeners } from './metadata-form.mjs';
+import { wireStoryListeners } from './stories.mjs';
+import { wireByteCountListener } from './metadata-form.mjs';
+import { fieldStories } from './metadata-controls.mjs';
+import { pickerStories } from './format-picker.mjs';
 
 // apply, create and explain are what slap is for; the rest are welcome, just quieter.
 const headlinerVerbs = ['apply', 'create', 'explain'];
@@ -88,8 +91,9 @@ const verbs = {
   convert: makeConvertVerb(host),
 };
 
-// The emit verbs' stories and byte counters ride data attributes, so one wiring serves whichever is mounted.
-wireMetadataBenchListeners(host, () => verbs[currentVerb].storiesQuiet?.() ?? false);
+const storybook = { ...fieldStories, ...pickerStories };
+wireStoryListeners(host, storybook, () => verbs[currentVerb].storiesQuiet?.() ?? false);
+wireByteCountListener(host);
 
 /* --------------------------------------------------------------- render ---- */
 

@@ -6,6 +6,7 @@
 @font-face { font-family: 'Space Mono';     src: url(fonts/spacemono-400.woff2) format('woff2');     font-weight: 400;      font-display: swap; }
 @font-face { font-family: 'Space Mono';     src: url(fonts/spacemono-700.woff2) format('woff2');     font-weight: 700;      font-display: swap; }
 @font-face { font-family: 'IM Fell English'; src: url(fonts/imfell-400-italic.woff2) format('woff2'); font-style: italic;    font-display: swap; }
+@font-face { font-family: 'Sarasa Mono J';   src: url(fonts/sarasamonoj-400.woff2) format('woff2');   font-weight: 400;      font-display: swap; }
 
 :root {
   --room: #FBF4EA;
@@ -13,25 +14,30 @@
   --hairline: #ECD9C4;
   --ink: #3D3A34;
   --ink-soft: #7A5647;
-  --whisper: #A6937F;
+  --whisper: #857059;
 
   --grape: #8E44AD;
   --grape-tint: #F5EDF9;
   --coral: #F26B43;
   --coral-deep: #C6592F;
   --amber: #E8912B;
+  /* the bright coral and amber carry no words: anything to be read in either hue takes the ink below it */
+  --coral-ink: #A8431E;
+  --amber-ink: #A8680F;
 
   --ok-ink: #3E5A34;     --ok-room: #F2F7EE;      --ok-line: #CFE3C4;
   --caution-ink: #8A5A2F; --caution-room: #FFF3E6; --caution-line: #E7D2A8;
 
-  /* the terminal strip keeps its own dark ground; the page accent never sits on it */
+  /* the terminal strip keeps its own dark ground; the page accent never sits on it,
+     and every word on it speaks bright and saturated — no greys, no browns */
   --terminal-room: #221E1A;      --terminal-ink: #EFE7DD;
-  --terminal-verb: #CDB4DE;      --terminal-flag: #8FD6B6;
-  --terminal-value: #F0C987;     --terminal-placeholder: #8A8177;
+  --terminal-verb: #D9ABFA;      --terminal-flag: #7EE787;
+  --terminal-value: #FFC66D;
 
   --display: 'Baloo 2', system-ui, sans-serif;
   --body: 'Nunito', system-ui, sans-serif;
   --mono: 'Space Mono', ui-monospace, Menlo, Consolas, monospace;
+  --terminal-mono: 'Sarasa Mono J', ui-monospace, Menlo, Consolas, monospace;
 }
 
 * { box-sizing: border-box; }
@@ -84,8 +90,7 @@ button { font: inherit; cursor: pointer; }
 }
 .verb:hover { color: var(--grape); }
 .verb.on { color: var(--grape); font-weight: 700; border-bottom-color: var(--grape); }
-.verb.lesser { font-size: 12.5px; padding: 8px 10px; opacity: 0.62; }
-.verb.lesser.on { opacity: 1; }
+.verb.lesser { font-size: 12.5px; padding: 8px 10px; }
 .verb-gap { width: 1px; height: 15px; background: var(--hairline); margin: 0 9px; }
 
 /* ---------------------------------------------------------- sentence ---- */
@@ -145,6 +150,14 @@ button { font: inherit; cursor: pointer; }
 .group > .aside:first-child { margin-top: 0; }
 .group .aside.explainer { margin: 0 0 10px; }
 
+.advisory {
+  display: flex; gap: 10px; align-items: flex-start;
+  font-size: 13.5px; border-radius: 8px; padding: 9px 12px; margin: 10px 0 0;
+  background: var(--caution-room); border: 1px solid var(--caution-line); color: var(--caution-ink);
+}
+.advisory.note { background: var(--room); border-color: var(--hairline); color: var(--ink-soft); }
+.advisory-face { flex: none; margin-top: 1px; }
+
 .choice-row { display: flex; gap: 7px; flex-wrap: wrap; margin: 4px 0; }
 .chip {
   font-family: var(--mono); font-size: 12.5px;
@@ -157,8 +170,14 @@ button { font: inherit; cursor: pointer; }
 .choice-label { font-family: var(--mono); font-size: 11.5px; color: var(--whisper); margin: 12px 0 6px; }
 
 .toggle { display: flex; align-items: center; gap: 9px; margin: 10px 0 2px; }
-.toggle input { accent-color: var(--grape); width: 15px; height: 15px; }
-.toggle label { font-family: var(--mono); font-size: 13px; }
+.toggle + .toggle { border-top: 1px solid var(--hairline); padding-top: 10px; }
+.toggle-input { position: absolute; opacity: 0; pointer-events: none; }
+.toggle-chip { cursor: pointer; }
+/* the tick's seat is never empty: a hollow ring holds it while off, so the chip reads fillable and never shifts */
+.toggle-chip::before { content: '○'; display: inline-block; width: 1.2em; color: var(--whisper); }
+.toggle-input:checked + .toggle-chip { background: var(--grape); border-color: var(--grape); color: #fff; }
+.toggle-input:checked + .toggle-chip::before { content: '✓'; color: inherit; }
+.toggle-input:focus-visible + .toggle-chip { outline: 2px solid var(--grape); outline-offset: 2px; }
 .toggle .why { color: var(--whisper); font-family: var(--body); font-size: 13px; }
 
 /* ------------------------------------------------------------ create ---- */
@@ -177,11 +196,15 @@ button { font: inherit; cursor: pointer; }
 .tile.curio { width: 100%; flex-direction: row; align-items: baseline; gap: 14px; margin: 0 0 10px; }
 .tile.curio .tile-name { flex: none; }
 
-.format-note { display: flex; gap: 9px; align-items: baseline; font-size: 13px; color: var(--ink-soft); margin: 0 0 12px; }
-.note-mark {
-  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; color: var(--amber);
-  border: 1px solid var(--caution-line); border-radius: 4px; padding: 1px 5px; flex: none;
+/* the dashed border borrows the empty slot's promise of more; the chip shape previews what unfolds */
+.more-chip {
+  font-family: var(--mono); font-size: 12.5px;
+  color: var(--grape); background: none;
+  border: 1px dashed #D5B8E3; border-radius: 999px;
+  padding: 7px 13px;
 }
+.more-chip:hover { border-color: var(--grape); background: var(--grape-tint); }
+.more-chip.open { border-style: solid; }
 
 .field { display: flex; align-items: baseline; gap: 10px; margin: 8px 0; }
 .field-label { font-family: var(--mono); font-size: 12px; color: var(--whisper); flex: 0 0 128px; }
@@ -190,7 +213,8 @@ button { font: inherit; cursor: pointer; }
 .byte-count.over-ceiling { color: var(--caution-ink); }
 .chip-stack { display: inline-block; position: relative; }
 .chip-stack .role-whisper { margin-top: 2px; }
-.choice-row:has(.chip-stack) { margin-bottom: 16px; }
+/* the hanging whisper needs headroom when the row wraps, and below the row either way */
+.choice-row:has(.chip-stack) { row-gap: 20px; margin-bottom: 16px; }
 .choice-gloss { color: var(--ink-soft); font-size: 12.5px; margin: 4px 0 2px; }
 .has-story { text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: var(--hairline); cursor: help; }
 .field-input, .field-textarea {
@@ -201,6 +225,7 @@ button { font: inherit; cursor: pointer; }
 .field-input:focus, .field-textarea:focus { outline: none; border-color: var(--grape); }
 .field-input:invalid { border-color: var(--coral-deep); }
 .field-textarea { width: 100%; min-height: 64px; resize: vertical; margin-top: 4px; }
+.counted-lane .byte-count { display: block; text-align: right; margin-top: 3px; }
 
 .way-out { margin: 2px 0 6px; font-size: 13.5px; color: var(--ink-soft); }
 
@@ -222,12 +247,7 @@ button { font: inherit; cursor: pointer; }
 .voice .headline .sparkle { color: var(--amber); font-size: 18px; }
 .voice .said { margin: 0 0 6px; }
 .voice .said code { font-family: var(--mono); font-size: 12.5px; background: var(--room); border: 1px solid var(--hairline); border-radius: 4px; padding: 1px 5px; }
-.voice .refusal { font-family: var(--mono); font-size: 13.5px; white-space: pre-wrap; margin: 0 0 6px; color: var(--ink); }
-.voice .advisory {
-  font-size: 13.5px; border-radius: 8px; padding: 9px 12px; margin: 10px 0 0;
-  background: var(--caution-room); border: 1px solid var(--caution-line); color: var(--caution-ink);
-}
-.voice .advisory.note { background: var(--room); border-color: var(--hairline); color: var(--ink-soft); }
+.voice .refusal { font-family: var(--mono); font-size: 13.5px; white-space: pre-wrap; margin: 0 0 6px; color: var(--coral-ink); }
 .voice .boot-stamp { margin: 10px 0 0; font-size: 12px; color: var(--whisper); }
 .voice .download {
   display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
@@ -282,7 +302,7 @@ button { font: inherit; cursor: pointer; }
 .walk-offset { color: var(--whisper); flex: 0 0 76px; }
 .walk-size { flex: 0 0 72px; }
 .walk-detail { color: var(--whisper); }
-.walk-hex { color: var(--amber); font-size: 11.5px; letter-spacing: 0.04em; padding: 1px 0 5px 137px; overflow-wrap: anywhere; }
+.walk-hex { color: var(--amber-ink); font-size: 11.5px; letter-spacing: 0.04em; padding: 1px 0 5px 137px; overflow-wrap: anywhere; }
 .walk-more { display: flex; align-items: baseline; gap: 8px; margin-top: 10px; font-size: 12.5px; }
 
 .blob { border: 1px solid var(--hairline); border-radius: 8px; background: #FDF9F2; margin: 4px 0 12px; }
@@ -303,7 +323,7 @@ button { font: inherit; cursor: pointer; }
 
 .tutor-label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; color: var(--whisper); margin: 20px 0 7px; }
 .terminal {
-  font-family: var(--mono); font-size: 13px; line-height: 1.75;
+  font-family: var(--terminal-mono); font-size: 13.5px; line-height: 1.75;
   background: var(--terminal-room); color: var(--terminal-ink);
   border-radius: 10px; padding: 13px 15px; margin: 0;
   white-space: pre-wrap; overflow-wrap: anywhere;
@@ -311,7 +331,8 @@ button { font: inherit; cursor: pointer; }
 .terminal .verb-word   { color: var(--terminal-verb); }
 .terminal .flag-word   { color: var(--terminal-flag); }
 .terminal .value-word  { color: var(--terminal-value); }
-.terminal .placeholder { color: var(--terminal-placeholder); }
+/* a placeholder speaks at full brightness; the dashed underline — the sentence slots' own idiom — says "yours to fill" */
+.terminal .placeholder { text-decoration: underline dashed rgba(239, 231, 221, 0.5); text-underline-offset: 4px; text-decoration-thickness: 1px; }
 
 /* --------------------------------------------------------------- act ---- */
 

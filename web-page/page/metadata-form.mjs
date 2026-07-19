@@ -3,7 +3,6 @@
 
 import { html } from './dom.mjs';
 import { groupMarkup, toggleMarkup } from './controls.mjs';
-import { plainVoice } from './answer-surface.mjs';
 import { flagWord, valueWord, quotedWord } from './command-tutor.mjs';
 import { requestKeyOf, utf8Text, toggleRequests, fieldLabel, fieldWhy,
          choiceGloss, fieldStories, concealedWhileToggled, windowUnits } from './metadata-controls.mjs';
@@ -28,10 +27,19 @@ export const base64OfBuffer = (buffer) => {
 
 // The story trigger hugs its words — a block label's empty width must not speak — and takes focus so a keyboard hears it too.
 export const storiedText = (fieldName, labelText) => (fieldStories[fieldName]
-  ? html`<span class="has-story" tabindex="0" data-story-field="${fieldName}">${labelText}</span>`
+  ? html`<span class="has-story" tabindex="0" data-story="${fieldName}">${labelText}</span>`
   : labelText);
 
-const storiedAttribute = (fieldName) => fieldStories[fieldName] && html`data-story-field="${fieldName}"`;
+const storiedAttribute = (fieldName) => fieldStories[fieldName] && html`data-story="${fieldName}"`;
+
+// The counter is the textarea's own sibling: the live listener reaches it through their shared parent.
+export const countedTextareaMarkup = ({ setting, placeholder, typed, ceiling }) => (ceiling
+  ? html`<div class="counted-lane">
+      <textarea class="field-textarea" data-setting="${setting}" data-ceiling="${ceiling}"
+        aria-describedby="${setting}-count" placeholder="${placeholder}">${typed}</textarea>
+      <span class="byte-count${byteCountOf(typed) > ceiling ? ' over-ceiling' : ''}"
+        id="${setting}-count">${byteCountOf(typed)} / ${ceiling} bytes</span></div>`
+  : html`<textarea class="field-textarea" data-setting="${setting}" placeholder="${placeholder}">${typed}</textarea>`);
 
 export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
   const atRest = () => ({
@@ -222,6 +230,7 @@ export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
   return {
     reset: () => { bench = atRest(); },
     formatAcceptsField,
+    fieldCeiling,
     declarationFields,
     constraintsDeclaration,
     metadataGroupMarkup,
@@ -241,38 +250,13 @@ export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
   };
 };
 
-/* ------------------------------------------------------- stage listeners ---- */
-/* Wired once, against the one stage: data attributes serve whichever emit verb is mounted, and a story never speaks twice. */
+/* ------------------------------------------------------- stage listener ---- */
 
-// The long stories are view-transients, never state: hovering or focusing a storied control lets the fellow
-// speak it, and leaving renders the box back to what the state says. A control being typed in keeps its story —
-// the render would tear focus out of the input.
-export const wireMetadataBenchListeners = (host, storiesQuietNow) => {
-  const speakStory = (event) => {
-    if (storiesQuietNow()) return;
-    const storied = event.target.closest('[data-story-field]');
-    const story = storied && fieldStories[storied.dataset.storyField];
-    if (!story) return;
-    host.fellow.lean();
-    host.murmur(plainVoice(story));
-  };
-  const settleStory = (event) => {
-    const storied = event.target.closest?.('[data-story-field]');
-    if (!storied) return;
-    if (event.relatedTarget && storied.contains(event.relatedTarget)) return;
-    if (storied.contains(document.activeElement)) return;
-    host.fellow.settle();
-    host.render();
-  };
-  host.stage().addEventListener('mouseover', speakStory);
-  host.stage().addEventListener('focusin', speakStory);
-  host.stage().addEventListener('mouseout', settleStory);
-  host.stage().addEventListener('focusout', settleStory);
-
-  // The byte count is a view-transient like the stories: typed text is measured where it lands,
-  // and the engine's own sentence arrives from the check when the field commits.
+// The count is measured where it lands rather than through a render, which would tear focus out of the field being typed in.
+// It is the page's own arithmetic; the engine's sentence about the length arrives at the check.
+export const wireByteCountListener = (host) => {
   host.stage().addEventListener('input', (event) => {
-    const input = event.target.closest?.('.field-input[data-ceiling]');
+    const input = event.target.closest?.('.field-input[data-ceiling], .field-textarea[data-ceiling]');
     if (!input) return;
     const counter = input.parentElement.querySelector('.byte-count');
     if (!counter) return;

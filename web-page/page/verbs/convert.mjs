@@ -10,8 +10,8 @@ import { verbWord, flagWord, valueWord, quotedWord, fileWord, namedOr, placehold
 import { utf8Text, typedTextFlags, dropFlags, carriedFieldLabels, fieldLabel } from './../metadata-controls.mjs';
 import { dialectControls, dialectTogglesMarkup } from './../dialect-controls.mjs';
 import { identifyDeclaration } from './../declarations.mjs';
-import { makeMetadataBench, storiedText, base64OfBuffer } from './../metadata-form.mjs';
-import { formatPickerMarkup, formatNoteMarkup } from './../format-picker.mjs';
+import { makeMetadataBench, storiedText, base64OfBuffer, countedTextareaMarkup } from './../metadata-form.mjs';
+import { formatPickerMarkup } from './../format-picker.mjs';
 import { stemOf } from './../readouts.mjs';
 
 const runLabel = 'Convert';
@@ -343,8 +343,9 @@ export const makeConvertVerb = (host) => {
     return html`
       <p class="choice-label">${storiedText('MetadataFileIdDiz', fieldLabel('MetadataFileIdDiz'))}</p>
       ${laneChips('diz-lane', convert.diz, fieldCarried('MetadataFileIdDiz'))}
-      ${lane === 'typed' && html`<textarea class="field-textarea" data-setting="diz-text"
-          placeholder="the FILE_ID.DIZ text, as you'd like it carried">${convert.diz.text}</textarea>`}
+      ${lane === 'typed' && countedTextareaMarkup({ setting: 'diz-text',
+          placeholder: "the FILE_ID.DIZ text, as you'd like it carried",
+          typed: convert.diz.text, ceiling: bench.fieldCeiling('MetadataFileIdDiz') })}
       ${lane === 'file' && html`<div class="choice-row"><button class="chip" data-action="pick-file"
           data-seat="diz-file">${convert.diz.file?.name ?? 'choose a file…'}</button></div>`}`;
   };
@@ -371,7 +372,6 @@ export const makeConvertVerb = (host) => {
     const undeclaredTextFields = convert.patchReading?.answered?.infoUndeclaredTextFields ?? [];
     return html`
       ${sentenceMarkup()}
-      ${formatNoteMarkup(convert.formatToken)}
       ${formatPickerMarkup(host.surface()?.surfaceFormats ?? [], convert.formatToken, convert.moreFormatsOpen)}
       ${sourceGroupMarkup()}
       ${headerControlSurfaces() && headerControlMarkup(convert.framing, host.surface().surfaceConsoleHeaders)}

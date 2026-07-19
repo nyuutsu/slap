@@ -2,7 +2,7 @@
 // A format with no words still shows, under "more formats", unadorned.
 
 import { html } from './dom.mjs';
-import { groupMarkup } from './controls.mjs';
+import { groupMarkup, admonitionMarkup } from './controls.mjs';
 
 const recommendedTokens = ['bps', 'xdelta3', 'ppf3'];
 const curioToken = 'rfc-vcdiff';
@@ -25,9 +25,17 @@ const formatNotes = {
   xdelta1: "Joshua MacDonald's original xdelta, 1997 to 2003.",
 };
 
-export const formatNoteMarkup = (chosenToken) => {
+const chosenFormatNoteMarkup = (chosenToken) => {
   const note = formatNotes[chosenToken];
-  return note && html`<p class="format-note"><span class="note-mark">note</span><span>${note}</span></p>`;
+  return note && admonitionMarkup('note', note);
+};
+
+// The key is the page's own noun; every other storybook entry is named for an engine metadata field.
+export const pickerStories = {
+  MoreFormats:
+    'every format slap can write is on this shelf — the quieter ones unfold as chips. '
+    + 'reach for one when the patcher or community on the receiving end expects it; '
+    + 'otherwise the tiles above are the recommendation.',
 };
 
 const tileMarkup = (row, chosenToken, curio) => html`<button
@@ -49,10 +57,12 @@ export const formatPickerMarkup = (surfaceRows, chosenToken, moreFormatsOpen) =>
   return groupMarkup('format', html`
     <div class="tiles">${recommendedRows.map((row) => tileMarkup(row, chosenToken, false))}</div>
     ${curioRow && tileMarkup(curioRow, chosenToken, true)}
-    ${!chosenIsQuieter && html`<button class="quiet-button" data-action="more-formats">
+    ${!chosenIsQuieter && html`<button class="more-chip${moreOpen ? ' open' : ''}" aria-expanded="${moreOpen}"
+      data-action="more-formats" data-story="MoreFormats">
       ${moreOpen ? 'fewer formats' : `more formats (${quieterRows.length})`}</button>`}
     ${moreOpen && html`<div class="choice-row">${quieterRows.map((row) => html`<button
       class="chip${row.formatToken === chosenToken ? ' on' : ''}"
       aria-pressed="${row.formatToken === chosenToken}"
-      data-action="choose-format" data-token="${row.formatToken}">${row.formatToken}</button>`)}</div>`}`);
+      data-action="choose-format" data-token="${row.formatToken}">${row.formatToken}</button>`)}</div>`}
+    ${chosenFormatNoteMarkup(chosenToken)}`);
 };
