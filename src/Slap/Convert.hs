@@ -446,9 +446,11 @@ rejectCrossPlatformRomTypeRetag cliMeta extractedMeta =
 -- PatchContents helpers
 ----------------------------------------------------------------------------
 
+-- | The hunks plus absent metadata. No-op empty hunks are dropped: an IPS-family target
+-- re-encodes one as a size-0 record — the RLE sentinel — which then swallows the record after it.
 emptyContents :: [Hunk] -> PatchContents
 emptyContents records = PatchContents
-  { contentsRecords     = records
+  { contentsRecords     = filter (not . ByteString.null . hunkPayload) records
   , contentsDescription = Nothing
   , contentsSourceCRC32 = Nothing
   , contentsSourceMD5   = Nothing

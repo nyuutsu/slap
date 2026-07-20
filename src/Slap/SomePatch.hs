@@ -124,7 +124,7 @@ import qualified Data.ByteString as ByteString
 import qualified Data.Set as Set
 import qualified Data.Vector as Vector
 import Data.List (partition)
-import Data.Maybe (catMaybes, fromMaybe, isJust, mapMaybe)
+import Data.Maybe (catMaybes, fromMaybe, isJust)
 import Slap.Checksum (MD5Hash(..))
 
 ----------------------------------------------------------------------------
@@ -481,26 +481,19 @@ parseSomePatchFromIPS variant patchContents = do
   let label = case variant of
         IPS.StandardIPS -> LabelIPS
         IPS.IPS32       -> LabelIPS32
-      -- A record's writes become a hunk. A zero-count RLE record
-      -- writes nothing and must expand to no hunk: an empty hunk
-      -- carried to an IPS-family target re-encodes as a size-0
-      -- record, which is the RLE sentinel on the wire, desyncing
-      -- every record after it.
       expandIPSRecord (IPS.IPSRecordCopy { ipsCopyOffset = recordOffset
                                          , ipsCopyPayload = recordPayload }) =
-        Just (Hunk recordOffset recordPayload)
+        Hunk recordOffset recordPayload
       expandIPSRecord (IPS.IPSRecordRLE { ipsRleOffset = recordOffset
                                         , ipsRleCount = fillCount
-                                        , ipsRleFill = fillByte })
-        | unLength fillCount == 0 = Nothing
-        | otherwise =
-            Just (Hunk recordOffset (replicateLength fillCount fillByte))
+                                        , ipsRleFill = fillByte }) =
+        Hunk recordOffset (replicateLength fillCount fillByte)
       -- One builder for the three parse outcomes; each supplies its own label, analytical carrier,
       -- meta lines, extracted metadata, EBP trailer, and the wire patch to apply.
       ipsSomePatch armLabel analysis metaLines extractedMeta ebpMetadata ipsPatch =
         let records = IPS.ipsRecords ipsPatch
         in (bareSomePatch armLabel analysis
-              (Direct (Just (emptyContents (mapMaybe expandIPSRecord (Vector.toList records)))
+              (Direct (Just (emptyContents (map expandIPSRecord (Vector.toList records)))
                   { contentsTruncation  = IPS.ipsTruncatedTargetSize ipsPatch
                   , contentsEBPMetadata = ebpMetadata
                   }))
@@ -687,14 +680,11 @@ parseSomePatchFromAPSN64 metadataEncoding patchContents = do
   Parsed patch@(APSN64.APSN64Patch header records) parseAdvisories <- APSN64.parseAPSN64 metadataEncoding patchContents
   let -- A zero-count APS-N64 RLE record writes nothing, so it must expand to no hunk: an empty hunk carried to an
       -- IPS-family or APS-N64 target re-encodes as a size-0 record — the RLE sentinel — and desyncs every record after it.
-      -- Same guard as 'expandIPSRecord' above.
       expandN64 (APSN64.APSN64Normal recordOffset recordPayload) =
-        Just (Hunk recordOffset recordPayload)
-      expandN64 (APSN64.APSN64RLE recordOffset fillValue fillCount)
-        | fillCount == 0 = Nothing
-        | otherwise      =
-            Just (Hunk recordOffset (ByteString.replicate (fromIntegral fillCount) fillValue))
-      kind = Direct (Just (emptyContents (mapMaybe expandN64 (Vector.toList records)))
+        Hunk recordOffset recordPayload
+      expandN64 (APSN64.APSN64RLE recordOffset fillValue fillCount) =
+        Hunk recordOffset (ByteString.replicate (fromIntegral fillCount) fillValue)
+      kind = Direct (Just (emptyContents (map expandN64 (Vector.toList records)))
           { contentsDescription = Just (APSN64.apsN64Description header)
           -- ^ APSN64's description field is typed 'EncodedText';
           -- the parse-time decode (and any substitution advisories) lives inside 'parseAPSN64'.
