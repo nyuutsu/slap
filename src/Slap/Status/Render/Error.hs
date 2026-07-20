@@ -162,7 +162,7 @@ renderSlapError (UnsupportedXDelta1Subformat version) =
 
 renderSlapError (UnsupportedNINJA1Subformat (NINJA1SubformatIdentifier subformatBytes)) =
   formatLabelName LabelNINJA1 <> ": this patch declares subformat "
-  <> renderAsText subformatBytes <> ", which slap does not read"
+  <> renderPrintableASCIIOrHex subformatBytes <> ", which slap does not read"
 
 renderSlapError NINJA1BinaryMissingEOFFooter =
   formatLabelName LabelNINJA1 <> ": the patch ends without its closing marker (an EOF footer)"
@@ -220,7 +220,7 @@ renderSlapError (PatchCRCMismatch label (ExpectedCRC32 stored) (ActualCRC32 comp
 
 renderSlapError (TrailingMagicMismatch label (ExpectedMagic expected) (ActualMagic actual)) =
   formatLabelName label <> ": the patch's closing signature is wrong (expected "
-  <> renderAsText expected <> ", found " <> renderAsText actual <> ")"
+  <> renderPrintableASCIIOrHex expected <> ", found " <> renderPrintableASCIIOrHex actual <> ")"
 
 renderSlapError (UnknownFlag label name (RawFlagByte flagByte)) =
   formatLabelName label <> ": the patch's "

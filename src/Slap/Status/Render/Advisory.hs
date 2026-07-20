@@ -9,7 +9,7 @@ module Slap.Status.Render.Advisory
 
 import Slap.Checksum (showCRC32, showAdler32, ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Display.Common (renderAsText, proseList)
-import Slap.Display.Primitives (padHex)
+import Slap.Display.Primitives (padHex, renderPrintableASCIIOrHex)
 import Slap.FieldName (fieldNameLabel)
 import Slap.FormatLabel (FormatLabel(..), formatLabelName)
 import Slap.Header (ConsoleHeader, HeaderAdjustment(..), consoleHeaderName, consoleHeaderLength, consoleHeaderToken)
@@ -234,7 +234,7 @@ renderSlapAdvisory (XDelta1InputFileNotConsulted sourcelessShape) =
 
 renderSlapAdvisory (XDelta1DataRecordNameDiverges (XDelta1DataRecordNameAsRead observedName)) =
   formatLabelName LabelXDelta1
-  <> ": data-record name is " <> renderAsText observedName
+  <> ": data-record name is " <> renderPrintableASCIIOrHex observedName
   <> " (canonical xdelta writes \"(patch data)\"; the field is a display label only, so slap proceeds normally)"
 
 renderSlapAdvisory (FieldDropped field droppedValue) =
