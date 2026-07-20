@@ -106,9 +106,9 @@ The list of metadata flags is below. The ones that need explaining are elaborate
 
 `PPF1`: `--description`
 
-`PPF2`: `--description`, `--diz`, `--diz-text`
+`PPF2`: `--description`, `--diz`, `--diz-text`, `--diz-encoding`
 
-`PPF3`: `--description`, `--diz`, `--diz-text`, `--image-type`, `--no-undo`, `--omit-verification`
+`PPF3`: `--description`, `--diz`, `--diz-text`, `--diz-encoding`, `--image-type`, `--no-undo`, `--omit-verification`
 
 `rfc-vcdiff`: `--window-size`
 
@@ -150,6 +150,8 @@ The `diz`-related flags are two ways of providing metadata. They are mutually ex
 
 `--diz`: Nestle a DIZ description file into the patch as a metadata payload[^DIZ].
 
+`--diz-encoding`: Declare the initial text encoding of the DIZ description file. At time of creation it is parsed and then encoded as UTF-8 for coherence reasons: the description field, is populated, is UTF-8. Thus: declare it if it is something else, to protect it from mangling. Use `slap --encodings` to list the supported encodings. Most *permutations* of an encoding name (e.g. `gb18030` vs `GB18030`) will work.
+
 `--diz-text`: Nestle text into the patch as a metadata payload. The text is wrapped in a DIZ container.
 
 #### PPF3
@@ -157,6 +159,8 @@ The `diz`-related flags are two ways of providing metadata. They are mutually ex
 The `diz`-related flags are two ways of providing metadata. They are mutually exclusive.
 
 `--diz`: Nestle a DIZ description file into the patch as a metadata payload.
+
+`--diz-encoding`: Declare the initial text encoding of the DIZ description file. At time of creation it is parsed and then encoded as UTF-8 for coherence reasons: the description field, is populated, is UTF-8. Thus: declare it if it is something else, to protect it from mangling. Use `slap --encodings` to list the supported encodings. Most *permutations* of an encoding name (e.g. `gb18030` vs `GB18030`) will work.
 
 `--diz-text`: Nestle text into the patch as a metadata payload. The text is wrapped in a DIZ container.
 
@@ -279,7 +283,7 @@ slap explain patch.bps --records --with original.gba
 
 ## Undoing
 
-Where supported by the patch format, put things back the way they were. `undo` understands the same flags as does `apply`.
+Where supported by the patch format, put things back the way they were. `undo` understands the same flags as does `apply`, except `--add-header` and `--remove-header`[^WHY]. 
 
 ```console
 slap undo patch.ninja2 patched.gba
@@ -411,3 +415,5 @@ The per-test durations are logged to `test-results/`.
 [^DIZ]: The original tool allows inserting *whatever*. At the moment we also allow inserting *whatever*. I am ambivalent about this decision and it will probably change.
 
 [^AUTOMATIC]: Some formats don't store this information.
+
+[^WHY]: The reason for this: the header controls are there to put a rom into the shape a patch expects *before* applying. So the rom is already in the right shape.
