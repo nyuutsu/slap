@@ -77,6 +77,7 @@ export const makeConvertVerb = (host) => {
 
   const laneOf = (laneState, carried) => laneState.lane ?? (carried ? 'keep' : 'typed');
 
+
   /* ------------------------------------------------------ declaration ---- */
 
   const blobRequest = () => {
@@ -107,6 +108,13 @@ export const makeConvertVerb = (host) => {
     if (lane === 'file' && convert.diz.fileBytes !== null) return { tag: 'SetFileIdDiz', contents: decodedDizFile() };
     return { tag: 'InheritFileIdDiz' };
   };
+
+  // Two things are read under the chosen encoding, and the command line reads the same two: the source patch's
+  // own text where it records no encoding for it, and a DIZ handed over as a file, whose bytes it decodes.
+  // With neither in hand the choice stays put and says nothing, having nothing to read.
+  const encodingSpeaks = () =>
+    (convert.patchReading?.answered?.infoUndeclaredTextFields ?? []).length > 0
+    || dizRequest().tag === 'SetFileIdDiz';
 
   const framingDeclaration = () => convert.framing.tag === 'TakeInputAsIs'
     ? { tag: 'TakeInputAsIs' }
@@ -369,7 +377,6 @@ export const makeConvertVerb = (host) => {
 
   const stageMarkup = () => {
     if (convert.outcome) return sentenceMarkup();
-    const undeclaredTextFields = convert.patchReading?.answered?.infoUndeclaredTextFields ?? [];
     return html`
       ${sentenceMarkup()}
       ${formatPickerMarkup(host.surface()?.surfaceFormats ?? [], convert.formatToken, convert.moreFormatsOpen)}
@@ -377,8 +384,8 @@ export const makeConvertVerb = (host) => {
       ${headerControlSurfaces() && headerControlMarkup(convert.framing, host.surface().surfaceConsoleHeaders)}
       ${bench.metadataGroupMarkup(fileFieldMarkup)}
       ${bench.constraintsGroupMarkup()}
-      ${undeclaredTextFields.length > 0 && encodingPickerMarkup(host.surface()?.surfaceEncodings ?? [],
-                                                              convert.metadataEncoding, convert.moreEncodingsOpen)}
+      ${encodingSpeaks() && encodingPickerMarkup(host.surface()?.surfaceEncodings ?? [],
+                                                 convert.metadataEncoding, convert.moreEncodingsOpen)}
       ${convert.patch && !impedimentSpoken() && optionsMarkup()}`;
   };
 
@@ -435,7 +442,8 @@ export const makeConvertVerb = (host) => {
       if (convert.framing.tag === 'RemoveHeader') words.push(flagWord('--remove-header'), valueWord(convert.framing.console.consoleToken));
       if (convert.framing.tag === 'AddHeader') words.push(flagWord('--add-header'), valueWord(convert.framing.console.consoleToken));
     }
-    if (convert.metadataEncoding !== 'utf-8') words.push(flagWord('--metadata-encoding'), valueWord(convert.metadataEncoding));
+    if (encodingSpeaks() && convert.metadataEncoding !== 'utf-8')
+      words.push(flagWord('--metadata-encoding'), valueWord(convert.metadataEncoding));
     if (convert.ppf1Origin === ppf1Origin.chosenOrigin) words.push(flagWord(ppf1Origin.terminalFlag));
     words.push(...bench.commandWords(fileFieldWords));
     return words;

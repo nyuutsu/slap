@@ -24,8 +24,13 @@ const atRest = () => ({
   moreEncodingsOpen: false,
 });
 
-const makeReadCore = (host, { verbName, wireVerb, declaration, restingLine, readLine }) => {
+const makeReadCore = (host, { verbName, wireVerb, declaration, restingLine, readLine, undeclaredTextFieldsOf }) => {
   let read = atRest();
+
+  // Only a patch keeping text whose encoding it never recorded has anything to read under a chosen encoding;
+  // on any other the choice stays in hand — swap back and it is still there — and says nothing, in neither the control nor the command.
+  const encodingSpeaks = () =>
+    (read.reading?.answered ? undeclaredTextFieldsOf(read.reading.answered).length : 0) > 0;
 
   const askIdentity = () => {
     if (!read.patch) return;
@@ -87,7 +92,8 @@ const makeReadCore = (host, { verbName, wireVerb, declaration, restingLine, read
     const ppf1Origin = dialectControls.PPF1OriginAxis;
     const words = [verbWord('slap'), verbWord(verbName), namedOr(read.patch, 'PATCH')];
     if (read.everyRecord) words.push(flagWord('--records'));
-    if (read.metadataEncoding !== 'utf-8') words.push(flagWord('--metadata-encoding'), valueWord(read.metadataEncoding));
+    if (encodingSpeaks() && read.metadataEncoding !== 'utf-8')
+      words.push(flagWord('--metadata-encoding'), valueWord(read.metadataEncoding));
     if (read.ppf1Origin === ppf1Origin.chosenOrigin) words.push(flagWord(ppf1Origin.terminalFlag));
     return words;
   };
@@ -106,7 +112,7 @@ const makeReadCore = (host, { verbName, wireVerb, declaration, restingLine, read
 
   return {
     state: () => read,
-    chipWord, applicableDialects, voiceMarkup, commandWords, dialectGroupMarkup,
+    chipWord, applicableDialects, voiceMarkup, commandWords, dialectGroupMarkup, encodingSpeaks,
     admitPatch, rereadPatch, askIdentity, askReading, settings,
   };
 };
@@ -127,6 +133,7 @@ export const makeInfoVerb = (host) => {
       declaredInspectMetadataEncoding: read.metadataEncoding,
       declaredInspectDialects: { requestedPPF1Origin: read.ppf1Origin },
     }),
+    undeclaredTextFieldsOf: (answered) => answered.infoUndeclaredTextFields,
     restingLine: voiceLines.infoResting,
     readLine: voiceLines.infoRead,
   });
@@ -194,6 +201,7 @@ export const makeExplainVerb = (host) => {
       declaredAnalyzeMetadataEncoding: read.metadataEncoding,
       declaredAnalyzeDialects: { requestedPPF1Origin: read.ppf1Origin },
     }),
+    undeclaredTextFieldsOf: (answered) => answered.explanationInfo.infoUndeclaredTextFields,
     restingLine: voiceLines.explainResting,
     readLine: voiceLines.explainRead,
   });
@@ -238,7 +246,7 @@ export const makeExplainVerb = (host) => {
       ${sentence}
       ${infoReadoutMarkup(explanationInfo, core.chipWord() ?? formatLabelWord(explanationInfo.infoFormat.formatLabel))}
       ${structurePanelMarkup(answered)}
-      ${explanationInfo.infoUndeclaredTextFields.length > 0 && textEncodingGroupMarkup()}
+      ${core.encodingSpeaks() && textEncodingGroupMarkup()}
       ${optionsMarkup()}
       ${read.everyRecord && html`<div class="results">${walkMarkup(regions, read.walkRowsShown)}</div>`}`;
   };
