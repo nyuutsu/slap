@@ -468,6 +468,11 @@ renderSlapError (MalformedBSDiffHeader (BSDiffDiffOverrunsPatch overrunBytes)) =
   <> renderAsText overrunBytes <> plural overrunBytes " byte" " bytes"
   <> " past the end of the patch)"
 
+renderSlapError (MalformedBSDiffHeader (BSDiffTargetOverrunsData overrunBytes)) =
+  formatLabelName LabelBSDiff
+  <> ": the header's target size is larger than the diff and extra data can fill (over by "
+  <> renderAsText overrunBytes <> plural overrunBytes " byte" " bytes" <> ")"
+
 renderSlapError (MalformedAPSN64Header malformation) =
   formatLabelName LabelAPSN64 <> ": " <> case malformation of
     APSN64UnknownPatchType byte ->

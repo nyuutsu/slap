@@ -279,6 +279,7 @@ data BSDiffHeaderMalformation
   = BSDiffNegativeHeaderSizes !ControlSectionSize !DiffSectionSize !TargetSectionSize
   | BSDiffControlOverrunsPatch !Int64
   | BSDiffDiffOverrunsPatch !Int64
+  | BSDiffTargetOverrunsData !Int64
   deriving (Eq, Show, Generic)
   deriving (ToJSON) via Generically BSDiffHeaderMalformation
 

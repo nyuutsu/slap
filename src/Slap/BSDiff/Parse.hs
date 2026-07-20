@@ -22,6 +22,7 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (FileSize(..), Length(..), Delta(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      byteLength)
+import Control.Monad (when)
 
 ----------------------------------------------------------------------------
 -- Signed LE64 (bsdiff sign-magnitude encoding)
@@ -70,6 +71,12 @@ parseBSDiff (PatchFileContents input)
       controlData <- safeDecompressBZip BSDiffControl controlCompressed
       diffData    <- safeDecompressBZip BSDiffDiff    diffCompressed
       extraData   <- safeDecompressBZip BSDiffExtra   extraCompressed
+      -- Every output byte is an ADD drawn from the diff stream or a COPY drawn from extra, so the target
+      -- cannot exceed their combined length. A header claiming more can only underfill — caught here, before
+      -- apply reserves a buffer the size of the declared target.
+      let producibleBytes = fromIntegral (ByteString.length diffData + ByteString.length extraData) :: Int64
+      when (rawTargetSize > producibleBytes)
+        (Left (MalformedBSDiffHeader (BSDiffTargetOverrunsData (rawTargetSize - producibleBytes))))
       let instructions   = parseInstructions controlData
           fragmentLength = ByteString.length controlData `mod` bsdiffInstructionSize
       Right (Parsed
