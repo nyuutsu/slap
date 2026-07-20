@@ -276,7 +276,10 @@ button { font: inherit; cursor: pointer; }
 .voice .headline .sparkle { color: var(--amber); font-size: 18px; }
 .voice .said { margin: 0 0 6px; }
 .voice .said code { font-family: var(--mono); font-size: 12.5px; background: var(--room); border: 1px solid var(--hairline); border-radius: 4px; padding: 1px 5px; }
-.voice .refusal { font-family: var(--mono); font-size: 13.5px; white-space: pre-wrap; margin: 0 0 6px; color: var(--coral-ink); }
+/* A refusal is slap saying what a file is, not an alarm — the monospace is the whole of its register.
+   The coral is kept for the one card where something is actually broken: a boot that did not happen. */
+.voice .refusal { font-family: var(--mono); font-size: 13.5px; white-space: pre-wrap; margin: 0 0 6px; color: var(--ink); }
+.voice .boot-detail { color: var(--coral-ink); }
 .voice .boot-stamp { margin: 10px 0 0; font-size: 12px; color: var(--whisper); }
 .voice .download {
   display: flex; align-items: center; gap: 9px; flex-wrap: wrap;

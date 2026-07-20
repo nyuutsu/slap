@@ -66,10 +66,10 @@ const bootFailureSentences = (bootFailureShape) => {
         the slap command line has no such ceiling.`)}`;
     case 'ReactorNeverArrived': return html`
       <p class="plain-line">slap's engine didn't download — a reload usually fixes this.</p>
-      <p class="refusal">${bootFailureShape.detail}</p>`;
+      <p class="refusal boot-detail">${bootFailureShape.detail}</p>`;
     case 'BootFell': return html`
       <p class="plain-line">slap couldn't start in this browser.</p>
-      <p class="refusal">${bootFailureShape.detail}</p>`;
+      <p class="refusal boot-detail">${bootFailureShape.detail}</p>`;
   }
 };
 
