@@ -177,17 +177,27 @@ freshAddressCache config = AddressCache
   , nextNearWriteSlot = NearSlotIndex 0
   }
 
--- | Write a freshly-handled address into both caches: the near cache at the current write slot (then advancing round-robin)
--- and the same cache at @address mod (256 * s_same)@.
+-- | Write a freshly-handled address into both caches: the near cache at the current write slot,
+-- advancing round-robin; the same cache at @address mod (256 * s_same)@.
+-- A zero-size cache is skipped — it has no slot to write and no address mode reads it (RFC 3284's cache_update guards the same).
 recordAddress :: AddressCache -> Offset -> AddressCache
 recordAddress cache address = cache
-  { nearAddresses     = IntMap.insert writeSlot address (nearAddresses cache)
-  , nextNearWriteSlot = advanceNearWriteSlot config (nextNearWriteSlot cache)
-  , sameAddresses     = IntMap.insert (sameSlotForAddress config address) address (sameAddresses cache)
+  { nearAddresses     = updatedNearAddresses
+  , nextNearWriteSlot = updatedWriteSlot
+  , sameAddresses     = updatedSameAddresses
   }
   where
-    config                  = cacheConfig cache
-    NearSlotIndex writeSlot = nextNearWriteSlot cache
+    config = cacheConfig cache
+    (updatedNearAddresses, updatedWriteSlot)
+      | unNearSlotCount (nearSlotCount config) > 0 =
+          let NearSlotIndex writeSlot = nextNearWriteSlot cache
+          in ( IntMap.insert writeSlot address (nearAddresses cache)
+             , advanceNearWriteSlot config (nextNearWriteSlot cache) )
+      | otherwise = (nearAddresses cache, nextNearWriteSlot cache)
+    updatedSameAddresses
+      | unSameBlockCount (sameBlockCount config) > 0 =
+          IntMap.insert (sameSlotForAddress config address) address (sameAddresses cache)
+      | otherwise = sameAddresses cache
 
 ----------------------------------------------------------------------------
 -- The address-mode layout
