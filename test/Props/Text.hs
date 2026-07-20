@@ -20,7 +20,7 @@ import Slap.Text
   , advertisedEncodingNames
   )
 
-import Slap.Measure (Length(..), OriginalLength(..), TruncatedLength(..))
+import Slap.Measure (Length(..), MaxLength(..), OriginalLength(..), TruncatedLength(..))
 
 import qualified Data.ByteString as ByteString
 import qualified Data.Encoding as Encoding
@@ -225,7 +225,8 @@ test_boundedAsciiCap50 = do
   assertEqual "50 bytes out" 50 (ByteString.length bytes)
   assertEqual "one notice"   1  (length notices)
   case notices of
-    [TruncatedToFitBound (OriginalLength original) (TruncatedLength written)] -> do
+    [TruncatedToFitBound (MaxLength cap) (OriginalLength original) (TruncatedLength written)] -> do
+      assertEqual "reported cap"        (Length 50)  cap
       assertEqual "original byte count" (Length 100) original
       assertEqual "written byte count"  (Length 50)  written
     other -> assertFailure ("unexpected notices: " ++ show other)
@@ -247,7 +248,8 @@ test_boundedJapaneseCap7 = do
       (bytes, notices) = encodeTextBounded EncodingUtf8 (Length 7) source
   assertEqual "6 bytes out (two codepoints fit)" 6 (ByteString.length bytes)
   case notices of
-    [TruncatedToFitBound (OriginalLength original) (TruncatedLength written)] -> do
+    [TruncatedToFitBound (MaxLength cap) (OriginalLength original) (TruncatedLength written)] -> do
+      assertEqual "reported cap is the field's width, not what fit" (Length 7) cap
       assertEqual "original byte count" (Length 9) original
       assertEqual "written byte count"  (Length 6) written
     other -> assertFailure ("unexpected notices: " ++ show other)
@@ -262,13 +264,14 @@ test_boundedCapZero = do
   assertEqual "empty source, no notice" [] notices1
   assertEqual "non-empty source, cap 0" ByteString.empty bytes2
   case notices2 of
-    [TruncatedToFitBound (OriginalLength original) (TruncatedLength written)] -> do
+    [TruncatedToFitBound (MaxLength cap) (OriginalLength original) (TruncatedLength written)] -> do
+      assertEqual "reported cap"        (Length 0) cap
       assertEqual "original byte count" (Length 1) original
       assertEqual "written byte count"  (Length 0) written
     other -> assertFailure ("unexpected notices: " ++ show other)
 
--- | Across many cap and source sizes, the truncation notice's
--- written-count always matches the actual output byte count, and
+-- | Across many cap and source sizes, the truncation notice reports the cap it was
+-- given, its written-count always matches the actual output byte count, and
 -- the original-count is at least the written-count.
 test_boundedTruncationCounts :: IO ()
 test_boundedTruncationCounts =
@@ -285,7 +288,9 @@ test_boundedTruncationCounts =
         (ByteString.length bytes <= cap)
       case [n | n@TruncatedToFitBound{} <- notices] of
         [] -> pure ()
-        [TruncatedToFitBound (OriginalLength original) (TruncatedLength written)] -> do
+        [TruncatedToFitBound (MaxLength reportedCap) (OriginalLength original) (TruncatedLength written)] -> do
+          assertEqual (caseLabel ++ ": reported cap is the cap given")
+            (Length (fromIntegral cap)) reportedCap
           assertEqual (caseLabel ++ ": written matches output")
             (Length (fromIntegral (ByteString.length bytes))) written
           assertBool (caseLabel ++ ": original ≥ written")

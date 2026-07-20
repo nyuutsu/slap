@@ -214,7 +214,9 @@ data SlapAdvisory
   | SourceHashesMissing FormatLabel
 
   -- Encoding
-  | FieldTruncated FormatLabel FieldName OriginalLength TruncatedLength
+  -- | Text too long for a fixed-width field. The 'MaxLength' is the field's own width,
+  -- which the written count only equals when truncation lands exactly on the byte cap.
+  | FieldTruncated FormatLabel FieldName MaxLength OriginalLength TruncatedLength
 
   -- | A text field's wire bytes held sequences the declared encoding cannot decode;
   -- slap substituted U+FFFD for each and parsed on. The 'SubstitutionCount' is how many.

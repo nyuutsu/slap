@@ -224,7 +224,7 @@ emptyNINJA2Metadata = NINJA2.NINJA2CreateMetadata
 ----------------------------------------------------------------------------
 
 isFieldTruncatedFor :: FormatLabel -> SlapAdvisory -> Bool
-isFieldTruncatedFor expectedLabel (FieldTruncated warningLabel _ _ _) = expectedLabel == warningLabel
+isFieldTruncatedFor expectedLabel (FieldTruncated warningLabel _ _ _ _) = expectedLabel == warningLabel
 isFieldTruncatedFor _ _ = False
 
 ----------------------------------------------------------------------------

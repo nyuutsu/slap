@@ -273,11 +273,12 @@ renderSlapAdvisory IncludingVerificationByDefault =
 renderSlapAdvisory (SourceHashesMissing _label) =
   "input verification hashes not available (populate with --with INPUT)"
 
-renderSlapAdvisory (FieldTruncated label name (OriginalLength original) (TruncatedLength truncated)) =
+renderSlapAdvisory (FieldTruncated label name (MaxLength cap) (OriginalLength original) (TruncatedLength truncated)) =
   formatLabelName label <> " "
   <> fieldNameLabel name <> " truncated to fit "
-  <> renderAsText (unLength truncated) <> "-byte field (was "
-  <> renderAsText (unLength original) <> " bytes)"
+  <> renderAsText (unLength cap) <> "-byte field (was "
+  <> renderAsText (unLength original) <> " bytes, kept "
+  <> renderAsText (unLength truncated) <> ")"
 
 renderSlapAdvisory (FieldDecodedSubstituted label name (SubstitutionCount count)) =
   formatLabelName label <> " "

@@ -98,7 +98,7 @@ import qualified Data.Text.Encoding as TextEncoding
 import GHC.Generics (Generic, Generically(..))
 import Slap.FieldName (FieldName)
 import Slap.FormatLabel (FormatLabel)
-import Slap.Measure (Length(..), OriginalLength(..), TruncatedLength(..),
+import Slap.Measure (Length(..), MaxLength(..), OriginalLength(..), TruncatedLength(..),
                      SubstitutionCount(..), byteLength)
 import Slap.Status (SlapAdvisory(..))
 
@@ -222,14 +222,13 @@ data DecodeError = DecodeError
 --     replaced with its substitute (U+FFFD, or @\'?\'@ if the target lacks it).
 --   * 'SubstitutedByteSequence' — decode-side: a byte sequence the declared encoding cannot decode, replaced with U+FFFD.
 --   * 'TruncatedToFitBound' — bounded encoding stopped before a codepoint that would overflow the byte cap.
---     The 'OriginalLength' and 'TruncatedLength' are the unbounded and written byte counts, the newtypes 'Slap.Status.FieldTruncated' carries.
+--     It carries the cap alongside the unbounded and written byte counts, the three 'Slap.Status.FieldTruncated' reports.
 --
 -- The substitution cases carry nothing; a caller only counts them.
--- Truncation carries its byte counts, which the advisory reports.
 data LossNotice
   = SubstitutedCodepoint
   | SubstitutedByteSequence
-  | TruncatedToFitBound !OriginalLength !TruncatedLength
+  | TruncatedToFitBound !MaxLength !OriginalLength !TruncatedLength
   deriving (Eq, Show)
 
 ----------------------------------------------------------------------------
@@ -388,7 +387,7 @@ recoverNamed encoder = recover
 -- at most @cap@ bytes long.
 --
 -- Substitution works as in 'encodeTextLenient': an unrepresentable codepoint becomes a substitute with a 'SubstitutedCodepoint' notice.
--- Truncation, when it happens, surfaces as a 'TruncatedToFitBound' notice carrying the unbounded and written byte counts.
+-- Truncation, when it happens, surfaces as a 'TruncatedToFitBound' notice carrying the cap and the unbounded and written byte counts.
 --
 -- The caller decides what to do about the notices — slap's create
 -- paths typically lift each one to a 'Slap.Status.FieldTruncated'
@@ -407,6 +406,7 @@ encodeTextBounded encodingName cap text =
         _  -> let writtenLength  = byteLength takenBytes
                   originalLength = writtenLength <> foldMap (byteLength . fst) remaining
               in [TruncatedToFitBound
+                    (MaxLength       cap)
                     (OriginalLength  originalLength)
                     (TruncatedLength writtenLength)]
   in (takenBytes, substitutionNotes ++ truncationNotes)
@@ -538,8 +538,8 @@ encodeLossAdvisories label field notices =
         [FieldEncodedSubstituted label field (SubstitutionCount substitutions)
          | substitutions > 0]
       truncationAdvisories =
-        [FieldTruncated label field original truncated
-         | TruncatedToFitBound original truncated <- notices]
+        [FieldTruncated label field cap original truncated
+         | TruncatedToFitBound cap original truncated <- notices]
   in substitutionAdvisory ++ truncationAdvisories
 
 ----------------------------------------------------------------------------

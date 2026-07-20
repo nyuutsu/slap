@@ -2783,7 +2783,7 @@ ninja2FieldTruncationWarningReportsActualStoredLength =
        Right (CreateResult patch warnings) -> do
          (reportedOriginalLength, reportedTruncatedLength) <-
            case [(originalLen, truncatedLen)
-                | FieldTruncated LabelNINJA2 FieldDescription originalLen truncatedLen
+                | FieldTruncated LabelNINJA2 FieldDescription _ originalLen truncatedLen
                     <- warnings] of
              [singletonPair] -> pure singletonPair
              []              -> assertFailure "expected exactly one FieldTruncated warning for description"
@@ -2993,7 +2993,7 @@ assertPPFDescriptionTruncationWarning
   :: FormatLabel -> [SlapAdvisory] -> Assertion
 assertPPFDescriptionTruncationWarning expectedLabel advisories =
   case [(originalLen, truncatedLen)
-        | FieldTruncated formatLabel FieldDescription originalLen truncatedLen <- advisories
+        | FieldTruncated formatLabel FieldDescription _ originalLen truncatedLen <- advisories
         , formatLabel == expectedLabel] of
     [(OriginalLength original, TruncatedLength storedLength)] -> do
       assertEqual "OriginalLength reports the full encoded byte count"
