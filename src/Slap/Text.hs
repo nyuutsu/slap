@@ -485,7 +485,7 @@ readFixedWidthTextField (EncodedText encoding content) =
                       Text.dropWhileEnd (== ' ')
                         (Text.take terminatorIndex withoutTrailingPadding)
                     tailPastTerminator =
-                      Length (fromIntegral (Text.length withoutTrailingPadding - terminatorIndex))
+                      Length (fromIntegral (Text.length withoutTrailingPadding - terminatorIndex - 1))
                 in ContentPastEnd
                      (EncodedText encoding beforeTerminator) tailPastTerminator
   where
