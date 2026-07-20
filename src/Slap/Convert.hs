@@ -1199,11 +1199,13 @@ encodeDirect contents source target meta limits constraints dialects = case targ
               }
   CreatePPF3 -> do
     records <- narrow (splitHunks ppf3MaxRecordPayload (contentsRecords contents))
-    undoEncoded <- traverse (first NarrowingError . narrowUndoHunks ppf3Limits)
-                            (contentsUndoData contents)
-    let ppfResult   = PPF3.encodePPF3 records descriptionTyped undoEncoded
-                        (fmap PPF3ValidationBlock (contentsValidation contents))
-                        imageType
+    undoEncoded <- case ppf3UndoChoice of
+      IncludeUndoData -> traverse (first NarrowingError . narrowUndoHunks ppf3Limits) (contentsUndoData contents)
+      OmitUndoData    -> Right Nothing
+    let ppfValidation = case ppf3VerificationChoice of
+          IncludeVerification -> fmap PPF3ValidationBlock (contentsValidation contents)
+          OmitVerification    -> Nothing
+        ppfResult = PPF3.encodePPF3 records descriptionTyped undoEncoded ppfValidation imageType
     case effectiveFileIdDiz meta contents of
       Nothing  -> Right ppfResult
       Just diz -> do
@@ -1287,6 +1289,9 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     -- CLI flag > PatchContents > format default
     (ninja1Type, platformAdvisories) = maybe (NINJA1.RomRAW, []) platformToNINJA1 (requestedRomType meta <|> contentsRomType contents)
     imageType   = fromMaybe ppf3DefaultImageType (requestedImageType meta <|> contentsImageType contents)
+    -- The effective inclusion, matched to 'verdictOnDirectConversion' so the emitted bytes agree with the dropped-field notes.
+    ppf3UndoChoice         = fromMaybe (inferUndoInclusion         contents) (requestedUndoInclusion         meta)
+    ppf3VerificationChoice = fromMaybe (inferVerificationInclusion contents) (requestedVerificationInclusion meta)
 
 ----------------------------------------------------------------------------
 -- Create
