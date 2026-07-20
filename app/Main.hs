@@ -84,7 +84,7 @@ import Control.Exception (try, bracketOnError)
 import Control.Monad (when)
 import System.Directory (doesFileExist, renameFile, removeFile)
 import System.FilePath (dropExtension, replaceExtension, takeBaseName, takeExtension, takeDirectory, takeFileName)
-import System.IO (IOMode(ReadMode), hFileSize, hSetEncoding, stderr, stdout, withFile, openBinaryTempFile, hClose)
+import System.IO (IOMode(ReadMode), hFileSize, hSetEncoding, stderr, stdout, openBinaryFile, openBinaryTempFile, hClose, hIsSeekable)
 import System.IO.MMap (mmapFileByteString)
 import System.IO.Error (isDoesNotExistError, ioeGetErrorString)
 import GHC.IO.Encoding (setFileSystemEncoding, setLocaleEncoding, utf8)
@@ -134,19 +134,19 @@ readInputFile path = do
       | isDoesNotExistError ioErr -> bailError (MissingInputFile path)
       | otherwise                 -> bailError (UnreadableInputFile path (ioeGetErrorString ioErr))
 
--- | Read a whole input into memory, mapped when the file's shape allows it.
--- A regular file with a real size arrives memory-mapped: address space and evictable page cache rather than a heap copy,
--- paged in as slap touches it.
--- Everything else streams through 'ByteString.readFile', which answers every shape a mapping cannot:
--- pipes and devices (the size probe refuses them), proc-style files whose reported size is zero despite content,
--- and the truly empty file. A probe failure decides nothing by itself —
--- the streaming read then produces the authoritative bytes or the authoritative error for 'readInputFile' to type.
+-- | Read a whole input into memory, memory-mapped when the file's shape allows it: a regular, seekable file with a real
+-- size arrives as address space and evictable page cache rather than a heap copy, paged in as slap touches it.
+-- Everything a mapping can't answer — a pipe or FIFO, a device, a proc-style file reporting size zero, the empty file —
+-- is read from the one open handle. A second, independent open would be wrong: opening a FIFO consumes the bytes a writer
+-- has queued, so a size probe that opened and closed it first would leave the read empty.
 readWholeFile :: FilePath -> IO ByteString
-readWholeFile path = do
-  probedSize <- try (withFile path ReadMode hFileSize) :: IO (Either IOError Integer)
-  case probedSize of
-    Right byteCount | byteCount > 0 -> mmapFileByteString path Nothing
-    _                               -> ByteString.readFile path
+readWholeFile path =
+  bracketOnError (openBinaryFile path ReadMode) hClose $ \handle -> do
+    seekable <- hIsSeekable handle
+    size     <- if seekable then hFileSize handle else pure 0
+    if seekable && size > 0
+      then hClose handle >> mmapFileByteString path Nothing
+      else ByteString.hGetContents handle <* hClose handle
 
 -- | Write an output file: the write-side mirror of 'readInputFile'.
 writeOutputFile :: FilePath -> ByteString -> IO ()
