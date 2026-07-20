@@ -99,6 +99,38 @@ export const makeApplyVerb = (host) => {
     host.render();
   };
 
+  // Both seats at once, for the two moves that are one move: swapping them, and a patch taking its own seat.
+  const seatBothFiles = (patchFile, romFile) => {
+    if (apply.running) return;
+    host.supersedeAsks();
+    abandonOutcome();
+    apply.patch = patchFile;
+    apply.rom = romFile;
+    apply.patchIdentity = null;
+    apply.romFacts = null;
+    apply.sourceReport = null;
+    apply.ppf1Origin = 'PPF1OriginPC';
+    askUnanswered();
+    host.render();
+  };
+
+  // The picker learns what a drop already knows. A file the engine recognizes as a patch takes the patch seat
+  // wherever it was picked, and the file it displaces takes the seat it was picked into. Nothing else moves:
+  // a file picked as the patch and recognized as no patch stays there to be told so, which is the useful answer.
+  // A patch seat already holding a patch slap can read is left alone — two patches in hand is the person's arrangement.
+  const admitPickedFile = (seat, file) => {
+    const displacedFromPatchSeat = apply.patch;
+    const patchSeatReadable = !!apply.patchIdentity?.answered;
+    admitFile(seat, file);
+    if (seat !== 'rom' || patchSeatReadable) return;
+    host.ask('classify', { file })
+      ?.then(host.wheneverStillCurrent(({ answered }) => {
+        if (answered !== 'SortsAsPatch' || apply.rom !== file) return;
+        seatBothFiles(file, displacedFromPatchSeat);
+      }))
+      .catch(host.askFailed);
+  };
+
   /* --------------------------------------------------------- settings ---- */
   /* The verification policy is not a comparison input — a held report stays true under either policy — so its toggle only redraws. */
 
@@ -196,7 +228,7 @@ export const makeApplyVerb = (host) => {
 
     return html`
       ${sentenceMarkup()}
-      ${operandsSatisfied && !apply.running && swapSeatsMarkup}
+      ${operandsSatisfied && !apply.running && apply.patchIdentity?.refused && swapSeatsMarkup}
       ${applyFactsCardMarkup(apply, host.surface()?.surfaceConsoleHeaders ?? [])}
       ${headerControlSurfaces && headerControlMarkup(apply.framing, host.surface().surfaceConsoleHeaders)}
       ${operandsSatisfied && !impedimentSpoken() && optionsMarkup()}`;
@@ -262,7 +294,7 @@ export const makeApplyVerb = (host) => {
       return html`<button class="run" data-action="run" ${!ready && html`disabled`}>${runLabel}</button>`;
     },
     admitDroppedFile: (sorting, file) => admitFile(sorting === 'SortsAsPatch' ? 'patch' : 'rom', file),
-    admitPickedFile: admitFile,
+    admitPickedFile,
     askAgain: askUnanswered,
     actions: {
       'set-framing': ({ framing }) => reweighSource(() => {
@@ -277,17 +309,8 @@ export const makeApplyVerb = (host) => {
       run: runApply,
       'cancel-run': () => apply.running?.cancel(),
       'swap-seats': () => {
-        if (apply.running) return;
-        host.supersedeAsks();
-        abandonOutcome();
-        [apply.patch, apply.rom] = [apply.rom, apply.patch];
-        apply.patchIdentity = null;
-        apply.romFacts = null;
-        apply.sourceReport = null;
-        apply.ppf1Origin = 'PPF1OriginPC';
+        seatBothFiles(apply.rom, apply.patch);
         host.fellow.nod();
-        askUnanswered();
-        host.render();
       },
       'start-over': () => {
         host.supersedeAsks();

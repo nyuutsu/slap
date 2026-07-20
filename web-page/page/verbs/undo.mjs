@@ -106,6 +106,38 @@ export const makeUndoVerb = (host) => {
     host.render();
   };
 
+  // Both seats at once, for the two moves that are one move: swapping them, and a patch taking its own seat.
+  const seatBothFiles = (patchFile, patchedFile) => {
+    if (undo.running) return;
+    host.supersedeAsks();
+    abandonOutcome();
+    undo.patch = patchFile;
+    undo.patched = patchedFile;
+    undo.patchIdentity = null;
+    undo.patchedFacts = null;
+    undo.verdict = null;
+    undo.ppf1Origin = 'PPF1OriginPC';
+    askUnanswered();
+    host.render();
+  };
+
+  // The picker learns what a drop already knows. A file the engine recognizes as a patch takes the patch seat
+  // wherever it was picked, and the file it displaces takes the seat it was picked into. Nothing else moves:
+  // a file picked as the patch and recognized as no patch stays there to be told so, which is the useful answer.
+  // A patch seat already holding a patch slap can read is left alone — two patches in hand is the person's arrangement.
+  const admitPickedFile = (seat, file) => {
+    const displacedFromPatchSeat = undo.patch;
+    const patchSeatReadable = !!undo.patchIdentity?.answered;
+    admitFile(seat, file);
+    if (seat !== 'patched' || patchSeatReadable) return;
+    host.ask('classify', { file })
+      ?.then(host.wheneverStillCurrent(({ answered }) => {
+        if (answered !== 'SortsAsPatch' || undo.patched !== file) return;
+        seatBothFiles(file, displacedFromPatchSeat);
+      }))
+      .catch(host.askFailed);
+  };
+
   /* --------------------------------------------------------- settings ---- */
 
   const restateQuietly = (change) => {
@@ -183,7 +215,7 @@ export const makeUndoVerb = (host) => {
     // options serve the act, so none surface for a patch that cannot be peeled
     return html`
       ${sentenceMarkup()}
-      ${operandsSatisfied && !undo.running && swapSeatsMarkup}
+      ${operandsSatisfied && !undo.running && undo.patchIdentity?.refused && swapSeatsMarkup}
       ${!undo.patch && peelNoteMarkup}
       ${undoFactsCardMarkup(undo, patchPeels() && !impedimentSpoken())}
       ${operandsSatisfied && patchPeels() && !impedimentSpoken() && optionsMarkup()}`;
@@ -248,23 +280,14 @@ export const makeUndoVerb = (host) => {
       return html`<button class="run" data-action="run" ${!ready && html`disabled`}>${runLabel}</button>`;
     },
     admitDroppedFile: (sorting, file) => admitFile(sorting === 'SortsAsPatch' ? 'patch' : 'patched', file),
-    admitPickedFile: admitFile,
+    admitPickedFile,
     askAgain: askUnanswered,
     actions: {
       run: runUndo,
       'cancel-run': () => undo.running?.cancel(),
       'swap-seats': () => {
-        if (undo.running) return;
-        host.supersedeAsks();
-        abandonOutcome();
-        [undo.patch, undo.patched] = [undo.patched, undo.patch];
-        undo.patchIdentity = null;
-        undo.patchedFacts = null;
-        undo.verdict = null;
-        undo.ppf1Origin = 'PPF1OriginPC';
+        seatBothFiles(undo.patched, undo.patch);
         host.fellow.nod();
-        askUnanswered();
-        host.render();
       },
       'start-over': () => {
         host.supersedeAsks();
