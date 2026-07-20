@@ -45,10 +45,10 @@ export const voiceLines = {
   createModifiedOnly: 'got the changed one — now the original it came from.',
   createNeedsFormat: 'now pick a format for it — the tiles say which and why.',
   createReady: 'all set — bottle it.',
-  convertResting: 'hand me a patch — i\'ll re-bottle it as another format.',
-  convertRomOnly: 'got the rom — now the patch to re-bottle.',
+  convertResting: 'hand me a patch — i\'ll rebottle it as another format.',
+  convertRomOnly: 'got the rom — now the patch to rebottle.',
   convertNeedsFormat: 'now pick the format it should become.',
-  convertReady: 'all set — convert it.',
+  convertReady: 'all set — rebottle it.',
 };
 
 export const plainVoice = (line) => html`<p class="plain-line">${line}</p>`;
@@ -183,7 +183,7 @@ export const bottledVoice = ({ formatName, advisories, downloadName, downloadHre
 
 export const convertedVoice = ({ formatName, advisories, downloadName, downloadHref }) => html`
   <p class="headline">converted! <span class="sparkle" aria-hidden="true">✦ ✧</span></p>
-  <p class="said">Here's your patch again, re-bottled as ${formatName}.</p>
+  <p class="said">Here's your patch again, rebottled as ${formatName}.</p>
   ${advisoryMarkup(advisories)}
   ${downloadRowMarkup(downloadName, downloadHref)}
   <div class="afterward">

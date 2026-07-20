@@ -14,7 +14,7 @@ import { makeMetadataBench, storiedText, base64OfBuffer, countedTextareaMarkup }
 import { formatPickerMarkup } from './../format-picker.mjs';
 import { stemOf } from './../readouts.mjs';
 
-const runLabel = 'Convert';
+const runLabel = 'Rebottle';
 
 const atRest = () => ({
   patch: null, patchIdentity: null, patchReading: null,
