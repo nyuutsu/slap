@@ -242,7 +242,7 @@ resolveConvertMetadata metadataEncoding inputs = do
 
 doInfo :: InfoCommand -> IO ()
 doInfo parsedCommand = do
-  parsed <- readAndParsePatch (infoDialects parsedCommand) (infoMetadataEncoding parsedCommand) (infoPatch parsedCommand)
+  parsed <- readAndParsePatch (infoFileReading parsedCommand) (infoDialects parsedCommand) (infoMetadataEncoding parsedCommand) (infoPatch parsedCommand)
   orBail (rejectIncompatibleDialects
             (acceptedDialects (patchFormat parsed))
             (patchFormat parsed)
@@ -274,7 +274,7 @@ doInfo parsedCommand = do
 
 doExplain :: ExplainCommand -> IO ()
 doExplain parsedCommand = do
-  parsed <- readAndParsePatch (explainDialects parsedCommand) (explainMetadataEncoding parsedCommand) (explainPatch parsedCommand)
+  parsed <- readAndParsePatch (explainFileReading parsedCommand) (explainDialects parsedCommand) (explainMetadataEncoding parsedCommand) (explainPatch parsedCommand)
   orBail (rejectIncompatibleDialects
             (acceptedDialects (patchFormat parsed))
             (patchFormat parsed)
@@ -300,7 +300,7 @@ doExplain parsedCommand = do
 
 doApply :: ApplyCommand -> IO ()
 doApply parsedCommand = do
-  parsed <- readAndParsePatch (applyDialects parsedCommand) EncodingUtf8 (applyPatch parsedCommand)
+  parsed <- readAndParsePatch (applyFileReading parsedCommand) (applyDialects parsedCommand) EncodingUtf8 (applyPatch parsedCommand)
   orBail (rejectIncompatibleDialects
             (acceptedDialects (patchFormat parsed))
             (patchFormat parsed)
@@ -338,7 +338,7 @@ doApply parsedCommand = do
 
 doUndo :: UndoCommand -> IO ()
 doUndo parsedCommand = do
-  parsed <- readAndParsePatch (undoDialects parsedCommand) EncodingUtf8 (undoPatch parsedCommand)
+  parsed <- readAndParsePatch (undoFileReading parsedCommand) (undoDialects parsedCommand) EncodingUtf8 (undoPatch parsedCommand)
   orBail (rejectIncompatibleDialects
             (acceptedDialects (patchFormat parsed))
             (patchFormat parsed)
@@ -453,7 +453,7 @@ doConvert parsedCommand = do
   cliMeta <- resolveConvertMetadata (convertMetadataEncoding parsedCommand) (convertMetadata parsedCommand)
   orBail (rejectUnencodableSecondaryCompressor (convertTo parsedCommand) cliMeta)
   orBail (rejectIncompatibleConstraints (convertTo parsedCommand) (convertConstraints parsedCommand))
-  parsed <- readAndParsePatch (convertDialects parsedCommand) (convertMetadataEncoding parsedCommand) (convertPatch parsedCommand)
+  parsed <- readAndParsePatch (convertFileReading parsedCommand) (convertDialects parsedCommand) (convertMetadataEncoding parsedCommand) (convertPatch parsedCommand)
   orBail (rejectIncompatibleDialects
             (acceptedDialects (patchFormat parsed))
             (patchFormat parsed)
@@ -563,9 +563,9 @@ emitVerboseAnalysis Quiet _ = pure ()
 -- | Emits no advisories itself, leaving warning-ordering to each caller:
 -- 'doInfo' and 'doExplain' defer until after their stdout renders,
 -- while 'doApply', 'doUndo', and 'doConvert' emit immediately (each via 'emitAdvisories').
-readAndParsePatch :: RequestedDialects -> EncodingName -> FilePath -> IO SomePatch
-readAndParsePatch dialects metadataEncoding path = do
-  patchBytes <- readUnwrap path
+readAndParsePatch :: FileReadingOptions -> RequestedDialects -> EncodingName -> FilePath -> IO SomePatch
+readAndParsePatch fileReading dialects metadataEncoding path = do
+  patchBytes <- readMaybeUnwrap fileReading path
   orBail (parseSome dialects metadataEncoding (PatchFileContents patchBytes))
 
 ----------------------------------------------------------------------------

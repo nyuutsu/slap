@@ -300,6 +300,7 @@ data InfoCommand = InfoCommand
   { infoPatch            :: FilePath
   , infoExtractMetadata  :: Maybe FilePath
   , infoExtractDiz       :: Maybe FilePath
+  , infoFileReading      :: FileReadingOptions
   , infoDialects         :: RequestedDialects
   , infoMetadataEncoding :: EncodingName
   , infoOverwritePolicy  :: OverwritePolicy
@@ -868,6 +869,7 @@ patchInfoParser = do
         <> help "Write embedded metadata to FILE"))
     extractDizPath <- optional (pathOption (long "extract-diz" <> metavar "FILE"
         <> help "Write the FILE_ID.DIZ to FILE (PPF2/PPF3)"))
+    fileReadingOptions <- fileReadingOptionsParser
     dialects <- dialectsParser
     metadataEncoding <- metadataEncodingParser
     overwritePolicy <- overwritePolicyFlag
@@ -875,6 +877,7 @@ patchInfoParser = do
       { infoPatch            = patchFile
       , infoExtractMetadata  = extractMetadataPath
       , infoExtractDiz       = extractDizPath
+      , infoFileReading      = fileReadingOptions
       , infoDialects         = dialects
       , infoMetadataEncoding = metadataEncoding
       , infoOverwritePolicy  = overwritePolicy
