@@ -250,6 +250,10 @@ renderSlapAdvisory (UndoDataDropped (UndoRecordCount recordCount)) =
 renderSlapAdvisory ValidationBlockDropped =
   "dropping validation block (1024 bytes)"
 
+renderSlapAdvisory ValidationWindowNeedsSource =
+  "dropping validation block: the target's image type reads a different window than the source's, "
+  <> "which can't be re-sampled without the ROM (pass --with SOURCE to keep it)"
+
 renderSlapAdvisory (MetadataDropped (Length byteCount)) =
   "dropping metadata (" <> renderAsText byteCount
   <> plural byteCount " byte" " bytes" <> ")"

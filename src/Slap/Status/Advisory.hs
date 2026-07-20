@@ -199,6 +199,9 @@ data SlapAdvisory
   | FieldDropped PatchField DroppedValue
   | UndoDataDropped UndoRecordCount
   | ValidationBlockDropped
+  -- | A validation block dropped because the target reads its window at a different offset than the source did,
+  -- and source-less convert cannot re-sample it. '--with SOURCE' re-samples and keeps it.
+  | ValidationWindowNeedsSource
   -- | A BPS metadata blob with no destination channel in the target format.
   -- The 'Length' is the blob's byte count.
   | MetadataDropped Length
@@ -393,6 +396,7 @@ slapAdvisorySeverity advisory = case advisory of
   FieldDropped{}                       -> SeverityNote
   UndoDataDropped{}                    -> SeverityNote
   ValidationBlockDropped               -> SeverityNote
+  ValidationWindowNeedsSource          -> SeverityNote
   MetadataDropped{}                    -> SeverityNote
   DefaultRomType{}                     -> SeverityNote
   DefaultImageType{}                   -> SeverityNote

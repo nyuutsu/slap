@@ -1202,10 +1202,17 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     undoEncoded <- case ppf3UndoChoice of
       IncludeUndoData -> traverse (first NarrowingError . narrowUndoHunks ppf3Limits) (contentsUndoData contents)
       OmitUndoData    -> Right Nothing
-    let ppfValidation = case ppf3VerificationChoice of
-          IncludeVerification -> fmap PPF3ValidationBlock (contentsValidation contents)
-          OmitVerification    -> Nothing
-        ppfResult = PPF3.encodePPF3 records descriptionTyped undoEncoded ppfValidation imageType
+    -- Source-less, a carried block sits at the source's window and can't be re-sampled; emit it only when the
+    -- target reads the same window, never relabelled to a different one. With --with, 'buildContents' re-samples,
+    -- 'sourceLess' is false, and the block always rides along.
+    let (ppfValidation, windowNotes) = case ppf3VerificationChoice of
+          OmitVerification -> (Nothing, [])
+          IncludeVerification
+            | sourceLess && sourceValidationOffset /= ppf3ValidationOffset imageType ->
+                (Nothing, [ValidationWindowNeedsSource])
+            | otherwise -> (fmap PPF3ValidationBlock (contentsValidation contents), [])
+        ppfBase   = PPF3.encodePPF3 records descriptionTyped undoEncoded ppfValidation imageType
+        ppfResult = ppfBase { resultAdvisories = windowNotes ++ resultAdvisories ppfBase }
     case effectiveFileIdDiz meta contents of
       Nothing  -> Right ppfResult
       Just diz -> do
@@ -1292,6 +1299,10 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     -- The effective inclusion, matched to 'verdictOnDirectConversion' so the emitted bytes agree with the dropped-field notes.
     ppf3UndoChoice         = fromMaybe (inferUndoInclusion         contents) (requestedUndoInclusion         meta)
     ppf3VerificationChoice = fromMaybe (inferVerificationInclusion contents) (requestedVerificationInclusion meta)
+    sourceLess = ByteString.null (unInputFileContents source)
+    -- The window a carried validation block was sampled at: a PPF3 source records its image type; a PPF2 source
+    -- has none, so 'contentsImageType' is 'Nothing' and the block sits at PPF2's fixed offset.
+    sourceValidationOffset = maybe ppf2ValidationOffset ppf3ValidationOffset (contentsImageType contents)
 
 ----------------------------------------------------------------------------
 -- Create
