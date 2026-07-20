@@ -28,6 +28,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Unsafe (unsafeIndex, unsafeUseAsCStringLen)
 import qualified Data.Vector as Vector
+import Data.Int (Int64)
 import Data.Word (Word8)
 import Foreign.Ptr (Ptr, castPtr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
@@ -397,8 +398,8 @@ detectOOBBlocks patch direction outputSize = case oobFirstIndex finalState of
 
     walkBlock state blockIndex (UPSBlock skipLength xorData) =
       let xorLength        = byteLength xorData
-          totalBlockLength = skipLength <> xorLength <> upsTerminatorByteLength
-          nextPosition  = advance (oobPosition state) totalBlockLength
+          totalBlockLength = saturatingSpan [skipLength, xorLength, upsTerminatorByteLength]
+          nextPosition  = saturatingAdvance (oobPosition state) totalBlockLength
           placement     = classifyBlockPlacement
                             (oobPosition state) totalBlockLength outputSize
       in case placement of
@@ -419,3 +420,14 @@ detectOOBBlocks patch direction outputSize = case oobFirstIndex finalState of
             Nothing -> Just (actionAtPosition blockIndex)
         , oobOvershoot  = oobOvershoot state <> OOBOvershootBytes blockOvershoot
         }
+
+    -- A UPS skip is a byuu varint that can name a span near 2^63. The walk saturates its arithmetic at the
+    -- 'Int64' ceiling, so a monstrous skip lands as a vast overshoot rather than a wrapped-negative stride —
+    -- which would misclassify the block and underflow the overshoot subtraction.
+    saturatingSpan :: [Length] -> Length
+    saturatingSpan = Length . toInt64Ceiling . sum . map (toInteger . unLength)
+    saturatingAdvance :: Offset -> Length -> Offset
+    saturatingAdvance (Offset position) (Length stride) =
+      Offset (toInt64Ceiling (toInteger position + toInteger stride))
+    toInt64Ceiling :: Integer -> Int64
+    toInt64Ceiling = fromInteger . min (toInteger (maxBound :: Int64))
