@@ -346,8 +346,13 @@ button { font: inherit; cursor: pointer; }
 
 /* ------------------------------------------------------------- tutor ---- */
 
-.tutor-label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; color: var(--whisper); margin: 20px 0 7px; }
+.tutor-label {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; color: var(--whisper); margin: 20px 0 7px;
+}
+.tutor-label .quiet-button { font-size: 11px; letter-spacing: 0.08em; }
 .terminal {
+  cursor: pointer;
   font-family: var(--terminal-mono); font-size: 13.5px; line-height: 1.75;
   background: var(--terminal-room); color: var(--terminal-ink);
   border-radius: 10px; padding: 13px 15px; margin: 0;

@@ -1,4 +1,4 @@
-// Wired once against the one stage, so any verb's markup joins in by marking an element data-story.
+// Wired once against the whole page rather than the stage alone, so any element marking itself data-story joins in.
 // A story is a view-transient, never state: leaving renders the voice box back to what the state says,
 // and a control being typed in keeps its story, because that render would tear focus out of the input.
 
@@ -21,8 +21,8 @@ export const wireStoryListeners = (host, storybook, storiesQuietNow) => {
     host.fellow.settle();
     host.render();
   };
-  host.stage().addEventListener('mouseover', speakStory);
-  host.stage().addEventListener('focusin', speakStory);
-  host.stage().addEventListener('mouseout', settleStory);
-  host.stage().addEventListener('focusout', settleStory);
+  document.addEventListener('mouseover', speakStory);
+  document.addEventListener('focusin', speakStory);
+  document.addEventListener('mouseout', settleStory);
+  document.addEventListener('focusout', settleStory);
 };

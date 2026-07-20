@@ -4,7 +4,7 @@ import { markupOf, html } from './dom.mjs';
 import { openReactorSession, classifyBootFailure, answerOf, advisoriesOf, ReactorJobCancelled } from './reactor-session.mjs';
 import { seatMascot } from './mascot.mjs';
 import { voiceLines, bootFailureVoice } from './answer-surface.mjs';
-import { commandMarkup } from './command-tutor.mjs';
+import { commandMarkup, tutorStories } from './command-tutor.mjs';
 import { makeApplyVerb } from './verbs/apply.mjs';
 import { makeUndoVerb } from './verbs/undo.mjs';
 import { makeCreateVerb } from './verbs/create.mjs';
@@ -91,7 +91,8 @@ const verbs = {
   convert: makeConvertVerb(host),
 };
 
-const storybook = { ...fieldStories, ...pickerStories };
+// Most keys name an engine metadata field; the page's own furniture brings nouns of its own.
+const storybook = { ...fieldStories, ...pickerStories, ...tutorStories };
 wireStoryListeners(host, storybook, () => verbs[currentVerb].storiesQuiet?.() ?? false);
 wireByteCountListener(host);
 
@@ -120,6 +121,30 @@ const render = () => {
 
 /* --------------------------------------------------------------- wiring ---- */
 
+// The button's own word carries the answer, because the tutor is the one thing on the page no render rebuilds:
+// a line in the voice box would be wiped by the next interaction that redraws it.
+let copyWordTimer = null;
+const copyCommand = async () => {
+  const button = element('copy-command');
+  const sayOnTheButton = (word) => {
+    button.textContent = word;
+    clearTimeout(copyWordTimer);
+    copyWordTimer = setTimeout(() => { button.textContent = 'copy'; }, 1600);
+  };
+  try {
+    await navigator.clipboard.writeText(element('command').textContent.trim());
+    sayOnTheButton('copied');
+  } catch {
+    sayOnTheButton('copy it by hand');
+  }
+};
+
+// The strip answers the gesture people try on it anyway, and stands aside for a selection:
+// dragging across part of a command is someone taking that part by hand, and copying over them would be rude.
+element('command').addEventListener('click', () => {
+  if (document.getSelection()?.isCollapsed !== false) copyCommand();
+});
+
 const filePicker = element('file-picker');
 
 document.addEventListener('click', (event) => {
@@ -135,6 +160,10 @@ document.addEventListener('click', (event) => {
   if (action === 'pick-file') {
     filePicker.dataset.seat = control.dataset.seat;
     filePicker.click();
+    return;
+  }
+  if (action === 'copy-command') {
+    copyCommand();
     return;
   }
   verbs[currentVerb].actions[action]?.(control.dataset);

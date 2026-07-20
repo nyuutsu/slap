@@ -30,7 +30,6 @@ const chosenFormatNoteMarkup = (chosenToken) => {
   return note && admonitionMarkup('note', note);
 };
 
-// The key is the page's own noun; every other storybook entry is named for an engine metadata field.
 export const pickerStories = {
   MoreFormats:
     'every format slap can write is on this shelf — the quieter ones unfold as chips. '
