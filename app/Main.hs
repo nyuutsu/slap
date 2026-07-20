@@ -82,7 +82,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Control.Exception (try, bracketOnError)
 import Control.Monad (when)
-import System.Directory (doesFileExist, renameFile, removeFile)
+import System.Directory (doesFileExist, renameFile, removeFile, copyPermissions)
 import System.FilePath (dropExtension, replaceExtension, takeBaseName, takeExtension, takeDirectory, takeFileName)
 import System.IO (IOMode(ReadMode), hFileSize, hSetEncoding, stderr, stdout, openBinaryFile, openBinaryTempFile, hClose, hIsSeekable)
 import System.IO.MMap (mmapFileByteString)
@@ -156,21 +156,28 @@ writeOutputFile path outputBytes = do
     Right ()   -> pure ()
     Left ioErr -> bailError (UnwritableOutputFile path (ioeGetErrorString ioErr))
 
--- | Replace @path@'s contents atomically: write a sibling temporary, then 'renameFile' it over @path@.
--- The original is never truncated mid-write — an interrupted or failed write leaves it whole, not half-written —
--- which is what makes a @--force@ overwrite survivable on a file the user cannot re-fetch.
+-- | Write @path@. An existing file is replaced atomically — a sibling temporary, then a 'renameFile' over it —
+-- so an interrupted write leaves the original whole, which is what makes a @--force@ overwrite survivable on a
+-- file the user cannot re-fetch; the temporary inherits the target's mode, not its own private default.
+-- A path that doesn't exist yet has nothing to protect from a half-write, so it's written directly, at the
+-- umask's mode like any created file rather than the temporary's @0600@.
 writeFileAtomicallyOver :: FilePath -> ByteString -> IO ()
 writeFileAtomicallyOver path outputBytes = do
-  result <- try $ bracketOnError
-    (openBinaryTempFile (takeDirectory path) (takeFileName path <> ".tmp"))
-    (\(tempPath, tempHandle) -> hClose tempHandle >> removeFileIfExists tempPath)
-    (\(tempPath, tempHandle) -> do
-       ByteString.hPut tempHandle outputBytes
-       hClose tempHandle
-       renameFile tempPath path)
-  case result of
-    Right ()   -> pure ()
-    Left ioErr -> bailError (UnwritableOutputFile path (ioeGetErrorString ioErr))
+  targetExists <- doesFileExist path
+  if not targetExists
+    then writeOutputFile path outputBytes
+    else do
+      result <- try $ bracketOnError
+        (openBinaryTempFile (takeDirectory path) (takeFileName path <> ".tmp"))
+        (\(tempPath, tempHandle) -> hClose tempHandle >> removeFileIfExists tempPath)
+        (\(tempPath, tempHandle) -> do
+           ByteString.hPut tempHandle outputBytes
+           hClose tempHandle
+           copyPermissions path tempPath
+           renameFile tempPath path)
+      case result of
+        Right ()   -> pure ()
+        Left ioErr -> bailError (UnwritableOutputFile path (ioeGetErrorString ioErr))
 
 removeFileIfExists :: FilePath -> IO ()
 removeFileIfExists path = do
@@ -519,10 +526,17 @@ resolveConvertXDelta1Names parsedCommand parsed mergedMeta = case convertTo pars
 -- Helpers
 ----------------------------------------------------------------------------
 
+-- | Insert a bracketed marker before a path's extension — or at the end when the name has no extension to sit
+-- before, as with an extensionless name or a dotfile (whose leading dot names no extension, so it must not be split on).
+insertBeforeExtension :: String -> FilePath -> FilePath
+insertBeforeExtension marker path
+  | null (takeBaseName path) = path ++ marker
+  | otherwise                = dropExtension path ++ marker ++ takeExtension path
+
 -- | "game.gbc" + "translation.ips" → "game [translation].gbc"
 deriveOutput :: FilePath -> FilePath -> FilePath
 deriveOutput patchPath sourcePath =
-  dropExtension sourcePath ++ " [" ++ takeBaseName patchPath ++ "]" ++ takeExtension sourcePath
+  insertBeforeExtension (" [" ++ takeBaseName patchPath ++ "]") sourcePath
 
 -- | Append a @[reverted]@ marker before the extension, if there is one.
 --
@@ -534,8 +548,7 @@ deriveOutput patchPath sourcePath =
 -- Pre-existing bracketed markers are not detected or stripped;
 -- the marker is appended unconditionally.
 deriveUndoOutput :: FilePath -> FilePath
-deriveUndoOutput modifiedPath =
-  dropExtension modifiedPath ++ " [reverted]" ++ takeExtension modifiedPath
+deriveUndoOutput modifiedPath = insertBeforeExtension " [reverted]" modifiedPath
 
 -- | Abort if the destination already exists and the user did not pass @--force@.
 refuseOverwrite :: OverwritePolicy -> FilePath -> IO ()
