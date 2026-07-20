@@ -387,7 +387,7 @@ recoverNamed encoder = recover
 -- at most @cap@ bytes long.
 --
 -- Substitution works as in 'encodeTextLenient': an unrepresentable codepoint becomes a substitute with a 'SubstitutedCodepoint' notice.
--- Truncation, when it happens, surfaces as a 'TruncatedToFitBound' notice carrying the cap and the unbounded and written byte counts.
+-- Truncation, when it happens, surfaces as a 'TruncatedToFitBound' notice carrying the cap alongside the unbounded and written byte counts.
 --
 -- The caller decides what to do about the notices — slap's create
 -- paths typically lift each one to a 'Slap.Status.FieldTruncated'

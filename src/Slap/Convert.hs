@@ -446,8 +446,8 @@ rejectCrossPlatformRomTypeRetag cliMeta extractedMeta =
 -- PatchContents helpers
 ----------------------------------------------------------------------------
 
--- | The hunks plus absent metadata. No-op empty hunks are dropped: an IPS-family target
--- re-encodes one as a size-0 record — the RLE sentinel — which then swallows the record after it.
+-- | No-op empty hunks are dropped: an IPS-family target re-encodes one as a size-0 record,
+-- which the wire reserves for RLE, so the reader takes the following record's bytes as a run length and fill.
 emptyContents :: [Hunk] -> PatchContents
 emptyContents records = PatchContents
   { contentsRecords     = filter (not . ByteString.null . hunkPayload) records
@@ -657,8 +657,9 @@ xdelta3CompressionEmission meta =
            Nothing         -> Left (XDelta3CompressorEncodingUnsupported (compressionAlgorithmOf algorithm))
 
 -- | The value-level half of the @--compress-with@ gate, beside the concept-level 'rejectIncompatibleMetadata', run before any file is read:
--- an xdelta3 target refuses a selected compressor slap cannot encode with, and a compressor chosen beside a compression opt-out — a do-nothing pair.
--- Judged on the request as authored, never a merged bag: an inherited compressor beside the user's @--no-compress@ stays the emission's Omit-wins fold.
+-- an xdelta3 target refuses a compressor slap cannot encode with, and a compressor chosen beside a compression opt-out — a do-nothing pair.
+-- Judged on the request as authored, never a merged bag:
+-- an inherited compressor beside the user's @--no-compress@ stays the emission's Omit-wins fold.
 -- Other targets pass through — a selection they can't consume is already the concept-level rejection's to make.
 rejectUnencodableSecondaryCompressor :: CreateFormat -> RequestedPatchMetadata -> Either SlapError ()
 rejectUnencodableSecondaryCompressor (CreateDifferential CreateXDelta3) meta
@@ -1202,17 +1203,16 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     undoEncoded <- case ppf3UndoChoice of
       IncludeUndoData -> traverse (first NarrowingError . narrowUndoHunks ppf3Limits) (contentsUndoData contents)
       OmitUndoData    -> Right Nothing
-    -- Source-less, a carried block sits at the source's window and can't be re-sampled; emit it only when the
-    -- target reads the same window, never relabelled to a different one. With --with, 'buildContents' re-samples,
-    -- 'sourceLess' is false, and the block always rides along.
+    -- Source-less, the carried block was sampled at the source's window and there is no ROM to re-sample from,
+    -- so it survives only where the target reads that same window; anywhere else it is dropped rather than relabelled.
     let (ppfValidation, windowNotes) = case ppf3VerificationChoice of
           OmitVerification -> (Nothing, [])
           IncludeVerification
             | sourceLess && sourceValidationOffset /= ppf3ValidationOffset imageType ->
                 (Nothing, [ValidationWindowNeedsSource])
             | otherwise -> (fmap PPF3ValidationBlock (contentsValidation contents), [])
-        ppfBase   = PPF3.encodePPF3 records descriptionTyped undoEncoded ppfValidation imageType
-        ppfResult = ppfBase { resultAdvisories = windowNotes ++ resultAdvisories ppfBase }
+        encodedPPF3 = PPF3.encodePPF3 records descriptionTyped undoEncoded ppfValidation imageType
+        ppfResult   = encodedPPF3 { resultAdvisories = windowNotes ++ resultAdvisories encodedPPF3 }
     case effectiveFileIdDiz meta contents of
       Nothing  -> Right ppfResult
       Just diz -> do
@@ -1300,8 +1300,8 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     ppf3UndoChoice         = fromMaybe (inferUndoInclusion         contents) (requestedUndoInclusion         meta)
     ppf3VerificationChoice = fromMaybe (inferVerificationInclusion contents) (requestedVerificationInclusion meta)
     sourceLess = ByteString.null (unInputFileContents source)
-    -- The window a carried validation block was sampled at: a PPF3 source records its image type; a PPF2 source
-    -- has none, so 'contentsImageType' is 'Nothing' and the block sits at PPF2's fixed offset.
+    -- The window a carried validation block was sampled at: a PPF3 source records its image type,
+    -- while a PPF2 source has none, so 'contentsImageType' is 'Nothing' and the block sits at PPF2's fixed offset.
     sourceValidationOffset = maybe ppf2ValidationOffset ppf3ValidationOffset (contentsImageType contents)
 
 ----------------------------------------------------------------------------
@@ -1528,7 +1528,7 @@ resolveEBPField cliValue ebpValue
   | Just value    <- ebpValue  = value
   | otherwise                  = EncodedText EncodingUtf8 Text.empty
 
--- | The @patcher@ field EBP metadata carries. Despite the name, tools treat it as a format identifier rather than a credits field for the creation tool used.
+-- | The @patcher@ field EBP metadata carries. Despite the name, tools treat it as a format identifier rather than a credits field.
 ebpPatcherDiscriminator :: EncodedText
 ebpPatcherDiscriminator = EncodedText EncodingUtf8 (Text.pack "EBPatcher")
 

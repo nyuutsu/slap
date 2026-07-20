@@ -122,15 +122,15 @@ list7z path = do
     ExitSuccess -> Right (map toEntryName (parse7zList stdout))
     _           -> Left (ArchiveToolFailed (ToolName "7z") (toolDiagnostic stderr))
 
--- | The file entries in 7z's @-slt@ listing: one @Key = Value@ block each, blocks blank-line separated.
--- A @D@ in a block's DOS attributes marks a directory, which is not an entry to extract.
+-- | The file entries in 7z's @-slt@ listing. A directory carries a @D@ in its DOS attributes,
+-- not the trailing slash a ZIP central directory would give it, so only the attribute line tells them apart.
 parse7zList :: String -> [String]
 parse7zList = mapMaybe fileEntryPath . groupIntoEntries . lines
   where
     fileEntryPath entryLines
-      | any entryIsDirectory entryLines = Nothing
+      | any marksDirectory entryLines = Nothing
       | otherwise = listToMaybe (mapMaybe (stripPrefix "Path = ") entryLines)
-    entryIsDirectory line = case stripPrefix "Attributes = " line of
+    marksDirectory line = case stripPrefix "Attributes = " line of
       Just attributes -> 'D' `elem` takeWhile (/= ' ') attributes
       Nothing         -> False
 

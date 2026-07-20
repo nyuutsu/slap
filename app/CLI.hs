@@ -810,9 +810,8 @@ dizSourceParser = asum
   , pure NoFileIdDiz
   ]
 
--- | The @--diz-encoding ENC@ option: what encoding a @--diz FILE@'s bytes are in.
--- Distinct from @--metadata-encoding@, which says how to read a patch slap is /given/;
--- this says how to read a file the user is handing in. Both resolve at parse time.
+-- | The @--diz-encoding ENC@ option, distinct from @--metadata-encoding@:
+-- that one reads text out of a patch slap was handed, this one reads the bytes of a file the user hands in.
 dizEncodingParser :: Parser EncodingName
 dizEncodingParser = option (eitherReader resolveMetadataEncoding)
   ( long "diz-encoding"

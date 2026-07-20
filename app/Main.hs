@@ -136,11 +136,11 @@ readInputFile path = do
       | isDoesNotExistError ioErr -> bailError (MissingInputFile path)
       | otherwise                 -> bailError (UnreadableInputFile path (ioeGetErrorString ioErr))
 
--- | Read a whole input into memory, memory-mapped when the file's shape allows it: a regular, seekable file with a real
--- size arrives as address space and evictable page cache rather than a heap copy, paged in as slap touches it.
--- Everything a mapping can't answer — a pipe or FIFO, a device, a proc-style file reporting size zero, the empty file —
--- is read from the one open handle. A second, independent open would be wrong: opening a FIFO consumes the bytes a writer
--- has queued, so a size probe that opened and closed it first would leave the read empty.
+-- | Read a whole input into memory, memory-mapped where the file's shape allows:
+-- a regular, seekable file with a real size arrives as address space and evictable page cache rather than a heap copy.
+-- Every other shape — a pipe or FIFO, a device, a proc-style file reporting size zero, the empty file — reads from the one open handle.
+-- Opening it a second time would be wrong: opening a FIFO consumes whatever a writer has queued,
+-- so a size probe that opened and closed one first would leave the real read empty.
 readWholeFile :: FilePath -> IO ByteString
 readWholeFile path =
   bracketOnError (openBinaryFile path ReadMode) hClose $ \handle -> do
@@ -159,10 +159,10 @@ writeOutputFile path outputBytes = do
     Left ioErr -> bailError (UnwritableOutputFile path (ioeGetErrorString ioErr))
 
 -- | Write @path@. An existing file is replaced atomically — a sibling temporary, then a 'renameFile' over it —
--- so an interrupted write leaves the original whole, which is what makes a @--force@ overwrite survivable on a
--- file the user cannot re-fetch; the temporary inherits the target's mode, not its own private default.
--- A path that doesn't exist yet has nothing to protect from a half-write, so it's written directly, at the
--- umask's mode like any created file rather than the temporary's @0600@.
+-- so an interrupted write leaves the original whole, which is what makes a @--force@ overwrite survivable on a file the user cannot re-fetch;
+-- the temporary inherits the target's mode, not its own private default.
+-- A path that doesn't exist yet has nothing to protect from a half-write,
+-- so it is written directly, at the umask's mode like any created file rather than the temporary's @0600@.
 writeFileAtomicallyOver :: FilePath -> ByteString -> IO ()
 writeFileAtomicallyOver path outputBytes = do
   targetExists <- doesFileExist path
@@ -219,8 +219,8 @@ resolveCreateMetadata label inputs = do
     }
 
 -- | The @--diz@ file and @--diz-text@ string both become UTF-8, because create writes every text field that way.
--- A DIZ file is bytes, so it is read under @--diz-encoding@ first — DOS scene art is usually CP437, and reading it
--- as UTF-8 would replace every high byte. Whatever the encoding still can't represent is reported, not swallowed.
+-- A DIZ file arrives as bytes, so @--diz-encoding@ says how to read them: DOS scene art is usually CP437,
+-- and reading that as UTF-8 would replace every high byte. What the chosen encoding still cannot represent is reported.
 resolveCreateFileIdDiz :: FormatLabel -> FileIdDizSource -> IO FileIdDizRequest
 resolveCreateFileIdDiz _ NoFileIdDiz = pure InheritFileIdDiz
 resolveCreateFileIdDiz label (FileIdDizFromFile path encoding) = do
@@ -532,8 +532,8 @@ resolveConvertXDelta1Names parsedCommand parsed mergedMeta = case convertTo pars
 -- Helpers
 ----------------------------------------------------------------------------
 
--- | Insert a bracketed marker before a path's extension — or at the end when the name has no extension to sit
--- before, as with an extensionless name or a dotfile (whose leading dot names no extension, so it must not be split on).
+-- | The marker goes before the extension, except where there is none to sit before —
+-- an extensionless name, or a dotfile whose leading dot names no extension — and there it goes at the end.
 insertBeforeExtension :: String -> FilePath -> FilePath
 insertBeforeExtension marker path
   | null (takeBaseName path) = path ++ marker

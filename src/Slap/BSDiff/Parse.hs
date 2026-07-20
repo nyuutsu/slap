@@ -71,9 +71,8 @@ parseBSDiff (PatchFileContents input)
       controlData <- safeDecompressBZip BSDiffControl controlCompressed
       diffData    <- safeDecompressBZip BSDiffDiff    diffCompressed
       extraData   <- safeDecompressBZip BSDiffExtra   extraCompressed
-      -- Every output byte is an ADD drawn from the diff stream or a COPY drawn from extra, so the target
-      -- cannot exceed their combined length. A header claiming more can only underfill — caught here, before
-      -- apply reserves a buffer the size of the declared target.
+      -- Every output byte is an ADD drawn from the diff stream or a COPY drawn from extra,
+      -- so a target larger than the two together is one no walk of this patch could ever fill.
       let producibleBytes = fromIntegral (ByteString.length diffData + ByteString.length extraData) :: Int64
       when (rawTargetSize > producibleBytes)
         (Left (MalformedBSDiffHeader (BSDiffTargetOverrunsData (rawTargetSize - producibleBytes))))
