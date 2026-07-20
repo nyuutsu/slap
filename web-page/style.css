@@ -391,6 +391,15 @@ button { font: inherit; cursor: pointer; }
   border-top: 1px solid var(--hairline);
 }
 .standing-note { font-family: var(--mono); font-size: 11px; color: var(--whisper); }
+a.standing-note { text-decoration: underline; text-underline-offset: 3px; }
+a.standing-note:hover { color: var(--grape); }
+
+/* the one thing a page whose work is all script can still say for itself */
+.noscript-note {
+  background: var(--panel); border: 1px solid var(--hairline); border-radius: 12px;
+  padding: 14px 17px; margin: 14px 0; font-size: 14.5px; color: var(--ink-soft);
+}
+.noscript-note a { color: var(--grape); }
 .makers-mark { font-family: 'IM Fell English', serif; font-style: italic; font-size: 15px; color: var(--ink-soft); text-decoration: none; }
 .makers-mark:hover { color: var(--grape); }
 .amber-dot { color: var(--amber); }
