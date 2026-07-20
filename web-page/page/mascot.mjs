@@ -1,6 +1,8 @@
 // The googly-eyed fellow beside the answer surface: the face of slap's voice.
 // The bandage artwork lives in art/bandage.svg, its one home; the eyes are drawn on top here.
 // Moods are named for what he does, not for what happened: the caller decides when a nod is due.
+// Asked for stillness he holds still — no spring, no gaze following the cursor, no bob — while his
+// expressions go on changing, a smile and a downcast look being the answer's tone rather than motion.
 
 const eyesMarkup = `
   <g>
@@ -30,33 +32,49 @@ export const seatMascot = async (seat) => {
   // A small spring: the pupils glide toward their target, the body bobs and rights itself.
   let gazeX = 0, gazeY = 2, gazeVelocityX = 0, gazeVelocityY = 0, gazeTargetX = 0, gazeTargetY = 2;
   let bob = 0, bobVelocity = 0, tilt = 0, tiltVelocity = 0;
-  let tracking = true, smiling = false;
+  let tracking = true, smiling = false, springing = false;
   const clamped = (value) => Math.max(-6, Math.min(6, value));
 
+  const paintGaze = () => pupils.forEach((pupil, which) => {
+    pupil.setAttribute('cx', restingEyeCenters[which].x + clamped(gazeX));
+    pupil.setAttribute('cy', restingEyeCenters[which].y + clamped(gazeY));
+  });
+
+  // Where the eyes are asked to look. The spring is what carries them there, so in its absence they are already there.
+  const aimGaze = (towardX, towardY) => {
+    gazeTargetX = towardX; gazeTargetY = towardY;
+    if (!stillness.matches) return;
+    gazeX = towardX; gazeY = towardY;
+    paintGaze();
+  };
+
   const springTick = () => {
+    if (stillness.matches) { springing = false; figure.style.transform = ''; return; }
     gazeVelocityX += (gazeTargetX - gazeX) * 0.09; gazeVelocityY += (gazeTargetY - gazeY) * 0.09;
     gazeVelocityX *= 0.86; gazeVelocityY *= 0.86;
     gazeX += gazeVelocityX; gazeY += gazeVelocityY;
-    pupils.forEach((pupil, which) => {
-      pupil.setAttribute('cx', restingEyeCenters[which].x + clamped(gazeX));
-      pupil.setAttribute('cy', restingEyeCenters[which].y + clamped(gazeY));
-    });
+    paintGaze();
     bobVelocity += (0 - bob) * 0.18; bobVelocity *= 0.80; bob += bobVelocity;
     tiltVelocity += (0 - tilt) * 0.18; tiltVelocity *= 0.80; tilt += tiltVelocity;
     figure.style.transform = `translateY(${bob.toFixed(2)}px) rotate(${tilt.toFixed(2)}deg)`;
     requestAnimationFrame(springTick);
   };
-  springTick();
+  const beginSpringing = () => { if (springing || stillness.matches) return; springing = true; springTick(); };
+
+  paintGaze();
+  beginSpringing();
+  // the setting can turn over under a page already open, and he answers it whichever way it turns
+  stillness.addEventListener('change', () => (stillness.matches ? aimGaze(0, 2) : beginSpringing()));
 
   const settle = () => {
     smiling = false; tracking = true;
-    gazeTargetX = 0; gazeTargetY = 2;
+    aimGaze(0, 2);
     smileEyes.forEach((eye) => eye.setAttribute('opacity', 0));
     pupils.forEach((pupil) => pupil.setAttribute('opacity', 1));
   };
 
   addEventListener('mousemove', (cursor) => {
-    if (!tracking) return;
+    if (!tracking || stillness.matches) return;
     const box = figure.getBoundingClientRect();
     gazeTargetX = clamped((cursor.clientX - (box.left + box.width / 2)) / 40);
     gazeTargetY = clamped((cursor.clientY - (box.top + box.height / 2)) / 40) + 2;
@@ -68,7 +86,9 @@ export const seatMascot = async (seat) => {
   return {
     // a quiet acknowledgment — something landed
     nod() {
-      settle(); tracking = false; gazeTargetY = 5;
+      settle();
+      if (stillness.matches) return;
+      tracking = false; gazeTargetY = 5;
       setTimeout(() => { gazeTargetY = -2; }, 130);
       setTimeout(() => { gazeTargetY = 2; tracking = true; }, 300);
     },
@@ -82,7 +102,7 @@ export const seatMascot = async (seat) => {
     // smile-eyes, and they stay: the person is still looking at the thing that went right,
     // so the smile lasts until something new begins — a fresh file, another verb, "do another"
     smile() {
-      smiling = true; tracking = false; gazeTargetX = 0; gazeTargetY = 2;
+      smiling = true; tracking = false; aimGaze(0, 2);
       pupils.forEach((pupil) => pupil.setAttribute('opacity', 0));
       smileEyes.forEach((eye) => eye.setAttribute('opacity', 1));
       if (!stillness.matches) bobVelocity = -6;
@@ -92,7 +112,7 @@ export const seatMascot = async (seat) => {
       smiling = true; tracking = false;
       pupils.forEach((pupil) => pupil.setAttribute('opacity', 1));
       smileEyes.forEach((eye) => eye.setAttribute('opacity', 0));
-      gazeTargetX = -4; gazeTargetY = 6;
+      aimGaze(-4, 6);
       setTimeout(() => { if (smiling) settle(); }, 2600);
     },
     // restless while a job runs; settle() ends it
