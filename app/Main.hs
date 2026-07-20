@@ -30,7 +30,7 @@ import Slap.Convert (CreateFormat(..), DifferentialCreate(..),
                      acceptedDialects,
                      rejectIncompatibleDialects,
                      rejectCrossPlatformRomTypeRetag,
-                     createDefaultAdvisories, convertDirect,
+                     createDefaultAdvisories, convertDirect, createFormatLabel,
                      mergeRequestedMetadata, rejectIncompatibleMetadataRequests,
                      EmbeddedBlobContents(..), EmbeddedBlobRequest(..),
                      formatExtension, formatName)
@@ -39,12 +39,14 @@ import Slap.XDelta1.Types (ResolvedXDelta1FileNames,
                            requireXDelta1FileNames,
                            XDelta1FromName(..), XDelta1ToName(..))
 import Slap.Create (createPatch)
-import Slap.Text (EncodingName(EncodingUtf8), EncodedText(..), decodeTextLenient)
+import Slap.Text (EncodingName(EncodingUtf8), EncodedText(..), decodeTextLenient, decodeLossAdvisories)
 import qualified Data.Text.IO as TextIO
 import Slap.Archive.Types (detectArchive, EntryName(unEntryName))
 import Slap.Status (SlapError(..), SourceRequiredCause(..), ExtractionSubject(..),
                    CreateResult(..), Outcome(..),
                    emitAdvisories, bailError, orBail)
+import Slap.FieldName (FieldName(FieldFileIdDiz))
+import Slap.FormatLabel (FormatLabel)
 import Slap.Normalize (NormalizedSource(..), normalizeApplySource)
 import Slap.Display.Glyph (spacePaddedRightwardsArrow)
 import Slap.Preflight (PreparedApplySource(..), prepareApplySource, weighUndoInput)
@@ -204,25 +206,29 @@ readMaybeUnwrap fileReadingOptions = case fileReadingArchiveHandling fileReading
   ReadBytesVerbatim             -> readInputFile
 
 -- | Resolve @slap create@'s metadata inputs: the 'EmbeddedBlobSource' and 'FileIdDizSource' become the blob and DIZ requests.
-resolveCreateMetadata :: CreateMetadataInputs -> IO RequestedPatchMetadata
-resolveCreateMetadata inputs = do
+resolveCreateMetadata :: FormatLabel -> CreateMetadataInputs -> IO RequestedPatchMetadata
+resolveCreateMetadata label inputs = do
   embeddedBlob <- case createEmbeddedBlobSource inputs of
     NoEmbeddedBlob                  -> pure InheritEmbeddedBlob
     EmbeddedBlobFromFile path       -> SetEmbeddedBlob . EmbeddedBlobContents <$> readInputFile path
     EmbeddedBlobFromTypedText typed -> pure (SetEmbeddedTypedText typed)
-  fileIdDiz    <- resolveCreateFileIdDiz (createDizSource inputs)
+  fileIdDiz    <- resolveCreateFileIdDiz label (createDizSource inputs)
   pure (createParsedMetadata inputs)
     { requestedEmbeddedBlob = embeddedBlob
     , requestedFileIdDiz    = fileIdDiz
     }
 
--- | The @--diz@ file and @--diz-text@ string both become UTF-8: create writes every text field that way,
--- and has no @--metadata-encoding@ knob to say otherwise.
-resolveCreateFileIdDiz :: FileIdDizSource -> IO FileIdDizRequest
-resolveCreateFileIdDiz NoFileIdDiz              = pure InheritFileIdDiz
-resolveCreateFileIdDiz (FileIdDizFromFile path) =
-  SetFileIdDiz . fst . decodeTextLenient EncodingUtf8 <$> readInputFile path
-resolveCreateFileIdDiz (FileIdDizFromText typed) =
+-- | The @--diz@ file and @--diz-text@ string both become UTF-8, because create writes every text field that way.
+-- A DIZ file is bytes, so it is read under @--diz-encoding@ first — DOS scene art is usually CP437, and reading it
+-- as UTF-8 would replace every high byte. Whatever the encoding still can't represent is reported, not swallowed.
+resolveCreateFileIdDiz :: FormatLabel -> FileIdDizSource -> IO FileIdDizRequest
+resolveCreateFileIdDiz _ NoFileIdDiz = pure InheritFileIdDiz
+resolveCreateFileIdDiz label (FileIdDizFromFile path encoding) = do
+  dizBytes <- readInputFile path
+  let (decoded, lossNotices) = decodeTextLenient encoding dizBytes
+  emitAdvisories (decodeLossAdvisories label FieldFileIdDiz lossNotices)
+  pure (SetFileIdDiz decoded)
+resolveCreateFileIdDiz _ (FileIdDizFromText typed) =
   pure (SetFileIdDizFromText (EncodedText EncodingUtf8 typed))
 
 -- | @--metadata-encoding@ decodes bytes, so only the @--diz FILE@ lane consults it; typed text arrives already decoded, and is tagged UTF-8.
@@ -393,7 +399,7 @@ doUndo parsedCommand = do
 doCreate :: CreateCommand -> IO ()
 doCreate parsedCommand = do
   orBail (rejectIncompatibleMetadataRequests (createFormat parsedCommand) (createMetadataRequests (createMetadata parsedCommand)))
-  createMeta    <- resolveCreateMetadata (createMetadata parsedCommand)
+  createMeta    <- resolveCreateMetadata (createFormatLabel (createFormat parsedCommand)) (createMetadata parsedCommand)
   orBail (rejectUnencodableSecondaryCompressor (createFormat parsedCommand) createMeta)
   orBail (rejectIncompatibleConstraints (createFormat parsedCommand) (createConstraints parsedCommand))
   resolvedXDelta1Names <- orBail (resolveCreateXDelta1Names parsedCommand createMeta)

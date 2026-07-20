@@ -185,7 +185,7 @@ data EmbeddedBlobSource
 -- | Where @slap create@'s FILE_ID.DIZ comes from — the same three shapes as 'EmbeddedBlobSource', for the DIZ.
 data FileIdDizSource
   = NoFileIdDiz
-  | FileIdDizFromFile FilePath
+  | FileIdDizFromFile FilePath EncodingName
   | FileIdDizFromText Text
   deriving (Show, Eq)
 
@@ -210,7 +210,7 @@ createMetadataRequests inputs = sortOn requestField $
       EmbeddedBlobFromTypedText _ -> [SetFieldFromText TypedTextEmbeddedBlob]
     dizRequest = case createDizSource inputs of
       NoFileIdDiz         -> []
-      FileIdDizFromFile _ -> [SetField MetadataFileIdDiz]
+      FileIdDizFromFile _ _ -> [SetField MetadataFileIdDiz]
       FileIdDizFromText _ -> [SetFieldFromText TypedTextFileIdDiz]
 
 -- | The convert-side counterpart of 'createMetadataRequests'.
@@ -798,14 +798,29 @@ embeddedBlobSourceParser = asum
   ]
 
 -- | The FILE_ID.DIZ counterpart to 'embeddedBlobSourceParser': @--diz FILE@ and @--diz-text TEXT@, mutually exclusive.
+-- Only the file lane carries an encoding: a DIZ file arrives as bytes that have to be read as some encoding,
+-- while text typed at the flag was decoded from argv before slap saw it.
 dizSourceParser :: Parser FileIdDizSource
 dizSourceParser = asum
   [ FileIdDizFromFile <$> pathOption (metadataFlag MetadataFileIdDiz <> metavar "FILE"
       <> help "Embed FILE as the output patch's FILE_ID.DIZ (PPF2/PPF3)")
+                      <*> dizEncodingParser
   , FileIdDizFromText <$> option str (typedTextFlag TypedTextFileIdDiz <> metavar "TEXT"
       <> help "Embed TEXT as the output patch's FILE_ID.DIZ (PPF2/PPF3)")
   , pure NoFileIdDiz
   ]
+
+-- | The @--diz-encoding ENC@ option: what encoding a @--diz FILE@'s bytes are in.
+-- Distinct from @--metadata-encoding@, which says how to read a patch slap is /given/;
+-- this says how to read a file the user is handing in. Both resolve at parse time.
+dizEncodingParser :: Parser EncodingName
+dizEncodingParser = option (eitherReader resolveMetadataEncoding)
+  ( long "diz-encoding"
+ <> metavar "ENC"
+ <> value EncodingUtf8
+ <> completeWith advertisedEncodingNames
+ <> help ("Read the --diz file as ENC (e.g. cp437 for DOS scene art; see"
+       ++ " --encodings). Default: utf8") )
 
 convertMetadataInputsParser :: Parser ConvertMetadataInputs
 convertMetadataInputsParser = ConvertMetadataInputs
