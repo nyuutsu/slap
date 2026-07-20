@@ -537,27 +537,26 @@ deinterleaveSMDBlock block = Internal.unsafeCreate blockLength $ \outputPointer 
     halfLength  = blockLength `div` 2
 
 ----------------------------------------------------------------------------
--- CRC-16/IBM (reflected polynomial 0xA001, init 0x0000)
+-- CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, unreflected): APS-GBA's block checksum
 ----------------------------------------------------------------------------
 
 crc16 :: ByteString -> CRC16
-crc16 = CRC16 . ByteString.foldl' updateChecksum 0
+crc16 = CRC16 . ByteString.foldl' updateChecksum 0xFFFF
   where
     updateChecksum :: Word16 -> Word8 -> Word16
     updateChecksum checksum byte =
-      let tableIndex = (checksum `xor` fromIntegral byte) .&. 0xFF
-      in (checksum `shiftR` 8) `xor` (crc16Table ! tableIndex)
+      let tableIndex = ((checksum `shiftR` 8) `xor` fromIntegral byte) .&. 0xFF
+      in (checksum `shiftL` 8) `xor` (crc16Table ! tableIndex)
 
 crc16Table :: Array Word16 Word16
-crc16Table = listArray (0, 255) [computeEntry entry | entry <- [0..255]]
+crc16Table = listArray (0, 255) [feedEightBits (byte `shiftL` 8) | byte <- [0..255]]
   where
-    -- One reflection per bit of the byte a table entry digests.
-    computeEntry :: Word16 -> Word16
-    computeEntry = reflect . reflect . reflect . reflect . reflect . reflect . reflect . reflect
-    reflect :: Word16 -> Word16
-    reflect checksum
-      | testBit checksum 0 = (checksum `shiftR` 1) `xor` 0xA001
-      | otherwise           = checksum `shiftR` 1
+    feedEightBits :: Word16 -> Word16
+    feedEightBits = foldr (.) id (replicate 8 feedOneBit)
+    feedOneBit :: Word16 -> Word16
+    feedOneBit checksum
+      | testBit checksum 15 = (checksum `shiftL` 1) `xor` 0x1021
+      | otherwise           = checksum `shiftL` 1
 
 ----------------------------------------------------------------------------
 -- Diff
