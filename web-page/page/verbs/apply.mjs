@@ -114,10 +114,11 @@ export const makeApplyVerb = (host) => {
     host.render();
   };
 
-  // The picker learns what a drop already knows. A file the engine recognizes as a patch takes the patch seat
-  // wherever it was picked, and the file it displaces takes the seat it was picked into. Nothing else moves:
-  // a file picked as the patch and recognized as no patch stays there to be told so, which is the useful answer.
-  // A patch seat already holding a patch slap can read is left alone — two patches in hand is the person's arrangement.
+  // The picker learns what a drop already knows. A file the engine recognizes as a patch belongs in the patch seat wherever it was picked,
+  // and the file it displaces belongs in the seat it was picked into.
+  // Nothing else moves. A file picked as the patch and recognized as no patch stays there to be told so,
+  // which is the answer worth having; and a patch seat already holding a readable patch is left alone,
+  // two patches in hand being an arrangement only the person can mean. Undo seats its own pair by this same rule.
   const admitPickedFile = (seat, file) => {
     const displacedFromPatchSeat = apply.patch;
     const patchSeatReadable = !!apply.patchIdentity?.answered;

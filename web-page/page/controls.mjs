@@ -13,7 +13,8 @@ export const admonitionMarkup = (kind, spokenContents) => html`<p class="advisor
 // The checkbox is dressed as a chip but kept, hidden and real,
 // so the toggling, the label click and the announced state stay the browser's own.
 export const toggleMarkup = ({ id, setting, checked, label, why, field }) => html`<div class="toggle">
-  <input class="toggle-input" type="checkbox" id="${id}" data-setting="${setting}" ${field && html`data-field="${field}"`} ${checked && html`checked`}>
+  <input class="toggle-input" type="checkbox" id="${id}" data-setting="${setting}"
+    ${field && html`data-field="${field}"`} ${checked && html`checked`}>
   <label class="chip toggle-chip" for="${id}">${label}</label>
   ${why && html`<span class="why">— ${why}</span>`}
 </div>`;

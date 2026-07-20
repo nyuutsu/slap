@@ -231,8 +231,8 @@ button { font: inherit; cursor: pointer; }
 /* the hanging whisper needs headroom when the row wraps, and below the row either way */
 .choice-row:has(.chip-stack) { row-gap: 20px; margin-bottom: 16px; }
 .choice-gloss { color: var(--ink-soft); font-size: 12.5px; margin: 4px 0 2px; }
-/* a story is marked the way a footnote is: the asterisk finds the eye across a form, and hovering
-   the word makes good on it. Raised on a zero line-height, so marking a label never moves one. */
+/* a story is marked the way a footnote is: the asterisk finds the eye across a form, and hovering makes good on it.
+   it is raised on a zero line-height, so marking a label never moves the line the label sits on. */
 .has-story { cursor: help; }
 .has-story::after {
   content: '*'; color: var(--grape); font-weight: 700;
