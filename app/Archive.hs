@@ -11,7 +11,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Char (toLower)
 import Data.List (stripPrefix)
-import Data.Maybe (mapMaybe)
+import Data.Maybe (mapMaybe, listToMaybe)
 import qualified Data.Text as Text
 import Slap.Archive.Types
   ( ArchiveFormat(..)
@@ -122,10 +122,23 @@ list7z path = do
     ExitSuccess -> Right (map toEntryName (parse7zList stdout))
     _           -> Left (ArchiveToolFailed (ToolName "7z") (toolDiagnostic stderr))
 
--- | Pull the entry paths out of 7z's @-slt@ listing, whose lines read
--- @Path = name@.
+-- | The file entries in 7z's @-slt@ listing: one @Key = Value@ block each, blocks blank-line separated.
+-- A @D@ in a block's DOS attributes marks a directory, which is not an entry to extract.
 parse7zList :: String -> [String]
-parse7zList = mapMaybe (stripPrefix "Path = ") . lines
+parse7zList = mapMaybe fileEntryPath . groupIntoEntries . lines
+  where
+    fileEntryPath entryLines
+      | any entryIsDirectory entryLines = Nothing
+      | otherwise = listToMaybe (mapMaybe (stripPrefix "Path = ") entryLines)
+    entryIsDirectory line = case stripPrefix "Attributes = " line of
+      Just attributes -> 'D' `elem` takeWhile (/= ' ') attributes
+      Nothing         -> False
+
+groupIntoEntries :: [String] -> [[String]]
+groupIntoEntries [] = []
+groupIntoEntries listingLines =
+  let (entry, rest) = break null listingLines
+  in entry : groupIntoEntries (drop 1 rest)
 
 extractEntry :: ExternalFormat -> FilePath -> EntryName -> IO (Either UnwrapError (ByteString, EntryName))
 extractEntry format archivePath entryName = do
