@@ -527,7 +527,7 @@ directConversionContract target undoChoice verificationChoice = case target of
   CreateIPS32   -> DirectConversionContract (requiredFields []) (acceptedFields [])
   CreateEBP     -> DirectConversionContract (requiredFields []) (acceptedFields [FieldDescription, FieldEBPMeta])
   CreatePPF1    -> DirectConversionContract (requiredFields []) (acceptedFields [FieldDescription])
-  CreatePPF2    -> DirectConversionContract (requiredFields [FieldValidation])
+  CreatePPF2    -> DirectConversionContract (requiredFields [FieldValidation, FieldDestinationSize])
                              (acceptedFields [FieldDescription, FieldFileIdDiz])
   CreatePPF3    -> DirectConversionContract (requiredFields $ [FieldUndoData     | undoChoice         == IncludeUndoData]
                                  ++ [FieldValidation | verificationChoice == IncludeVerification])
