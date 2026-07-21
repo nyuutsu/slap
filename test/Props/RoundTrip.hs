@@ -21,7 +21,7 @@ import qualified Slap.BSDiff.Types as BSDiff
 import qualified Slap.IPS.Apply as IPS
 import qualified Slap.IPS.Parse as IPS
 import Slap.IPS.Create (resolveSentinelCollisions, optimalIPSRecords)
-import Slap.IPS.Types (OffsetWidth(..), EBPPatch(..), IPSParseResult(..),
+import Slap.IPS.Types (OffsetWidth(..), EBPPatch(..), IPSPatch, IPSParseResult(..),
                        ipsMaxRecordPayload, ipsMagicBytes, ipsEOFMarkerBytes)
 import Slap.SomePatch (SomePatch(..), PatchKind(..), parseSome)
 import qualified Slap.UPS.Apply as UPS
@@ -105,7 +105,7 @@ import Slap.PPF3.Types (PPF3ImageType(..), narrowPPF3FileId)
 import Slap.Binary (md5, sha1, diffHunks)
 import Slap.Binary (minimalVcdiffVarintLength, getVcdiffVarint, VarintResult(..), putVcdiffVarint)
 import Slap.Compression.Stream (lzmaCompress)
-import Slap.Status (CreateResult(..), Parsed(..), SlapError(..), Outcome(..),
+import Slap.Status (CreateResult(..), Parsed(..), SlapError(..), ByteParserError(..), Outcome(..),
                    noAdvisories, UnencodeabilityReason(..), CompressionAlgorithm(..),
                    SlapAdvisory(..), renderSlapError,
                    DecompressionFailure(..), VCDIFFSection(..))
@@ -141,7 +141,9 @@ import qualified Data.Text.Encoding as TextEncoding
 import qualified Slap.Text as SlapText
 import Data.Bits (shiftL)
 import qualified Data.Bits as Bits
-import Data.ByteString.Builder (word8, byteString, toLazyByteString)
+import Data.ByteString.Builder (word8, word32BE, byteString, toLazyByteString)
+import qualified Data.Vector as Vector
+import Slap.Status.ApplyError (ApplyError(..))
 import Data.List (isInfixOf)
 import Data.Foldable (toList)
 import Slap.Binary (getWord32BE)
@@ -160,6 +162,7 @@ roundTripTests = testGroup "RoundTrip"
       , testProperty "block-move" prop_bpsBlockMove
       , testProperty "no-size-regression" prop_bpsNoSizeRegression
       , testProperty "metadata-round-trip" prop_bpsMetadata
+      , testCase     "a target declared past its actions is refused, not allocated" bpsHugeTargetRefusesUnderfilled
       ]
   , testGroup "BSDiff"
       [ testProperty "round-trip" prop_bsdiff
@@ -177,6 +180,9 @@ roundTripTests = testGroup "RoundTrip"
       , testCase     "truncation at the marker's maximum round-trips" ipsTruncationAtMarkerMaximumRoundTrips
       , testCase     "zero-count RLE sizes nothing" ipsZeroCountRleSizesNothing
       , testCase     "zero-count RLE drops out of conversion" ipsZeroCountRleConvertRoundTrips
+      , testCase     "growth past the 24-bit index limit round-trips" ipsGrowthPastAddressableCeilingRoundTrips
+      , testCase     "growth to the exact writable ceiling round-trips" ipsGrowthToWritableCeilingRoundTrips
+      , testCase     "a change past the index limit round-trips" ipsChangePastAddressableCeilingRoundTrips
       , testProperty "dp-not-larger" prop_dpNotLarger
       ]
   , testGroup "IPS32"
@@ -185,6 +191,7 @@ roundTripTests = testGroup "RoundTrip"
       ]
   , testGroup "EBP"
       [ testProperty "round-trip" prop_ebp
+      , testCase     "growth past the 24-bit index limit round-trips" ebpGrowthPastAddressableCeilingRoundTrips
       ]
   , testGroup "UPS"
       [ testProperty "round-trip" prop_ups
@@ -266,7 +273,7 @@ roundTripTests = testGroup "RoundTrip"
       ]
   , testGroup "PPF2"
       [ testProperty "round-trip" prop_ppf2
-      , testCase     "rejects header source size > 0xFFFFFFFF"
+      , testCase     "rejects a header source size past the signed half of its field"
                      ppf2SourceSizeAdversarial
       , testCase "description: UTF-8 codepoints round-trip byte-faithfully"
                  ppf2DescriptionUtf8RoundTrip
@@ -316,6 +323,7 @@ roundTripTests = testGroup "RoundTrip"
       [ testProperty "round-trip" prop_ppf4
       , testProperty "encoding byte other than 0xFF is refused" prop_ppf4RejectsBadEncodingByte
       , testProperty "nonzero reserved header byte is refused" prop_ppf4RejectsNonzeroReservedByte
+      , testProperty "a trailing run too short for a record is refused" prop_ppf4RejectsShortTail
       , testCase "straddling hunk splits at the source boundary"
                  ppf4StraddleRoundTrip
       ]
@@ -372,6 +380,8 @@ roundTripTests = testGroup "RoundTrip"
       , testProperty "planCopy chunk offsets chain without gaps"     prop_planCopyOffsetsChain
       , testProperty "planCopy above-threshold yields only Copy255"  prop_planCopyAboveThresholdAllCopy255
       , testProperty "planCopy round-trips through parseGDIFF"       prop_planCopyRoundTrips
+      , testCase     "an offset past the signed int32 max steps up to COPY 255" gdiffOffsetPastSignedIntStepsToCopy255
+      , testCase     "a four-byte COPY offset reads as a signed int32"          gdiffFourByteOffsetReadsSigned
       ]
   , testGroup "XDelta1"
       [ testProperty "round-trip"                       prop_xdelta1RoundTrips
@@ -2026,6 +2036,60 @@ ipsSentinelCollisionMidDiffRoundTrips =
          Right (Parsed (IPSParseTruncated _ _) _) ->
            assertFailure "unexpectedly parsed as truncated"
 
+assertGrowthPastCeilingRoundTrips
+  :: DirectCreate -> (IPSParseResult -> Either String IPSPatch) -> ByteString.ByteString -> ByteString.ByteString -> Assertion
+assertGrowthPastCeilingRoundTrips directFormat extractBasePatch source target =
+  case createPatch (CreateDirect directFormat) Nothing
+                   (InputFileContents source) (OutputFileContents target)
+                   noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
+    Left slapError -> assertFailureT ("create: " <> renderSlapError slapError)
+    Right (CreateResult patch _) -> case IPS.parseIPS patch of
+      Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
+      Right (Parsed parseResult _) -> case extractBasePatch parseResult of
+        Left wrongFlavor -> assertFailure wrongFlavor
+        Right ipsPatch -> case IPS.applyIPS (InputFileContents source) ipsPatch of
+          Left slapError -> assertFailureT ("apply: " <> renderSlapError slapError)
+          Right outcome  -> assertEqual "round-trip" (OutputFileContents target) (outcomeValue outcome)
+
+expectPlainIPS, expectEBP :: IPSParseResult -> Either String IPSPatch
+expectPlainIPS (IPSParseCleanIPS ipsPatch) = Right ipsPatch
+expectPlainIPS (IPSParseCleanEBP _)        = Left "unexpectedly parsed as EBP"
+expectPlainIPS (IPSParseTruncated _ _)     = Left "unexpectedly parsed as truncated"
+expectEBP (IPSParseCleanEBP ebpPatch)      = Right (ebpBasePatch ebpPatch)
+expectEBP (IPSParseCleanIPS _)             = Left "unexpectedly parsed as plain IPS"
+expectEBP (IPSParseTruncated _ _)          = Left "unexpectedly parsed as truncated"
+
+-- | A source exactly 16 MiB long, so the appended tail starts one byte past the 24-bit cap.
+ipsGrowthPastAddressableCeilingRoundTrips :: Assertion
+ipsGrowthPastAddressableCeilingRoundTrips =
+  let source = pseudoRandomBytes 0x5A17 0x1000000
+      target = source <> ByteString8.pack "APPENDED-TAIL!!!"
+  in assertGrowthPastCeilingRoundTrips CreateIPS expectPlainIPS source target
+
+ebpGrowthPastAddressableCeilingRoundTrips :: Assertion
+ebpGrowthPastAddressableCeilingRoundTrips =
+  let source = pseudoRandomBytes 0x5A18 0x1000000
+      target = source <> ByteString8.pack "APPENDED-TAIL!!!"
+  in assertGrowthPastCeilingRoundTrips CreateEBP expectEBP source target
+
+-- | A sub-cap source grown to exactly the writable ceiling (0xFFFFFF + 0xFFFF), so the anchored record carries a full payload.
+ipsGrowthToWritableCeilingRoundTrips :: Assertion
+ipsGrowthToWritableCeilingRoundTrips =
+  let source = pseudoRandomBytes 0x5A19 0xF00000
+      target = source <> pseudoRandomBytes 0x5A1A (0x100FFFE - 0xF00000)
+  in assertGrowthPastCeilingRoundTrips CreateIPS expectPlainIPS source target
+
+-- | A change rather than an append past the cap, so the past-cap content comes from the byte scan,
+-- not the tail: a second path into the same re-anchoring.
+ipsChangePastAddressableCeilingRoundTrips :: Assertion
+ipsChangePastAddressableCeilingRoundTrips =
+  let source   = pseudoRandomBytes 0x5A1B 0x1010000
+      changeAt = 0xFFFFFF + 5
+      target   = ByteString.take changeAt source
+              <> ByteString8.pack "XY"
+              <> ByteString.drop (changeAt + 2) source
+  in assertGrowthPastCeilingRoundTrips CreateIPS expectPlainIPS source target
+
 -- | DP patch size must not exceed greedy patch size for IPS (offWidth=3).
 prop_dpNotLarger :: Property
 prop_dpNotLarger = forAll genPair $ \(source, target) ->
@@ -2203,6 +2267,51 @@ prop_planCopyRoundTrips = forAll genCopyOffset $ \initialOffset ->
              , conjoin (zipWith (===) actualOffsets expectedOffsets)
              ]
 
+-- | An offset past the signed int32 max belongs in COPY 255's long field, not a high-bit four-byte field the reference reads as negative.
+-- The opcode is chosen from the offset alone, so no multi-gigabyte source is needed to test it.
+gdiffOffsetPastSignedIntStepsToCopy255 :: Assertion
+gdiffOffsetPastSignedIntStepsToCopy255 =
+  assertBool "an offset one past the signed int32 max uses COPY 255"
+    (all isCopy255 (GDIFF.planCopy (Offset 0x80000000) (Length 4)))
+  where
+    isCopy255 GDIFF.Copy255{} = True
+    isCopy255 _               = False
+
+-- | A hand-built COPY 254 with the high bit set: the four-byte offset is the spec's signed int32,
+-- so it reads as a negative offset rather than a phantom +2^31 position.
+gdiffFourByteOffsetReadsSigned :: Assertion
+gdiffFourByteOffsetReadsSigned =
+  let patchBytes = LazyByteString.toStrict $ toLazyByteString $
+        byteString GDIFF.gdiffMagicBytes
+        <> word8 4
+        <> word8 254 <> word32BE 0x80000000 <> word32BE 4
+        <> word8 0
+  in case GDIFF.parseGDIFF (PatchFileContents patchBytes) of
+       Left parseError -> assertFailureT ("parse: " <> renderSlapError parseError)
+       Right (Parsed parsed _) ->
+         case [ offsetValue | GDIFF.GDiffCommandCopy { GDIFF.gdiffCopyOffset = Offset offsetValue } <- GDIFF.gdiffCommands parsed ] of
+           [offsetValue] -> assertBool "a high-bit four-byte offset reads negative" (offsetValue < 0)
+           other         -> assertFailure ("expected one COPY offset, got " ++ show other)
+
+-- | A BPS declaring a target far larger than its actions fill must refuse before allocating,
+-- or 'fillNewBuffer' aborts the process trying to reserve the whole declared size.
+bpsHugeTargetRefusesUnderfilled :: Assertion
+bpsHugeTargetRefusesUnderfilled =
+  let dummyCRC = crc32 ByteString.empty
+      patch = BPS.BPSPatch
+        { BPS.bpsSourceSize = FileSize 0
+        , BPS.bpsTargetSize = FileSize (1 `shiftL` 62)
+        , BPS.bpsMetadata   = BPSMetadata ByteString.empty
+        , BPS.bpsActions    = Vector.fromList [BPS.TargetRead (ByteString.replicate 500 0x41)]
+        , BPS.bpsSourceCRC  = dummyCRC
+        , BPS.bpsTargetCRC  = dummyCRC
+        , BPS.bpsPatchCRC   = dummyCRC
+        }
+  in case BPS.applyBPS patch (InputFileContents ByteString.empty) of
+       Left (ApplyFailed LabelBPS (ApplyTargetUnderfilled _ _)) -> pure ()
+       Left otherErr -> assertFailureT ("refused differently: " <> renderSlapError otherErr)
+       Right _       -> assertFailure "a target declared past its actions was allocated instead of refused"
+
 prop_apsGba :: Property
 prop_apsGba = forAll genPair $ \(source, target) ->
   case createAPSGBA (InputFileContents source) (OutputFileContents target) of
@@ -2357,11 +2466,11 @@ ppf2OneByteShortValidationSourceRejected =
 -- this 'NarrowingError' up unchanged.
 ppf2SourceSizeAdversarial :: Assertion
 ppf2SourceSizeAdversarial =
-  case narrowPPF2SourceSize (FileSize 0x100000000) of
+  case narrowPPF2SourceSize (FileSize 0x80000000) of
     Left (NarrowingError (FieldValueExceedsBound LabelPPF2 FieldSourceSize
                             actual maxValue)) -> do
-      assertEqual "actual"  0x100000000 actual
-      assertEqual "maximum" 0xFFFFFFFF  maxValue
+      assertEqual "actual"  0x80000000 actual
+      assertEqual "maximum" 0x7FFFFFFF maxValue
     other -> assertFailure
                ("expected NarrowingError FieldValueExceedsBound, got " ++ show other)
 
@@ -2473,6 +2582,18 @@ prop_ppf4RejectsNonzeroReservedByte =
           case PPF4.parsePPF4 SlapText.EncodingUtf8 (PatchFileContents (setByteAt position badByte patchBytes)) of
             Left slapError -> slapError === UnknownFlag LabelPPF4 FieldReservedHeader (RawFlagByte badByte)
             Right _        -> counterexample "expected a refusal, but the patch parsed" $ property False
+
+-- | A run of one to six bytes past the last record is too short to begin another, so the patch ends mid-record.
+-- The reference applier refuses such a tail; slap names it rather than dropping it silently.
+prop_ppf4RejectsShortTail :: Property
+prop_ppf4RejectsShortTail =
+  forAll genPairNoShrink $ \(source, target) ->
+    forAll (chooseInt (1, 6)) $ \tailLength ->
+      withCreatedPPF4 source target $ \patchBytes ->
+        let stranded = ByteString.replicate tailLength 0x00
+        in case PPF4.parsePPF4 SlapText.EncodingUtf8 (PatchFileContents (patchBytes <> stranded)) of
+             Left (ParseError LabelPPF4 (ByteParserTrailingBytesTooFewForRecord{})) -> property True
+             other -> counterexample ("expected a short-tail refusal, got: " ++ show other) $ property False
 
 -- | Create a valid PPF4 patch from a (source, target) pair and hand its wire bytes to the check.
 -- A create failure fails the property loudly rather than letting it pass vacuously.

@@ -65,8 +65,8 @@ validateCommands sourceSize = validateCommandStream firstAction (Offset 0)
         GDiffCommandData { gdiffDataPayload = payload } ->
           extendOutput (byteLength payload)
         GDiffCommandCopy { gdiffCopyOffset = sourceOffset, gdiffCopyLength = copyLength }
-          -- Opcode 255's offset is a signed int64BE; the other COPY opcodes read unsigned 16/32-bit fields,
-          -- so only a 255 command can present a negative offset.
+          -- GDIFF types a COPY position signed, so a negative one is a shape the wire admits rather than an internal impossibility.
+          -- Answered before 'fitsWithin', which would otherwise report it as a read past the source's end.
           | unOffset sourceOffset < 0 ->
               Left (ApplyNegativeRecordOffset actionIndex sourceOffset)
           | not (fitsWithin sourceOffset copyLength sourceSize) ->

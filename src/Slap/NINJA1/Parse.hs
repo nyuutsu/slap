@@ -25,7 +25,7 @@ import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..), NINJA1TextHeader(..
                            toNINJA1RomType, toNINJA1SubFormat,
                            ninja1MagicBytes,
                            ninja1BinaryEOFMarkerBytes, ninja1BinaryEOFMarkerWidth)
-import Slap.Status (SlapError(..), DecompressionFailure(..), Parsed(..),
+import Slap.Status (SlapError(..), SlapAdvisory(..), DecompressionFailure(..), Parsed(..),
                     NINJA1Malformation(..), NINJA1SubformatIdentifier(..), ByteParserError(..),
                     LineText(..), OffsetTokenText(..), ChecksumTokenText(..))
 import Slap.FieldName (FieldName(..))
@@ -62,9 +62,9 @@ parseNINJA1 (PatchFileContents input)
     subFormatIdentifier = ByteString.take 2 (ByteString.drop 6 input)
     payload             = ByteString.drop 8 input
     wrapParsed parseResult = do
-      patch <- parseResult
+      (patch, advisories) <- parseResult
       rejectUnaddressableRecordEnds (ninja1Records patch)
-      pure (Parsed patch [])
+      pure (Parsed patch advisories)
 
 -- | Refuse a record whose write end — offset plus payload length — lands past 'maxBound' :: 'Int',
 -- the ceiling of what an in-memory buffer can realize. The per-field ceilings bound each offset and length alone;
@@ -98,14 +98,15 @@ zlibDecompress compressed = case zlibInflate compressed of
 -- Large file hash sampling (>0x1e00000): see ninja1HashInput.
 ----------------------------------------------------------------------------
 
-parseBinary :: NINJA1SubFormat -> PatchFileContents -> Either SlapError NINJA1Patch
+parseBinary :: NINJA1SubFormat -> PatchFileContents -> Either SlapError (NINJA1Patch, [SlapAdvisory])
 parseBinary format (PatchFileContents payload)
-  | ByteString.length payload < 41 = Left (InputTooShort LabelNINJA1 (RequiredLength (Length 41)) (ActualLength (byteLength payload)))
+  | ByteString.length payload < 41 = Left (NINJA1BinaryBodyTooShort (RequiredLength (Length 41)) (ActualLength (byteLength payload)))
   | otherwise = do
       (termination, patch) <- runFormatParser LabelNINJA1 (parseBinaryGet format) payload
       case termination of
-        EndedWithoutEOFFooter -> Left NINJA1BinaryMissingEOFFooter
-        ReachedEOFFooter      -> Right patch
+        EndedWithoutEOFFooter     -> Left NINJA1BinaryMissingEOFFooter
+        ReachedEOFFooter leftover ->
+          Right (patch, [NINJA1TrailingBytes leftover | leftover > Length 0])
 
 parseBinaryGet :: NINJA1SubFormat -> ByteParser (NINJA1BinaryTermination, NINJA1Patch)
 parseBinaryGet format = do
@@ -160,7 +161,9 @@ data NINJA1BinaryStreamHead
     -- ^ A record begins here, its offset already decoded; the data
     -- width, length, and payload remain to be read.
 
-data NINJA1BinaryTermination = ReachedEOFFooter | EndedWithoutEOFFooter
+-- | How the binary record stream ended. 'ReachedEOFFooter' carries what was left after the footer;
+-- a stream that ran out never reached one to have anything past.
+data NINJA1BinaryTermination = ReachedEOFFooter Length | EndedWithoutEOFFooter
 
 parseBinaryRecords :: ByteParser (NINJA1BinaryTermination, [NINJA1Record])
 parseBinaryRecords = parseLoop firstAction []
@@ -169,7 +172,9 @@ parseBinaryRecords = parseLoop firstAction []
       streamHead <- readBinaryStreamHead recordIndex
       case streamHead of
         EndsWithoutMarker -> pure (EndedWithoutEOFFooter, reverse accumulated)
-        EOFMarkerFound    -> pure (ReachedEOFFooter, reverse accumulated)
+        EOFMarkerFound    -> do
+          leftover <- remaining
+          pure (ReachedEOFFooter leftover, reverse accumulated)
         RecordAt recordOffset -> do
           dataWidth    <- fromIntegral <$> getByte :: ByteParser Int
           dataLenBytes <- getBytes (Length (fromIntegral dataWidth))
@@ -207,23 +212,25 @@ parseBinaryRecords = parseLoop firstAction []
 -- Record lines: OFFSET HEXDATA (both hex strings, no 0x prefix)
 ----------------------------------------------------------------------------
 
-parseText :: NINJA1SubFormat -> PatchFileContents -> Either SlapError NINJA1Patch
+parseText :: NINJA1SubFormat -> PatchFileContents -> Either SlapError (NINJA1Patch, [SlapAdvisory])
 parseText format (PatchFileContents payload) = do
   let stripCR = ByteString8.takeWhile (/= '\r')
       contentLines = filter (not . isSkippable) (map stripCR (ByteString8.lines payload))
   case contentLines of
     [] -> Left (MalformedNINJA1Content NINJA1EmptyTextualPatch)
     (headerLine : recordLines) -> do
-      header  <- parseTextHeader headerLine
-      records <- mapM parseTextRecord recordLines
-      Right NINJA1Patch
-        { ninja1SubFormat  = format
-        , ninja1RomType    = ninja1TextRomType header
-        , ninja1SourceCRC  = ninja1TextSourceCRC header
-        , ninja1SourceMD5  = ninja1TextSourceMD5 header
-        , ninja1SourceSHA1 = ninja1TextSourceSHA1 header
-        , ninja1Records    = records
-        }
+      header       <- parseTextHeader headerLine
+      readRecords  <- traverse (uncurry parseTextRecord) (zip (iterate nextAction firstAction) recordLines)
+      let (records, recordAdvisories) = unzip readRecords
+      Right ( NINJA1Patch
+                { ninja1SubFormat  = format
+                , ninja1RomType    = ninja1TextRomType header
+                , ninja1SourceCRC  = ninja1TextSourceCRC header
+                , ninja1SourceMD5  = ninja1TextSourceMD5 header
+                , ninja1SourceSHA1 = ninja1TextSourceSHA1 header
+                , ninja1Records    = records
+                }
+            , concat recordAdvisories )
   where
     isSkippable line = ByteString.null line || ByteString8.head line == '#'
 
@@ -292,18 +299,29 @@ decodeFixedWidthDigest byteWidth token
 -- | Decode one textual record line: a hex offset, then the payload as hex.
 -- The offset is read at 'Integer', since textual offsets have no width limit.
 -- A value past 'maxBound' :: 'Int' is refused ('NINJA1UnaddressableOffsetInTextRecord'), not wrapped.
-parseTextRecord :: ByteString -> Either SlapError NINJA1Record
-parseTextRecord line = case ByteString8.words line of
-  (offsetToken : dataParts@(_:_)) ->
+--
+-- The spec sheet's line is @OFFSET PATCH_BYTES@ and gives a third field no meaning, so a line carrying one is refused.
+-- Padding between the two is read across, and warned about: the reference applier splits on a single space,
+-- which makes a padded line's payload the empty field between them.
+parseTextRecord :: ActionIndex -> ByteString -> Either SlapError (NINJA1Record, [SlapAdvisory])
+parseTextRecord recordIndex line = case ByteString8.words line of
+  [offsetToken, payloadHex] ->
     case (readHex (ByteString8.unpack offsetToken) :: [(Integer, String)]) of
       [(offset, "")]
         | offset > toInteger (maxBound :: Int) ->
             Left (MalformedNINJA1Content (NINJA1UnaddressableOffsetInTextRecord (offsetTokenOf offsetToken)))
+        | not (isEvenHexRun payloadHex) ->
+            Left (MalformedNINJA1Content (NINJA1InvalidHexPayloadInTextRecord (LineText (Text.pack (ByteString8.unpack payloadHex)))))
         | otherwise ->
-            Right (NINJA1Record (offsetFromParsed offset) (hexToBytes (ByteString.concat dataParts)))
+            Right ( NINJA1Record (offsetFromParsed offset) (hexToBytes payloadHex)
+                  , [ NINJA1PaddedRecordSeparator recordIndex
+                    | ByteString8.strip line /= offsetToken <> " " <> payloadHex ] )
       _ -> Left (MalformedNINJA1Content (NINJA1InvalidOffsetInTextRecord (offsetTokenOf offsetToken)))
+  (_ : _ : _ : _) ->
+    Left (MalformedNINJA1Content (NINJA1ExtraFieldsInTextRecord (LineText (Text.pack (ByteString8.unpack line)))))
   _ -> Left (MalformedNINJA1Content (NINJA1MalformedTextRecord (LineText (Text.pack (ByteString8.unpack line)))))
   where
+    isEvenHexRun bytes = even (ByteString.length bytes) && ByteString8.all isHexDigit bytes
     offsetTokenOf = OffsetTokenText . Text.pack . ByteString8.unpack
 
 -- | Decode a run of ASCII hex pairs into their bytes.

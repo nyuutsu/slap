@@ -310,6 +310,13 @@ data NINJA1Malformation
     -- ^ A header checksum slot holds a token that is neither @"unk"@\/@"unk."@ nor a valid checksum for that slot.
     -- Such a token is refused rather than skipped or truncated into a wrong one; the 'FieldName' names the slot.
   | NINJA1MalformedTextRecord       LineText
+  | NINJA1ExtraFieldsInTextRecord LineText
+    -- ^ A textual record line carries more than the offset and payload the format's line has room for.
+    -- The spec sheet writes that line as @OFFSET PATCH_BYTES@, two fields, and gives no third one a meaning;
+    -- the reference applier binds the first two, and any beyond them go unused.
+  | NINJA1InvalidHexPayloadInTextRecord LineText
+    -- ^ A record's payload has a non-hex character or a lone trailing nibble, so it isn't the whole pairs of hex digits a text record must hold.
+    -- Refused outright rather than decoded up to the fault, which would write a shorter span than the record declares.
   deriving (Eq, Show, Generic)
   deriving (ToJSON) via Generically NINJA1Malformation
 

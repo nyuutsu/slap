@@ -12,11 +12,12 @@
 -- never happens. The apply-time tests cover the layer above that — the
 -- guards that turn "does not fit" into a precise message:
 -- 'ApplyNegativeRecordOffset' for a NINJA2 record offset that decoded
--- negative from its packed integer, and 'ApplyNegativeControlLength'
--- for a bsdiff control instruction whose sign-magnitude add or copy
--- length came in negative. (bsdiff's seek delta in the same triple is
+-- negative from its packed integer. A bsdiff instruction's sign-magnitude
+-- add or copy length is answered a layer earlier, at parse, since a
+-- length no region can have makes the whole patch malformed rather than
+-- one action of it. (bsdiff's seek delta in the same triple is
 -- legitimately signed and is deliberately not caught.) The parse-time
--- tests cover the bsdiff header's sequential fit checks: two hostile
+-- tests cover that refusal and the bsdiff header's sequential fit checks: two hostile
 -- near-2^63 declared sizes would wrap a summed bound and slip through
 -- as a decompression failure; sequential comparison keeps the verdict
 -- a header verdict naming the block.
@@ -30,9 +31,9 @@
 -- Both fold 'boundedWriteEnd' to refuse the overrun rather than wrap a short buffer the write walk would run past.
 module Props.NegativeWireValues (negativeWireValuesTests) where
 
-import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffInstruction(..), bsdiffMagicBytes)
-import Slap.BSDiff.Apply (applyBSDiff)
+import Slap.BSDiff.Types (bsdiffMagicBytes)
 import Slap.BSDiff.Create (putSignMagnitude64)
+import Slap.Compression.Stream (bzip2Compress)
 import qualified Slap.BSDiff.Parse as BSDiff
 import Slap.NINJA2.Types (NINJA2Patch(..), NINJA2Record(..))
 import Slap.NINJA2.Apply (applyNINJA2)
@@ -44,6 +45,9 @@ import Slap.PPF3.Types (PPF3Patch(..), PPF3Record(..), PPF3ImageType(..))
 import Slap.PPF3.Apply (undoPPF3)
 import Slap.VCDIFF.Types (VCDIFFPatch(..), Window(..))
 import Slap.VCDIFF.Apply (applyVCDIFF)
+import Slap.PMSR.Types (pmsrMagicBytes)
+import qualified Slap.PMSR.Parse as PMSR
+import Slap.Binary (putWord32BE)
 import Slap.GDIFF.Types (GDiffCommand(..))
 import Slap.GDIFF.Apply (validateCommands)
 import Slap.Create (createNINJA2)
@@ -52,7 +56,7 @@ import Slap.Status (SlapError(..), ApplyError(..), CreateResult(..),
 import Control.Exception (evaluate)
 import qualified Data.Text as Text
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), Length(..), FileSize(..), Delta(..))
+import Slap.Measure (Offset(..), Length(..), FileSize(..), ParsedSizeValue(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import qualified Slap.Text as SlapText
 
@@ -63,6 +67,7 @@ import qualified Data.Vector as Vector
 import Data.ByteString.Builder (toLazyByteString, byteString)
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Int (Int64)
+import Data.Word (Word32)
 
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -77,6 +82,8 @@ negativeWireValuesTests = testGroup "hostile wire values are named, not mislabel
       bsdiffControlOverrunNamed
   , testCase "bsdiff: hostile control and diff sizes cannot wrap past the guard"
       bsdiffHostileSizesCannotWrap
+  , testCase "PMSR: a record offset in the signed half of its field is refused at parse"
+      pmsrNegativeRecordOffset
   , testCase "NINJA2: a negative record offset is refused as a negative record offset"
       ninja2NegativeRecordOffset
   , testCase "APSN64: a record starting past the destination renders, not crashes"
@@ -192,34 +199,39 @@ isAbsoluteWritePastTarget (UndoFailed  _ ApplyAbsoluteWritePastTarget{}) = True
 isAbsoluteWritePastTarget _                                              = False
 
 -- | A bsdiff patch whose single instruction declares an add region of negative length.
--- Apply must refuse with 'ApplyNegativeControlLength', naming the malformed instruction, not fold the negative length into a bounds verdict.
--- The patch is built directly, no bzip2 framing — but its diff stream must cover the declared target size,
--- since the declared-size ceiling runs before the instruction walk and only a patch that clears it reaches this guard.
+-- Parse must refuse it by name, not leave it for a bounds verdict downstream to fold into "does not fit".
+-- The patch carries real bzip2 framing, and its diff stream must cover the declared target size,
+-- since the declared-size ceiling runs before the instruction walk and only a patch that clears it reaches this refusal.
 bsdiffNegativeAddLength :: Assertion
 bsdiffNegativeAddLength =
-  assertNegativeControlLength
-    (bsdiffPatchWithInstruction (BSDiffInstruction (Length (-1)) (Length 0) (Delta 0)))
+  assertNegativeInstructionLength (bsdiffPatchWithInstructionBytes (-1) 0 0)
 
 -- | As 'bsdiffNegativeAddLength', but the copy region carries the
 -- negative length. The add region is a well-formed no-op, so the walk
 -- reaches the copy-region guard.
 bsdiffNegativeCopyLength :: Assertion
 bsdiffNegativeCopyLength =
-  assertNegativeControlLength
-    (bsdiffPatchWithInstruction (BSDiffInstruction (Length 0) (Length (-1)) (Delta 0)))
+  assertNegativeInstructionLength (bsdiffPatchWithInstructionBytes 0 (-1) 0)
 
 -- | A bsdiff patch with one control instruction, a positive target size, and a diff stream that covers it,
 -- so the declared-size ceiling passes and the instruction walk is reached.
-bsdiffPatchWithInstruction :: BSDiffInstruction -> BSDiffPatch
-bsdiffPatchWithInstruction instruction = BSDiffPatch
-  { bsdiffControlSize  = Length 0
-  , bsdiffDiffSize     = Length 4
-  , bsdiffExtraSize    = Length 0
-  , bsdiffTargetSize   = FileSize 4
-  , bsdiffInstructions = [instruction]
-  , bsdiffDiffData     = ByteString.replicate 4 0x00
-  , bsdiffExtraData    = ByteString.empty
-  }
+-- | One bsdiff instruction, bzip2-framed as a whole patch, so the refusal is reached the way a real patch would reach it.
+-- The diff stream covers the 4-byte declared target; the extra stream is empty.
+bsdiffPatchWithInstructionBytes :: Int64 -> Int64 -> Int64 -> PatchFileContents
+bsdiffPatchWithInstructionBytes addLength copyLength seekDelta =
+  let instruction = toStrictBytes
+        (putSignMagnitude64 addLength <> putSignMagnitude64 copyLength <> putSignMagnitude64 seekDelta)
+      controlCompressed = bzip2Compress instruction
+      diffCompressed    = bzip2Compress (ByteString.replicate 4 0x00)
+      extraCompressed   = bzip2Compress ByteString.empty
+      header = toStrictBytes
+        (  byteString bsdiffMagicBytes
+        <> putSignMagnitude64 (fromIntegral (ByteString.length controlCompressed))
+        <> putSignMagnitude64 (fromIntegral (ByteString.length diffCompressed))
+        <> putSignMagnitude64 4 )
+  in PatchFileContents (header <> controlCompressed <> diffCompressed <> extraCompressed)
+  where
+    toStrictBytes = LazyByteString.toStrict . toLazyByteString
 
 -- | A 32-byte header and nothing else: the declared sizes are the
 -- whole hostile payload.
@@ -257,14 +269,14 @@ bsdiffHostileSizesCannotWrap =
        Right _ -> assertFailure
          "expected parse to refuse the hostile sizes, but it succeeded"
 
-assertNegativeControlLength :: BSDiffPatch -> Assertion
-assertNegativeControlLength patch =
-  case applyBSDiff patch (InputFileContents ByteString.empty) of
-    Left (ApplyFailed LabelBSDiff (ApplyNegativeControlLength _ _)) -> pure ()
+assertNegativeInstructionLength :: PatchFileContents -> Assertion
+assertNegativeInstructionLength patchBytes =
+  case BSDiff.parseBSDiff patchBytes of
+    Left (NegativeRecordLength LabelBSDiff _ (ParsedSizeValue (-1))) -> pure ()
     Left other -> assertFailureT
-      ("expected a negative-control-length error, got: " <> renderSlapError other)
+      ("expected a negative-length verdict, got: " <> renderSlapError other)
     Right _ -> assertFailure
-      "expected apply to refuse the negative control length, but it succeeded"
+      "expected parse to refuse the negative instruction length, but it succeeded"
 
 -- | A real NINJA2 patch (created from a one-byte difference, so it
 -- carries a genuine header) with its record list replaced by a single
@@ -291,3 +303,25 @@ ninja2NegativeRecordOffset =
                     ("expected a negative-record-offset error, got: " <> renderSlapError other)
                   Right _ -> assertFailure
                     "expected apply to refuse the negative record offset, but it succeeded"
+
+-- | Star Rod writes a PMSR offset with ByteBuffer.putInt, so the top bit of that four-byte field is a sign.
+-- A patch setting it names a position no buffer has room for, and one Star Rod could neither write nor read back;
+-- parse refuses it there rather than let the apply walk take it to a raw pointer.
+pmsrNegativeRecordOffset :: Assertion
+pmsrNegativeRecordOffset =
+  case PMSR.parsePMSR (pmsrPatchWithOffset 0x80000000) of
+    Left (NegativeRecordOffset LabelPMSR _ (Offset (-2147483648))) -> pure ()
+    Left other -> assertFailureT
+      ("expected a negative-record-offset verdict, got: " <> renderSlapError other)
+    Right _ -> assertFailure
+      "expected parse to refuse the signed-half offset, but it succeeded"
+
+-- | One PMSR record carrying a single byte at the given offset, magic and count included.
+pmsrPatchWithOffset :: Word32 -> PatchFileContents
+pmsrPatchWithOffset wireOffset =
+  PatchFileContents . LazyByteString.toStrict . toLazyByteString $
+    byteString pmsrMagicBytes
+    <> putWord32BE 1
+    <> putWord32BE wireOffset
+    <> putWord32BE 1
+    <> byteString (ByteString.singleton 0xAA)

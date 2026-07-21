@@ -192,6 +192,7 @@ data PatchContents = PatchContents
   , contentsSourceCRC32 :: Maybe CRC32
   , contentsSourceMD5   :: Maybe MD5Hash
   , contentsSourceSHA1  :: Maybe SHA1Hash
+  , contentsSourceSize         :: Maybe FileSize
   , contentsDestinationSize    :: Maybe FileSize
   , contentsValidation  :: Maybe ByteString
     -- ^ Raw 1024-byte validation-block bytes (PPF2/PPF3). Cross-cutting,
@@ -455,6 +456,7 @@ emptyContents records = PatchContents
   , contentsSourceCRC32 = Nothing
   , contentsSourceMD5   = Nothing
   , contentsSourceSHA1  = Nothing
+  , contentsSourceSize         = Nothing
   , contentsDestinationSize    = Nothing
   , contentsValidation  = Nothing
   , contentsUndoData    = Nothing
@@ -477,6 +479,7 @@ carries contents field = case field of
   FieldSourceCRC32     -> maybe False (/= CRC32 0)                     (contentsSourceCRC32 contents)
   FieldSourceMD5       -> maybe False (not . allZeroBytes . unMD5Hash)  (contentsSourceMD5 contents)
   FieldSourceSHA1      -> maybe False (not . allZeroBytes . unSHA1Hash) (contentsSourceSHA1 contents)
+  FieldSourceSize      -> isJust (contentsSourceSize contents)
   FieldDestinationSize -> isJust (contentsDestinationSize contents)
   FieldUndoData        -> isJust (contentsUndoData contents)
   FieldValidation      -> isJust (contentsValidation contents)
@@ -527,7 +530,7 @@ directConversionContract target undoChoice verificationChoice = case target of
   CreateIPS32   -> DirectConversionContract (requiredFields []) (acceptedFields [])
   CreateEBP     -> DirectConversionContract (requiredFields []) (acceptedFields [FieldDescription, FieldEBPMeta])
   CreatePPF1    -> DirectConversionContract (requiredFields []) (acceptedFields [FieldDescription])
-  CreatePPF2    -> DirectConversionContract (requiredFields [FieldValidation, FieldDestinationSize])
+  CreatePPF2    -> DirectConversionContract (requiredFields [FieldValidation, FieldSourceSize])
                              (acceptedFields [FieldDescription, FieldFileIdDiz])
   CreatePPF3    -> DirectConversionContract (requiredFields $ [FieldUndoData     | undoChoice         == IncludeUndoData]
                                  ++ [FieldValidation | verificationChoice == IncludeVerification])
@@ -1049,6 +1052,9 @@ fieldNote contents field = case field of
     Just undoRecords -> [UndoDataDropped (UndoRecordCount (length undoRecords))]
     Nothing -> []
   FieldValidation -> [ValidationBlockDropped | isJust (contentsValidation contents)]
+  FieldSourceSize -> case contentsSourceSize contents of
+    Just sourceSize -> [FieldDropped FieldSourceSize (DroppedSize sourceSize)]
+    Nothing -> []
   FieldDestinationSize -> case contentsDestinationSize contents of
     Just targetSize -> [FieldDropped FieldDestinationSize (DroppedSize targetSize)]
     Nothing -> []
@@ -1178,9 +1184,7 @@ encodeDirect contents source target meta limits constraints dialects = case targ
       Just validationBytes -> do
         sourceSize <- narrowPPF2SourceSize $
           if ByteString.null (unInputFileContents source)
-            -- Source-less convert: 'contentsDestinationSize' carries the
-            -- size value the parsed source patch had in its header.
-            then fromMaybe (FileSize 0) (contentsDestinationSize contents)
+            then fromMaybe (FileSize 0) (contentsSourceSize contents)
             else byteFileSize (unInputFileContents source)
         records <- narrow (splitHunks ppf2MaxRecordPayload (contentsRecords contents))
         let ppf2Result = PPF2.encodePPF2
@@ -1251,8 +1255,8 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     Right (CreateResult (NINJA1.encodeNINJA1 records crc md5Hash sha1Hash ninja1Type
              (fromMaybe NINJA1Uncompressed (contentsNINJA1Compression contents))) platformAdvisories)
   CreatePMSR -> do
-    count   <- narrowPMSRRecordCount (length (contentsRecords contents))
     records <- narrow (splitHunks pmsrMaxRecordPayload (contentsRecords contents))
+    count   <- narrowPMSRRecordCount (length records)
     Right (CreateResult (PMSR.encodePMSR count records) [])
   CreateAPSN64 -> do
     records <- narrow (splitHunks APSN64.apsN64MaxChunkSize (contentsRecords contents))
@@ -1437,6 +1441,9 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
   , contentsSourceCRC32 = if needs FieldSourceCRC32 then Just (crc32 hashSource) else Nothing
   , contentsSourceMD5   = if needs FieldSourceMD5   then Just (md5 hashSource)   else Nothing
   , contentsSourceSHA1  = if needs FieldSourceSHA1  then Just (sha1 hashSource)  else Nothing
+  , contentsSourceSize         = if needs FieldSourceSize
+                    then Just (byteFileSize source)
+                    else Nothing
   , contentsDestinationSize    = if needs FieldDestinationSize
                     then Just (byteFileSize target)
                     else Nothing

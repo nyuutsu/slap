@@ -55,10 +55,6 @@ data ApplyError
   -- PPF3's signed 64-bit field, and NINJA2's packed integers, which decode into a signed 'Int'.
   | ApplyNegativeRecordOffset ActionIndex Offset
 
-  -- | A bsdiff control instruction declares a negative region length — bsdiff's sign-magnitude wire encoding admits one,
-  -- but a region length is non-negative by nature. (The seek delta in the same triple is legitimately signed and is not this.)
-  | ApplyNegativeControlLength ActionIndex RequestedLength
-
   -- | A record's write end — offset plus payload length — exceeds 'maxBound' :: 'Int', the ceiling of slap's position carrier.
   -- Only a wire offset as wide as the carrier (PPF3's signed 64-bit field) can name such a write;
   -- the format admits it, and slap declines to materialise an output it cannot address.
@@ -80,6 +76,9 @@ data ApplyError
   -- | An absolute wire write position whose payload runs past the target's end — the start alone can sit past it,
   -- unlike 'ApplyWritesPastTarget' and its always-in-buffer forward cursor.
   | ApplyAbsoluteWritePastTarget ActionIndex Offset RequestedLength FileSize
+
+  -- | A NINJA2 overflow block writing past the target's end. Distinct from the record variants so the message names the overflow, not a phantom record.
+  | ApplyOverflowWritePastTarget Offset RequestedLength FileSize
 
   deriving (Show, Eq, Generic)
   deriving (ToJSON) via Generically ApplyError
@@ -129,11 +128,6 @@ renderApplyError (ApplyNegativeRecordOffset actionIndex offset) =
   "record " <> renderAsText (unActionIndex actionIndex)
   <> " writes at offset " <> renderAsText (unOffset offset)
 
-renderApplyError (ApplyNegativeControlLength actionIndex (RequestedLength regionLength)) =
-  "record " <> renderAsText (unActionIndex actionIndex)
-  <> " declares a region length of " <> renderAsText (unLength regionLength)
-  <> " bytes; a record's seek may be negative, but a length may not"
-
 renderApplyError (ApplyOutputExceedsAddressableRange actionIndex offset payloadLength) =
   "record " <> renderAsText (unActionIndex actionIndex)
   <> " writes at offset " <> renderAsText (unOffset offset)
@@ -172,3 +166,11 @@ renderApplyError (ApplyAbsoluteWritePastTarget actionIndex writeStart (Requested
   <> " at offset 0x" <> renderHexAsText (unOffset writeStart)
   <> ", running past the output's "
   <> renderAsText (unFileSize targetSize) <> "-byte end"
+
+renderApplyError (ApplyOverflowWritePastTarget writeStart (RequestedLength payloadLength) targetSize) =
+  "this patch writes past the end of the output it builds (its overflow block puts "
+  <> renderAsText (unLength payloadLength)
+  <> plural (unLength payloadLength) " byte" " bytes"
+  <> " at offset 0x" <> renderHexAsText (unOffset writeStart)
+  <> ", past the "
+  <> renderAsText (unFileSize targetSize) <> "-byte end)"

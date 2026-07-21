@@ -4,11 +4,15 @@ module Slap.Binary
   ( -- * Little-endian readers
     getWord16LE
   , getWord32LE
+  , getInt16LE
+  , getInt32LE
   , getInt64LE
     -- * Big-endian readers
   , getWord16BE
   , getWord24BE
   , getWord32BE
+  , getInt16BE
+  , getInt32BE
   , getInt64BE
     -- * Variable-length integers
   , VarintResult(..)
@@ -69,7 +73,7 @@ import qualified Data.ByteString.Unsafe as UnsafeByteString
 import Data.ByteString.Builder (Builder, word8)
 import Data.Array (Array, listArray, (!))
 import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.), testBit)
-import Data.Int (Int64)
+import Data.Int (Int16, Int32, Int64)
 import Data.Word (Word8, Word16, Word32, Word64)
 import Foreign.Marshal.Utils (copyBytes, fillBytes, moveBytes)
 import Foreign.Ptr (Ptr, castPtr)
@@ -98,6 +102,12 @@ getWord32LE offset input =
   let byteAt index = fromIntegral (ByteString.index input (offset + index)) :: Word32
   in byteAt 0 .|. (byteAt 1 `shiftL` 8) .|. (byteAt 2 `shiftL` 16) .|. (byteAt 3 `shiftL` 24)
 
+getInt16LE :: Int -> ByteString -> Int64
+getInt16LE offset input = fromIntegral (fromIntegral (getWord16LE offset input) :: Int16)
+
+getInt32LE :: Int -> ByteString -> Int64
+getInt32LE offset input = fromIntegral (fromIntegral (getWord32LE offset input) :: Int32)
+
 getInt64LE :: Int -> ByteString -> Int64
 getInt64LE offset input =
   let byteAt index = fromIntegral (ByteString.index input (offset + index)) :: Int64
@@ -122,6 +132,12 @@ getWord32BE :: Int -> ByteString -> Word32
 getWord32BE offset input =
   let byteAt index = fromIntegral (ByteString.index input (offset + index)) :: Word32
   in (byteAt 0 `shiftL` 24) .|. (byteAt 1 `shiftL` 16) .|. (byteAt 2 `shiftL` 8) .|. byteAt 3
+
+getInt16BE :: Int -> ByteString -> Int64
+getInt16BE offset input = fromIntegral (fromIntegral (getWord16BE offset input) :: Int16)
+
+getInt32BE :: Int -> ByteString -> Int64
+getInt32BE offset input = fromIntegral (fromIntegral (getWord32BE offset input) :: Int32)
 
 getInt64BE :: Int -> ByteString -> Int64
 getInt64BE offset input =

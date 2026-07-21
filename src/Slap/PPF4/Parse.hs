@@ -8,7 +8,8 @@ module Slap.PPF4.Parse (parsePPF4) where
 
 import Slap.PPF4.Types (PPF4Patch(..), PPF4Replace(..), PPF4Append(..),
                         ppf4PreambleLength, ppf4DescriptionLength,
-                        ppf4PostDescriptionLength, ppf4RecordHeaderLength)
+                        ppf4PostDescriptionLength, ppf4RecordHeaderLength,
+                        ppf4MinimumRecordLength)
 import Slap.Status (SlapError(..), SlapAdvisory, ByteParserError(..), Parsed(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
@@ -107,9 +108,15 @@ requirePostDescriptionZero postDescriptionBytes =
 parsePPF4Records :: ActionIndex -> [PPF4WireRecord] -> ByteParser [PPF4WireRecord]
 parsePPF4Records recordIndex accumulatedReversed = do
   remainingBytes <- remaining
-  if unLength remainingBytes < unLength ppf4RecordHeaderLength
+  if unLength remainingBytes == 0
     then pure (reverse accumulatedReversed)
-    else do
+    else if unLength remainingBytes < unLength ppf4MinimumRecordLength
+      then throwByteParserError (ByteParserTrailingBytesTooFewForRecord recordIndex
+             (RequiredLength ppf4MinimumRecordLength)
+             (RemainingLength remainingBytes))
+      else readOneRecord remainingBytes
+  where
+    readOneRecord remainingBytes = do
       commandByte <- getByte
       wireOffset  <- word32LE
       count       <- fromIntegral <$> getByte

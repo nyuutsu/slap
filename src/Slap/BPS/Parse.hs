@@ -8,7 +8,7 @@ module Slap.BPS.Parse
 
 import Slap.BPS.Types (BPSPatch(..), BPSBody(..), BPSAction(..), BPSMetadata(..),
                        decodeSignedVarint, isNegativeZeroSignedVarint,
-                       bpsMagicBytes, bpsMagicLength, bpsCRC32Length, bpsFooterLength)
+                       bpsMagicBytes, bpsMagicLength, bpsCRC32Length, bpsFooterLength, bpsMinimumLength)
 import Slap.Binary (getWord32LE, takeLength, dropLength, splitSuffixOfLength)
 import Slap.Checksum (CRC32(..), ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Status (SlapError(..), SlapAdvisory(..), Parsed(..))
@@ -31,8 +31,8 @@ parseBPS (PatchFileContents input)
       Left (InputTooShort LabelBPS (RequiredLength bpsMagicLength) (ActualLength (byteLength input)))
   | actualMagicBytes /= bpsMagicBytes =
       Left (BadMagic LabelBPS (ActualMagic actualMagicBytes))
-  | byteLength input < bpsFooterLength =
-      Left (InputTooShort LabelBPS (RequiredLength bpsFooterLength) (ActualLength (byteLength input)))
+  | byteLength input < bpsMinimumLength =
+      Left (InputTooShort LabelBPS (RequiredLength bpsMinimumLength) (ActualLength (byteLength input)))
   | otherwise = do
       -- The patch CRC covers everything except itself
       let (patchCRCCoverage, storedPatchCRCBytes) = splitSuffixOfLength bpsCRC32Length input

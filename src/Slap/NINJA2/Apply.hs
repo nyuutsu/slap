@@ -11,7 +11,7 @@ import Slap.Measure (Offset(..), Length, FileSize,
                      ActionIndex, RequestedLength(..),
                      byteFileSize, byteLength, fileSizeToOffset, fitsWithin, offsetToFileSize,
                      plusOffset, remainingFromOffset,
-                     firstAction, nextAction, streamEndIndex)
+                     firstAction, nextAction)
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
@@ -58,8 +58,6 @@ runNINJA2XorWalk patch input direction =
       Reverse -> UndoFailed  LabelNINJA2
 
     records             = ninja2Records patch
-    -- one index past the last record, so an overflow error never wears a record's index
-    overflowActionIndex = streamEndIndex records
 
     checkWriteFits :: ActionIndex -> Offset -> Length -> FileSize
                    -> Either ApplyError ()
@@ -111,12 +109,13 @@ runNINJA2XorWalk patch input direction =
       case (ninja2OverflowType patch, ninja2Overflow patch) of
         (Just mode, Just overflow) | mode == writtenOverflowMode ->
           let decoded = ByteString.map (xor 0xFF) overflow
-          in case checkWriteFits overflowActionIndex overflowPosition (byteLength decoded) outputSize of
-               Left err -> pure (Just err)
-               Right () -> do
+          in if fitsWithin overflowPosition (byteLength decoded) outputSize
+               then do
                  copyRegion outputPointer overflowPosition
                             decoded (Offset 0) (byteLength decoded)
                  pure Nothing
+               else pure (Just (ApplyOverflowWritePastTarget overflowPosition
+                                  (RequestedLength (byteLength decoded)) outputSize))
         _ -> pure Nothing
 
     runWalk outputPointer = do

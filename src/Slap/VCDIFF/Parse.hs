@@ -24,6 +24,7 @@ module Slap.VCDIFF.Parse
   , AddressDecodeFailure(..)
   ) where
 
+import Data.Int (Int64)
 import Slap.VCDIFF.Types
   ( VCDIFFPatch(..), Window(..), VCDIFFInstruction(..)
   , XDelta3Header(..), XDelta3Window(..), RFCHeader(..), CustomCodeTable(..)
@@ -834,10 +835,16 @@ adoptCopyAddressReading reading decodeState = decodeState
 
 emitInstruction :: VCDIFFInstruction -> Length -> DecodeState -> DecodeState
 emitInstruction instruction outputSize decodeState = decodeState
-  { producedBytes    = producedBytes decodeState <> outputSize
+  { producedBytes    = saturatingAddLength (producedBytes decodeState) outputSize
   , instructionIndex = nextAction (instructionIndex decodeState)
   , emittedReversed  = instruction : emittedReversed decodeState
   }
+
+-- | A wrapping total could match the declared window size, slip 'finishWindow''s size check,
+-- and let apply over-run the target, so this sum stops at the ceiling instead of wrapping.
+saturatingAddLength :: Length -> Length -> Length
+saturatingAddLength (Length runningTotal) (Length addend) =
+  Length (fromInteger (min (toInteger (maxBound :: Int64)) (toInteger runningTotal + toInteger addend)))
 
 -- | Record a note raised mid-walk (an overlong inline size varint), newest-first; 'finishWindow' reverses the accumulator into wire order.
 -- Peer to 'emitInstruction', the way the IPS record walk carries its own walker-time warnings.

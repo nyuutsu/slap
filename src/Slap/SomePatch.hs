@@ -353,7 +353,7 @@ parseSomePatchFromPPF2 (Parsed patch parseAdvisories) =
           }
       kind = Direct (Just (emptyContents (map hunkOf records))
           { contentsDescription     = Just (PPF2.ppf2Description patch)
-          , contentsDestinationSize = Just sourceFileSize
+          , contentsSourceSize      = Just sourceFileSize
           , contentsValidation      = Just validationBytes
           , contentsFileIdDiz       = fmap PPF2.ppf2CarriedFileIdText (PPF2.ppf2FileId patch)
           })

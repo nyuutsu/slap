@@ -33,6 +33,7 @@ module Slap.APSN64.Types
   ) where
 
 import Data.ByteString (ByteString)
+import Data.Int (Int64)
 import Data.Text (Text)
 import Data.Vector (Vector)
 import Data.Word (Word8, Word32)
@@ -40,7 +41,7 @@ import Slap.Display.Primitives (padHex)
 import Slap.FieldName (FieldName(FieldDestinationSize))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (FileSize(..), Length(..), Offset(..))
-import Slap.Narrow (EncodingLimits(..), narrowToWord32)
+import Slap.Narrow (EncodingLimits(..), NarrowingFailure(FieldValueExceedsBound))
 import Slap.Status (APSN64HeaderMalformation(..), SlapError(..))
 import Slap.Text (EncodedText)
 
@@ -246,11 +247,16 @@ apsN64MaxChunkSize = Length 255
 apsN64RecordHeaderSize :: Length
 apsN64RecordHeaderSize = Length 5
 
--- | APS-N64's per-record offset wire field is 4-byte little-endian Word32, so offsets must fit in 2^32 bytes.
--- Enforced at narrow time so silent truncation in 'Slap.APSN64.Create.encodeAPSN64Record' is structurally impossible.
+-- | The largest byte position APS-N64 addresses. Its offset and destination-size fields are both four bytes,
+-- and the authors' own patcher reads each into a signed C @long@ before handing the offset to @fseek@,
+-- so the top bit names a position behind the start of the file rather than one past 2 GB.
+-- @aps.txt@ states the same ceiling in words: the format "should facilitate patching of files up to 2Gb".
+apsN64MaximumAddressableSize :: Int64
+apsN64MaximumAddressableSize = 0x7FFFFFFF
+
 apsN64Limits :: EncodingLimits
 apsN64Limits = EncodingLimits
-  { maximumOffset = Offset 0xFFFFFFFF
+  { maximumOffset = Offset apsN64MaximumAddressableSize
   , formatLabel   = LabelAPSN64
   }
 
@@ -263,10 +269,13 @@ newtype APSN64DestinationSize =
   deriving (Show, Eq)
 
 narrowAPSN64DestinationSize :: FileSize -> Either SlapError APSN64DestinationSize
-narrowAPSN64DestinationSize size =
-  case narrowToWord32 LabelAPSN64 FieldDestinationSize (unFileSize size) of
-    Left  failure -> Left (NarrowingError failure)
-    Right word    -> Right (APSN64DestinationSize word)
+narrowAPSN64DestinationSize size
+  | declaredSize < 0 || declaredSize > apsN64MaximumAddressableSize =
+      Left (NarrowingError (FieldValueExceedsBound LabelAPSN64 FieldDestinationSize
+                              (toInteger declaredSize) (toInteger apsN64MaximumAddressableSize)))
+  | otherwise = Right (APSN64DestinationSize (fromIntegral declaredSize))
+  where
+    declaredSize = unFileSize size
 
 -- | Trust a parsed 4-byte field as a destination size; the wire shape
 -- already constrained it to a 'Word32'.

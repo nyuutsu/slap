@@ -12,13 +12,13 @@ import Slap.PPF2.Types (PPF2Patch(..), PPF2Record(..),
                         ppf2ValidationSize,
                         ppf2FileIdLengthFieldWidth, ppf2FileIdMaxContentLength,
                         ppf2FileIdMarkerLength, ppf2FileIdFooterLength)
-import Slap.Binary (getWord32LE, dropLength, dropLengthFromEnd, splitSuffixOfLength)
+import Slap.Binary (getInt32LE, dropLength, dropLengthFromEnd, splitSuffixOfLength)
 import Slap.Status (SlapError(..), SlapAdvisory(..), Parsed(..), ByteParserError(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runFormatParser, throwByteParserError,
-                        getByte, getBytes, remaining, skip, word32LE)
+                        getByte, getBytes, remaining, skip, word32LE, int32LE)
 import Slap.Measure (offsetFromParsed, Length(..),
                      EncodingMethodByte(..),
                      ActionIndex,
@@ -98,7 +98,7 @@ parsePPF2Records recordIndex = do
   remainingBytes <- remaining
   if unLength remainingBytes < fromIntegral ppf2RecordHeaderLength then pure []
   else do
-    recordOffset  <- offsetFromParsed <$> word32LE
+    recordOffset  <- offsetFromParsed <$> int32LE
     payloadLength <- fromIntegral <$> getByte
     let totalNeeded = ppf2RecordHeaderLength + payloadLength
     if fromIntegral totalNeeded > unLength remainingBytes
@@ -137,6 +137,7 @@ splitFileIdTrailer :: EncodingName -> ByteString -> PPF2FileIdSplit
 splitFileIdTrailer metadataEncoding recordBody
   | byteLength recordBody < ppf2FileIdFooterLength <> ppf2FileIdLengthFieldWidth = withoutTrailer
   | footerCandidate /= "@END_FILE_ID.DIZ"                                        = withoutTrailer
+  | unLength dizContentLength < 0                                                = withoutTrailer
   | dizContentLength > byteLength bytesBeforeFooter                              = withoutTrailer
   | markerCandidate /= "@BEGIN_FILE_ID.DIZ"                                      = withoutTrailer
   | otherwise = PPF2FileIdSplit
@@ -154,7 +155,7 @@ splitFileIdTrailer metadataEncoding recordBody
     (bytesBeforeFooter, footerCandidate)       = splitSuffixOfLength ppf2FileIdFooterLength bytesBeforeLengthField
     (bytesBeforeContent, dizContentBytes)      = splitSuffixOfLength dizContentLength bytesBeforeFooter
     (_, markerCandidate)                       = splitSuffixOfLength ppf2FileIdMarkerLength bytesBeforeContent
-    dizContentLength      = Length (fromIntegral (getWord32LE 0 lengthFieldBytes))
+    dizContentLength      = Length (getInt32LE 0 lengthFieldBytes)
     (dizText, dizNotices) = decodeTextLenient metadataEncoding dizContentBytes
     trailerSize = ppf2FileIdMarkerLength <> dizContentLength
                <> ppf2FileIdFooterLength <> ppf2FileIdLengthFieldWidth

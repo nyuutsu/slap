@@ -47,6 +47,11 @@ data ByteParserError
   -- rather than the byte offset a raw underflow would have named.
   | ByteParserTruncatedRecord !ActionIndex !RequiredLength !RemainingLength
 
+  -- | The stream ends with bytes too few to begin a record — some remain where the next record's header would sit, but fewer than a whole record needs.
+  -- Distinct from 'ByteParserTruncatedRecord', whose record read far enough to declare a size the rest of the stream then failed to meet.
+  -- The 'RequiredLength' is the smallest a record of this format can be; the 'RemainingLength' is what was stranded.
+  | ByteParserTrailingBytesTooFewForRecord !ActionIndex !RequiredLength !RemainingLength
+
   -- | A command-coded stream's next code byte is outside the format's command table.
   | ByteParserUnknownCommandByte !ActionIndex !Word8
 
@@ -128,6 +133,16 @@ renderByteParserError
   <> " is truncated (it declares " <> renderAsText needed
   <> plural needed " byte" " bytes"
   <> ", with only " <> renderAsText available <> " left in the patch)"
+
+renderByteParserError
+  (ByteParserTrailingBytesTooFewForRecord
+      recordIndex
+      (RequiredLength (Length needed))
+      (RemainingLength (Length available))) =
+  "the patch ends with " <> renderAsText available
+  <> plural available " trailing byte" " trailing bytes"
+  <> ", too few to form record " <> renderAsText (unActionIndex recordIndex)
+  <> " (a record needs at least " <> renderAsText needed <> ")"
 
 renderByteParserError (ByteParserUnknownCommandByte recordIndex commandByte) =
   "record " <> renderAsText (unActionIndex recordIndex)

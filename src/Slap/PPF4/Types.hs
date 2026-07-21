@@ -11,6 +11,7 @@ module Slap.PPF4.Types
   , ppf4PostDescriptionLength
   , ppf4MaxRecordPayload
   , ppf4RecordHeaderLength
+  , ppf4MinimumRecordLength
     -- * Encoding limits
   , ppf4Limits
     -- * Source/target size-pair rule
@@ -97,6 +98,12 @@ ppf4MaxRecordPayload = Length 255
 -- + 1-byte payload count. Equal to 'ppf4PreambleLength' by coincidence.
 ppf4RecordHeaderLength :: Length
 ppf4RecordHeaderLength = Length 6
+
+-- | The smallest a whole record can be: the header plus one payload byte.
+-- The reference maker never emits a record without payload, and its applier refuses a trailing run shorter than this,
+-- so a stream that ends with fewer bytes than this left over ends mid-record rather than cleanly.
+ppf4MinimumRecordLength :: Length
+ppf4MinimumRecordLength = Length 7
 
 -- | PPF4's wire-format offset cap. The Replace record's offset field is
 -- 4 bytes; offsets ≥ 2^32 cannot be expressed. Append records carry no

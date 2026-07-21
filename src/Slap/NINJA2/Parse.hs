@@ -10,12 +10,12 @@ module Slap.NINJA2.Parse
 
 import Slap.NINJA2.Types
 import Slap.Checksum (MD5Hash(..))
-import Slap.Status (SlapError(..), SlapAdvisory, Parsed(..), ByteParserError(..))
+import Slap.Status (SlapAdvisory(..), SlapError(..), SlapAdvisory, Parsed(..), ByteParserError(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runFormatParser, flattenParse, throwByteParserError,
-                        getByte, getBytes, atEnd)
+                        getByte, getBytes, atEnd, remaining)
 import Slap.Binary (viewBytesInRange)
 import Slap.Measure (Length(..), Offset, offsetFromParsed, FileSize(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
@@ -128,10 +128,11 @@ parseNINJA2 metadataEncoding (PatchFileContents input)
       headerBytes <- getBytes headerSize
       let (info, headerAdvisories) = parseFixedHeader metadataEncoding textMode headerBytes
       runExceptT $ do
-        patch <- parseCommands firstAction (emptyPatch info textMode)
+        patch    <- parseCommands firstAction (emptyPatch info textMode)
+        leftover <- lift remaining
         pure ( patch { ninja2Records      = reverse (ninja2Records patch)
                      , ninja2FurtherFiles = reverse (ninja2FurtherFiles patch) }
-             , headerAdvisories )
+             , headerAdvisories ++ [NINJA2TrailingBytes leftover | leftover > Length 0] )
 
     emptyPatch info textMode = NINJA2Patch
       { ninja2Header = info, ninja2Records = [], ninja2Overflow = Nothing

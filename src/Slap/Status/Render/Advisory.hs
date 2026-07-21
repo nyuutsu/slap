@@ -119,6 +119,13 @@ renderSlapAdvisory (IPS32TrailingBytes label (Length n)) =
   formatLabelName label
   <> ": dropped " <> renderAsText n <> " trailing bytes after EEOF marker"
 
+renderSlapAdvisory (NINJA1PaddedRecordSeparator recordIndex) =
+  formatLabelName LabelNINJA1
+  <> ": record " <> renderAsText (unActionIndex recordIndex)
+  <> " writes nothing under the original patcher"
+  <> " (more than one space sits between its offset and its bytes, and that patcher splits the line on a single space,"
+  <> " taking the empty field between them as the payload)"
+
 renderSlapAdvisory (VCDIFFTrailingRemnant (Length remnantLength)) =
   formatLabelName LabelVCDIFF
   <> ": " <> renderAsText remnantLength
@@ -164,6 +171,24 @@ renderSlapAdvisory (APSGBATrailingFragment (Length fragmentLength)) =
   <> ": " <> renderAsText fragmentLength
   <> plural fragmentLength " trailing byte" " trailing bytes"
   <> " after the last record (too few to begin another); not record data, ignored"
+
+renderSlapAdvisory (PMSRTrailingBytes (Length trailingLength)) =
+  formatLabelName LabelPMSR
+  <> ": " <> renderAsText trailingLength
+  <> plural trailingLength " trailing byte" " trailing bytes"
+  <> " past the last record the count named; not record data, ignored"
+
+renderSlapAdvisory (NINJA1TrailingBytes (Length trailingLength)) =
+  formatLabelName LabelNINJA1
+  <> ": " <> renderAsText trailingLength
+  <> plural trailingLength " trailing byte" " trailing bytes"
+  <> " after the EOF footer; not record data, ignored"
+
+renderSlapAdvisory (NINJA2TrailingBytes (Length trailingLength)) =
+  formatLabelName LabelNINJA2
+  <> ": " <> renderAsText trailingLength
+  <> plural trailingLength " trailing byte" " trailing bytes"
+  <> " after the END command; not command data, ignored"
 
 renderSlapAdvisory (BSDiffTrailingControlFragment (Length fragmentLength)) =
   formatLabelName LabelBSDiff

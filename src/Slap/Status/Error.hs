@@ -143,6 +143,16 @@ data SlapError
   -- Distinct from 'NegativeSize' (a top-level header size was negative).
   | MalformedRecordField FormatLabel ActionIndex FieldName
 
+  -- | A record's length field decoded to a negative value, in a format that types that field signed.
+  -- Raised at parse rather than apply, so that every verb refuses alike and no later stage carries a length that cannot name a region.
+  -- Distinct from 'NegativeSize', whose subject is a top-level header size and which therefore names no record.
+  | NegativeRecordLength FormatLabel ActionIndex ParsedSizeValue
+
+  -- | A record's offset field decoded to a negative value, in a format that types that field signed.
+  -- Raised at parse for the same reason as 'NegativeRecordLength', and for one more where the apply walk writes through a raw pointer:
+  -- a position behind the start of the buffer is not a thing to carry any further than the field it came from.
+  | NegativeRecordOffset FormatLabel ActionIndex Offset
+
   -- | Bytes after a recognized stream-closing trailer marker that match no post-trailer shape the format accepts.
   -- 'Slap.IPS.Types.StandardIPS' is the one format that raises this: it accepts an empty post-@"EOF"@ trailer,
   -- a 3-byte truncation marker, or an EBP JSON metadata blob, and rejects anything else.
@@ -167,6 +177,10 @@ data SlapError
   | MalformedNINJA1Content NINJA1Malformation
 
   | NINJA1BinaryMissingEOFFooter
+
+  -- | A NINJA1 binary patch too short for its 41-byte header.
+  -- Measured against the body, not the whole file: a compressed patch's body is inflated bytes with no size of their own.
+  | NINJA1BinaryBodyTooShort RequiredLength ActualLength
 
   | NINJA2MissingEndCommand
 

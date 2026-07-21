@@ -18,13 +18,14 @@ module Slap.PMSR.Types
 
 import Data.ByteString (ByteString)
 import Data.Vector (Vector)
+import Data.Int (Int64)
 import Data.Word (Word32)
 import Slap.Status (SlapError(..), UnencodeabilityReason(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Length(..), Offset(..),
                      FileSize, ActualSize(..), ExpectedSize(..))
-import Slap.Narrow (EncodingLimits(..), narrowToWord32)
+import Slap.Narrow (EncodingLimits(..), NarrowingFailure(FieldValueExceedsBound))
 
 data PMSRRecord = PMSRRecord
   { pmsrOffset :: !Offset
@@ -41,29 +42,32 @@ newtype PMSRRecordCount = PMSRRecordCount { unPMSRRecordCount :: Word32 }
   deriving (Show, Eq)
 
 narrowPMSRRecordCount :: Int -> Either SlapError PMSRRecordCount
-narrowPMSRRecordCount n =
-  case narrowToWord32 LabelPMSR FieldRecordCount n of
-    Left  failure -> Left (NarrowingError failure)
-    Right word    -> Right (PMSRRecordCount word)
+narrowPMSRRecordCount recordCount
+  | recordCount < 0 || toInteger recordCount > toInteger pmsrMaximumAddressableSize =
+      Left (NarrowingError (FieldValueExceedsBound LabelPMSR FieldRecordCount
+                              (toInteger recordCount) (toInteger pmsrMaximumAddressableSize)))
+  | otherwise = Right (PMSRRecordCount (fromIntegral recordCount))
 
 -- | PMSR magic bytes, per Star Rod (Paper Mario 64).
 pmsrMagicBytes :: ByteString
 pmsrMagicBytes = "PMSR"
 
--- | PMSR's per-record offset wire field is 4-byte big-endian Word32;
--- offsets must fit in 2^32 bytes. Enforced at narrow time so
--- 'Slap.PMSR.Create.encodePMSR' cannot silently truncate.
+-- | The largest byte position PMSR addresses. Star Rod writes the whole patch through @java.nio.ByteBuffer@,
+-- and its three numbers, the record count and each record's offset and length, all go out as @putInt@.
+-- That is a Java @int@: signed, 32 bits, big-endian, so the top bit of any of them is a sign rather than magnitude.
+-- (@Patcher.java@ in Star Rod Classic, the loop that follows @putInt(MOD_PACKAGE_IDENTIFIER)@.)
+pmsrMaximumAddressableSize :: Int64
+pmsrMaximumAddressableSize = 0x7FFFFFFF
+
 pmsrLimits :: EncodingLimits
 pmsrLimits = EncodingLimits
-  { maximumOffset = Offset 0xFFFFFFFF
+  { maximumOffset = Offset pmsrMaximumAddressableSize
   , formatLabel   = LabelPMSR
   }
 
--- | PMSR's per-record length wire field is 4-byte big-endian Word32;
--- payloads must fit in 2^32 bytes. Enforced at split time so
--- 'Slap.PMSR.Create.encodePMSR' cannot silently truncate.
+-- | The per-record payload cap, being the same signed 32-bit field as the offset ('pmsrMaximumAddressableSize').
 pmsrMaxRecordPayload :: Length
-pmsrMaxRecordPayload = Length 0xFFFFFFFF
+pmsrMaxRecordPayload = Length pmsrMaximumAddressableSize
 
 -- | PMSR declines (source, target) pairs whose target is shorter than
 -- the source. PMSR carries no output-size field; an applier derives the

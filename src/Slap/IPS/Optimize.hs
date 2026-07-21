@@ -28,6 +28,7 @@ import Slap.Binary (byteAtOffset, viewBytesInRange)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.IPS.Types
   ( OffsetWidth
+  , offsetWidthMaxAddressableOffset
   , ipsCopyRecordOverhead
   , ipsRleRecordOverhead
   , ipsMaxRecordPayload
@@ -105,10 +106,12 @@ optimalIPSRecords
     offsetWidth
     inputContents
     outputContents@(OutputFileContents target) =
-  concatMap (partitionDiffRegion offsetWidth target) gapMergedDiffRegions
+  concatMap (partitionDiffRegion offsetWidth target) ceilingAnchoredDiffRegions
   where
-    rawDiffRegions       = scanDiffRegions inputContents outputContents
-    gapMergedDiffRegions = mergeNarrowGaps offsetWidth target rawDiffRegions
+    rawDiffRegions             = scanDiffRegions inputContents outputContents
+    gapMergedDiffRegions       = mergeNarrowGaps offsetWidth target rawDiffRegions
+    ceilingAnchoredDiffRegions =
+      anchorRegionsPastAddressableCeiling (offsetWidthMaxAddressableOffset offsetWidth) target gapMergedDiffRegions
 
 ----------------------------------------------------------------------------
 -- Step 1: scan source and target for the raw diff regions
@@ -234,6 +237,37 @@ mergeNarrowGaps offsetWidth target = mergeStep
 mergeBreakEvenGapLength :: OffsetWidth -> Length
 mergeBreakEvenGapLength offsetWidth =
   subtractLength (ipsCopyRecordOverhead offsetWidth) (Length 1)
+
+----------------------------------------------------------------------------
+-- Step 2b: fold the tail past the offset cap into one anchored record
+----------------------------------------------------------------------------
+
+-- | A record can't start past the 24-bit cap, but its payload can run past it,
+-- so a growth ending just past slap's 16 MiB limit is covered by one record anchored at the cap.
+-- That record fits because the size gate has already held the target within a record's reach.
+-- The pass runs after 'mergeNarrowGaps', since a later merge could otherwise carry a record back over the cap.
+anchorRegionsPastAddressableCeiling :: Offset -> ByteString -> [Hunk] -> [Hunk]
+anchorRegionsPastAddressableCeiling maxOffset target regions =
+  addressableRegions ++ ceilingRecord
+  where
+    addressableCeiling = fromIntegral (unOffset maxOffset) :: Int
+    regionStart region = fromIntegral (unOffset (hunkOffset region)) :: Int
+    regionEnd   region = regionStart region + ByteString.length (hunkPayload region)
+
+    addressableRegions = concatMap keepAddressablePrefix regions
+    keepAddressablePrefix region
+      | regionEnd   region <= addressableCeiling = [region]
+      | regionStart region >= addressableCeiling = []
+      | otherwise =
+          [ region { hunkPayload = ByteString.take (addressableCeiling - regionStart region) (hunkPayload region) } ]
+
+    furthestRegionEnd = maximum (addressableCeiling : map regionEnd regions)
+    ceilingRecord
+      | furthestRegionEnd > addressableCeiling =
+          [ Hunk { hunkOffset  = maxOffset
+                 , hunkPayload = ByteString.take (furthestRegionEnd - addressableCeiling)
+                                   (ByteString.drop addressableCeiling target) } ]
+      | otherwise = []
 
 ----------------------------------------------------------------------------
 -- Step 3: optimal copy/RLE partition within a diff region

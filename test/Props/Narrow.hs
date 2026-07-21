@@ -39,6 +39,10 @@ narrowTests = testGroup "Slap.Narrow rejection cases"
   , testCase "PPF2 rejects offset 2^32"     ppf2RejectsOverflow
   , testCase "IPS rejects offset 2^24"      ipsRejectsOverflow
   , testCase "IPS32 rejects offset 2^32"    ips32RejectsOverflow
+  , testCase "APSN64 rejects offset 2^31"   apsN64RejectsSignedHalf
+  , testCase "PPF1 rejects offset 2^31"     ppf1RejectsSignedHalf
+  , testCase "PPF2 rejects offset 2^31"     ppf2RejectsSignedHalf
+  , testCase "PMSR rejects offset 2^31"     pmsrRejectsSignedHalf
   , testCase "APSN64 rejects destination size 2^32"
              apsN64RejectsDestinationSizeOverflow
   , testCase "xdelta1 rejects control offset 2^32"
@@ -52,6 +56,43 @@ narrowTests = testGroup "Slap.Narrow rejection cases"
 overflowingHunk :: [Hunk]
 overflowingHunk = [Hunk (Offset 0x100000000) (ByteString.singleton 0xFF)]
 
+-- | The lowest offset whose four-byte field reads negative wherever the format's own tooling reads it signed.
+-- 'overflowingHunk' is past the field's width altogether; this one fits the field and still cannot be written.
+signedHalfHunk :: [Hunk]
+signedHalfHunk = [Hunk (Offset 0x80000000) (ByteString.singleton 0xFF)]
+
+pmsrRejectsSignedHalf :: Assertion
+pmsrRejectsSignedHalf =
+  case narrowHunks pmsrLimits (splitHunksUnbounded signedHalfHunk) of
+    Left (OffsetExceedsBound LabelPMSR
+            (ActualOffset (Offset 0x80000000))
+            (MaxOffset    (Offset 0x7FFFFFFF))) -> pure ()
+    other -> assertFailure ("expected PMSR OffsetExceedsBound, got " ++ show other)
+
+ppf2RejectsSignedHalf :: Assertion
+ppf2RejectsSignedHalf =
+  case narrowHunks ppf2Limits (splitHunksUnbounded signedHalfHunk) of
+    Left (OffsetExceedsBound LabelPPF2
+            (ActualOffset (Offset 0x80000000))
+            (MaxOffset    (Offset 0x7FFFFFFF))) -> pure ()
+    other -> assertFailure ("expected PPF2 OffsetExceedsBound, got " ++ show other)
+
+apsN64RejectsSignedHalf :: Assertion
+apsN64RejectsSignedHalf =
+  case narrowHunks apsN64Limits (splitHunksUnbounded signedHalfHunk) of
+    Left (OffsetExceedsBound LabelAPSN64
+            (ActualOffset (Offset 0x80000000))
+            (MaxOffset    (Offset 0x7FFFFFFF))) -> pure ()
+    other -> assertFailure ("expected APSN64 OffsetExceedsBound, got " ++ show other)
+
+ppf1RejectsSignedHalf :: Assertion
+ppf1RejectsSignedHalf =
+  case narrowHunks ppf1Limits (splitHunksUnbounded signedHalfHunk) of
+    Left (OffsetExceedsBound LabelPPF1
+            (ActualOffset (Offset 0x80000000))
+            (MaxOffset    (Offset 0x7FFFFFFF))) -> pure ()
+    other -> assertFailure ("expected PPF1 OffsetExceedsBound, got " ++ show other)
+
 -- | The two fixed-width header/trailer fields that ride the create
 -- path on their own channel (not through 'narrowHunks'): APS-N64's
 -- destination size and xdelta1's control-segment offset. Each must
@@ -61,7 +102,7 @@ apsN64RejectsDestinationSizeOverflow :: Assertion
 apsN64RejectsDestinationSizeOverflow =
   case narrowAPSN64DestinationSize (FileSize 0x100000000) of
     Left (NarrowingError (FieldValueExceedsBound LabelAPSN64 FieldDestinationSize
-                            0x100000000 0xFFFFFFFF)) -> pure ()
+                            0x100000000 0x7FFFFFFF)) -> pure ()
     other -> assertFailure
       ("expected APSN64 destination-size FieldValueExceedsBound, got " ++ show other)
 
@@ -78,7 +119,7 @@ apsN64RejectsOverflow =
   case narrowHunks apsN64Limits (splitHunksUnbounded overflowingHunk) of
     Left (OffsetExceedsBound LabelAPSN64
             (ActualOffset (Offset 0x100000000))
-            (MaxOffset    (Offset 0xFFFFFFFF))) -> pure ()
+            (MaxOffset    (Offset 0x7FFFFFFF))) -> pure ()
     other -> assertFailure ("expected APSN64 OffsetExceedsBound, got " ++ show other)
 
 pmsrRejectsOverflow :: Assertion
@@ -86,7 +127,7 @@ pmsrRejectsOverflow =
   case narrowHunks pmsrLimits (splitHunksUnbounded overflowingHunk) of
     Left (OffsetExceedsBound LabelPMSR
             (ActualOffset (Offset 0x100000000))
-            (MaxOffset    (Offset 0xFFFFFFFF))) -> pure ()
+            (MaxOffset    (Offset 0x7FFFFFFF))) -> pure ()
     other -> assertFailure ("expected PMSR OffsetExceedsBound, got " ++ show other)
 
 ppf1RejectsOverflow :: Assertion
@@ -94,7 +135,7 @@ ppf1RejectsOverflow =
   case narrowHunks ppf1Limits (splitHunksUnbounded overflowingHunk) of
     Left (OffsetExceedsBound LabelPPF1
             (ActualOffset (Offset 0x100000000))
-            (MaxOffset    (Offset 0xFFFFFFFF))) -> pure ()
+            (MaxOffset    (Offset 0x7FFFFFFF))) -> pure ()
     other -> assertFailure ("expected PPF1 OffsetExceedsBound, got " ++ show other)
 
 ppf2RejectsOverflow :: Assertion
@@ -102,7 +143,7 @@ ppf2RejectsOverflow =
   case narrowHunks ppf2Limits (splitHunksUnbounded overflowingHunk) of
     Left (OffsetExceedsBound LabelPPF2
             (ActualOffset (Offset 0x100000000))
-            (MaxOffset    (Offset 0xFFFFFFFF))) -> pure ()
+            (MaxOffset    (Offset 0x7FFFFFFF))) -> pure ()
     other -> assertFailure ("expected PPF2 OffsetExceedsBound, got " ++ show other)
 
 -- | IPS's 24-bit offset cap is two orders of magnitude tighter than

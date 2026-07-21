@@ -25,8 +25,8 @@ import Slap.Measure (Length(..), FileSize(..), offsetFromParsed,
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 
--- | Structural check for APS-GBA: a header followed by N 65544-byte records, each at a 64KB-aligned offset.
--- Used to disambiguate "APS10" (APSN64) from "APS1" + source_size when size mod 256 == 48.
+-- | Disambiguates "APS10" (APSN64) from "APS1" + source_size when size mod 256 == 48.
+-- A trailing partial record is tolerated here too, so detection and the parser accept the same files.
 isAPSGBAStructured :: ByteString -> Bool
 isAPSGBAStructured input =
   let dataLength   = ByteString.length input - apsGbaHeaderSize
@@ -36,7 +36,7 @@ isAPSGBAStructured input =
         in ByteString.index input recordHeaderStart == 0
            && ByteString.index input (recordHeaderStart + 1) == 0
   in dataLength == 0
-     || (dataLength >= apsGbaRecordSize && dataLength `mod` apsGbaRecordSize == 0
+     || (dataLength >= apsGbaRecordSize
          && all recordOffsetIs64KBAligned [0 .. recordCount - 1])
 
 parseAPSGBA :: PatchFileContents -> Either SlapError (Parsed APSGBAPatch)

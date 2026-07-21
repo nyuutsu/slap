@@ -18,6 +18,7 @@ data PatchField
   | FieldSourceCRC32
   | FieldSourceMD5
   | FieldSourceSHA1
+  | FieldSourceSize
   | FieldDestinationSize
   | FieldUndoData
   | FieldValidation
@@ -36,6 +37,7 @@ fieldName FieldDescription     = "description"
 fieldName FieldSourceCRC32     = "source CRC32"
 fieldName FieldSourceMD5       = "source MD5"
 fieldName FieldSourceSHA1      = "source SHA1"
+fieldName FieldSourceSize      = "original file size"
 fieldName FieldDestinationSize = "target file size"
 fieldName FieldUndoData        = "undo data"
 fieldName FieldValidation      = "validation block"
@@ -46,23 +48,11 @@ fieldName FieldImageType       = "image type"
 fieldName FieldFileIdDiz       = "File_ID.diz"
 fieldName FieldMetadata        = "metadata"
 
--- | Whether dropping a field changes the output bytes that the
--- resulting patch produces on apply. Fields that affect apply
--- output cannot be silently dropped on conversion; 'canConvert'
--- refuses any conversion that would lose one present in the source.
--- Other fields (metadata, capability carriers like undo data, etc.)
--- are dropped with a warning via the usual 'conversionNotes'
--- mechanism.
---
--- 'FieldTruncation' is the only field of this kind today: an IPS
--- patch with a truncation marker produces a target file of the
--- declared size on apply, while the same records without truncation
--- produce @max(sourceSize, maxRecordEnd)@. The two apply operations
--- yield different bytes, so the conversion machinery refuses the
--- drop rather than papering over it with a warning. 'FieldUndoData'
--- is deliberately not in this class: undo is a separate operation
--- from apply, and dropping undo data only affects whether a later
--- undo is possible.
+-- | Whether dropping this field changes the bytes apply produces.
+-- 'canConvert' refuses a conversion that would drop such a field rather than noting it.
+-- 'FieldTruncation' and 'FieldDestinationSize' each pin the output to a declared size;
+-- dropping either lets the length fall back to @max(sourceSize, maxRecordEnd)@.
 affectsApplyOutput :: PatchField -> Bool
-affectsApplyOutput FieldTruncation = True
-affectsApplyOutput _               = False
+affectsApplyOutput FieldTruncation      = True
+affectsApplyOutput FieldDestinationSize = True
+affectsApplyOutput _                    = False

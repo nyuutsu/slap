@@ -56,14 +56,13 @@ sampleSource, sampleTarget :: ByteString
 sampleSource = ByteString.replicate 1024 0x42
 sampleTarget = ByteString.replicate 768  0x42 <> ByteString.replicate 256 0xFF
 
--- | u16 cap on each name's encoded byte length, as packed by
--- 'Slap.XDelta1.Create.encodeXDelta1'\'s @nameLengthsWord@. The
--- module-private constant in "Slap.XDelta1.Types" is the single
--- source of truth; this test-side mirror is a pin so that a future
--- change to the wire cap would force a deliberate update of both
--- numbers.
+-- | Cap on each name's encoded byte length, as packed by
+-- 'Slap.XDelta1.Create.encodeXDelta1'\'s @nameLengthsWord@. The slot is 16 bits wide,
+-- but the reference unpacks each half into a @gint16@ and allocates against it, so the cap is that field's positive half.
+-- The constant in "Slap.XDelta1.Types" is the single source of truth; this test-side mirror is a pin,
+-- so a change to the wire cap forces a deliberate update of both numbers.
 xdelta1NameByteCap :: Int
-xdelta1NameByteCap = 0xFFFF
+xdelta1NameByteCap = 0x7FFF
 
 ----------------------------------------------------------------------------
 -- Test group
@@ -84,12 +83,12 @@ trees =
           sourceRecordNameMirrorsFromName
       ]
   , testGroup "length bounds"
-      [ testCase "from-name exactly 65535 bytes: accepted" lengthAtBoundaryAccepted
-      , testCase "both header names at 65535 bytes simultaneously: accepted"
+      [ testCase "from-name exactly 32767 bytes: accepted" lengthAtBoundaryAccepted
+      , testCase "both header names at 32767 bytes simultaneously: accepted"
           bothNamesAtBoundaryAccepted
       , testCase "from-name at cap also propagates to source-record name at cap"
           sourceRecordNameAtBoundary
-      , testCase "from-name 65536 bytes: refused with FieldTooLong"
+      , testCase "from-name 32768 bytes: refused with FieldTooLong"
           lengthOneByteOverRefused
       , testCase "from-name ~1MB: refused with FieldTooLong"
           lengthFarOverRefused
@@ -249,7 +248,7 @@ asciiText n = Text.replicate n (Text.singleton 'a')
 
 lengthAtBoundaryAccepted :: Assertion
 lengthAtBoundaryAccepted = do
-  let huge = asciiText xdelta1NameByteCap  -- 'a' × 65535
+  let huge = asciiText xdelta1NameByteCap  -- 'a' × 32767
   withRoundTrippedNames huge "target" $ \parsed ->
     assertEqual "boundary-length from-name round-trips"
       (XDelta1FromName (utf8Name huge)) (parsedXDelta1FromName parsed)
@@ -281,7 +280,7 @@ lengthOneByteOverRefused :: Assertion
 lengthOneByteOverRefused = do
   let oversize = asciiText (xdelta1NameByteCap + 1)
   case resolveExplicit oversize "target" of
-    Right _ -> assertFailure "expected FieldTooLong for 65536-byte from-name"
+    Right _ -> assertFailure "expected FieldTooLong for 32768-byte from-name"
     Left (FieldTooLong LabelXDelta1 FieldXDelta1FromName _ _) -> pure ()
     Left other -> assertFailure
       ("expected FieldTooLong LabelXDelta1 FieldXDelta1FromName but got: " ++ show other)

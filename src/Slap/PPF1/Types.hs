@@ -85,14 +85,13 @@ ppf1HeaderLength = Length 56
 ppf1MaxRecordPayload :: Length
 ppf1MaxRecordPayload = Length 255
 
--- | PPF1's wire-format offset cap. The record format's offset field
--- is 4 bytes (LE for the PC dialect, BE for the Amiga dialect), so
--- offsets ≥ 2^32 cannot be expressed without truncation. Enforced at
--- narrow time so 'Slap.PPF1.Create.encodePPF1' cannot silently emit a
--- truncated offset.
+-- | PPF1's wire-format offset cap. The record's offset field is 4 bytes (LE for the PC dialect, BE for the Amiga),
+-- and the reference reads it into a C @long@ to hand to @fseek@, whose offset parameter is signed,
+-- so the top bit names a position behind the start of the file rather than one past 2 GB.
+-- @ppf-doc.txt@ says as much in words: "PPF facilitate patching of iso-files up to 2Gb."
 ppf1Limits :: EncodingLimits
 ppf1Limits = EncodingLimits
-  { maximumOffset = Offset 0xFFFFFFFF
+  { maximumOffset = Offset 0x7FFFFFFF
   , formatLabel   = LabelPPF1
   }
 

@@ -248,10 +248,11 @@ checkNameLength field text
     (bytes, _notices) =
       encodeTextLenient (encodedTextEncoding text) (encodedTextContent text)
 
--- | Maximum byte count that fits in a 16-bit name-length slot of the
--- xdelta1 header's packed name-lengths word.
+-- | Maximum byte count a name-length slot of the header's packed name-lengths word can name.
+-- The slot is 16 bits, but the reference unpacks each half into a @gint16@ and then allocates against it,
+-- so a slot above @0x7FFF@ reads there as a negative byte count.
 xdelta1NameByteCap :: Int
-xdelta1NameByteCap = 0xFFFF
+xdelta1NameByteCap = 0x7FFF
 
 -- | The slap-internal representation of an xdelta 1.1.x patch's verification posture:
 -- whether the MD5 fields carry real verification data, or the canonical sentinel ('xdelta1EmptyInputMD5Sentinel') the reference's @--noverify@ emits.

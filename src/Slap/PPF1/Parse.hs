@@ -13,7 +13,7 @@ import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runFormatParser, throwByteParserError,
-                        getByte, getBytes, remaining, skip, word32LE, word32BE)
+                        getByte, getBytes, remaining, skip, int32LE, int32BE)
 import Slap.Measure (Offset, offsetFromParsed, Length(..), EncodingMethodByte(..),
                      ActionIndex,
                      RequiredLength(..), ActualLength(..), RemainingLength(..),
@@ -88,8 +88,8 @@ parsePPF1Records :: PPF1Origin -> ActionIndex -> ByteParser [PPF1Record]
 parsePPF1Records origin = parseRemainingRecords
   where
     readOffsetWord = case origin of
-      PPF1OriginPC    -> word32LE
-      PPF1OriginAmiga -> word32BE
+      PPF1OriginPC    -> int32LE
+      PPF1OriginAmiga -> int32BE
     parseRemainingRecords recordIndex = do
       remainingBytes <- remaining
       if unLength remainingBytes < 5 then pure []

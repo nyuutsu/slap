@@ -43,7 +43,7 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Length(..), Offset(..), FileSize(..),
                      ActualSize(..), ExpectedSize(..),
                      EncodedLength(..), MaxLength(..), SubstitutionCount, byteLength)
-import Slap.Narrow (EncodingLimits(..), narrowToWord32)
+import Slap.Narrow (EncodingLimits(..), NarrowingFailure(FieldValueExceedsBound))
 import Slap.Text (EncodedText, EncodingName(..),
                   encodedTextContent, encodeTextLenient)
 
@@ -82,18 +82,22 @@ narrowPPF2FileId description
     (encoded, _notices) = encodeTextLenient EncodingUtf8 (encodedTextContent description)
     contentLength       = byteLength encoded
 
--- | PPF2's 4-byte LE source-ROM-size header field, narrowed from a
--- runtime 'FileSize'. Constructor private; values come from
--- 'narrowPPF2SourceSize' (runtime check) or 'ppf2SourceSizeFromParsed'
--- (parse-time trust).
+-- | PPF2's 4-byte LE source-ROM-size header field, narrowed from a runtime 'FileSize'.
+-- The third of the format's four-byte numbers, and signed for the same reason as the other two:
+-- the tools that read it hold a 32-bit number in a Turbo Pascal @Longint@ and have no wider one to reach for.
+-- Constructor private; values come from 'narrowPPF2SourceSize' (runtime check)
+-- or 'ppf2SourceSizeFromParsed' (parse-time trust).
 newtype PPF2SourceSize = PPF2SourceSize { unPPF2SourceSize :: Word32 }
   deriving (Show, Eq)
 
 narrowPPF2SourceSize :: FileSize -> Either SlapError PPF2SourceSize
-narrowPPF2SourceSize size =
-  case narrowToWord32 LabelPPF2 FieldSourceSize (unFileSize size) of
-    Left  failure -> Left (NarrowingError failure)
-    Right word    -> Right (PPF2SourceSize word)
+narrowPPF2SourceSize size
+  | declaredSize < 0 || declaredSize > unOffset (maximumOffset ppf2Limits) =
+      Left (NarrowingError (FieldValueExceedsBound LabelPPF2 FieldSourceSize
+                              (toInteger declaredSize) (toInteger (unOffset (maximumOffset ppf2Limits)))))
+  | otherwise = Right (PPF2SourceSize (fromIntegral declaredSize))
+  where
+    declaredSize = unFileSize size
 
 ppf2SourceSizeFromParsed :: Word32 -> PPF2SourceSize
 ppf2SourceSizeFromParsed = PPF2SourceSize
@@ -138,9 +142,10 @@ ppf2ValidationSize = Length 1024
 ppf2MaxRecordPayload :: Length
 ppf2MaxRecordPayload = Length 255
 
--- | Width of the FILE_ID.DIZ length field at the very end of the
--- patch: 4 bytes (LE) in PPF2. PPF3 uses 2 bytes for the same
--- role.
+-- | Width of the FILE_ID.DIZ length field at the very end of the patch: 4 bytes LE, where PPF3 uses 2 for the same role.
+-- Signed, being a Turbo Pascal @Longint@ like every other 32-bit number these tools handle,
+-- so the field names at most @0x7FFFFFFF@ and a high-bit value is not a very long DIZ but a negative one.
+-- That is a wider bound than 'ppf2FileIdMaxContentLength' by a long way, and reading honours the field rather than the cap.
 ppf2FileIdLengthFieldWidth :: Length
 ppf2FileIdLengthFieldWidth = Length 4
 
@@ -158,14 +163,14 @@ ppf2FileIdMarkerLength = Length 18
 ppf2FileIdFooterLength :: Length
 ppf2FileIdFooterLength = Length 16
 
--- | PPF2's wire-format offset cap. The record format's offset field
--- is 4 bytes LE (same shape as PPF1), so offsets ≥ 2^32 cannot be
--- expressed without truncation. Enforced at narrow time so
--- 'Slap.PPF2.Create.encodePPF2' cannot silently emit a truncated
--- offset.
+-- | PPF2's wire-format offset cap. The record's offset field is 4 bytes LE, and @PPF2.txt@ says nothing about its sign.
+-- The original tools are Turbo Pascal 6.0, whose only 32-bit integer is the signed @Longint@:
+-- the applier hands the field's four bytes straight to @System.Seek(var F; N: Longint)@,
+-- and the creator computes its offsets in that same type,
+-- so a position above the signed half is not representable anywhere in the toolchain the format came from.
 ppf2Limits :: EncodingLimits
 ppf2Limits = EncodingLimits
-  { maximumOffset = Offset 0xFFFFFFFF
+  { maximumOffset = Offset 0x7FFFFFFF
   , formatLabel   = LabelPPF2
   }
 

@@ -48,12 +48,11 @@ maxSingleCommandLength = Length 0x7FFFFFFF
 maximumTwoByteOffset :: Offset
 maximumTwoByteOffset = Offset 0xFFFF
 
--- | The largest 'Offset' that a four-byte opcode offset field can
--- carry on the wire. COPY opcodes 252, 253, and 254 use this field
--- width for their offset; offsets above this bound require the
--- eight-byte field carried only by COPY 255.
+-- | The largest offset the four-byte COPY opcodes (252-254) can name.
+-- Their field is the GDIFF spec's signed 32-bit int,
+-- so a larger offset steps up to COPY 255's signed 64-bit long, which the reference still reads as positive.
 maximumFourByteOffset :: Offset
-maximumFourByteOffset = Offset 0xFFFFFFFF
+maximumFourByteOffset = Offset 0x7FFFFFFF
 
 -- | The largest 'Length' that a one-byte opcode length field can
 -- carry on the wire. COPY opcodes 249 and 252 use this field width

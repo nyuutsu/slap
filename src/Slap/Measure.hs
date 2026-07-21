@@ -53,6 +53,7 @@ module Slap.Measure
   , splitUndoOriginal
   , OffsetRange(..)
   , rangeEndExclusive
+  , writtenOffsetRange
   , rangeLastByte
     -- * Conversions
   , lengthToFileSize
@@ -100,6 +101,7 @@ module Slap.Measure
 import Data.Aeson (ToJSON)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import Data.Foldable (toList)
 import Data.Int (Int64)
 import Data.Word (Word8, Word32)
 import Foreign.Ptr (Ptr, plusPtr)
@@ -407,6 +409,26 @@ data OffsetRange = OffsetRange
 rangeEndExclusive :: OffsetRange -> Offset
 rangeEndExclusive range = advance (rangeStart range) (rangeLength range)
 
+-- | The span a format's writes cover, from the lowest start to the highest end.
+-- Writes of no bytes are left out: they move nothing and would drag the start down to a position the patch never touches.
+--
+-- 'Nothing' where no write covers any byte, and where some write ends at a position an 'Offset' cannot hold,
+-- past the ceiling or, for a length the wire let go negative, behind the write's own start.
+-- A span cannot be stated over an end that does not exist, and saying so beats naming a wrapped one.
+-- That every end is real is also what leaves the subtraction below total: the lowest start carries a positive length,
+-- so the highest end is strictly past it.
+writtenOffsetRange :: Foldable f => f (Offset, Length) -> Maybe OffsetRange
+writtenOffsetRange writes =
+  case filter ((/= Length 0) . snd) (toList writes) of
+    []             -> Nothing
+    coveringWrites -> do
+      endOffsets <- traverse (uncurry boundedWriteEnd) coveringWrites
+      let firstAffectedOffset = minimum (map fst coveringWrites)
+      pure OffsetRange
+        { rangeStart  = firstAffectedOffset
+        , rangeLength = distance firstAffectedOffset (maximum endOffsets)
+        }
+
 -- | The last byte 'Offset' inside an 'OffsetRange', i.e.
 -- @rangeEndExclusive - 1@. Suitable for inclusive display
 -- ("0x000100 – 0x00FFFF"). Undefined for an empty range; every
@@ -462,9 +484,9 @@ offsetToFileSize (Offset position) = FileSize position
 -- and wraps it here rather than inlining @Offset . fromIntegral@ at each call site. Sibling to 'splitUndoHunkFromParsed';
 -- both are where a parsed wire value crosses into a typed position.
 --
--- Pure widening, no validation. A negative value is preserved as-is: PPF1/PPF2/PPF3/PPF4 carry signed offsets on the wire,
--- and an out-of-range one is the apply layer's to reject (via 'Slap.Status.ApplyNegativeRecordOffset'),
--- not the parser's to pre-empt.
+-- Pure widening, no validation. A negative value is preserved as-is: PPF1, PPF2 and PPF3 carry signed offsets on the wire,
+-- and an out-of-range one is the apply layer's to reject (via 'Slap.Status.ApplyNegativeRecordOffset'), not the parser's to pre-empt.
+-- PPF4 is the sibling that does not: its maker declares that field @u32@ with a @s32@ typedef alongside it, and its patcher reads it back unsigned.
 offsetFromParsed :: Integral a => a -> Offset
 offsetFromParsed = Offset . fromIntegral
 

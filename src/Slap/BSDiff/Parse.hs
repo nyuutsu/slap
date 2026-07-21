@@ -20,9 +20,10 @@ import Slap.Status (SlapError(..), SlapAdvisory(..), BSDiffHeaderMalformation(..
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (FileSize(..), Length(..), Delta(..),
-                     RequiredLength(..), ActualLength(..), ActualMagic(..),
-                     byteLength)
+                     RequiredLength(..), ActualLength(..), ActualMagic(..), ParsedSizeValue(..),
+                     byteLength, firstAction, nextAction)
 import Control.Monad (when)
+import Data.Foldable (traverse_)
 
 ----------------------------------------------------------------------------
 -- Signed LE64 (bsdiff sign-magnitude encoding)
@@ -78,6 +79,7 @@ parseBSDiff (PatchFileContents input)
         (Left (MalformedBSDiffHeader (BSDiffTargetOverrunsData (rawTargetSize - producibleBytes))))
       let instructions   = parseInstructions controlData
           fragmentLength = ByteString.length controlData `mod` bsdiffInstructionSize
+      rejectNegativeInstructionLengths instructions
       Right (Parsed
               (BSDiffPatch (Length rawControlSize)
                            (Length rawDiffSize)
@@ -116,3 +118,18 @@ parseInstructions input
         (Length (getSignMagnitude64 8  input))
         (Delta  (getSignMagnitude64 16 input))
         : parseInstructions (ByteString.drop bsdiffInstructionSize input)
+
+-- | An ADD or COPY length the sign-magnitude encoding admits but no region can have.
+-- The header's three sizes are checked for the same thing where they are read; this is the per-instruction counterpart.
+-- Refused at parse so every verb answers alike, and so no later stage holds a 'Length' that arithmetic would take as a real extent.
+-- The seek in the same triple is legitimately signed and is not this.
+rejectNegativeInstructionLengths :: [BSDiffInstruction] -> Either SlapError ()
+rejectNegativeInstructionLengths instructions =
+  traverse_ refuseNegativeLengths (zip (iterate nextAction firstAction) instructions)
+  where
+    refuseNegativeLengths (actionIndex, instruction) =
+      traverse_ (refuseNegativeLength actionIndex) [controlAdd instruction, controlCopy instruction]
+    refuseNegativeLength actionIndex regionLength
+      | unLength regionLength < 0 =
+          Left (NegativeRecordLength LabelBSDiff actionIndex (ParsedSizeValue (unLength regionLength)))
+      | otherwise = Right ()

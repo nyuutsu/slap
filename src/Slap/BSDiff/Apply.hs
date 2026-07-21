@@ -62,6 +62,8 @@ initialCursors = BSDiffCursors
 -- the apply walks the stream and runs the per-instruction preconditions at the instruction boundary,
 -- returning 'Left' with a structured 'ApplyError' if any precondition fails.
 -- The source cursor is unbounded; 'sourceByteOrZero' handles out-of-range source reads.
+-- An instruction's two lengths arrive non-negative, 'Slap.BSDiff.Parse.rejectNegativeInstructionLengths' having refused the patch otherwise,
+-- so the preconditions below weigh extent alone.
 applyBSDiff :: BSDiffPatch -> InputFileContents -> Either SlapError OutputFileContents
 applyBSDiff patch _
   | unFileSize (bsdiffTargetSize patch) == 0 = Right (OutputFileContents ByteString.empty)
@@ -84,8 +86,6 @@ applyBSDiff patch (InputFileContents source) =
     checkAddPreconditions :: ActionIndex -> Length -> Offset -> Offset
                           -> Either ApplyError ()
     checkAddPreconditions actionIndex addLength outputPosition diffReadOffset
-      | unLength addLength < 0 =
-          Left (ApplyNegativeControlLength actionIndex (RequestedLength addLength))
       | not (fitsWithin outputPosition addLength targetFileSize) =
           Left (ApplyWritesPastTarget actionIndex
                  (RequestedLength addLength)
@@ -99,8 +99,6 @@ applyBSDiff patch (InputFileContents source) =
     checkCopyPreconditions :: ActionIndex -> Length -> Offset -> Offset
                            -> Either ApplyError ()
     checkCopyPreconditions actionIndex copyLength outputAfterAdd extraReadOffset
-      | unLength copyLength < 0 =
-          Left (ApplyNegativeControlLength actionIndex (RequestedLength copyLength))
       | not (fitsWithin outputAfterAdd copyLength targetFileSize) =
           Left (ApplyWritesPastTarget actionIndex
                  (RequestedLength copyLength)

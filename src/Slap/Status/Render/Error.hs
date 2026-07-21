@@ -14,7 +14,7 @@ import Slap.Checksum (showCRC32, MD5Hash(..), ExpectedCRC32(..), ActualCRC32(..)
 import Slap.Constraint (Constraint(..), constraintFlagName, constraintName)
 import Slap.Dialect (dialectFlagName, dialectName)
 import Slap.Display.Common (renderAsText, renderHexAsText, pathText)
-import Slap.Display.Primitives (hexByteString, padHex, renderPrintableASCIIOrHex)
+import Slap.Display.Primitives (hexByteString, padHex, renderPrintableASCIIOrHex, renderEscapingNonPrintable)
 import Slap.FieldName (fieldNameLabel)
 import Slap.FormatLabel (FormatLabel(..), formatLabelName, formatLabelWithIndefiniteArticle)
 import Slap.Header (consoleHeaderName, consoleHeaderLength)
@@ -82,6 +82,9 @@ renderUnwrapError path format (ArchiveHasManyCandidates names) =
 renderUnwrapError path format (ExtractedEntryMissing (EntryName name)) =
   "extracted " <> name <> " from the " <> archiveFormatName format
     <> " archive " <> pathText path <> " but it was not found afterwards"
+renderUnwrapError path format (ExtractedEntryUnreadable (EntryName name) (UnreadableReason reason)) =
+  "extracted " <> name <> " from the " <> archiveFormatName format
+    <> " archive " <> pathText path <> " but could not read it: " <> reason
 renderUnwrapError path format (ArchiveUnreadable (UnreadableReason reason)) =
   "could not read the " <> archiveFormatName format <> " archive "
     <> pathText path <> ": " <> reason
@@ -167,6 +170,11 @@ renderSlapError (UnsupportedNINJA1Subformat (NINJA1SubformatIdentifier subformat
 renderSlapError NINJA1BinaryMissingEOFFooter =
   formatLabelName LabelNINJA1 <> ": the patch ends without its closing marker (an EOF footer)"
 
+renderSlapError (NINJA1BinaryBodyTooShort (RequiredLength needed) (ActualLength actual)) =
+  formatLabelName LabelNINJA1 <> ": this patch runs out before its header is complete (the binary body needs "
+  <> renderAsText (unLength needed) <> " bytes for its record header but holds only "
+  <> renderAsText (unLength actual) <> plural (unLength actual) " byte" " bytes" <> ")"
+
 renderSlapError NINJA2MissingEndCommand =
   formatLabelName LabelNINJA2 <> ": the patch ends without its closing marker (the END command, byte 0x00)"
 
@@ -208,6 +216,14 @@ renderSlapError (MalformedRecordField label recordIndex name) =
   formatLabelName label <> ": record " <> renderAsText (unActionIndex recordIndex)
   <> " has a malformed " <> fieldNameLabel name
 
+renderSlapError (NegativeRecordLength label recordIndex (ParsedSizeValue value)) =
+  formatLabelName label <> ": record " <> renderAsText (unActionIndex recordIndex)
+  <> " declares a length of " <> renderAsText value
+
+renderSlapError (NegativeRecordOffset label recordIndex offset) =
+  formatLabelName label <> ": record " <> renderAsText (unActionIndex recordIndex)
+  <> " writes at offset " <> renderAsText (unOffset offset)
+
 renderSlapError (UnrecognizedTrailer label (TrailerMarker markerBytes) (ActualLength actualLength)) =
   formatLabelName label <> ": the patch carries "
   <> renderAsText (unLength actualLength)
@@ -242,14 +258,20 @@ renderSlapError (MalformedNINJA1Content malformation) =
   formatLabelName LabelNINJA1 <> ": " <> case malformation of
     NINJA1EmptyTextualPatch -> "the textual patch is empty"
     NINJA1InvalidOffsetInTextRecord (OffsetTokenText t) ->
-      "a text record's offset token \"" <> t <> "\" cannot be read as a number"
+      "a text record's offset token \"" <> renderEscapingNonPrintable t <> "\" cannot be read as a number"
     NINJA1UnaddressableOffsetInTextRecord (OffsetTokenText t) ->
-      "offset " <> t <> " in a text record is past "
+      "offset " <> renderEscapingNonPrintable t <> " in a text record is past "
       <> slapAddressableCeiling <> ", the largest position slap can address"
     NINJA1MalformedChecksum field (ChecksumTokenText t) ->
-      "the " <> fieldNameLabel field <> " token \"" <> t <> "\" is neither \"unk\" nor a valid hex checksum"
+      "the " <> fieldNameLabel field <> " token \"" <> renderEscapingNonPrintable t <> "\" is neither \"unk\" nor a valid hex checksum"
     NINJA1MalformedTextRecord (LineText line) ->
-      "a text record cannot be read: \"" <> line <> "\""
+      "a text record cannot be read: \"" <> renderEscapingNonPrintable line <> "\""
+    NINJA1ExtraFieldsInTextRecord (LineText line) ->
+      "a text record carries more than the two fields it has room for (the format's line is an offset then its bytes, and this one reads \""
+      <> renderEscapingNonPrintable line <> "\")"
+    NINJA1InvalidHexPayloadInTextRecord (LineText payload) ->
+      "part of this patch isn't the hex data it should be (a text record's payload must be whole pairs of hex digits, but reads \""
+      <> renderEscapingNonPrintable payload <> "\")"
 
 renderSlapError (ParseError label parserError) =
   formatLabelName label <> ": " <> renderByteParserError parserError
@@ -757,20 +779,20 @@ renderUnencodeabilityReason _label
 renderUnencodeabilityReason _label
   (TargetShrinksBelowSource (ActualSize sourceSize) (ExpectedSize targetSize)) =
   "the output is smaller than the input"
-  <> " (input 0x" <> renderHexAsText (unFileSize sourceSize)
-  <> " bytes, output 0x" <> renderHexAsText (unFileSize targetSize)
+  <> " (input " <> renderAsText (unFileSize sourceSize)
+  <> " bytes, output " <> renderAsText (unFileSize targetSize)
   <> " bytes); this format does not represent shrinking"
 renderUnencodeabilityReason _label
   (TruncationTargetUnrepresentable (DeclaredTargetSize targetSize) (MaxOffset markerMaximum)) =
   "the output is smaller than the input, so the patch would need a truncation marker"
   <> " to record the trimmed size, and that marker's field is only 24 bits:"
-  <> " it can't name 0x" <> renderHexAsText (unFileSize targetSize)
+  <> " it can't name " <> renderAsText (unFileSize targetSize)
   <> " bytes, past its 0x" <> renderHexAsText (unOffset markerMaximum) <> " ceiling"
 renderUnencodeabilityReason _label
   (GrowthReachesPastAddressableRange (DeclaredTargetSize targetSize) (MaxWritableSize writableCeiling)) =
   "the output is larger than the input, so every byte past the input's end must be written,"
   <> " but records reach no further than 0x" <> renderHexAsText (unFileSize writableCeiling)
-  <> ": an output of 0x" <> renderHexAsText (unFileSize targetSize) <> " bytes ends out of reach"
+  <> ": an output of " <> renderAsText (unFileSize targetSize) <> " bytes ends out of reach"
 
 -- | The markers in the wild are ASCII-printable (@"EOF"@, @"EEOF"@), so the common case is the literal string;
 -- a marker with a non-printable byte falls back to hex rather than putting control characters in the error stream.

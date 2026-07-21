@@ -93,14 +93,24 @@ classifyTargetCopy readStart writePosition copyLength
 -- applyBPS
 ----------------------------------------------------------------------------
 
+bpsActionOutputLength :: BPSAction -> Length
+bpsActionOutputLength (SourceRead actionLength)   = actionLength
+bpsActionOutputLength (TargetRead payload)        = byteLength payload
+bpsActionOutputLength (SourceCopy actionLength _) = actionLength
+bpsActionOutputLength (TargetCopy actionLength _) = actionLength
+
 -- | Returns 'Left' with a structured error if the patch's action stream is semantically malformed:
 -- negative cursors, out-of-bounds reads, forward reads in TargetCopy, writes past target, or stream exhaustion before the target is filled.
 -- The caller is still responsible for validating CRCs before calling;
 -- a 'Left' here means the action stream is invalid, not that the patch bytes were corrupted.
 applyBPS :: BPSPatch -> InputFileContents -> Either SlapError OutputFileContents
 applyBPS patch (InputFileContents source)
-  | unFileSize targetSize == 0 =
+  -- A zero-size target is coherent only with no actions; with actions, the walk below refuses each write past the empty buffer.
+  | unFileSize targetSize == 0 && null actions =
       Right (OutputFileContents ByteString.empty)
+  | actionsOutputReach < declaredTarget =
+      Left (ApplyFailed LabelBPS
+             (ApplyTargetUnderfilled (WritePosition (Offset actionsOutputReach)) (ExpectedSize targetSize)))
   | otherwise = case addressableByteCount LabelBPS targetSize of
       Left refusal          -> Left refusal
       Right addressableSize -> unsafePerformIO $ do
@@ -113,6 +123,17 @@ applyBPS patch (InputFileContents source)
     sourceSize      = byteFileSize source
     actions         = bpsActions patch
     actionStreamEnd = streamEndIndex actions
+
+    -- The actions tile the target in order, so their lengths sum to where the walk would end.
+    -- Summing here, capped at the declared size, catches a target declared past what its actions fill,
+    -- before 'fillNewBuffer' would allocate that whole declared size and abort.
+    declaredTarget     = unFileSize targetSize
+    actionsOutputReach = Vector.foldl' addCappedOutput 0 actions
+    addCappedOutput reached action
+      | reached    >= declaredTarget            = declaredTarget
+      | contributed >= declaredTarget - reached = declaredTarget
+      | otherwise                               = reached + contributed
+      where contributed = unLength (bpsActionOutputLength action)
 
     -- | Per-action guards for 'SourceRead': the write must fit in
     -- the remaining target buffer, and the parallel source read

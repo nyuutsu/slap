@@ -73,6 +73,7 @@ fullContents = PatchContents
   , contentsSourceCRC32 = Just (CRC32 0xDEADBEEF)
   , contentsSourceMD5   = Just (MD5Hash (ByteString.replicate 16 0xAA))
   , contentsSourceSHA1  = Just (SHA1Hash (ByteString.replicate 20 0xBB))
+  , contentsSourceSize         = Just (FileSize 2048)
   , contentsDestinationSize    = Just (FileSize 1024)
   , contentsValidation  = Just (ByteString.replicate 1024 0)
   , contentsUndoData    = Just [splitUndoHunkFromParsed (Offset 0) (ByteString.pack [0x00]) (ByteString.pack [0xFF])]
@@ -86,12 +87,9 @@ fullContents = PatchContents
   , contentsMetadata = Nothing
   }
 
--- | canConvert succeeds for every direct format when all fields it
--- accepts are present.  Apply-output-affecting fields that the target
--- doesn't accept (today only 'FieldTruncation' for targets other than IPS)
--- are stripped before the check: their presence would correctly make
--- 'canConvert' refuse with 'ApplyOutputFieldsDropped', so this test
--- only covers formats' accepted-field surface.
+-- | canConvert succeeds for every direct format when all its accepted fields are present.
+-- Apply-output-affecting fields the target doesn't accept are stripped first, since their presence would make 'canConvert' refuse;
+-- this test covers only the accepted-field surface.
 prop_canConvertFull :: Property
 prop_canConvertFull = conjoin
   [ counterexample (show format) $
@@ -106,6 +104,9 @@ prop_canConvertFull = conjoin
         { contentsTruncation = if FieldTruncation `Set.member` kept
                                 then contentsTruncation fullContents
                                 else Nothing
+        , contentsDestinationSize = if FieldDestinationSize `Set.member` kept
+                                then contentsDestinationSize fullContents
+                                else Nothing
         }
 
 -- | No dropped-field notes when provides exactly matches required + accepted.
@@ -119,6 +120,7 @@ prop_noSurplusNoNotes = conjoin
             , contentsSourceCRC32 = if FieldSourceCRC32 `Set.member` kept then contentsSourceCRC32 fullContents else Nothing
             , contentsSourceMD5   = if FieldSourceMD5   `Set.member` kept then contentsSourceMD5   fullContents else Nothing
             , contentsSourceSHA1  = if FieldSourceSHA1  `Set.member` kept then contentsSourceSHA1  fullContents else Nothing
+            , contentsSourceSize         = if FieldSourceSize         `Set.member` kept then contentsSourceSize         fullContents else Nothing
             , contentsDestinationSize    = if FieldDestinationSize    `Set.member` kept then contentsDestinationSize    fullContents else Nothing
             , contentsValidation  = if FieldValidation  `Set.member` kept then contentsValidation  fullContents else Nothing
             , contentsUndoData    = if FieldUndoData    `Set.member` kept then contentsUndoData    fullContents else Nothing

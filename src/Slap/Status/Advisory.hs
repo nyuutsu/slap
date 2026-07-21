@@ -108,6 +108,12 @@ data SlapAdvisory
   -- The 'Length' is the byte count dropped.
   | IPS32TrailingBytes FormatLabel Length
 
+  -- | A textual record separates its offset from its bytes with more than one space.
+  -- slap reads across the padding and writes the payload; the reference applier splits such lines on a single space,
+  -- so it binds the empty field between them as the payload and writes nothing for that record.
+  -- The same patch therefore produces different output bytes depending on which tool applies it, which is why this warns.
+  | NINJA1PaddedRecordSeparator ActionIndex
+
   -- | Bytes after the last window matching the one trailing shape slap recognizes: four @0xFF@ marker bytes, then nothing but zero padding —
   -- a harmless trailer some patches carry. VCDIFF has no window count, total-size field, or footer, so it never says what trailing bytes mean;
   -- xdelta3's applier writes the correct output and then errors on this tail, while its printhdr ignores it.
@@ -149,6 +155,16 @@ data SlapAdvisory
   -- | Bytes at the end of an APS-GBA patch too few to begin another record (records are a fixed 65544 bytes).
   -- The 'Length' is the fragment's byte count — up to 65543, since a whole record's worth would parse.
   | APSGBATrailingFragment !Length
+
+  -- | Bytes past the last record a PMSR patch's count named. Unlike the fragments the APS formats leave, this one can be
+  -- any size at all: the count says where the record stream ends, so whatever follows is leftover whatever its length.
+  | PMSRTrailingBytes !Length
+
+  -- | Bytes after a NINJA1 binary patch's EOF footer.
+  | NINJA1TrailingBytes !Length
+
+  -- | Bytes after a NINJA2 patch's END command.
+  | NINJA2TrailingBytes !Length
 
   -- | Bytes at the end of a BSDiff control stream too few to form another
   -- instruction (one is 24 bytes: three 8-byte sign-magnitude values).
@@ -360,7 +376,11 @@ slapAdvisorySeverity advisory = case advisory of
   BSDiffTrailingControlFragment{}      -> SeverityWarning
   APSN64TrailingFragment{}             -> SeverityWarning
   APSGBATrailingFragment{}             -> SeverityWarning
+  PMSRTrailingBytes{}                  -> SeverityWarning
+  NINJA1TrailingBytes{}                -> SeverityWarning
+  NINJA2TrailingBytes{}                -> SeverityWarning
   IPS32TrailingBytes{}                 -> SeverityWarning
+  NINJA1PaddedRecordSeparator{}        -> SeverityWarning
   -- PPF2 tolerates growth, so its apply-grow advisory is a note; the other labels warn.
   PPFApplyGrewPastSource LabelPPF2 _ _ -> SeverityNote
   PPFApplyGrewPastSource{}             -> SeverityWarning

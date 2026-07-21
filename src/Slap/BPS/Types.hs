@@ -12,6 +12,7 @@ module Slap.BPS.Types
   , bpsMagicLength
   , bpsCRC32Length
   , bpsFooterLength
+  , bpsMinimumLength
   ) where
 
 import Data.Bits (shiftR, testBit)
@@ -74,6 +75,10 @@ bpsCRC32Length = Length 4
 -- | Length of the BPS footer: three CRC32 fields (source, target, patch).
 bpsFooterLength :: Length
 bpsFooterLength = bpsCRC32Length <> bpsCRC32Length <> bpsCRC32Length
+
+-- | The shortest a BPS can be: the 4-byte magic, three 1-byte header varints (source, target, and metadata size), and the 12-byte footer.
+bpsMinimumLength :: Length
+bpsMinimumLength = bpsMagicLength <> Length 3 <> bpsFooterLength
 
 -- | Decode a signed varint: bit 0 = sign (1 = negative), bits 1+ = magnitude.
 decodeSignedVarint :: Int64 -> Int64

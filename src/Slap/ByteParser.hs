@@ -36,10 +36,14 @@ module Slap.ByteParser
     -- * Fixed-width readers
   , word16LE
   , word32LE
+  , int16LE
+  , int32LE
   , int64LE
   , word16BE
   , word24BE
   , word32BE
+  , int16BE
+  , int32BE
   , int64BE
     -- * Variable-length readers
   , byuuVarint
@@ -56,8 +60,8 @@ module Slap.ByteParser
 import Slap.Binary
   ( VarintResult(..)
   , VarintReadFailure(..)
-  , getWord16LE, getWord32LE, getInt64LE
-  , getWord16BE, getWord24BE, getWord32BE, getInt64BE
+  , getWord16LE, getWord32LE, getInt16LE, getInt32LE, getInt64LE
+  , getWord16BE, getWord24BE, getWord32BE, getInt16BE, getInt32BE, getInt64BE
   , getByuuVarint, getVcdiffVarint
   , minimalVcdiffVarintLength
   , takeLength
@@ -321,6 +325,12 @@ word16LE = liftRead (Length 2) getWord16LE
 word32LE :: ByteParser Word32
 word32LE = liftRead (Length 4) getWord32LE
 
+int16LE :: ByteParser Int64
+int16LE = liftRead (Length 2) getInt16LE
+
+int32LE :: ByteParser Int64
+int32LE = liftRead (Length 4) getInt32LE
+
 int64LE :: ByteParser Int64
 int64LE = liftRead (Length 8) getInt64LE
 
@@ -332,6 +342,12 @@ word24BE = liftRead (Length 3) getWord24BE
 
 word32BE :: ByteParser Word32
 word32BE = liftRead (Length 4) getWord32BE
+
+int16BE :: ByteParser Int64
+int16BE = liftRead (Length 2) getInt16BE
+
+int32BE :: ByteParser Int64
+int32BE = liftRead (Length 4) getInt32BE
 
 int64BE :: ByteParser Int64
 int64BE = liftRead (Length 8) getInt64BE

@@ -4,6 +4,7 @@ module Slap.IPS.Types
   ( IPSVariant(..)
   , OffsetWidth(..)
   , offsetWidthByteCount
+  , offsetWidthMaxAddressableOffset
   , IPSVariantSpec(..)
   , IPSRecord(..)
   , ipsRecordOffset
@@ -102,6 +103,10 @@ data OffsetWidth
 offsetWidthByteCount :: OffsetWidth -> Length
 offsetWidthByteCount Offset24 = Length 3
 offsetWidthByteCount Offset32 = Length 4
+
+offsetWidthMaxAddressableOffset :: OffsetWidth -> Offset
+offsetWidthMaxAddressableOffset Offset24 = Offset 0xFFFFFF
+offsetWidthMaxAddressableOffset Offset32 = Offset 0xFFFFFFFF
 
 -- | Per-variant wire facts collected in a single record. The one
 -- place in the codebase that knows how 'StandardIPS' and 'IPS32'
@@ -381,14 +386,14 @@ variantSpec StandardIPS = IPSVariantSpec
   , ipsVariantOffsetWidth          = Offset24
   , ipsVariantEOFMarker            = ipsEOFMarkerBytes
   , ipsVariantSentinel             = Offset (fromIntegral ipsSentinel)
-  , ipsVariantMaxAddressableOffset = Offset 0xFFFFFF
+  , ipsVariantMaxAddressableOffset = offsetWidthMaxAddressableOffset Offset24
   }
 variantSpec IPS32 = IPSVariantSpec
   { ipsVariantMagic                = ips32MagicBytes
   , ipsVariantOffsetWidth          = Offset32
   , ipsVariantEOFMarker            = ips32EEOFMarkerBytes
   , ipsVariantSentinel             = Offset (fromIntegral ips32Sentinel)
-  , ipsVariantMaxAddressableOffset = Offset 0xFFFFFFFF
+  , ipsVariantMaxAddressableOffset = offsetWidthMaxAddressableOffset Offset32
   }
 
 -- | The arithmetic spec ceiling for where a single record can end
