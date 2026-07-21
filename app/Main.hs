@@ -49,6 +49,7 @@ import Slap.FieldName (FieldName(FieldFileIdDiz))
 import Slap.FormatLabel (FormatLabel)
 import Slap.Normalize (NormalizedSource(..), normalizeApplySource)
 import Slap.Display.Glyph (spacePaddedRightwardsArrow)
+import Slap.Display.Primitives (renderEscapingNonPrintable)
 import Slap.Preflight (PreparedApplySource(..), prepareApplySource, weighUndoInput)
 
 import CLI
@@ -100,7 +101,7 @@ import Control.Exception.Backtrace (setBacktraceMechanismState, BacktraceMechani
 
 main :: IO ()
 main = do
-  -- Source-located backtraces on an uncaught exception, when built with the info-table map (make dev); inert otherwise.
+  -- Source-located backtraces on an uncaught exception; the info-table map they resolve against is turned on in cabal.project.
   setBacktraceMechanismState IPEBacktrace True
   -- Slap is a UTF-8 program on both sides:
   -- the filesystem pin decodes arguments and path bytes as UTF-8 (RoundtripFailure, so an odd non-UTF-8 name still round-trips),
@@ -193,11 +194,11 @@ readUnwrap path = do
   case detectArchive (ByteString.take 8 fileBytes) of
     Nothing -> pure fileBytes
     Just format -> do
-      result <- unwrapArchive format path
+      result <- unwrapArchive format fileBytes path
       case result of
         Left unwrapError -> bailError (ArchiveUnwrapFailed path format unwrapError)
         Right (unwrappedBytes, entryName) -> do
-          TextIO.hPutStrLn stderr ("slap: unwrapped " <> pathText path <> spacePaddedRightwardsArrow <> unEntryName entryName)
+          TextIO.hPutStrLn stderr ("slap: unwrapped " <> pathText path <> spacePaddedRightwardsArrow <> renderEscapingNonPrintable (unEntryName entryName))
           pure unwrappedBytes
 
 readMaybeUnwrap :: FileReadingOptions -> FilePath -> IO ByteString
@@ -232,15 +233,19 @@ resolveCreateFileIdDiz _ (FileIdDizFromText typed) =
   pure (SetFileIdDizFromText (EncodedText EncodingUtf8 typed))
 
 -- | @--metadata-encoding@ decodes bytes, so only the @--diz FILE@ lane consults it; typed text arrives already decoded, and is tagged UTF-8.
-resolveConvertMetadata :: EncodingName -> ConvertMetadataInputs -> IO RequestedPatchMetadata
-resolveConvertMetadata metadataEncoding inputs = do
+resolveConvertMetadata :: FormatLabel -> EncodingName -> ConvertMetadataInputs -> IO RequestedPatchMetadata
+resolveConvertMetadata label metadataEncoding inputs = do
   embeddedBlob <- case convertEmbeddedBlobIntent inputs of
     SetBlobFromFile path       -> SetEmbeddedBlob . EmbeddedBlobContents <$> readInputFile path
     SetBlobFromTypedText typed -> pure (SetEmbeddedTypedText typed)
     DropBlob                   -> pure DropEmbeddedBlob
     CarryBlob                  -> pure InheritEmbeddedBlob
   fileIdDiz <- case convertDizIntent inputs of
-    SetDizFromFile path       -> SetFileIdDiz . fst . decodeTextLenient metadataEncoding <$> readInputFile path
+    SetDizFromFile path       -> do
+      dizBytes <- readInputFile path
+      let (decoded, lossNotices) = decodeTextLenient metadataEncoding dizBytes
+      emitAdvisories (decodeLossAdvisories label FieldFileIdDiz lossNotices)
+      pure (SetFileIdDiz decoded)
     SetDizFromTypedText typed -> pure (SetFileIdDizFromText (EncodedText EncodingUtf8 typed))
     DropDiz                   -> pure DropFileIdDiz
     CarryDiz                  -> pure InheritFileIdDiz
@@ -463,7 +468,7 @@ chooseConvertDispatch parsedCommand parsed =
 doConvert :: ConvertCommand -> IO ()
 doConvert parsedCommand = do
   orBail (rejectIncompatibleMetadataRequests (convertTo parsedCommand) (convertMetadataRequests (convertMetadata parsedCommand)))
-  cliMeta <- resolveConvertMetadata (convertMetadataEncoding parsedCommand) (convertMetadata parsedCommand)
+  cliMeta <- resolveConvertMetadata (createFormatLabel (convertTo parsedCommand)) (convertMetadataEncoding parsedCommand) (convertMetadata parsedCommand)
   orBail (rejectUnencodableSecondaryCompressor (convertTo parsedCommand) cliMeta)
   orBail (rejectIncompatibleConstraints (convertTo parsedCommand) (convertConstraints parsedCommand))
   parsed <- readAndParsePatch (convertFileReading parsedCommand) (convertDialects parsedCommand) (convertMetadataEncoding parsedCommand) (convertPatch parsedCommand)

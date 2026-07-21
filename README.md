@@ -14,7 +14,7 @@ On conversion: if a conversion would lose data, it tells you what's being left b
 
 slap understands: `APS-GBA`, `APS-N64`[^APS], `BPS`, `BSDiff`, `DPS`, `EBP`, `GDIFF`, `IPS`, `IPS32`, `NINJA1`, `NINJA2`[^NINJA], `PMSR`, `PPF1`, `PPF2`, `PPF3`, `PPF4`[^PPF4], `UPS`, `VCDIFF` (qua RFC 3284)[^VCDIFF], `xdelta1`[^XDELTA1], and `xdelta3`[^XDELTA3].
 
-If your patch is tucked inside a `zip`, `rar`, or `7z` archive, slap will attempt[^RAR] to find and retrieve it.
+If your patch is tucked inside a `zip` or `7z` archive, slap will attempt to find and retrieve it.
 
 Here is a representative sample of everything you are likely to care about doing:
 
@@ -407,8 +407,6 @@ The per-test durations are logged to `test-results/`.
 [^APS]: The formats I'm calling "`APS-N64`" and "`APS-GBA`" are unrelated, and only coincidentally share an acronym.
 
 [^NINJA]: There are two formats: `ninja1` and `ninja2`. Both might use the file extension `.rup`.
-
-[^RAR]: The `RAR` format is proprietary; I don't know of a practical way to include a `RAR` decompressor.
 
 [^XML]: This is per what the format *prefers* but does not require.
 

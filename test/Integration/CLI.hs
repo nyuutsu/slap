@@ -94,6 +94,12 @@ cliTests tier = do
       requireExternalTool Unzip $ \_ ->
         pure (map WillRun (archiveTests dm4yBase dm4yIps dm4yBps dm4yUps))
 
+    -- A ZIP with a NUL in its one entry's name, built by hand because the zip
+    -- tools sanitize it, so this needs only the fixture and slap.
+    zipNulGated <-
+      requireFixture (repo </> "test/data/zip-nul-name/entry.zip") $ \nulZip ->
+        pure (map WillRun (zipNulNameTests nulZip))
+
     -- Codetable, VCD_TARGET, and VCDIFF-flag tests are slap-only
     -- (committed or temp-file fixtures; no ROM gate).
     let codetableMaybes =
@@ -110,7 +116,7 @@ cliTests tier = do
     let explainMaybes = map WillRun
           (explainModeTests dm4yIps (Just (dm4yBase, dm4yUps, dm4yBps)))
 
-    pure (dm4yGated ++ archiveGated ++ codetableMaybes ++ normalizationMaybes ++ explainMaybes)
+    pure (dm4yGated ++ archiveGated ++ zipNulGated ++ codetableMaybes ++ normalizationMaybes ++ explainMaybes)
 
   pure (namedGroup "cli" (inProcessMaybes ++ subprocessMaybes))
 
@@ -453,9 +459,14 @@ warningTests repo =
   ]
 
 
--- | The archive tests assume @zip@ is on @PATH@; the @cliTests@
--- gating layer ensures that's true before any of these run, so the
--- subprocess invocations here can call 'runExternal' 'Zip' directly.
+-- | A ZIP whose one entry's name carries a NUL, which slap once read as a separator,
+-- splitting one entry into two phantom candidates; extracting by index sees the one real entry.
+zipNulNameTests :: FilePath -> [TestTree]
+zipNulNameTests nulZip =
+  [ testCase "archive/a ZIP entry name with a NUL unwraps as one entry" $
+      expectOk ["info", nulZip] "NUL-in-name ZIP info" "IPS"
+  ]
+
 archiveTests :: FilePath -> FilePath -> FilePath -> FilePath -> [TestTree]
 archiveTests base ips bps ups =
   [ testCase "archive/apply ZIP-wrapped patch" $

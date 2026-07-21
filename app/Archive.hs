@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | The native frontend's archive-unwrap layer: open a single-entry container and hand back the file inside.
--- ZIP is read in-process via "Archive.Zip"; RAR and 7z shell out to @unrar@ and @7z@.
+-- ZIP is read in-process via "Archive.Zip"; 7z shells out to @7z@.
 module Archive
   ( unwrapArchive
   ) where
@@ -13,23 +13,26 @@ import Data.Char (toLower)
 import Data.List (stripPrefix)
 import Data.Maybe (mapMaybe, listToMaybe)
 import qualified Data.Text as Text
+import Control.Exception (try, IOException)
 import Slap.Archive.Types
   ( ArchiveFormat(..)
   , ToolName(..), ToolDiagnostic(..), EntryName(..), SeenEntryCount(..)
-  , UnwrapError(..) )
+  , UnreadableReason(..), UnwrapError(..) )
 import Archive.Zip (zipEntryNames, zipExtractEntry)
 import System.Directory (findExecutable, createDirectoryIfMissing,
                          removeDirectoryRecursive, removeFile, doesFileExist,
                          getTemporaryDirectory)
 import System.Exit (ExitCode(..))
-import System.FilePath (takeExtension, (</>), addTrailingPathSeparator)
+import System.FilePath (takeExtension, (</>))
 import System.IO (hClose, openBinaryTempFile)
+import System.IO.Error (ioeGetErrorString)
 import System.Process (readProcessWithExitCode)
 
-unwrapArchive :: ArchiveFormat -> FilePath -> IO (Either UnwrapError (ByteString, EntryName))
-unwrapArchive ArchiveZIP path = unwrapZip path
-unwrapArchive ArchiveRAR path = unwrapViaExternalTool ExternalRAR path
-unwrapArchive Archive7z  path = unwrapViaExternalTool External7z  path
+-- | ZIP is read from the bytes slap already holds, so a single-entry archive fed through a pipe still unwraps and a regular file isn't read twice.
+-- 7z shells out and needs a seekable file, so it takes the path; an archive fed through a pipe fails there with the tool's own diagnostic.
+unwrapArchive :: ArchiveFormat -> ByteString -> FilePath -> IO (Either UnwrapError (ByteString, EntryName))
+unwrapArchive ArchiveZIP fileBytes _    = pure (unwrapZip fileBytes)
+unwrapArchive Archive7z  _        path  = unwrapVia7z path
 
 ----------------------------------------------------------------------------
 -- Candidate selection (shared by the in-house and shell-out paths)
@@ -37,11 +40,11 @@ unwrapArchive Archive7z  path = unwrapViaExternalTool External7z  path
 
 -- | Filter chaff (readmes, images, docs) and pick the single patch worth
 -- extracting, or say why we can't.
-selectCandidate :: [EntryName] -> Either UnwrapError EntryName
-selectCandidate names = case filter isCandidate names of
+selectCandidate :: [EntryName] -> Either UnwrapError (Int, EntryName)
+selectCandidate names = case filter (isCandidate . snd) (zip [0 ..] names) of
   []                 -> Left (ArchiveHasNoCandidate (SeenEntryCount (length names)))
-  [name]             -> Right name
-  multipleCandidates -> Left (ArchiveHasManyCandidates multipleCandidates)
+  [indexedName]      -> Right indexedName
+  multipleCandidates -> Left (ArchiveHasManyCandidates (map snd multipleCandidates))
 
 isCandidate :: EntryName -> Bool
 isCandidate (EntryName name)
@@ -62,28 +65,23 @@ chaffExtensions =
 -- In-house ZIP
 ----------------------------------------------------------------------------
 
-unwrapZip :: FilePath -> IO (Either UnwrapError (ByteString, EntryName))
-unwrapZip path = do
-  archiveBytes <- ByteString.readFile path
-  pure $ do
-    names      <- first ArchiveUnreadable (zipEntryNames archiveBytes)
-    name       <- selectCandidate (map EntryName names)
-    entryBytes <- first ArchiveUnreadable (zipExtractEntry archiveBytes (unEntryName name))
-    pure (entryBytes, name)
+unwrapZip :: ByteString -> Either UnwrapError (ByteString, EntryName)
+unwrapZip archiveBytes = do
+  names         <- first ArchiveUnreadable (zipEntryNames archiveBytes)
+  (index, name) <- selectCandidate (map EntryName names)
+  entryBytes    <- first ArchiveUnreadable (zipExtractEntry archiveBytes index)
+  pure (entryBytes, name)
 
 ----------------------------------------------------------------------------
--- Shell-out path (RAR, 7z)
+-- Shell-out path (7z)
 ----------------------------------------------------------------------------
 
--- | The formats unwrapped by shelling out to an external tool.
-data ExternalFormat = ExternalRAR | External7z
-
-unwrapViaExternalTool :: ExternalFormat -> FilePath -> IO (Either UnwrapError (ByteString, EntryName))
-unwrapViaExternalTool format path = do
-  entries <- listEntries format path
+unwrapVia7z :: FilePath -> IO (Either UnwrapError (ByteString, EntryName))
+unwrapVia7z path = do
+  entries <- listEntries path
   case entries >>= selectCandidate of
-    Left unwrapError -> pure (Left unwrapError)
-    Right name       -> extractEntry format path name
+    Left unwrapError     -> pure (Left unwrapError)
+    Right (_index, name) -> extractEntry path name
 
 -- | Capture an external tool's stderr.
 toolDiagnostic :: String -> ToolDiagnostic
@@ -93,22 +91,8 @@ toolDiagnostic = ToolDiagnostic . Text.pack
 toEntryName :: String -> EntryName
 toEntryName = EntryName . Text.pack
 
-listEntries :: ExternalFormat -> FilePath -> IO (Either UnwrapError [EntryName])
-listEntries ExternalRAR path = do
-  maybeUnrar <- findExecutable "unrar"
-  case maybeUnrar of
-    Just _ -> do
-      (exitCode, stdout, stderr) <- readProcessWithExitCode "unrar" ["lb", path] ""
-      pure $ case exitCode of
-        ExitSuccess -> Right (map toEntryName (filter (not . null) (lines stdout)))
-        _           -> Left (ArchiveToolFailed (ToolName "unrar") (toolDiagnostic stderr))
-    Nothing -> do
-      maybe7z <- findExecutable "7z"
-      case maybe7z of
-        Nothing -> pure (Left NoToolForArchive)
-        Just _  -> list7z path
-
-listEntries External7z path = do
+listEntries :: FilePath -> IO (Either UnwrapError [EntryName])
+listEntries path = do
   maybe7z <- findExecutable "7z"
   case maybe7z of
     Nothing -> pure (Left NoToolForArchive)
@@ -117,7 +101,7 @@ listEntries External7z path = do
 -- | List entries using 7z's machine-readable output.
 list7z :: FilePath -> IO (Either UnwrapError [EntryName])
 list7z path = do
-  (exitCode, stdout, stderr) <- readProcessWithExitCode "7z" ["l", "-ba", "-slt", path] ""
+  (exitCode, stdout, stderr) <- readProcessWithExitCode "7z" ["l", "-ba", "-slt", "--", path] ""
   pure $ case exitCode of
     ExitSuccess -> Right (map toEntryName (parse7zList stdout))
     _           -> Left (ArchiveToolFailed (ToolName "7z") (toolDiagnostic stderr))
@@ -140,15 +124,15 @@ groupIntoEntries listingLines =
   let (entry, rest) = break null listingLines
   in entry : groupIntoEntries (drop 1 rest)
 
-extractEntry :: ExternalFormat -> FilePath -> EntryName -> IO (Either UnwrapError (ByteString, EntryName))
-extractEntry format archivePath entryName = do
+extractEntry :: FilePath -> EntryName -> IO (Either UnwrapError (ByteString, EntryName))
+extractEntry archivePath entryName = do
   systemTemporaryDirectory <- getTemporaryDirectory
   (temporaryFile, handle) <- openBinaryTempFile systemTemporaryDirectory "slap-archive"
   hClose handle
   let temporaryDirectory = temporaryFile ++ ".d"
       entryPath = Text.unpack (unEntryName entryName)
   createDirectoryIfMissing True temporaryDirectory
-  result <- doExtract format archivePath entryPath temporaryDirectory
+  result <- extractWith7z archivePath entryPath temporaryDirectory
   case result of
     Left unwrapError -> do
       cleanup temporaryFile temporaryDirectory
@@ -160,9 +144,12 @@ extractEntry format archivePath entryName = do
           cleanup temporaryFile temporaryDirectory
           pure (Left (ExtractedEntryMissing entryName))
         Just extractedPath -> do
-          extractedBytes <- ByteString.readFile extractedPath
+          readResult <- try (ByteString.readFile extractedPath) :: IO (Either IOException ByteString)
           cleanup temporaryFile temporaryDirectory
-          pure (Right (extractedBytes, entryName))
+          pure $ case readResult of
+            Left ioErr -> Left (ExtractedEntryUnreadable entryName
+                                  (UnreadableReason (Text.pack (ioeGetErrorString ioErr))))
+            Right extractedBytes -> Right (extractedBytes, entryName)
   where
     cleanup temporaryFile temporaryDirectory = do
       removeDirectoryRecursive temporaryDirectory
@@ -185,27 +172,11 @@ findExtracted temporaryDirectory entryName = do
 takeFileNamePortable :: String -> String
 takeFileNamePortable = reverse . takeWhile (\char -> char /= '/' && char /= '\\') . reverse
 
-doExtract :: ExternalFormat -> FilePath -> String -> FilePath -> IO (Either UnwrapError ())
-doExtract ExternalRAR archivePath entryName temporaryDirectory = do
-  maybeUnrar <- findExecutable "unrar"
-  case maybeUnrar of
-    Just _ -> do
-      (exitCode, _, stderr) <- readProcessWithExitCode "unrar"
-        ["e", "-o+", archivePath, entryName, addTrailingPathSeparator temporaryDirectory] ""
-      pure $ case exitCode of
-        ExitSuccess -> Right ()
-        _           -> Left (ArchiveToolFailed (ToolName "unrar") (toolDiagnostic stderr))
-    Nothing -> extractWith7z archivePath entryName temporaryDirectory
-
-doExtract External7z archivePath entryName temporaryDirectory =
-  extractWith7z archivePath entryName temporaryDirectory
-
--- | Extract one entry with 7z — for 7z archives, and as the RAR fallback
--- when unrar isn't present. The extraction-side counterpart of 'list7z'.
+-- | Extract one entry with 7z. The extraction-side counterpart of 'list7z'.
 extractWith7z :: FilePath -> String -> FilePath -> IO (Either UnwrapError ())
 extractWith7z archivePath entryName temporaryDirectory = do
   (exitCode, _, stderr) <- readProcessWithExitCode "7z"
-    ["e", "-o" ++ temporaryDirectory, "-y", archivePath, entryName] ""
+    ["e", "-o" ++ temporaryDirectory, "-y", "--", archivePath, entryName] ""
   pure $ case exitCode of
     ExitSuccess -> Right ()
     _           -> Left (ArchiveToolFailed (ToolName "7z") (toolDiagnostic stderr))

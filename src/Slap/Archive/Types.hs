@@ -31,18 +31,15 @@ import GHC.Generics (Generic, Generically(..))
 -- | A container format slap can unwrap. These are genuine archives — an
 -- entry table, chaff to filter, a single file to pick out — not stream
 -- compressors.
-data ArchiveFormat = ArchiveZIP | ArchiveRAR | Archive7z
+data ArchiveFormat = ArchiveZIP | Archive7z
   deriving (Show, Eq, Generic)
   deriving (ToJSON) via Generically ArchiveFormat
 
--- | Recognize a container by its magic bytes (ZIP: 4 bytes, RAR and 7z:
--- 6 bytes each).
+-- | Recognize a container by its leading magic bytes.
 detectArchive :: ByteString -> Maybe ArchiveFormat
 detectArchive input
   | ByteString.length input < 4                     = Nothing
   | ByteString.take 4 input == "PK\x03\x04"         = Just ArchiveZIP
-  | ByteString.length input >= 6
-  , ByteString.take 6 input == "Rar!\x1a\x07"       = Just ArchiveRAR
   | ByteString.length input >= 6
   , ByteString.take 6 input == "7z\xbc\xaf\x27\x1c" = Just Archive7z
   | otherwise                                       = Nothing
@@ -50,7 +47,6 @@ detectArchive input
 -- | The human name of a container format, for diagnostics.
 archiveFormatName :: ArchiveFormat -> Text
 archiveFormatName ArchiveZIP = "ZIP"
-archiveFormatName ArchiveRAR = "RAR"
 archiveFormatName Archive7z  = "7z"
 
 -- | The external tools that can open a format, in the order slap tries
@@ -60,7 +56,6 @@ archiveFormatName Archive7z  = "7z"
 -- actually attempts.
 toolsFor :: ArchiveFormat -> [ToolName]
 toolsFor ArchiveZIP = []  -- read via rusty-slap
-toolsFor ArchiveRAR = [ToolName "unrar", ToolName "7z"]
 toolsFor Archive7z  = [ToolName "7z"]
 
 -- | The name of an external archive tool as looked up on @PATH@.
@@ -109,9 +104,10 @@ data UnwrapError
   | -- | Several entries are plausible patches; slap will not guess, so
     -- the user must extract the one they want.
     ArchiveHasManyCandidates [EntryName]
-  | -- | A tool reported a successful extraction but the named file was
-    -- not found in the temporary directory afterwards.
+  | -- | A tool reported a successful extraction, but the named file wasn't in the temporary directory afterwards.
     ExtractedEntryMissing EntryName
+  | -- | The tool extracted the entry, but the file it wrote could not be read.
+    ExtractedEntryUnreadable EntryName UnreadableReason
   | -- | slap's reader could not read the container.
     ArchiveUnreadable UnreadableReason
   deriving (Show, Eq, Generic)

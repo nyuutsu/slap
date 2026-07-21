@@ -1020,35 +1020,27 @@ pub unsafe extern "C" fn rusty_zip_entry_names(
     }
 }
 
-/// Extract one named entry's decompressed bytes from a ZIP. The name is a
-/// UTF-8 byte range. Rust allocates the output; caller frees with
-/// [`rusty_free`]. Returns 0 on success, -1 on failure — the cause flows
-/// through the error channel.
+/// Extract one entry's decompressed bytes from a ZIP by its central-directory index.
+/// Rust allocates the output; caller frees with [`rusty_free`]. Returns 0 on success,
+/// -1 on failure, the cause flowing through the error channel.
 ///
 /// # Safety
 /// - `input_address` must point to `input_length` readable bytes.
-/// - `name_address` must point to `name_length` readable bytes.
 /// - All four out-pointers must be valid, aligned, and writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rusty_zip_extract_entry(
     input_address:          *const u8,
     input_length:           usize,
-    name_address:           *const u8,
-    name_length:            usize,
+    entry_index:            usize,
     output_address_pointer: *mut *mut u8,
     output_length_pointer:  *mut usize,
     error_address_pointer:  *mut *mut u8,
     error_length_pointer:   *mut usize,
 ) -> i32 {
     let input = unsafe { view_caller_buffer(input_address, input_length) };
-    let name_bytes = unsafe { view_caller_buffer(name_address, name_length) };
-    let outcome = match std::str::from_utf8(name_bytes) {
-        Ok(entry_name) => zip::zip_extract_entry(input, entry_name),
-        Err(_) => Err("the requested entry name was not valid UTF-8".to_string()),
-    };
     unsafe {
         surface_outcome_to_caller(
-            outcome,
+            zip::zip_extract_entry_by_index(input, entry_index),
             output_address_pointer, output_length_pointer,
             error_address_pointer,  error_length_pointer,
         )
