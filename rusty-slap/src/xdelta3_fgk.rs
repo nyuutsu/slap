@@ -30,28 +30,31 @@
 //! kind's sections as one continuous thing — a bitstream for LZMA, a
 //! tree for FGK.
 //!
-//! The one mechanism that is noise in the C and wants to be structure
-//! here is the zero-weight escape. An unseen byte has no path yet, so
-//! all unseen bytes share a single zero-weight leaf — arriving there
-//! means "read more bits to learn which unseen byte." The count of
-//! still-unseen bytes is held as `2^exp + rem`, and the escape reads
-//! `exp` or `exp + 1` bits — the ordinary trick for indexing a range
-//! that is not a power of two — then walks that many steps down the
-//! unseen list. That dance codes the first occurrence of every byte;
-//! it has its own named shape here ('AdaptiveTree::nth_unseen' and the
-//! escape branch of 'decode_one_symbol') rather than the bit-twiddling
-//! xd3 spends on it.
+//! The one mechanism this pulls out into its own structure is the
+//! zero-weight escape. An unseen byte has no path yet, so all unseen
+//! bytes share a single zero-weight leaf — arriving there means "read
+//! more bits to learn which unseen byte." The count of still-unseen
+//! bytes is held as `2^exp + rem`, and the escape reads `exp` or
+//! `exp + 1` bits — the ordinary trick for indexing a range that is not
+//! a power of two — then walks that many steps down the unseen list.
+//! That dance codes the first occurrence of every byte; it has its own
+//! named shape here ('AdaptiveTree::nth_unseen' and the escape branch of
+//! 'decode_one_symbol'), where the C keeps it inline.
 //!
 //! Where xd3 threads its tree through an arena of `fgk_node`s wired by
 //! sibling/child/parent pointers and a block free-list, this holds the
-//! tree as a `Vec<Node>` indexed by 'NodeId' and maintains the
-//! sibling-weight order by index swaps. xd3's block bookkeeping exists
-//! only to find a node's block leader — the rightmost node of equal
-//! weight — in O(1); 'AdaptiveTree::block_front' finds it by walking
-//! the weight-ordered sibling list instead, which lets the whole
-//! block free-list (and the `fgk_promote` that maintains it) fall
-//! away. The update then reads as the moves it is: reveal the symbol,
-//! slide it to the front of its weight block, raise its weight, climb.
+//! tree as a `Vec<Node>` indexed by 'NodeId' and keeps the sibling-weight
+//! order by index swaps. What it cannot set aside is the block
+//! bookkeeping. A weight bump swaps a node with its block's leader, and a
+//! block is finer than "all nodes of one weight": xd3 only ever merges a
+//! raised node into the block to its right, so equal-weight nodes grouped
+//! at different times stay apart. Which nodes share a block is a fact
+//! about the update history, not about the present tree, so each node
+//! carries a 'BlockId' — xd3's `my_block`, held as an id rather than a
+//! pointer — and 'AdaptiveTree::block_front' reads the leader off it. The
+//! update then reads as the moves it is: reveal the symbol, slide it to
+//! its block's front, settle the block its raised weight belongs to,
+//! raise the weight, climb.
 
 // ── Wire / algorithm constants ───────────────────────────────────────
 
@@ -89,10 +92,9 @@ pub enum FgkFault {
     /// is one bit wider than the count strictly needs).
     ZeroIndexPastUnseenList { requested: usize, unseen: usize },
     /// A node's weight overflowed the 32-bit counter xd3 keeps it in
-    /// (`fgk_weight`, whose source carries a literal "TODO: Need to
-    /// test for overflow"). The root's weight is the count of symbols
-    /// decoded so far, so reaching this needs an output past 2^32
-    /// bytes. Surfaced rather than wrapped.
+    /// (`fgk_weight`). The root's weight is the count of symbols decoded
+    /// so far, so reaching this needs an output past 2^32 bytes. Surfaced
+    /// rather than wrapped.
     WeightCounterOverflow,
     /// A tree link that the shared invariant guarantees was found
     /// absent: a navigation step into a child an internal node must
@@ -199,6 +201,16 @@ impl<'section> BitReader<'section> {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct NodeId(usize);
 
+/// Which block a node belongs to (xd3's `my_block` pointer, held as an
+/// id instead). A block is the unit a weight bump swaps within, and its
+/// boundaries carry update history that the tree alone does not — see
+/// 'AdaptiveTree::block_front'. `BlockId(0)` is the sentinel a node
+/// carries while it has no real block: a leaf still unseen, or a
+/// zero-weight node the update never swaps. Real blocks are handed out
+/// from `1` up by 'AdaptiveTree::make_block'.
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+struct BlockId(usize);
+
 /// A node's place in the Huffman tree. A leaf carries no children, so
 /// for every symbol leaf both child links stay `None` for the node's
 /// whole life.
@@ -240,6 +252,7 @@ struct UnseenLinks {
 #[derive(Clone, Copy, Default)]
 struct Node {
     weight: u32,
+    block: BlockId,
     tree: TreeLinks,
     siblings: SiblingLinks,
     unseen: UnseenLinks,
@@ -247,12 +260,16 @@ struct Node {
 
 /// The decoder's whole state for one section: the node arena and the
 /// running accounting that the escape field reads. Mirrors xd3's
-/// `fgk_stream` minus the block free-list.
+/// `fgk_stream`, with the block free-list replaced by a per-node
+/// 'BlockId' and a counter that hands out fresh ones.
 struct AdaptiveTree {
     nodes: Vec<Node>,
     root: NodeId,
     /// The next free internal-node slot, handed out by 'reveal_symbol'.
     free_node: usize,
+    /// The next unused block id, handed out by 'make_block'. Starts at
+    /// `1`, leaving `BlockId(0)` as the never-placed sentinel.
+    next_block: usize,
     /// The head of the unseen-symbol list, or `None` once every symbol
     /// has been seen.
     remaining_zeros: Option<NodeId>,
@@ -277,6 +294,7 @@ impl AdaptiveTree {
             nodes: vec![Node::default(); TOTAL_NODES],
             root: NodeId(0),
             free_node: ALPHABET_SIZE,
+            next_block: 1,
             remaining_zeros: Some(NodeId(0)),
             zero_freq_count: ALPHABET_SIZE + 2,
             zero_freq_exp: 0,
@@ -395,8 +413,9 @@ impl AdaptiveTree {
     /// Update the tree after `symbol` was decoded — the running fold
     /// that keeps decoder and encoder in lockstep (`fgk_update_tree`).
     /// Reveal the symbol if this is its first sighting, then climb from
-    /// it to the root, at each level sliding the node to the front of
-    /// its weight block before raising its weight by one.
+    /// it to the root, at each level sliding the node to the front of its
+    /// block, settling that block's membership for the raised weight, and
+    /// raising the weight by one.
     fn update_after(&mut self, symbol: usize) -> Result<(), FgkFault> {
         let mut climbing = if self.node(NodeId(symbol)).weight == 0 {
             self.reveal_symbol(symbol)?
@@ -405,50 +424,120 @@ impl AdaptiveTree {
         };
         while climbing != self.root {
             self.slide_to_block_front(climbing)?;
+            self.settle_block_for_raised_weight(climbing);
             self.raise_weight(climbing)?;
             climbing = self.node(climbing).tree.parent.ok_or(FgkFault::TreeStructureCorrupt)?;
         }
         self.raise_weight(self.root)
     }
 
-    /// Raise one node's weight by one, refusing the 32-bit overflow xd3
-    /// leaves as a TODO.
+    /// Settle a node's block membership as its weight is about to rise by
+    /// one (`fgk_promote`), run at each climb level just after the slide
+    /// has made the node its old block's leader. The node leaves that
+    /// block — its former blockmates keep their id, and 'block_front'
+    /// re-reads their leader as the new rightmost, so the departure needs
+    /// no cleanup — and takes on the block one weight up: it joins the
+    /// block to its right when that block already holds the weight the
+    /// node is climbing to, and otherwise opens a block of its own.
+    ///
+    /// Two shapes divert from that rule before it applies. When a node's
+    /// left neighbour is its own right child — an internal node just above
+    /// a freshly-revealed symbol, its other child still the unseen leaf —
+    /// its own branch handles it, merging the node and that child into the
+    /// right block together when the weights line up. And a node whose
+    /// left neighbour is the still-unseen leaf is the leftmost real node,
+    /// with no lower block to have led, so it simply keeps its id.
+    fn settle_block_for_raised_weight(&mut self, node: NodeId) {
+        if self.node(node).weight == 0 {
+            return;
+        }
+        let left = self.node(node).siblings.left;
+        let right_child = self.node(node).tree.right_child;
+        let left_child_unseen = self
+            .node(node)
+            .tree
+            .left_child
+            .is_some_and(|child| self.node(child).weight == 0);
+
+        if left == right_child && left_child_unseen {
+            if let Some(joined) = self.right_block_to_join(node) {
+                self.node_mut(node).block = joined;
+                if let Some(left) = left {
+                    self.node_mut(left).block = joined;
+                }
+            }
+            return;
+        }
+
+        if left == self.remaining_zeros {
+            return;
+        }
+
+        self.node_mut(node).block = match self.right_block_to_join(node) {
+            Some(joined) => joined,
+            None => self.make_block(),
+        };
+    }
+
+    /// The block a climbing node merges into, if any: the block of its
+    /// right neighbour, but only when that neighbour already carries the
+    /// weight the node is rising to (`node.weight + 1`) and is not the
+    /// root. Otherwise the node opens a fresh block, so this answers
+    /// `None`.
+    fn right_block_to_join(&self, node: NodeId) -> Option<BlockId> {
+        let right = self.node(node).siblings.right?;
+        let joins = right != self.root && self.node(right).weight == self.node(node).weight + 1;
+        joins.then(|| self.node(right).block)
+    }
+
+    /// Raise one node's weight by one, refusing a 32-bit overflow rather
+    /// than wrapping.
     fn raise_weight(&mut self, id: NodeId) -> Result<(), FgkFault> {
         let raised = self.node(id).weight.checked_add(1).ok_or(FgkFault::WeightCounterOverflow)?;
         self.node_mut(id).weight = raised;
         Ok(())
     }
 
-    /// The leader of a node's weight block: the rightmost node of equal
-    /// weight in the sibling sequence. xd3 maintains this in O(1)
-    /// through its block free-list; the sibling sequence is weight-
-    /// ordered with equal weights contiguous, so walking right while the
-    /// weight holds finds the same node and lets the free-list go.
+    /// The leader of a node's block: the rightmost node sharing its block
+    /// id in the sibling sequence, which is where a weight bump swaps the
+    /// node to (`fgk_move_right`'s `block_leader`). A block's members are
+    /// contiguous in the sequence, so walking right while the id holds
+    /// finds the leader.
     ///
-    /// This is the sole consumer of the `left`/`right` links, which
-    /// raises whether the sequence wants to be a doubly-linked list at
-    /// all. It cannot simply be dropped: the relative order of two
-    /// equal-weight non-siblings is xd3's implicit numbering, which is
-    /// path-dependent — not a function of the current tree and weights —
-    /// so reproducing xd3's leader choice needs that order stored
-    /// somewhere. The links are one honest encoding of it; an explicit
-    /// per-node sequence number would be another, no smaller. Retiring
-    /// them is re-encoding, not elimination, so it stays out of scope
-    /// here.
+    /// The leader cannot be read off the tree and weights alone, which is
+    /// why the block id has to be carried. A block is finer than "all
+    /// nodes of one weight": xd3 merges a raised node only into the block
+    /// to its right, so a same-weight node that ends up to the left and
+    /// is never raised again stays a block of its own indefinitely. Two
+    /// equal-weight neighbours can thus sit in different blocks, and which
+    /// nodes were grouped is a fact about the update history, not about
+    /// the present shape. Walking the sequence by weight would fold those
+    /// separate blocks together and pick the wrong leader; walking by
+    /// block id keeps xd3's partition.
     fn block_front(&self, node: NodeId) -> NodeId {
-        let block_weight = self.node(node).weight;
+        let block = self.node(node).block;
         std::iter::successors(Some(node), |&member| self.node(member).siblings.right)
-            .take_while(|&member| self.node(member).weight == block_weight)
+            .take_while(|&member| self.node(member).block == block)
             .last()
-            .expect("the successors walk is seeded with node, whose weight equals block_weight, so last() is non-empty")
+            .expect("the successors walk is seeded with node, whose block equals block, so last() is non-empty")
     }
 
-    /// Slide a node to the front of its weight block (`fgk_move_right`):
-    /// exchange it with its block leader in both the sibling sequence
-    /// and the tree, so that the weight raise about to follow keeps the
-    /// sequence ordered. A no-op for a zero-weight node, for the leader
-    /// itself, or when the leader is the node's own parent — the three
-    /// guards xd3 spends before touching a link.
+    /// Hand out a fresh block id, for a node that opens a block of its own
+    /// (`fgk_make_block`). xd3 recycles freed blocks through a free list;
+    /// an id that simply stops being referenced needs no such recycling,
+    /// so the counter only ever climbs.
+    fn make_block(&mut self) -> BlockId {
+        let block = BlockId(self.next_block);
+        self.next_block += 1;
+        block
+    }
+
+    /// Slide a node to the front of its block (`fgk_move_right`): exchange
+    /// it with its block leader in both the sibling sequence and the tree,
+    /// so that the weight raise about to follow keeps the sequence
+    /// ordered. A no-op for a zero-weight node, for the leader itself, or
+    /// when the leader is the node's own parent — the three guards xd3
+    /// spends before touching a link.
     fn slide_to_block_front(&mut self, forward: NodeId) -> Result<(), FgkFault> {
         if self.node(forward).weight == 0 {
             return Ok(());
@@ -552,7 +641,14 @@ impl AdaptiveTree {
         let revealed = NodeId(symbol);
         if self.zero_freq_count == 1 {
             // The lone remaining symbol already sits in the NYT's tree
-            // slot as a childless leaf; the unseen list simply empties.
+            // slot as a childless leaf; the unseen list simply empties. It
+            // joins the block to its right when that block holds weight
+            // one, and otherwise opens a block of its own.
+            let right = self.node(revealed).siblings.right;
+            self.node_mut(revealed).block = match right {
+                Some(right) if self.node(right).weight == 1 => self.node(right).block,
+                _ => self.make_block(),
+            };
             self.remaining_zeros = None;
             return Ok(revealed);
         }
@@ -574,8 +670,11 @@ impl AdaptiveTree {
 
         if self.remaining_zeros == Some(self.root) {
             // The first symbol ever coded: the new internal node is the
-            // whole tree's new root.
+            // whole tree's new root, and the two fresh weight-zero nodes
+            // open a block each.
             self.root = new_internal;
+            self.node_mut(revealed).block = self.make_block();
+            self.node_mut(new_internal).block = self.make_block();
         } else {
             if let Some(successor) = head_right {
                 self.node_mut(successor).siblings.left = Some(new_internal);
@@ -583,6 +682,15 @@ impl AdaptiveTree {
             let head_parent = head_parent.ok_or(FgkFault::TreeStructureCorrupt)?;
             let parent_holds_head_right = self.node(head_parent).tree.right_child == Some(old_head);
             self.set_child(head_parent, parent_holds_head_right, new_internal);
+            // The new internal node joins the block to its right when that
+            // block already holds weight one, and otherwise opens its own;
+            // the newly-seen leaf shares whichever block that is.
+            let internal_block = match head_right {
+                Some(successor) if self.node(successor).weight == 1 => self.node(successor).block,
+                _ => self.make_block(),
+            };
+            self.node_mut(new_internal).block = internal_block;
+            self.node_mut(revealed).block = internal_block;
         }
 
         // Drop the symbol from the unseen list; the list's head advances

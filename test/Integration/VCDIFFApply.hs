@@ -37,7 +37,8 @@ vcdiffApplyTests _tier = do
   coreOnlyRows <- parseSpecFile (repo </> "test" </> "specs" </> "vcdiff-coreonly.txt")
   xdelta3Rows  <- parseSpecFile (repo </> "test" </> "specs" </> "vcdiff-xdelta3.txt")
   rowMaybes <- concat <$> mapM (planRow repo) (coreOnlyRows ++ xdelta3Rows)
-  pure (namedGroup "vcdiff-apply" rowMaybes)
+  fgkMaybes <- fgkBlockSplitTests repo
+  pure (namedGroup "vcdiff-apply" (rowMaybes ++ fgkMaybes))
 
 -- | A spec row becomes a runnable test only when both fixtures are
 -- present and xdelta3 resolves; otherwise it contributes a typed skip.
@@ -51,6 +52,30 @@ planRow repo fields = case fields of
        requireExternalTool Xdelta3 $ \_ ->
          pure [WillRun (mkApplyTest label basePath patchPath)]
   _ -> pure []  -- malformed spec row
+
+-- | A regression fixture for FGK's block bookkeeping. Its section is long
+-- enough that the adaptive tree develops a block finer than a full weight
+-- run — where the leader a weight bump swaps toward cannot be read from
+-- the weights alone (see @rusty-slap/src/xdelta3_fgk.rs@). The patch has
+-- no source, so all of it decodes through the FGK coder as one section;
+-- expected.bin is the reference decode, committed beside the patch so the
+-- check stands on its own without xdelta3 present.
+fgkBlockSplitTests :: FilePath -> IO [MaybeTest]
+fgkBlockSplitTests repo =
+  let patchPath    = repo </> "test" </> "data" </> "fgk-block-split" </> "patch.vcdiff"
+      expectedPath = repo </> "test" </> "data" </> "fgk-block-split" </> "expected.bin"
+  in requireFixture patchPath $ \_ ->
+     requireFixture expectedPath $ \_ ->
+       pure [WillRun (mkFgkBlockSplitTest patchPath expectedPath)]
+
+mkFgkBlockSplitTest :: FilePath -> FilePath -> TestTree
+mkFgkBlockSplitTest patchPath expectedPath =
+  testCase "fgk/a finer-than-weight block decodes to the reference output" $ do
+    patchBytes    <- ByteString.readFile patchPath
+    expectedBytes <- ByteString.readFile expectedPath
+    slapOutput    <- applyWithSlap patchBytes ByteString.empty
+    assertEqual "slap output differs from the reference decode"
+      (sha1Hex expectedBytes) (sha1Hex slapOutput)
 
 mkApplyTest :: String -> FilePath -> FilePath -> TestTree
 mkApplyTest label basePath patchPath =
