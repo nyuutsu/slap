@@ -224,7 +224,7 @@ export const makeUndoVerb = (host) => {
     if (undo.outcome?.reverted) return revertedVoice(undo.outcome.reverted);
     if (undo.outcome?.refused) return refusalVoice(undo.outcome.refused, 'undo');
     if (undo.outcome?.failed) return refusalVoice(undo.outcome.failed, 'undo');
-    if (undo.running) return workingVoice();
+    if (undo.running) return workingVoice(voiceLines.peeling);
     if (host.notice()) return plainVoice(host.notice());
     if (undo.patchIdentity?.refused)
       return html`<p class="refusal">${undo.patchIdentity.refused.spokenErrorSentence}</p>`;

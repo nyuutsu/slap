@@ -33,6 +33,10 @@ export const voiceLines = {
   undoDiffers: 'hmm — that doesn\'t look like the rom this patch makes.',
   undoUncheckable: 'this patch doesn\'t say what it makes, so i can\'t check this rom for you.',
   working: 'working…',
+  bottling: 'bottling it…',
+  rebottling: 'rebottling it…',
+  patching: 'patching…',
+  peeling: 'peeling it off…',
   cancelled: 'cancelled — nothing was written.',
   infoResting: 'hand me a patch — i\'ll tell you what it says about itself.',
   explainResting: 'hand me a patch — i\'ll show you what it does.',
@@ -53,8 +57,8 @@ export const voiceLines = {
 
 export const plainVoice = (line) => html`<p class="plain-line">${line}</p>`;
 
-export const workingVoice = () => html`
-  <p class="plain-line">${voiceLines.working}</p>
+export const workingVoice = (line = voiceLines.working) => html`
+  <p class="plain-line"><span class="breathing">${line}</span> <span class="elapsed" id="work-elapsed"></span></p>
   <div class="afterward"><button class="quiet-button" data-action="cancel-run">cancel</button></div>`;
 
 const bootFailureSentences = (bootFailureShape) => {

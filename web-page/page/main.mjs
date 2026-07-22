@@ -65,8 +65,11 @@ const host = {
   render: () => render(),
   surface: () => sessionIfOpen()?.surface ?? null,
   hasSession: () => sessionStanding.tag === 'SessionOpen',
-  fellow: Object.fromEntries(['nod', 'lean', 'smile', 'droop', 'settle', 'beginFidgeting']
-    .map((mood) => [mood, () => fellow?.[mood]()])),
+  fellow: {
+    ...Object.fromEntries(['nod', 'lean', 'smile', 'droop'].map((mood) => [mood, () => fellow?.[mood]()])),
+    beginFidgeting: () => { fellow?.beginFidgeting(); startElapsedClock(); },
+    settle: () => { fellow?.settle(); stopElapsedClock(); },
+  },
   download: (href, downloadName) => {
     const link = document.createElement('a');
     link.href = href; link.download = downloadName;
@@ -106,6 +109,25 @@ const verbTabsMarkup = () => {
   return html`${headlinerVerbs.map((verbName) => tab(verbName, false))}<span class="verb-gap"></span>
     ${quieterVerbs.map((verbName) => tab(verbName, true))}`;
 };
+
+// The crunch runs on a Worker, so the page thread stays free to tick the elapsed count.
+let elapsedClock = null;
+let workBeganAt = 0;
+const spellElapsed = (seconds) =>
+  seconds < 60 ? `${seconds}s`
+               : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
+const paintElapsed = () => {
+  const elapsedSpot = element('work-elapsed');
+  if (!elapsedSpot) return;
+  const seconds = Math.floor((performance.now() - workBeganAt) / 1000);
+  elapsedSpot.textContent = seconds >= 1 ? spellElapsed(seconds) : '';
+};
+const startElapsedClock = () => {
+  if (elapsedClock !== null) return;
+  workBeganAt = performance.now();
+  elapsedClock = setInterval(paintElapsed, 500);
+};
+const stopElapsedClock = () => { if (elapsedClock !== null) { clearInterval(elapsedClock); elapsedClock = null; } };
 
 const render = () => {
   const verb = verbs[currentVerb];

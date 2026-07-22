@@ -395,7 +395,7 @@ export const makeConvertVerb = (host) => {
     if (convert.outcome?.converted) return convertedVoice(convert.outcome.converted);
     if (convert.outcome?.refused) return refusalVoice(convert.outcome.refused, 'convert');
     if (convert.outcome?.failed) return refusalVoice(convert.outcome.failed, 'convert');
-    if (convert.running) return workingVoice();
+    if (convert.running) return workingVoice(voiceLines.rebottling);
     if (host.notice()) return plainVoice(host.notice());
     if (convert.patchIdentity?.refused)
       return html`<p class="refusal">${convert.patchIdentity.refused.spokenErrorSentence}</p>`;

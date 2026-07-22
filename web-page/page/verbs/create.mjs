@@ -221,7 +221,7 @@ export const makeCreateVerb = (host) => {
     if (create.outcome?.bottled) return bottledVoice(create.outcome.bottled);
     if (create.outcome?.refused) return refusalVoice(create.outcome.refused, 'create');
     if (create.outcome?.failed) return refusalVoice(create.outcome.failed, 'create');
-    if (create.running) return workingVoice();
+    if (create.running) return workingVoice(voiceLines.bottling);
     if (host.notice()) return plainVoice(host.notice());
     if (!create.original && !create.modified) return plainVoice(voiceLines.createResting);
     if (!create.modified) return plainVoice(voiceLines.createOriginalOnly);

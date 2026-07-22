@@ -272,6 +272,10 @@ button { font: inherit; cursor: pointer; }
   font-size: 14.5px;
 }
 .voice .plain-line { margin: 0; color: var(--ink-soft); }
+.voice .breathing { animation: breathing 1.9s ease-in-out infinite; }
+@keyframes breathing { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+.voice .elapsed { font-family: var(--mono); font-size: 12.5px; color: var(--whisper); font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .voice .breathing { animation: none; } }
 .voice .headline { font-family: var(--display); font-weight: 700; font-size: 24px; color: var(--grape); margin: 0 0 8px; line-height: 1.2; }
 .voice .headline .sparkle { color: var(--amber); font-size: 18px; }
 .voice .said { margin: 0 0 6px; }

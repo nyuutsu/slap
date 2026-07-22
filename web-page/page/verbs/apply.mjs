@@ -241,7 +241,7 @@ export const makeApplyVerb = (host) => {
     if (apply.outcome?.patched) return patchedVoice(apply.outcome.patched);
     if (apply.outcome?.refused) return refusalVoice(apply.outcome.refused, 'apply');
     if (apply.outcome?.failed) return refusalVoice(apply.outcome.failed, 'apply');
-    if (apply.running) return workingVoice();
+    if (apply.running) return workingVoice(voiceLines.patching);
     if (host.notice()) return plainVoice(host.notice());
     if (apply.patchIdentity?.refused)
       return html`<p class="refusal">${apply.patchIdentity.refused.spokenErrorSentence}</p>`;
