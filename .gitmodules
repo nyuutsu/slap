@@ -1,12 +1,12 @@
 [submodule "test/data"]
 	path = test/data
-	url = git@github.com:nyuutsu/slap-test-patches.git
+	url = ../slap-test-patches.git
 [submodule "docs"]
 	path = docs
-	url = git@github.com:nyuutsu/slap-format-documentation.git
+	url = ../slap-format-documentation.git
 [submodule "vendor/ram"]
 	path = vendor/ram
-	url = git@github.com:nyuutsu/slap-ram.git
+	url = ../ram.git
 [submodule "vendor/browser_wasi_shim"]
 	path = vendor/browser_wasi_shim
-	url = git@github.com:nyuutsu/browser_wasi_shim.git
+	url = ../browser_wasi_shim.git

@@ -1,7 +1,7 @@
 -- The wasm cross-build's project file; `make wasm` drives it.
 -- Mirrors cabal.project, with the extras the wasm32-wasi target needs.
 packages: .
-          -- the slap-ram submodule: ram-0.22.0 with a wasi arm on its MemMap conditional,
+          -- vendor/ram is a ram-0.22.0 fork with a wasi arm on its MemMap conditional,
           -- because upstream's if os(windows)/else hands wasm the Posix mmap module, whose constants wasi-libc does not have
           vendor/ram
 
