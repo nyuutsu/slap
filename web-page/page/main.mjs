@@ -254,15 +254,12 @@ const arriveAtVerb = (verbName) => {
 
 addEventListener('hashchange', () => arriveAtVerb(verbNamedByHash() ?? 'apply'));
 
-const countWord = (formatCount) => formatCount === 20 ? 'twenty' : String(formatCount);
-
 currentVerb = verbNamedByHash() ?? 'apply';
 render();
 seatMascot(element('fellow')).then((seated) => { fellow = seated; }).catch(console.error);
 openReactorSession().then((openedSession) => {
   sessionStanding = { tag: 'SessionOpen', session: openedSession };
   noticeLine = null;   // a "still getting set" answer is stale the moment the page is set
-  element('format-count').textContent = countWord(openedSession.surface.surfaceFormats.length);
   Object.values(verbs).forEach((verb) => verb.askAgain());
   render();
 }).catch((bootFailure) => {

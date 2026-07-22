@@ -6,4 +6,4 @@ All five families are licensed under the SIL Open Font License 1.1 (https://open
 - **Nunito** — Vernon Adams, Cyreal, Jacques Le Bailly. Variable weight axis in one file.
 - **Space Mono** — Colophon Foundry, for Google Fonts.
 - **IM Fell English** — the Fell Types, digitally reproduced by Igino Marini.
-- **Sarasa Mono J** — Belleve Invis, building on Iosevka; the subset nyuu.page serves.
+- **Sarasa Mono J** — Belleve Invis, building on Iosevka; subset here from the full font.
