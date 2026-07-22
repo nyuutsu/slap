@@ -32,8 +32,9 @@ import Slap.Display.Primitives (padHex, padNum, padRight, showSigned, hexDump)
 import Slap.Display.Glyph (spacePaddedEnDash)
 import Slap.Measure (Offset(..), Length(..), Delta(..), SignedOffset(unSignedOffset),
                      byteLength,
-                     OffsetRange(..), rangeLastByte, advance, distance)
+                     OffsetRange(..), rangeLastByte, advance, distance, writtenOffsetRange)
 import Slap.Status (CursorKind, renderCursorKind)
+import Slap.Status.Vocabulary (slapAddressableCeiling)
 import Data.Aeson (ToJSON)
 import Data.Array (Array, Ix, accumArray, assocs, elems)
 import Data.Bits (xor)
@@ -165,7 +166,7 @@ renderAnalysisFull info analysis mSource = Text.unlines $ joinSections
     summaryLines (Summary summary)  = [renderSummaryLine summary]
 
     renderSection (SectionRegions regions) =
-      zipWith renderRegion [1..] regions
+      zipWith renderRegion [0..] regions
 
     renderSection (SectionLabeled label fields) =
       label : map renderLabeledField fields
@@ -350,7 +351,9 @@ renderAnalysisSummary info analysis mSource = Text.unlines $ joinSections
     sectionRegions (SectionText _)      = []
 
     -- Modified bytes breakdown
-    totalModified = sum (map (unLength . regionSize) allRegions)
+    -- Summed at 'Integer': a hand-built patch can carry region sizes that overflow 'Int64' in aggregate,
+    -- and the display should show the true total rather than a wrapped one.
+    totalModified = sum (map (toInteger . unLength . regionSize) allRegions)
     payloadCounts = foldl' countPayload (PayloadCounts 0 0 0 0 0) allRegions
     countPayload counts region = case regionPayload region of
       PayloadWrite _  -> counts { writeCount = writeCount counts + 1 }
@@ -375,20 +378,15 @@ renderAnalysisSummary info analysis mSource = Text.unlines $ joinSections
       | otherwise = ["modified:    " <> commaNum totalModified
                      <> " bytes" <> breakdownString]
 
-    -- Offset range (Nothing for empty patches — no partial minimum/maximum)
     offsetRange :: Maybe OffsetRange
-    offsetRange
-      | null allRegions = Nothing
-      | otherwise =
-          let firstAffectedOffset = minimum (map regionOffset allRegions)
-              endOfLastRecord     = maximum [ advance (regionOffset region) (regionSize region)
-                                            | region <- allRegions ]
-          in Just OffsetRange
-              { rangeStart  = firstAffectedOffset
-              , rangeLength = distance firstAffectedOffset endOfLastRecord
-              }
+    offsetRange =
+      writtenOffsetRange [ (regionOffset region, regionSize region) | region <- allRegions ]
+    -- A patch that covers bytes but has no range reached past what an 'Offset' carries, which is the only other way
+    -- 'writtenOffsetRange' declines to state one.
     rangeLine = case offsetRange of
-      Nothing    -> ["range:       (empty patch)"]
+      Nothing
+        | all ((== Length 0) . regionSize) allRegions -> ["range:       (empty patch)"]
+        | otherwise -> ["range:       (a record reaches past " <> slapAddressableCeiling <> ")"]
       Just range -> ["range:       0x" <> padHex 6 (unOffset (rangeStart range))
                      <> spacePaddedEnDash <> "0x" <> padHex 6 (unOffset (rangeLastByte range))]
 
@@ -544,11 +542,13 @@ renderAnalysisSummary info analysis mSource = Text.unlines $ joinSections
            _               -> []
 
 -- | Format an integer with comma grouping.
-commaNum :: (Num number, Ord number, Show number) => number -> Text
-commaNum number
-  | number < 0     = "-" <> commaNum (negate number)
-  | otherwise = Text.reverse (insertCommas (Text.reverse (renderAsText number)))
+-- The sign is split off the rendered digits rather than negated: @negate minBound@ stays negative, and would loop.
+commaNum :: Show number => number -> Text
+commaNum number = case Text.stripPrefix "-" (renderAsText number) of
+  Just digits -> "-" <> groupFromRight digits
+  Nothing     -> groupFromRight (renderAsText number)
   where
+    groupFromRight = Text.reverse . insertCommas . Text.reverse
     insertCommas digits
       | Text.null digits = ""
       | otherwise =

@@ -15,7 +15,7 @@ import Slap.Display.Analysis
     , Annotation(..), OffsetKind(..)
     )
 import Slap.Display.Common (InfoLine, Tally(..), CountUnit(..), ByteCount(..))
-import Slap.Measure (OffsetRange(..), advance, byteLength, distance)
+import Slap.Measure (OffsetRange, byteLength, writtenOffsetRange)
 import Data.Vector (Vector)
 
 import qualified Data.Vector as Vector
@@ -58,15 +58,5 @@ pmsrRecordRegion record = AnalysisRegion
 -- | Consumed by the cheap display path's 'Slap.Display.Info.PatchInfo' construction;
 -- 'Nothing' on an empty stream so the display layer suppresses the range line.
 pmsrRecordsRange :: Vector PMSRRecord -> Maybe OffsetRange
-pmsrRecordsRange records
-  | Vector.null records = Nothing
-  | otherwise =
-      let firstAffectedOffset = Vector.minimum (Vector.map pmsrOffset records)
-          endOfLastRecord     = Vector.maximum (Vector.map recordEndOffset records)
-      in Just OffsetRange
-          { rangeStart  = firstAffectedOffset
-          , rangeLength = distance firstAffectedOffset endOfLastRecord
-          }
-  where
-    recordEndOffset record =
-      advance (pmsrOffset record) (byteLength (pmsrData record))
+pmsrRecordsRange records =
+  writtenOffsetRange (Vector.map (\record -> (pmsrOffset record, byteLength (pmsrData record))) records)

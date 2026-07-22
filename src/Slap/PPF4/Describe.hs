@@ -7,7 +7,7 @@ module Slap.PPF4.Describe
 
 import Slap.PPF4.Types (PPF4Patch(..), PPF4Replace(..), PPF4Append(..))
 import Slap.Measure (Offset(Offset), Length(..),
-                     OffsetRange(..), advance, byteLength, distance)
+                     OffsetRange, advance, byteLength, writtenOffsetRange)
 import Slap.Display.Common (InfoLine(..),
                      Tally(..), CountUnit(Records), ByteCount(TotalPayloadBytes))
 import Slap.Display.Analysis
@@ -91,22 +91,6 @@ appendRegion displayOffset (PPF4Append payloadBytes) = AnalysisRegion
 -- Display range
 ----------------------------------------------------------------------------
 
--- | The 'OffsetRange' spanning a non-empty list of PPF4 'Replace'
--- records, consumed by the cheap display path's
--- 'Slap.Display.Info.PatchInfo' construction. Append records are
--- excluded — they have no addressable offset (PPF4 places appended
--- bytes at the end of the file, with no per-record offset on the
--- wire). Returns 'Nothing' on an empty list so the display layer
--- suppresses the range line.
 ppf4ReplacesRange :: [PPF4Replace] -> Maybe OffsetRange
-ppf4ReplacesRange [] = Nothing
 ppf4ReplacesRange replaces =
-  let firstAffectedOffset = minimum (map replaceOffset replaces)
-      endOfLastRecord     = maximum (map replaceEndOffset replaces)
-  in Just OffsetRange
-      { rangeStart  = firstAffectedOffset
-      , rangeLength = distance firstAffectedOffset endOfLastRecord
-      }
-  where
-    replaceEndOffset replace =
-      advance (replaceOffset replace) (byteLength (replaceData replace))
+  writtenOffsetRange [ (replaceOffset replace, byteLength (replaceData replace)) | replace <- replaces ]

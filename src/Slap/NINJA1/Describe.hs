@@ -16,7 +16,7 @@ import Slap.Checksum (showCRC32, MD5Hash(..), SHA1Hash(..))
 import Slap.Display.Common (InfoLine(..),
                      Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Display.Primitives (hexByteString)
-import Slap.Measure (OffsetRange(..), advance, byteLength, distance)
+import Slap.Measure (OffsetRange, byteLength, writtenOffsetRange)
 
 ----------------------------------------------------------------------------
 -- Info
@@ -62,17 +62,6 @@ makeNINJA1Region (NINJA1Record recordOffset recordPayload) = AnalysisRegion
 -- Display range
 ----------------------------------------------------------------------------
 
--- | Consumed by the cheap display path's 'Slap.Display.Info.PatchInfo' construction;
--- 'Nothing' on an empty stream so the display layer suppresses the range line.
 ninja1RecordsRange :: [NINJA1Record] -> Maybe OffsetRange
-ninja1RecordsRange [] = Nothing
 ninja1RecordsRange records =
-  let firstAffectedOffset = minimum (map ninja1RecordOffset records)
-      endOfLastRecord     = maximum (map recordEndOffset records)
-  in Just OffsetRange
-      { rangeStart  = firstAffectedOffset
-      , rangeLength = distance firstAffectedOffset endOfLastRecord
-      }
-  where
-    recordEndOffset record =
-      advance (ninja1RecordOffset record) (byteLength (ninja1RecordData record))
+  writtenOffsetRange [ (ninja1RecordOffset record, byteLength (ninja1RecordData record)) | record <- records ]

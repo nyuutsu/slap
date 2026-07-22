@@ -93,13 +93,13 @@ impl Yay0Header {
         }
         if header.link_offset > input.len() {
             return Err(format!(
-                "link offset beyond file (offset {}, file {} bytes)",
+                "the compressed data is corrupt: it points past the end of the file (link offset 0x{:x}, file {} bytes)",
                 header.link_offset, input.len()
             ));
         }
         if header.chunk_offset > input.len() {
             return Err(format!(
-                "chunk offset beyond file (offset {}, file {} bytes)",
+                "the compressed data is corrupt: it points past the end of the file (chunk offset 0x{:x}, file {} bytes)",
                 header.chunk_offset, input.len()
             ));
         }
@@ -309,13 +309,13 @@ mod tests {
     #[test]
     fn link_offset_beyond_file_errors() {
         let blob = yay0_blob(1, 0xFFFF_FFFF, 0x10, &[0u8; 4]);
-        assert!(yay0_decompress(&blob).unwrap_err().starts_with("link offset beyond file"));
+        assert!(yay0_decompress(&blob).unwrap_err().contains("link offset"));
     }
 
     #[test]
     fn chunk_offset_beyond_file_errors() {
         let blob = yay0_blob(1, 0x10, 0xFFFF_FFFF, &[0u8; 4]);
-        assert!(yay0_decompress(&blob).unwrap_err().starts_with("chunk offset beyond file"));
+        assert!(yay0_decompress(&blob).unwrap_err().contains("chunk offset"));
     }
 
     #[test]

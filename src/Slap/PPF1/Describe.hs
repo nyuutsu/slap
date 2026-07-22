@@ -13,8 +13,7 @@ module Slap.PPF1.Describe
   ) where
 
 import Slap.PPF1.Types (PPF1Patch(..), PPF1Record(..))
-import Slap.Measure (OffsetRange(..),
-                     advance, byteLength, distance)
+import Slap.Measure (OffsetRange, byteLength, writtenOffsetRange)
 import Slap.Display.Common (InfoLine(..),
                             Tally(..), CountUnit(Records),
                             ByteCount(TotalPayloadBytes))
@@ -60,14 +59,5 @@ analyzePPF1 patch = PatchAnalysis
       }
 
 ppf1RecordsRange :: [PPF1Record] -> Maybe OffsetRange
-ppf1RecordsRange [] = Nothing
 ppf1RecordsRange records =
-  let firstAffectedOffset = minimum (map ppf1RecordOffset records)
-      endOfLastRecord     = maximum (map recordEndOffset records)
-  in Just OffsetRange
-      { rangeStart  = firstAffectedOffset
-      , rangeLength = distance firstAffectedOffset endOfLastRecord
-      }
-  where
-    recordEndOffset record =
-      advance (ppf1RecordOffset record) (byteLength (ppf1RecordPayload record))
+  writtenOffsetRange [ (ppf1RecordOffset record, byteLength (ppf1RecordPayload record)) | record <- records ]

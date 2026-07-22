@@ -68,7 +68,7 @@ import Slap.Display.Analysis
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..), renderAsText)
 import Slap.Display.Primitives (padHex, renderPrintableASCIIOrHex)
 import Slap.Measure (Offset(Offset), FileSize(..),
-                     OffsetRange(..), advance, distance)
+                     OffsetRange, writtenOffsetRange)
 
 import Data.Vector (Vector)
 
@@ -241,11 +241,7 @@ renderOffsetWidth :: OffsetWidth -> Text
 renderOffsetWidth Offset24 = "24-bit"
 renderOffsetWidth Offset32 = "32-bit"
 
--- | Render a variant's maximum addressable offset as a zero-padded
--- hex literal. Eight hex digits accommodates the largest
--- 'IPS32' ceiling (@0xFFFFFFFF@); 'StandardIPS''s smaller
--- @0xFFFFFF@ gets the same eight-digit padding for visual
--- alignment across variants.
+-- | Eight hex digits: enough for 'IPS32''s @0xFFFFFFFF@ ceiling, and 'StandardIPS' pads to match for aligned columns.
 renderMaxOffset :: Offset -> Text
 renderMaxOffset (Offset offsetValue) = "0x" <> padHex 8 offsetValue
 
@@ -253,38 +249,14 @@ renderMaxOffset (Offset offsetValue) = "0x" <> padHex 8 offsetValue
 -- Display range
 ----------------------------------------------------------------------------
 
--- | The 'OffsetRange' spanning a non-empty IPS record stream. Used by
--- the cheap display path's 'Slap.Display.Info.PatchInfo' construction
--- on plain IPS, IPS32, and EBP — all three carry the same record
--- shape, so a single helper covers them.
--- 'Nothing' on an empty stream keeps the display layer from printing an empty @0x0 - 0x0@ range line.
 ipsRecordsRange :: Vector IPSRecord -> Maybe OffsetRange
-ipsRecordsRange records
-  | Vector.null records = Nothing
-  | otherwise =
-      let firstAffectedOffset = Vector.minimum (Vector.map ipsRecordOffset records)
-          endOfLastRecord     = Vector.maximum (Vector.map recordEndOffset records)
-      in Just OffsetRange
-          { rangeStart  = firstAffectedOffset
-          , rangeLength = distance firstAffectedOffset endOfLastRecord
-          }
-  where
-    recordEndOffset record =
-      advance (ipsRecordOffset record) (recordPayloadLength record)
+ipsRecordsRange records =
+  writtenOffsetRange (Vector.map (\record -> (ipsRecordOffset record, recordPayloadLength record)) records)
 
 ----------------------------------------------------------------------------
 -- Shape-recognized byte display
 ----------------------------------------------------------------------------
 
--- | Render a raw marker byte sequence (the variant's magic or EOF
--- marker, as it appears on the wire) for inclusion in an 'InfoLine'.
--- Returns the bytes decoded as ASCII when every byte is in the
--- printable ASCII range — the common case for every variant slap
--- supports, since @"PATCH"@, @"IPS32"@, @"EOF"@, and @"EEOF"@ are
--- all printable — and falls back to a hex dump when any byte is
--- outside that range. The fallback exists so a hypothetical future
--- variant with a non-ASCII marker still renders legibly instead of
--- smuggling control bytes into the info stream.
 renderMarkerBytes :: ByteString -> Text
 renderMarkerBytes = renderPrintableASCIIOrHex
 

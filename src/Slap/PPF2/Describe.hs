@@ -16,7 +16,7 @@ import Slap.PPF2.Types (PPF2Patch(..), PPF2Record(..),
                         PPF2CarriedFileId(..),
                         unPPF2SourceSize,
                         ppf2ValidationOffset)
-import Slap.Measure (OffsetRange(..), advance, byteLength, distance)
+import Slap.Measure (OffsetRange, byteLength, writtenOffsetRange)
 import Slap.Display.Common (InfoLine(..),
                             Tally(..), CountUnit(Records),
                             ByteCount(TotalPayloadBytes), renderAsText, renderOffsetAsHex)
@@ -84,14 +84,5 @@ analyzePPF2 patch = PatchAnalysis
       }
 
 ppf2RecordsRange :: [PPF2Record] -> Maybe OffsetRange
-ppf2RecordsRange [] = Nothing
 ppf2RecordsRange records =
-  let firstAffectedOffset = minimum (map ppf2RecordOffset records)
-      endOfLastRecord     = maximum (map recordEndOffset records)
-  in Just OffsetRange
-      { rangeStart  = firstAffectedOffset
-      , rangeLength = distance firstAffectedOffset endOfLastRecord
-      }
-  where
-    recordEndOffset record =
-      advance (ppf2RecordOffset record) (byteLength (ppf2RecordPayload record))
+  writtenOffsetRange [ (ppf2RecordOffset record, byteLength (ppf2RecordPayload record)) | record <- records ]
