@@ -202,16 +202,19 @@ export const makeApplyVerb = (host) => {
         host.fellow.droop();
       }
       host.render();
+      host.carryFocusToAnswer();
     }).catch((jobFailure) => {
       host.fellow.settle();
       if (host.wasCancelled(jobFailure)) {
         apply.act = { tag: 'AtRest' };
         host.setNotice(voiceLines.cancelled);
-      } else {
-        apply.act = { tag: 'Fell', sentence: jobFailure.message, advisories: [] };
-        host.fellow.droop();
+        host.render();
+        return;
       }
+      apply.act = { tag: 'Fell', sentence: jobFailure.message, advisories: [] };
+      host.fellow.droop();
       host.render();
+      host.carryFocusToAnswer();
     });
   };
 
@@ -303,21 +306,12 @@ export const makeApplyVerb = (host) => {
     actMarkup: () => {
       if (apply.act.tag !== 'AtRest') return html``;
       const ready = host.hasSession() && apply.patch && apply.rom && !refusalCertain();
-      return html`<button class="run" data-action="run" ?disabled=${!ready}>${runLabel}</button>`;
+      return html`<button class="run" type="submit" form="stage" ?disabled=${!ready}>${runLabel}</button>`;
     },
     admitDroppedFile: (sorting, file) => admitFile(sorting === Sorting.AsPatch ? 'patch' : 'rom', file),
     admitPickedFile,
     askAgain: askUnanswered,
     actions: {
-      'set-framing': ({ framing }) => reweighSource(() => {
-        apply.framing = framing === 'TakeInputAsIs'
-          ? { tag: 'TakeInputAsIs', console: null }
-          : { tag: framing, console: apply.framing.console ?? preseededConsoleRow(host.surface().surfaceConsoleHeaders) };
-      }),
-      'set-console': ({ console: consoleToken }) => reweighSource(() => {
-        apply.framing.console = host.surface().surfaceConsoleHeaders
-          .find((row) => row.consoleToken === consoleToken);
-      }),
       run: runApply,
       'cancel-run': () => { if (actRunning()) apply.act.cancel(); },
       'swap-seats': () => {
@@ -338,6 +332,15 @@ export const makeApplyVerb = (host) => {
       }),
       dialect: (checked) => rereadPatch(() => {
         apply.ppf1Origin = checked ? 'PPF1OriginAmiga' : 'PPF1OriginPC';
+      }),
+      framing: (framingTag) => reweighSource(() => {
+        apply.framing = framingTag === 'TakeInputAsIs'
+          ? { tag: 'TakeInputAsIs', console: null }
+          : { tag: framingTag, console: apply.framing.console ?? preseededConsoleRow(host.surface().surfaceConsoleHeaders) };
+      }),
+      console: (consoleToken) => reweighSource(() => {
+        apply.framing.console = host.surface().surfaceConsoleHeaders
+          .find((row) => row.consoleToken === consoleToken);
       }),
     },
   };

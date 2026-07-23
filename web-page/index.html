@@ -10,12 +10,14 @@
 </head>
 <body>
 
+<a class="skip-link" href="#stage">skip to the patching</a>
+
 <div class="page">
 
   <header class="masthead">
     <span class="sticker">
       <img src="art/bandage.svg" alt="" width="26" height="26">
-      <span class="sticker-word">slap</span>
+      <h1 class="sticker-word">slap</h1>
     </span>
     <a class="motd" href="https://github.com/nyuutsu/slap/releases">
       <span class="motd-banner">
@@ -30,7 +32,7 @@
     </a>
   </header>
 
-  <nav class="verbs" id="verbs" aria-label="what to do"></nav>
+  <nav class="verbs" id="verbs" role="tablist" aria-label="what to do"></nav>
 
   <main>
     <noscript>
@@ -38,16 +40,16 @@
         anything at all. if you would rather it did not run in a browser: the same slap runs at a terminal, and asks
         nothing of the sort. it is on <a href="https://github.com/nyuutsu/slap">github</a>.</p>
     </noscript>
-    <section class="stage" id="stage"></section>
+    <form class="stage" id="stage" role="tabpanel"></form>
 
-    <section class="answer">
+    <section class="answer" aria-label="the answer">
       <div class="fellow-seat" id="fellow" aria-hidden="true"></div>
-      <div class="voice" id="voice" aria-live="polite"></div>
+      <div class="voice" id="voice" aria-live="polite" tabindex="-1"></div>
     </section>
 
-    <section class="tutor" id="tutor"></section>
+    <section class="tutor" id="tutor" aria-label="command equivalent"></section>
 
-    <section class="act" id="act"></section>
+    <div class="act" id="act"></div>
   </main>
 
   <footer class="signature">

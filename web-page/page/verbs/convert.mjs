@@ -3,7 +3,7 @@
 import { html, nothing } from '../../vendor/lit-html/lit-html.js';
 import { Verdict, CheckVerdict, Sorting, EmbeddedField } from './../engine-vocabulary.mjs';
 import { groupMarkup, toggleMarkup, seatSlotMarkup, heldSeatMarkup, inertSlotMarkup,
-         headerControlMarkup, encodingPickerMarkup, preseededConsoleRow } from './../controls.mjs';
+         headerControlMarkup, encodingPickerMarkup, preseededConsoleRow, chipRadioMarkup } from './../controls.mjs';
 import { applyFactsCardMarkup } from './../facts-card.mjs';
 import { voiceLines, plainVoice, workingVoice, convertedVoice, blockedVoice, refusalVoice,
          advisoryMarkup } from './../answer-surface.mjs';
@@ -283,16 +283,19 @@ export const makeConvertVerb = (host) => {
         host.fellow.droop();
       }
       host.render();
+      host.carryFocusToAnswer();
     }).catch((jobFailure) => {
       host.fellow.settle();
       if (host.wasCancelled(jobFailure)) {
         convert.act = { tag: 'AtRest' };
         host.setNotice(voiceLines.cancelled);
-      } else {
-        convert.act = { tag: 'Fell', sentence: jobFailure.message, advisories: [] };
-        host.fellow.droop();
+        host.render();
+        return;
       }
+      convert.act = { tag: 'Fell', sentence: jobFailure.message, advisories: [] };
+      host.fellow.droop();
       host.render();
+      host.carryFocusToAnswer();
     });
   };
 
@@ -326,26 +329,27 @@ export const makeConvertVerb = (host) => {
       || (verdict?.tag === Verdict.Differs && convert.sourceReport.sourceRescue.length > 1);
   };
 
-  const laneChips = (laneAction, laneState, carried) => {
+  const laneChoiceMarkup = (settingName, fieldName, laneState, carried) => {
     const lane = laneOf(laneState, carried);
-    const chip = (token, label) => html`<button class="chip${lane === token ? ' on' : ''}"
-      aria-pressed="${lane === token}" data-action="${laneAction}" data-lane="${token}">${label}</button>`;
-    return html`<div class="choice-row">
+    const chip = (token, label) =>
+      chipRadioMarkup({ groupName: settingName, setting: settingName, token, checked: lane === token, label });
+    return html`<fieldset class="choice-fieldset"><legend class="visually-hidden">${fieldLabel(fieldName)}</legend>
+    <div class="choice-row">
       ${carried ? chip('keep', 'keep theirs') : nothing}
       ${chip('typed', carried ? 'replace it' : 'type it')}
       ${chip('file', 'use a file')}
       ${carried ? chip('drop', 'drop it') : nothing}
-    </div>`;
+    </div></fieldset>`;
   };
 
   const blobLanesMarkup = () => {
     const lane = laneOf(convert.blob, fieldCarried('MetadataEmbeddedBlob'));
     return html`
       <p class="choice-label">${storiedText('MetadataEmbeddedBlob', fieldLabel('MetadataEmbeddedBlob'))}</p>
-      ${laneChips('blob-lane', convert.blob, fieldCarried('MetadataEmbeddedBlob'))}
-      ${lane === 'typed' ? html`<textarea class="field-textarea" data-setting="blob-text"
+      ${laneChoiceMarkup('blob-lane', 'MetadataEmbeddedBlob', convert.blob, fieldCarried('MetadataEmbeddedBlob'))}
+      ${lane === 'typed' ? html`<textarea class="field-textarea" data-setting="blob-text" aria-labelledby="story-MetadataEmbeddedBlob"
           placeholder="a name, a version, a note: whatever you'd want found in here" .value=${convert.blob.text}></textarea>` : nothing}
-      ${lane === 'file' ? html`<div class="choice-row"><button class="chip" data-action="pick-file"
+      ${lane === 'file' ? html`<div class="choice-row"><button type="button" class="chip" data-action="pick-file"
           data-seat="blob-file">${convert.blob.file?.name ?? 'choose a file…'}</button></div>
         <p class="aside">Any file at all; the bytes go in exactly as they are.</p>` : nothing}`;
   };
@@ -354,11 +358,12 @@ export const makeConvertVerb = (host) => {
     const lane = laneOf(convert.diz, fieldCarried('MetadataFileIdDiz'));
     return html`
       <p class="choice-label">${storiedText('MetadataFileIdDiz', fieldLabel('MetadataFileIdDiz'))}</p>
-      ${laneChips('diz-lane', convert.diz, fieldCarried('MetadataFileIdDiz'))}
+      ${laneChoiceMarkup('diz-lane', 'MetadataFileIdDiz', convert.diz, fieldCarried('MetadataFileIdDiz'))}
       ${lane === 'typed' ? countedTextareaMarkup({ setting: 'diz-text',
           placeholder: "the FILE_ID.DIZ text, as you'd like it carried",
-          typed: convert.diz.text, ceiling: bench.fieldCeiling('MetadataFileIdDiz') }) : nothing}
-      ${lane === 'file' ? html`<div class="choice-row"><button class="chip" data-action="pick-file"
+          typed: convert.diz.text, ceiling: bench.fieldCeiling('MetadataFileIdDiz'),
+          labelledBy: 'story-MetadataFileIdDiz' }) : nothing}
+      ${lane === 'file' ? html`<div class="choice-row"><button type="button" class="chip" data-action="pick-file"
           data-seat="diz-file">${convert.diz.file?.name ?? 'choose a file…'}</button></div>` : nothing}`;
   };
 
@@ -469,7 +474,7 @@ export const makeConvertVerb = (host) => {
     actMarkup: () => {
       if (convert.act.tag !== 'AtRest') return html``;
       const ready = host.hasSession() && convert.patch && convert.formatToken && !refusalCertain();
-      return html`<button class="run" data-action="run" ?disabled=${!ready}>${runLabel}</button>`;
+      return html`<button class="run" type="submit" form="stage" ?disabled=${!ready}>${runLabel}</button>`;
     },
     admitDroppedFile: (sorting, file) => (sorting === Sorting.AsPatch ? admitPatch(file) : admitSource(file)),
     admitPickedFile: (seat, file) => {
@@ -481,25 +486,8 @@ export const makeConvertVerb = (host) => {
     askAgain: askUnanswered,
     storiesQuiet: () => convert.act.tag !== 'AtRest',
     actions: {
-      ...bench.actions,
-      'choose-format': ({ token }) => {
-        if (actRunning()) return;
-        recheck(() => { convert.formatToken = token; });
-      },
       'more-formats': () => { convert.moreFormatsOpen = !convert.moreFormatsOpen; host.render(); },
       'more-encodings': () => { convert.moreEncodingsOpen = !convert.moreEncodingsOpen; host.render(); },
-      'blob-lane': ({ lane }) => recheck(() => { convert.blob.lane = lane; }),
-      'diz-lane': ({ lane }) => recheck(() => { convert.diz.lane = lane; }),
-      'set-framing': ({ framing }) => reweighSource(() => {
-        convert.framing = framing === 'TakeInputAsIs'
-          ? { tag: 'TakeInputAsIs', console: null }
-          : { tag: framing, console: convert.framing.console ?? preseededConsoleRow(host.surface().surfaceConsoleHeaders) };
-      }),
-      'set-console': ({ console: consoleToken }) => reweighSource(() => {
-        convert.framing.console = host.surface().surfaceConsoleHeaders
-          .find((row) => row.consoleToken === consoleToken);
-      }),
-      'set-encoding': ({ token }) => rereadPatch(() => { convert.metadataEncoding = token; }),
       run: runConvert,
       'cancel-run': () => { if (actRunning()) convert.act.cancel(); },
       'look-inside': () => {
@@ -516,8 +504,24 @@ export const makeConvertVerb = (host) => {
     },
     settings: {
       ...bench.settings,
+      format: (formatToken) => {
+        if (actRunning()) return;
+        recheck(() => { convert.formatToken = formatToken; });
+      },
+      'blob-lane': (lane) => recheck(() => { convert.blob.lane = lane; }),
+      'diz-lane': (lane) => recheck(() => { convert.diz.lane = lane; }),
       'blob-text': (value) => recheck(() => { convert.blob.text = value; }),
       'diz-text': (value) => recheck(() => { convert.diz.text = value; }),
+      framing: (framingTag) => reweighSource(() => {
+        convert.framing = framingTag === 'TakeInputAsIs'
+          ? { tag: 'TakeInputAsIs', console: null }
+          : { tag: framingTag, console: convert.framing.console ?? preseededConsoleRow(host.surface().surfaceConsoleHeaders) };
+      }),
+      console: (consoleToken) => reweighSource(() => {
+        convert.framing.console = host.surface().surfaceConsoleHeaders
+          .find((row) => row.consoleToken === consoleToken);
+      }),
+      encoding: (encodingToken) => rereadPatch(() => { convert.metadataEncoding = encodingToken; }),
       verification: (checked) => {
         convert.verificationPolicy = checked ? 'SkipVerification' : 'EnforceVerification';
         host.render();

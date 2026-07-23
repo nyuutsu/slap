@@ -185,16 +185,19 @@ export const makeUndoVerb = (host) => {
         host.fellow.droop();
       }
       host.render();
+      host.carryFocusToAnswer();
     }).catch((jobFailure) => {
       host.fellow.settle();
       if (host.wasCancelled(jobFailure)) {
         undo.act = { tag: 'AtRest' };
         host.setNotice(voiceLines.cancelled);
-      } else {
-        undo.act = { tag: 'Fell', sentence: jobFailure.message, advisories: [] };
-        host.fellow.droop();
+        host.render();
+        return;
       }
+      undo.act = { tag: 'Fell', sentence: jobFailure.message, advisories: [] };
+      host.fellow.droop();
       host.render();
+      host.carryFocusToAnswer();
     });
   };
 
@@ -280,7 +283,7 @@ export const makeUndoVerb = (host) => {
     actMarkup: () => {
       if (undo.act.tag !== 'AtRest') return html``;
       const ready = host.hasSession() && undo.patch && undo.patched && !refusalCertain();
-      return html`<button class="run" data-action="run" ?disabled=${!ready}>${runLabel}</button>`;
+      return html`<button class="run" type="submit" form="stage" ?disabled=${!ready}>${runLabel}</button>`;
     },
     admitDroppedFile: (sorting, file) => admitFile(sorting === Sorting.AsPatch ? 'patch' : 'patched', file),
     admitPickedFile,

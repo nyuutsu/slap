@@ -60,6 +60,15 @@ body {
 
 .page { max-width: 780px; margin: 0 auto; padding: 34px 20px 40px; }
 
+/* Parked above the page until focus asks for it. */
+.skip-link {
+  position: absolute; left: 20px; top: -100px; z-index: 10;
+  background: var(--panel); color: var(--ink);
+  border: 1px solid var(--grape); border-radius: 999px;
+  padding: 8px 14px; font-family: var(--mono); font-size: 12.5px;
+}
+.skip-link:focus { top: 12px; }
+
 button { font: inherit; cursor: pointer; }
 :focus-visible { outline: 2px solid var(--grape); outline-offset: 2px; }
 
@@ -90,7 +99,7 @@ button { font: inherit; cursor: pointer; }
   box-shadow: 0 4px 0 rgba(90, 51, 39, 0.12);
 }
 .sticker img { display: block; }
-.sticker-word { font-family: var(--display); font-weight: 800; font-size: 22px; line-height: 1; color: var(--grape); }
+.sticker-word { font-family: var(--display); font-weight: 800; font-size: 22px; line-height: 1; color: var(--grape); margin: 0; }
 
 .motd { text-decoration: none; display: inline-block; }
 .motd-banner {
@@ -239,6 +248,13 @@ button { font: inherit; cursor: pointer; }
 .toggle-input:checked + .toggle-chip { background: var(--grape); border-color: var(--grape); color: #fff; }
 .toggle-input:checked + .toggle-chip::before { content: '✓'; color: inherit; }
 .toggle-input:focus-visible + .toggle-chip { outline: 2px solid var(--grape); outline-offset: 2px; }
+
+/* One-of-N choices ride hidden radios the way the toggles ride hidden checkboxes; the labels wear the chips. */
+.choice-input { position: absolute; opacity: 0; pointer-events: none; }
+.choice-input:focus-visible + .chip, .choice-input:focus-visible + .tile { outline: 2px solid var(--grape); outline-offset: 2px; }
+label.chip, label.tile { cursor: pointer; }
+.choice-fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+legend.choice-label { padding: 0; }
 .toggle .why { color: var(--whisper); font-family: var(--body); font-size: 13px; }
 
 /* ------------------------------------------------------------ create ---- */
@@ -282,7 +298,7 @@ button { font: inherit; cursor: pointer; }
 .choice-gloss { color: var(--ink-soft); font-size: 12.5px; margin: 4px 0 2px; }
 /* a story is marked the way a footnote is: the asterisk finds the eye across a form, and hovering makes good on it.
    it is raised on a zero line-height, so marking a label never moves the line the label sits on. */
-.has-story { cursor: help; }
+.has-story { cursor: help; background: none; border: 0; padding: 0; color: inherit; text-align: inherit; }
 .has-story::after {
   content: '*'; color: var(--grape); font-weight: 700;
   vertical-align: super; font-size: 0.8em; line-height: 0; margin-left: 1px;

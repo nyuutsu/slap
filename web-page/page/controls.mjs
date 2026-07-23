@@ -19,17 +19,24 @@ export const toggleMarkup = ({ id, setting, checked, label, why, field }) => htm
   ${why ? html`<span class="why">— ${why}</span>` : nothing}
 </div>`;
 
+// A one-of-N choice as a real radio dressed as a chip, toggleMarkup's doctrine at group scale:
+// arrow keys, the roving tab stop, and the announced "n of m" are all the browser's own.
+export const chipRadioMarkup = ({ groupName, setting, token, checked, label }) => html`<input
+    class="choice-input" type="radio" name="${groupName}" id="${groupName}-${token}"
+    data-setting="${setting}" value="${token}" .checked=${checked}>
+  <label class="chip${checked ? ' on' : ''}" for="${groupName}-${token}">${label}</label>`;
+
 // An empty slot wears its role word, so the empty sentence teaches the operation.
 
 export const inertSlotMarkup = (roleWord) => html`<span class="slot empty inert">${roleWord}</span>`;
 
-export const swapSeatsMarkup = html`<p class="swap-line"><button class="quiet-button"
+export const swapSeatsMarkup = html`<p class="swap-line"><button type="button" class="quiet-button"
   data-action="swap-seats">the wrong way round? swap them</button></p>`;
 
 export const seatSlotMarkup = (seat, roleWord, file, chipWord) => file
-  ? html`<button class="slot filled" data-action="pick-file" data-seat="${seat}">${file.name}</button>${
+  ? html`<button type="button" class="slot filled" data-action="pick-file" data-seat="${seat}">${file.name}</button>${
       chipWord ? html`<span class="format-chip">${chipWord}</span>` : nothing}`
-  : html`<button class="slot empty" data-action="pick-file" data-seat="${seat}">${roleWord}</button>`;
+  : html`<button type="button" class="slot empty" data-action="pick-file" data-seat="${seat}">${roleWord}</button>`;
 
 // While an act runs, the seats it reads are held: shown, not clickable.
 export const heldSeatMarkup = (file, chipWord) => html`<span class="slot filled inert">${file.name}</span>${
@@ -37,27 +44,29 @@ export const heldSeatMarkup = (file, chipWord) => html`<span class="slot filled 
 
 // Two same-type seats keep their role words in view once filled — order alone is ambiguous — as a whisper under the name.
 export const roleWhisperedSlotMarkup = (seat, roleWord, file) => file
-  ? html`<span class="slot-stack"><button class="slot filled" data-action="pick-file"
+  ? html`<span class="slot-stack"><button type="button" class="slot filled" data-action="pick-file"
       data-seat="${seat}">${file.name}</button><span class="role-whisper">${roleWord}</span></span>`
-  : html`<button class="slot empty" data-action="pick-file" data-seat="${seat}">${roleWord}</button>`;
+  : html`<button type="button" class="slot empty" data-action="pick-file" data-seat="${seat}">${roleWord}</button>`;
 
 // The header directive control: apply's source and convert's --with wear the same one.
 export const headerControlMarkup = (framing, consoleRows) => {
   const chosenMode = framing.tag;
-  const modeChip = (tag, label) => html`<button class="chip${chosenMode === tag ? ' on' : ''}"
-    aria-pressed="${chosenMode === tag}" data-action="set-framing" data-framing="${tag}">${label}</button>`;
+  const modeChip = (framingTag, label) =>
+    chipRadioMarkup({ groupName: 'framing', setting: 'framing', token: framingTag,
+                      checked: chosenMode === framingTag, label });
   return groupMarkup("the rom's header", html`
+    <fieldset class="choice-fieldset"><legend class="visually-hidden">the rom's header</legend>
     <div class="choice-row">
       ${modeChip('TakeInputAsIs', 'take it as it is')}
       ${modeChip('RemoveHeader', 'it has one — take it off')}
       ${modeChip('AddHeader', "it hasn't got one — pretend it has")}
-    </div>
+    </div></fieldset>
     ${chosenMode !== 'TakeInputAsIs' ? html`
-      <p class="choice-label">which console</p>
-      <div class="choice-row">${consoleRows.map((row) => html`<button
-        class="chip${framing.console?.consoleToken === row.consoleToken ? ' on' : ''}"
-        aria-pressed="${framing.console?.consoleToken === row.consoleToken}"
-        data-action="set-console" data-console="${row.consoleToken}">${row.consoleName}</button>`)}</div>
+      <fieldset class="choice-fieldset"><legend class="choice-label">which console</legend>
+      <div class="choice-row">${consoleRows.map((row) =>
+        chipRadioMarkup({ groupName: 'console', setting: 'console', token: row.consoleToken,
+                          checked: framing.console?.consoleToken === row.consoleToken, label: row.consoleName }))}</div>
+      </fieldset>
       <p class="aside">slap can't know whether your copy is headered — you can. It'll say what it did.</p>` : nothing}`);
 };
 
@@ -74,14 +83,14 @@ export const encodingPickerMarkup = (encodingFamilies, chosenEncoding, moreEncod
     <p class="aside explainer">Some formats store text — descriptions, author names — without
     recording its encoding, and slap reads it as UTF-8. If a patch came from, say, a Japanese release and
     its text looks wrong, that's something slap can't know but you might: pick the encoding and slap re-reads.</p>
-    ${!chosenIsUncommon ? html`<button class="more-chip${encodingsOpen ? ' open' : ''}"
+    ${!chosenIsUncommon ? html`<button type="button" class="more-chip${encodingsOpen ? ' open' : ''}"
       aria-expanded="${encodingsOpen}" data-action="more-encodings">
       ${encodingsOpen ? 'fewer encodings' : 'choose an encoding'}</button>` : nothing}
-    ${encodingsOpen ? encodingFamilies.map((family) => html`<div class="encoding-family">
+    ${encodingsOpen ? html`<fieldset class="choice-fieldset"><legend class="visually-hidden">text encoding</legend>
+    ${encodingFamilies.map((family) => html`<div class="encoding-family">
       <span class="family-label">${family.advertisedFamilyLabel}</span>
-      <div class="choice-row">${family.advertisedFamilyMembers.map((token) => html`<button
-        class="chip${chosenEncoding === token ? ' on' : ''}"
-        aria-pressed="${chosenEncoding === token}"
-        data-action="set-encoding" data-token="${token}">${token}</button>`)}</div>
-    </div>`) : nothing}`);
+      <div class="choice-row">${family.advertisedFamilyMembers.map((token) =>
+        chipRadioMarkup({ groupName: 'metadata-encoding', setting: 'encoding', token,
+                          checked: chosenEncoding === token, label: token }))}</div>
+    </div>`)}</fieldset>` : nothing}`);
 };

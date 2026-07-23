@@ -56,6 +56,11 @@ export const html = (parts, ...values) => {
       else built += `${attributeName}="${escapeText(value)}"`;
     }
   });
+  // Inside the stage form, a button without an explicit type is a submit button — a sweep-wide rule
+  // nobody should have to remember, so every template pays it here.
+  for (const buttonTag of built.matchAll(/<button\b[^>]*>/g))
+    if (!/\btype="/.test(buttonTag[0]))
+      throw new Error(`a button with no explicit type — inside the stage form it would submit: ${buttonTag[0]}`);
   return { [stuntMarkup]: built };
 };
 

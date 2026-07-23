@@ -262,7 +262,7 @@ export const walkMarkup = (regions, rowsShown) => html`
   ${walkLegendMarkup(regions)}
   <div class="walk">${regions.slice(0, rowsShown).map(walkRow)}</div>
   ${regions.length > rowsShown ? html`<div class="walk-more">
-    <button class="quiet-button" data-action="walk-more">show 2,000 more</button>
+    <button type="button" class="quiet-button" data-action="walk-more">show 2,000 more</button>
     <span class="aside">— ${groupedCount(regions.length - rowsShown)} further records below</span>
   </div>` : nothing}`;
 

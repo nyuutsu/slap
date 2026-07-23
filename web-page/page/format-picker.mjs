@@ -2,7 +2,7 @@
 // A format with no words still shows, under "more formats", unadorned.
 
 import { html, nothing } from '../vendor/lit-html/lit-html.js';
-import { groupMarkup, admonitionMarkup } from './controls.mjs';
+import { groupMarkup, admonitionMarkup, chipRadioMarkup } from './controls.mjs';
 
 const recommendedTokens = ['bps', 'xdelta3', 'ppf3'];
 const curioToken = 'rfc-vcdiff';
@@ -37,12 +37,14 @@ export const pickerStories = {
     + 'otherwise the tiles above are the recommendation.',
 };
 
-const tileMarkup = (row, chosenToken, curio) => html`<button
-  class="tile${curio ? ' curio' : ''}${row.formatToken === chosenToken ? ' on' : ''}"
-  aria-pressed="${row.formatToken === chosenToken}"
-  data-action="choose-format" data-token="${row.formatToken}">
+// A tile is the format radio group's grandest label; the quiet chips below answer to the same group.
+const tileMarkup = (row, chosenToken, curio) => html`<input class="choice-input" type="radio" name="format"
+  id="format-${row.formatToken}" data-setting="format" value="${row.formatToken}"
+  .checked=${row.formatToken === chosenToken}>
+  <label class="tile${curio ? ' curio' : ''}${row.formatToken === chosenToken ? ' on' : ''}"
+    for="format-${row.formatToken}">
   <span class="tile-name">${row.formatDisplayName}</span>
-  <span class="tile-copy">${tileCopy[row.formatToken] ?? ''}</span></button>`;
+  <span class="tile-copy">${tileCopy[row.formatToken] ?? ''}</span></label>`;
 
 export const formatPickerMarkup = (surfaceRows, chosenToken, moreFormatsOpen) => {
   if (surfaceRows.length === 0) return null;
@@ -54,14 +56,15 @@ export const formatPickerMarkup = (surfaceRows, chosenToken, moreFormatsOpen) =>
   const chosenIsQuieter = quieterRows.some((row) => row.formatToken === chosenToken);
   const moreOpen = moreFormatsOpen || chosenIsQuieter;
   return groupMarkup('format', html`
+    <fieldset class="choice-fieldset"><legend class="visually-hidden">format</legend>
     <div class="tiles">${recommendedRows.map((row) => tileMarkup(row, chosenToken, false))}</div>
     ${curioRow ? tileMarkup(curioRow, chosenToken, true) : nothing}
-    ${!chosenIsQuieter ? html`<button class="more-chip${moreOpen ? ' open' : ''}" aria-expanded="${moreOpen}"
+    ${!chosenIsQuieter ? html`<button type="button" class="more-chip${moreOpen ? ' open' : ''}" aria-expanded="${moreOpen}"
       data-action="more-formats" data-story="MoreFormats">
       ${moreOpen ? 'fewer formats' : `more formats (${quieterRows.length})`}</button>` : nothing}
-    ${moreOpen ? html`<div class="choice-row">${quieterRows.map((row) => html`<button
-      class="chip${row.formatToken === chosenToken ? ' on' : ''}"
-      aria-pressed="${row.formatToken === chosenToken}"
-      data-action="choose-format" data-token="${row.formatToken}">${row.formatToken}</button>`)}</div>` : nothing}
+    ${moreOpen ? html`<div class="choice-row">${quieterRows.map((row) =>
+      chipRadioMarkup({ groupName: 'format', setting: 'format', token: row.formatToken,
+                        checked: row.formatToken === chosenToken, label: row.formatToken }))}</div>` : nothing}
+    </fieldset>
     ${chosenFormatNoteMarkup(chosenToken)}`);
 };

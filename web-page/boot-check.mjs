@@ -9,7 +9,7 @@ import { ReactorNeverArrived } from './reactor/reactor-client.mjs';
 
 const fakeElement = () => ({
   innerHTML: '', textContent: '', dataset: {}, style: {}, files: [],
-  addEventListener() {}, click() {}, querySelector() { return null; },
+  addEventListener() {}, click() {}, focus() {}, setAttribute() {}, querySelector() { return null; },
 });
 const elements = new Map();
 const elementNamed = (id) => {

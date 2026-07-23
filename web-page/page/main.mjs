@@ -66,6 +66,8 @@ const host = {
   notice: () => page.noticeLine,
   setNotice: (line) => { page.noticeLine = line; },
   render: () => renderPage(),
+  // A settled act removes the run button whoever pressed it was standing on, so the answer takes the focus in.
+  carryFocusToAnswer: () => element('voice').focus(),
   surface: () => sessionIfOpen()?.surface ?? null,
   hasSession: () => page.session.tag === 'SessionOpen',
   fellow: {
@@ -103,12 +105,14 @@ wireStoryListeners(host, storybook, () => verbs[page.verbOnStage].storiesQuiet?.
 
 /* --------------------------------------------------------------- render ---- */
 
+// Real tabs: the shown one holds the group's tab stop, arrow keys walk the rest (wired below).
 const verbTabsMarkup = () => {
-  const tab = (verbName, quieter) => html`<button
+  const tab = (verbName, quieter) => html`<button type="button" role="tab" id="tab-${verbName}"
     class="verb${quieter ? ' lesser' : ''}${verbName === page.verbOnStage ? ' on' : ''}"
-    aria-current=${verbName === page.verbOnStage ? 'page' : nothing}
+    aria-selected="${verbName === page.verbOnStage}"
+    tabindex=${verbName === page.verbOnStage ? '0' : '-1'}
     data-action="choose-verb" data-verb="${verbName}">${verbName}</button>`;
-  return html`${headlinerVerbs.map((verbName) => tab(verbName, false))}<span class="verb-gap"></span>
+  return html`${headlinerVerbs.map((verbName) => tab(verbName, false))}<span class="verb-gap" aria-hidden="true"></span>
     ${quieterVerbs.map((verbName) => tab(verbName, true))}`;
 };
 
@@ -137,15 +141,16 @@ let copyWordTimer = null;
 
 const tutorMarkup = (words) => html`
   <p class="tutor-label">
-    <span class="has-story" tabindex="0" data-story="CommandEquivalent">command equivalent</span>
-    <button class="quiet-button" data-action="copy-command">${copyButtonWord}</button>
+    <button type="button" class="has-story" aria-expanded="false" data-story="CommandEquivalent">command equivalent</button>
+    <button type="button" class="quiet-button" data-action="copy-command">${copyButtonWord}</button>
   </p>
   <pre class="terminal" id="command" data-action="copy-command">${commandMarkup(words)}</pre>`;
 
 const renderPage = () => {
   const verb = verbs[page.verbOnStage];
   render(verbTabsMarkup(), element('verbs'));
-  render(verb.stageMarkup(), element('stage'));
+  render(html`<h2 class="visually-hidden">${page.verbOnStage}</h2>${verb.stageMarkup()}`, element('stage'));
+  element('stage').setAttribute('aria-labelledby', `tab-${page.verbOnStage}`);
   // a failed boot owns the voice box: a verb's voice would put a friendly face on a dead page
   render(page.session.tag === 'SessionFailedToOpen'
     ? bootFailureVoice(page.session.bootFailureShape)
@@ -171,6 +176,25 @@ const copyCommand = async () => {
     sayOnTheButton('copy it by hand');
   }
 };
+
+// Arrow keys walk the verb tabs; the hash stays the one authority, the keys only drive it.
+element('verbs').addEventListener('keydown', (event) => {
+  const stepped = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
+  const landed = { Home: 0, End: allVerbs.length - 1 }[event.key];
+  if (stepped === undefined && landed === undefined) return;
+  event.preventDefault();
+  const from = allVerbs.indexOf(page.verbOnStage);
+  const walkedToVerb = allVerbs[landed ?? (from + stepped + allVerbs.length) % allVerbs.length];
+  location.hash = walkedToVerb;
+  element(`tab-${walkedToVerb}`)?.focus();
+});
+
+// Enter in a field runs the verb through the form's own submission — the run button is its submit button,
+// so a disabled button stalls implicit submission the browser's own way.
+element('stage').addEventListener('submit', (event) => {
+  event.preventDefault();
+  verbs[page.verbOnStage].actions.run?.();
+});
 
 const filePicker = element('file-picker');
 

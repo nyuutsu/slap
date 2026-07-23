@@ -3,7 +3,7 @@
 
 import { html, nothing } from '../vendor/lit-html/lit-html.js';
 import { ControlKind, WindowDefault, matcherOver } from './engine-vocabulary.mjs';
-import { groupMarkup, toggleMarkup } from './controls.mjs';
+import { groupMarkup, toggleMarkup, chipRadioMarkup } from './controls.mjs';
 import { flagWord, valueWord, quotedWord } from './command-tutor.mjs';
 import { requestKeyOf, utf8Text, toggleRequests, fieldLabel, fieldWhy,
          choiceGloss, fieldStories, concealedWhileToggled, windowUnits } from './metadata-controls.mjs';
@@ -26,18 +26,21 @@ export const base64OfBuffer = (buffer) => {
   return btoa(binary);
 };
 
-// The story trigger hugs its words — a block label's empty width must not speak — and takes focus so a keyboard hears it too.
+// The story trigger is a real button — press speaks, Escape or leaving settles, aria-expanded says which —
+// and it hugs its words: a block label's empty width must not speak. Its id lets a control it names say so.
 export const storiedText = (fieldName, labelText) => (fieldStories[fieldName]
-  ? html`<span class="has-story" tabindex="0" data-story="${fieldName}">${labelText}</span>`
+  ? html`<button type="button" class="has-story" id="story-${fieldName}" aria-expanded="false"
+      data-story="${fieldName}">${labelText}</button>`
   : labelText);
 
-export const countedTextareaMarkup = ({ setting, placeholder, typed, ceiling }) => (ceiling
+export const countedTextareaMarkup = ({ setting, placeholder, typed, ceiling, labelledBy }) => (ceiling
   ? html`<div class="counted-lane">
-      <textarea class="field-textarea" data-setting="${setting}"
+      <textarea class="field-textarea" data-setting="${setting}" aria-labelledby=${labelledBy ?? nothing}
         aria-describedby="${setting}-count" placeholder="${placeholder}" .value=${typed}></textarea>
       <span class="byte-count${byteCountOf(typed) > ceiling ? ' over-ceiling' : ''}"
         id="${setting}-count">${byteCountOf(typed)} / ${ceiling} bytes</span></div>`
-  : html`<textarea class="field-textarea" data-setting="${setting}" placeholder="${placeholder}" .value=${typed}></textarea>`);
+  : html`<textarea class="field-textarea" data-setting="${setting}" aria-labelledby=${labelledBy ?? nothing}
+      placeholder="${placeholder}" .value=${typed}></textarea>`);
 
 export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
   const atRest = () => ({
@@ -127,42 +130,52 @@ export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
   const fieldCeiling = (fieldName) =>
     (surfaceRow()?.formatTextFieldCeilings ?? []).find(([ceilingField]) => ceilingField === fieldName)?.[1] ?? null;
 
+  // A storied field is named by its story button (a button cannot sit inside a label); a plain one by a label.
   const textFieldMarkup = (row, inputType) => {
     const fieldName = row.describedMetadataField;
     const ceiling = inputType === 'text' ? fieldCeiling(fieldName) : null;
     const typed = bench.fieldValues[fieldName] ?? '';
+    const labelWord = fieldLabel(fieldName, row.metadataFieldFlag);
     return html`<div class="field">
-      <label class="field-label" for="meta-${fieldName}">${storiedText(fieldName, fieldLabel(fieldName, row.metadataFieldFlag))}</label>
+      ${fieldStories[fieldName]
+        ? html`<p class="field-label">${storiedText(fieldName, labelWord)}</p>`
+        : html`<label class="field-label" for="meta-${fieldName}">${labelWord}</label>`}
       <input class="field-input" type="${inputType}"
         min=${inputType === 'number' ? '1' : nothing} step=${inputType === 'number' ? '1' : nothing}
+        aria-labelledby=${fieldStories[fieldName] ? `story-${fieldName}` : nothing}
         aria-describedby=${ceiling ? `meta-${fieldName}-count` : nothing}
         data-story=${fieldStories[fieldName] ? fieldName : nothing}
         id="meta-${fieldName}" data-setting="field" data-field="${fieldName}" .value=${typed}>
       ${ceiling ? html`<span class="byte-count${byteCountOf(typed) > ceiling ? ' over-ceiling' : ''}"
         id="meta-${fieldName}-count">${byteCountOf(typed)} / ${ceiling} bytes</span>` : nothing}
-      ${fieldName === 'MetadataWindowSize' ? html`<span class="choice-row">${windowUnits.map((unit) => html`<button
-        class="chip${bench.windowUnit === unit.token ? ' on' : ''}" aria-pressed="${bench.windowUnit === unit.token}"
-        data-action="window-unit" data-unit="${unit.token}">${unit.token}</button>`)}</span>` : nothing}
+      ${fieldName === 'MetadataWindowSize' ? html`<fieldset class="choice-fieldset">
+        <legend class="visually-hidden">unit</legend>
+        <span class="choice-row">${windowUnits.map((unit) =>
+          chipRadioMarkup({ groupName: 'window-unit', setting: 'window-unit', token: unit.token,
+                            checked: bench.windowUnit === unit.token, label: unit.token }))}</span></fieldset>` : nothing}
       ${whySpan(fieldName)}
       ${fieldGloss(fieldName) ? html`<p class="field-gloss">${fieldGloss(fieldName)}</p>` : nothing}
     </div>`;
   };
 
+  // Zero-or-one-of-N: hidden checkboxes, because unticking is real — the chosen chip unticks back to the
+  // format's default. Exclusivity is the choose-meta handler's: ticking one unticks its siblings.
   const choiceRowMarkup = (row, choicePairs) => {
     const fieldName = row.describedMetadataField;
     const defaultToken = (surfaceRow()?.formatChoiceDefaults ?? [])
       .find(([defaultField]) => defaultField === fieldName)?.[1] ?? null;
     const gloss = choiceGloss(fieldName, bench.chosenChoices[fieldName], defaultToken);
-    const chip = (token) => html`<button
-      class="chip${bench.chosenChoices[fieldName] === token ? ' on' : ''}"
-      aria-pressed="${bench.chosenChoices[fieldName] === token}"
-      data-action="choose-meta" data-field="${fieldName}" data-token="${token}">${token}</button>`;
-    return html`<div>
-      <p class="choice-label">${storiedText(fieldName, fieldLabel(fieldName, row.metadataFieldFlag))}${whySpan(fieldName)}</p>
+    const chip = (token) => html`<input class="choice-input" type="checkbox" id="meta-${fieldName}-${token}"
+        data-setting="choose-meta" data-field="${fieldName}" data-token="${token}"
+        .checked=${bench.chosenChoices[fieldName] === token}>
+      <label class="chip${bench.chosenChoices[fieldName] === token ? ' on' : ''}"
+        for="meta-${fieldName}-${token}">${token}</label>`;
+    return html`<fieldset class="choice-fieldset">
+      <legend class="choice-label">${storiedText(fieldName, fieldLabel(fieldName, row.metadataFieldFlag))}${whySpan(fieldName)}</legend>
       <div class="choice-row">${choicePairs.map(([token]) => (token === defaultToken
         ? html`<span class="chip-stack">${chip(token)}<span class="role-whisper">default</span></span>`
         : chip(token)))}</div>
-      ${gloss ? html`<p class="choice-gloss">${gloss}</p>` : nothing}</div>`;
+      ${gloss ? html`<p class="choice-gloss">${gloss}</p>` : nothing}</fieldset>`;
   };
 
   // A toggle field with no request spelling gets no control: quiet, never wrong (toggleRequests' own doctrine).
@@ -245,16 +258,15 @@ export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
     metadataGroupMarkup,
     constraintsGroupMarkup,
     commandWords,
-    actions: {
-      'choose-meta': ({ field, token }) => recheck(() => {
-        bench.chosenChoices[field] = bench.chosenChoices[field] === token ? null : token;
-      }),
-      'window-unit': ({ unit }) => recheck(() => { bench.windowUnit = unit; }),
-    },
     settings: {
       field: (value, { field }) => recheck(() => { bench.fieldValues[field] = value; }),
       toggle: (checked, { field }) => recheck(() => { bench.toggledFields[field] = checked; }),
       constraint: (checked, { field }) => recheck(() => { bench.chosenConstraints[field] = checked; }),
+      // one stored choice per field, so ticking a sibling unticks the last through the render
+      'choose-meta': (checked, { field, token }) => recheck(() => {
+        bench.chosenChoices[field] = checked ? token : null;
+      }),
+      'window-unit': (unitToken) => recheck(() => { bench.windowUnit = unitToken; }),
     },
     typings: {
       field: (value, { field }) => { bench.fieldValues[field] = value; host.render(); },

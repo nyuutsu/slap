@@ -3,7 +3,7 @@
 
 import { html, nothing } from '../../vendor/lit-html/lit-html.js';
 import { CheckVerdict } from './../engine-vocabulary.mjs';
-import { roleWhisperedSlotMarkup, heldSeatMarkup, swapSeatsMarkup } from './../controls.mjs';
+import { roleWhisperedSlotMarkup, heldSeatMarkup, swapSeatsMarkup, chipRadioMarkup } from './../controls.mjs';
 import { voiceLines, plainVoice, workingVoice, bottledVoice, blockedVoice, refusalVoice,
          advisoryMarkup } from './../answer-surface.mjs';
 import { verbWord, flagWord, valueWord, quotedWord, fileWord, namedOr, placeholderWord } from './../command-tutor.mjs';
@@ -152,16 +152,19 @@ export const makeCreateVerb = (host) => {
         host.fellow.droop();
       }
       host.render();
+      host.carryFocusToAnswer();
     }).catch((jobFailure) => {
       host.fellow.settle();
       if (host.wasCancelled(jobFailure)) {
         create.act = { tag: 'AtRest' };
         host.setNotice(voiceLines.cancelled);
-      } else {
-        create.act = { tag: 'Fell', sentence: jobFailure.message, advisories: [] };
-        host.fellow.droop();
+        host.render();
+        return;
       }
+      create.act = { tag: 'Fell', sentence: jobFailure.message, advisories: [] };
+      host.fellow.droop();
       host.render();
+      host.carryFocusToAnswer();
     });
   };
 
@@ -177,30 +180,32 @@ export const makeCreateVerb = (host) => {
       ? html`<span class="slot filled inert">${create.formatToken}</span>`
       : html`<span class="slot empty inert">format</span>`}</p>`;
 
-  const laneChips = (laneAction, currentLane) => html`<div class="choice-row">
-    <button class="chip${currentLane === 'typed' ? ' on' : ''}" aria-pressed="${currentLane === 'typed'}"
-      data-action="${laneAction}" data-lane="typed">type it</button>
-    <button class="chip${currentLane === 'file' ? ' on' : ''}" aria-pressed="${currentLane === 'file'}"
-      data-action="${laneAction}" data-lane="file">use a file</button>
-  </div>`;
+  const laneChoiceMarkup = (settingName, fieldName, currentLane) => html`
+    <fieldset class="choice-fieldset"><legend class="visually-hidden">${fieldLabel(fieldName)}</legend>
+    <div class="choice-row">
+      ${chipRadioMarkup({ groupName: settingName, setting: settingName, token: 'typed',
+                          checked: currentLane === 'typed', label: 'type it' })}
+      ${chipRadioMarkup({ groupName: settingName, setting: settingName, token: 'file',
+                          checked: currentLane === 'file', label: 'use a file' })}
+    </div></fieldset>`;
 
   const blobLanesMarkup = () => html`
     <p class="choice-label">${storiedText('MetadataEmbeddedBlob', fieldLabel('MetadataEmbeddedBlob'))}</p>
-    ${laneChips('blob-lane', create.blob.lane)}
+    ${laneChoiceMarkup('blob-lane', 'MetadataEmbeddedBlob', create.blob.lane)}
     ${create.blob.lane === 'typed'
-      ? html`<textarea class="field-textarea" data-setting="blob-text"
+      ? html`<textarea class="field-textarea" data-setting="blob-text" aria-labelledby="story-MetadataEmbeddedBlob"
           placeholder="a name, a version, a note: whatever you'd want found in here" .value=${create.blob.text}></textarea>`
-      : html`<div class="choice-row"><button class="chip" data-action="pick-file"
+      : html`<div class="choice-row"><button type="button" class="chip" data-action="pick-file"
           data-seat="blob-file">${create.blob.file?.name ?? 'choose a file…'}</button></div>
         <p class="aside">Any file at all; the bytes go in exactly as they are.</p>`}`;
 
   const dizLanesMarkup = () => html`
     <p class="choice-label">${storiedText('MetadataFileIdDiz', fieldLabel('MetadataFileIdDiz'))}</p>
-    ${laneChips('diz-lane', create.diz.lane)}
+    ${laneChoiceMarkup('diz-lane', 'MetadataFileIdDiz', create.diz.lane)}
     ${create.diz.lane === 'typed'
       ? countedTextareaMarkup({ setting: 'diz-text', placeholder: "the FILE_ID.DIZ text, as you'd like it carried",
-          typed: create.diz.text, ceiling: bench.fieldCeiling('MetadataFileIdDiz') })
-      : html`<div class="choice-row"><button class="chip" data-action="pick-file"
+          typed: create.diz.text, ceiling: bench.fieldCeiling('MetadataFileIdDiz'), labelledBy: 'story-MetadataFileIdDiz' })
+      : html`<div class="choice-row"><button type="button" class="chip" data-action="pick-file"
           data-seat="diz-file">${create.diz.file?.name ?? 'choose a file…'}</button></div>`}`;
 
   const fileFieldMarkup = (fieldName) => {
@@ -270,7 +275,7 @@ export const makeCreateVerb = (host) => {
     actMarkup: () => {
       if (create.act.tag !== 'AtRest') return html``;
       const ready = host.hasSession() && create.formatToken && create.original && create.modified && !refusalCertain();
-      return html`<button class="run" data-action="run" ?disabled=${!ready}>${runLabel}</button>`;
+      return html`<button class="run" type="submit" form="stage" ?disabled=${!ready}>${runLabel}</button>`;
     },
     // Both seats are roms, so the sorting is unused; the original seat fills first because
     // "the first one I dropped" reads as the original. A full bench starts a fresh pair, original first again,
@@ -288,14 +293,7 @@ export const makeCreateVerb = (host) => {
     askAgain: askUnanswered,
     storiesQuiet: () => create.act.tag !== 'AtRest',
     actions: {
-      ...bench.actions,
-      'choose-format': ({ token }) => {
-        if (actRunning()) return;
-        recheck(() => { create.formatToken = token; });
-      },
       'more-formats': () => { create.moreFormatsOpen = !create.moreFormatsOpen; host.render(); },
-      'blob-lane': ({ lane }) => recheck(() => { create.blob.lane = lane; }),
-      'diz-lane': ({ lane }) => recheck(() => { create.diz.lane = lane; }),
       run: runCreate,
       'cancel-run': () => { if (actRunning()) create.act.cancel(); },
       'look-inside': () => {
@@ -318,6 +316,12 @@ export const makeCreateVerb = (host) => {
     },
     settings: {
       ...bench.settings,
+      format: (formatToken) => {
+        if (actRunning()) return;
+        recheck(() => { create.formatToken = formatToken; });
+      },
+      'blob-lane': (lane) => recheck(() => { create.blob.lane = lane; }),
+      'diz-lane': (lane) => recheck(() => { create.diz.lane = lane; }),
       'blob-text': (value) => recheck(() => { create.blob.text = value; }),
       'diz-text': (value) => recheck(() => { create.diz.text = value; }),
     },

@@ -60,7 +60,7 @@ export const plainVoice = (line) => html`<p class="plain-line">${line}</p>`;
 
 export const workingVoice = (line = voiceLines.working) => html`
   <p class="plain-line"><span class="breathing">${line}</span> <span class="elapsed" id="work-elapsed"></span></p>
-  <div class="afterward"><button class="quiet-button" data-action="cancel-run">cancel</button></div>`;
+  <div class="afterward"><button type="button" class="quiet-button" data-action="cancel-run">cancel</button></div>`;
 
 const bootFailureSentences = (bootFailureShape) => {
   switch (bootFailureShape.tag) {
@@ -141,7 +141,7 @@ export const patchedVoice = ({ spoken, advisories, downloadName, downloadHref, r
   ${verdictSentences(spoken, romCrc32 === null ? null : crc32Hex(romCrc32), inputReframed)}
   ${advisoryMarkup(advisories)}
   ${downloadRowMarkup(downloadName, downloadHref)}
-  <div class="afterward"><button class="chip" data-action="start-over">do another</button></div>`;
+  <div class="afterward"><button type="button" class="chip" data-action="start-over">do another</button></div>`;
 
 const handedVerdictSentence = matcherOver(Verdict, {
   Matches: (checkKinds) => html`<p class="said">Your rom is exactly what this patch produces —
@@ -180,12 +180,12 @@ export const revertedVoice = ({ spoken, advisories, downloadName, downloadHref }
   ${revertedSentences(spoken)}
   ${advisoryMarkup(advisories)}
   ${downloadRowMarkup(downloadName, downloadHref)}
-  <div class="afterward"><button class="chip" data-action="start-over">do another</button></div>`;
+  <div class="afterward"><button type="button" class="chip" data-action="start-over">do another</button></div>`;
 
 export const refusalVoice = ({ spokenError, sentence, advisories }, verbName) => html`
   ${spokenRefusalMarkup(spokenError, sentence, verbName)}
   ${advisoryMarkup(advisories)}
-  <div class="afterward"><button class="chip" data-action="start-over">start over</button></div>`;
+  <div class="afterward"><button type="button" class="chip" data-action="start-over">start over</button></div>`;
 
 export const bottledVoice = ({ formatName, advisories, downloadName, downloadHref }) => html`
   <p class="headline">bottled! <span class="sparkle" aria-hidden="true">✦ ✧</span></p>
@@ -194,8 +194,8 @@ export const bottledVoice = ({ formatName, advisories, downloadName, downloadHre
   ${advisoryMarkup(advisories)}
   ${downloadRowMarkup(downloadName, downloadHref)}
   <div class="afterward">
-    <button class="chip" data-action="look-inside">look inside it</button>
-    <button class="chip" data-action="start-over">do another</button>
+    <button type="button" class="chip" data-action="look-inside">look inside it</button>
+    <button type="button" class="chip" data-action="start-over">do another</button>
   </div>`;
 
 export const convertedVoice = ({ formatName, advisories, downloadName, downloadHref }) => html`
@@ -204,8 +204,8 @@ export const convertedVoice = ({ formatName, advisories, downloadName, downloadH
   ${advisoryMarkup(advisories)}
   ${downloadRowMarkup(downloadName, downloadHref)}
   <div class="afterward">
-    <button class="chip" data-action="look-inside">look inside it</button>
-    <button class="chip" data-action="start-over">do another</button>
+    <button type="button" class="chip" data-action="look-inside">look inside it</button>
+    <button type="button" class="chip" data-action="start-over">do another</button>
   </div>`;
 
 // An emit check's way out, in the words of the page's own controls — total over the engine's sum,

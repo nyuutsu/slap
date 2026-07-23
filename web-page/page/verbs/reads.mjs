@@ -158,7 +158,7 @@ export const makeInfoVerb = (host) => {
     const carried = embeddedContentsOf(core.state().reading.answered);
     if (carried.length === 0) return null;
     return groupMarkup('extract', html`
-      <div class="choice-row">${carried.map(({ seatIndex, label }) => html`<button class="chip"
+      <div class="choice-row">${carried.map(({ seatIndex, label }) => html`<button type="button" class="chip"
         data-action="extract-embed" data-seat-index="${seatIndex}">download ${label}</button>`)}</div>
       <p class="aside">Byte-exact — the patch's own bytes, not a re-encode.</p>`);
   };
@@ -270,7 +270,6 @@ export const makeExplainVerb = (host) => {
     admitPickedFile: (_seat, file) => core.admitPatch(file),
     askAgain: () => { core.askIdentity(); core.askReading(); },
     actions: {
-      'set-encoding': ({ token }) => core.rereadPatch((read) => { read.metadataEncoding = token; }),
       'walk-more': () => { core.state().walkRowsShown += 2000; host.render(); },
       'more-encodings': () => {
         core.state().moreEncodingsOpen = !core.state().moreEncodingsOpen;
@@ -279,6 +278,7 @@ export const makeExplainVerb = (host) => {
     },
     settings: {
       ...core.settings,
+      encoding: (encodingToken) => core.rereadPatch((read) => { read.metadataEncoding = encodingToken; }),
       records: (checked) => { core.state().everyRecord = checked; host.render(); },
     },
   };
