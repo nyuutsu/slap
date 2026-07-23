@@ -12,6 +12,7 @@ import './lit-html-stunt-hook.mjs';
 
 const { markupOf } = await import('./lit-html-stunt.mjs');
 const { UndoAnswer, spokenTagsOf, spokenVocabularies, wireSumNameOf } = await import('./page/engine-vocabulary.mjs');
+const { engineSurface } = await import('./page/engine-surface.mjs');
 const { infoReadoutMarkup, embeddedContentsOf, embeddedContentMarkup,
         heatModel, heatBarMarkup, heatCaption, walkMarkup, structureOverviewMarkup,
         analysisRegionsOf, analysisAsidesMarkup } = await import('./page/read-panels.mjs');
@@ -101,6 +102,11 @@ for (const table of spokenVocabularies) {
       + (unlearned.length > 0 ? ` — constructors the page never learned: ${unlearned.join(', ')}` : '')
       + (invented.length > 0 ? ` — spellings the engine does not speak: ${invented.join(', ')}` : ''));
 }
+
+// The baked surface is the engine's own words from bake time; only word-for-word agreement keeps it a transcription.
+const engineSpokenSurface = JSON.parse(probeBytes('surface').toString()).envelopeAnswer.Right;
+if (JSON.stringify(engineSpokenSurface) !== JSON.stringify(engineSurface))
+  throw new Error('page/engine-surface.mjs disagrees with the engine — rebake it: make web-bake-surface');
 
 let renderedCount = 0, peeledCount = 0, refusedCount = 0;
 for (const patchPath of patchPaths) {
@@ -249,5 +255,6 @@ if (forewarned.envelopeAdvisories.length === 0)
 for (const advisory of advisoryMarkup(forewarned.envelopeAdvisories)) mustRender('forewarning', advisory);
 
 console.log(`render census: ${spokenVocabularies.length} vocabulary tables audited against the engine's own, `
+  + 'the baked surface matched the engine word for word, '
   + `${renderedCount} patches rendered whole, ${peeledCount} peels spoken, ${refusedCount} refused with a sentence, `
   + 'create checked both ways and bottled with a forewarning spoken, convert asked both ways and re-bottled both lanes');

@@ -209,7 +209,7 @@ export const makeExplainVerb = (host) => {
 
   const textEncodingGroupMarkup = () => {
     const read = core.state();
-    return encodingPickerMarkup(host.surface()?.surfaceEncodings ?? [], read.metadataEncoding, read.moreEncodingsOpen);
+    return encodingPickerMarkup(host.surface().surfaceEncodings, read.metadataEncoding, read.moreEncodingsOpen);
   };
 
   const structurePanelMarkup = (explanation) => {

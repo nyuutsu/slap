@@ -2,6 +2,7 @@
 
 import { html, nothing, render } from '../vendor/lit-html/lit-html.js';
 import { openReactorSession, classifyBootFailure, answerOf, advisoriesOf, ReactorJobCancelled } from './reactor-session.mjs';
+import { engineSurface } from './engine-surface.mjs';
 import { seatMascot } from './mascot.mjs';
 import { voiceLines, bootFailureVoice } from './answer-surface.mjs';
 import { commandMarkup, tutorStories } from './command-tutor.mjs';
@@ -68,7 +69,8 @@ const host = {
   render: () => renderPage(),
   // A settled act removes the run button whoever pressed it was standing on, so the answer takes the focus in.
   carryFocusToAnswer: () => element('voice').focus(),
-  surface: () => sessionIfOpen()?.surface ?? null,
+  // baked at build, so the furniture renders before the reactor arrives
+  surface: () => engineSurface,
   hasSession: () => page.session.tag === 'SessionOpen',
   fellow: {
     ...Object.fromEntries(['nod', 'lean', 'smile', 'droop'].map((mood) => [mood, () => fellow?.[mood]()])),
@@ -302,6 +304,9 @@ page.verbOnStage = verbNamedByHash() ?? 'apply';
 renderPage();
 seatMascot(element('fellow')).then((seated) => { fellow = seated; }).catch(console.error);
 openReactorSession().then((openedSession) => {
+  // the page was built against one engine's surface; an engine that booted speaking another must not answer for it
+  if (JSON.stringify(openedSession.surface) !== JSON.stringify(engineSurface))
+    throw new Error('the engine that booted speaks a different surface than the one baked into the page');
   page.session = { tag: 'SessionOpen', session: openedSession };
   page.noticeLine = null;   // a "still getting set" answer is stale the moment the page is set
   Object.values(verbs).forEach((verb) => verb.askAgain());

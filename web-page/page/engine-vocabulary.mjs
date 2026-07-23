@@ -26,7 +26,7 @@ const vocabulary = (name, spokenBy, entries) => {
   return table;
 };
 
-// Every table, by construction — the census audits each one against the engine's own vocabulary.
+// Every table there is — vocabulary() registers each as it is built — for the census to audit against the engine.
 export const spokenVocabularies = allVocabularies;
 
 export const wireSumNameOf = (table) => table[wireSumName];

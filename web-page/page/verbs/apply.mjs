@@ -248,7 +248,7 @@ export const makeApplyVerb = (host) => {
     return html`
       ${sentenceMarkup()}
       ${operandsSatisfied && !actRunning() && apply.patchIdentity?.refused ? swapSeatsMarkup : nothing}
-      ${applyFactsCardMarkup(apply, host.surface()?.surfaceConsoleHeaders ?? [])}
+      ${applyFactsCardMarkup(apply, host.surface().surfaceConsoleHeaders)}
       ${headerControlSurfaces ? headerControlMarkup(apply.framing, host.surface().surfaceConsoleHeaders) : nothing}
       ${operandsSatisfied && !impedimentSpoken() ? optionsMarkup() : nothing}`;
   };

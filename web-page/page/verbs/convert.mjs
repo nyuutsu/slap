@@ -37,7 +37,7 @@ const atRest = () => ({
 export const makeConvertVerb = (host) => {
   let convert = atRest();
 
-  const surfaceRow = () => host.surface()?.surfaceFormats.find((row) => row.formatToken === convert.formatToken) ?? null;
+  const surfaceRow = () => host.surface().surfaceFormats.find((row) => row.formatToken === convert.formatToken) ?? null;
 
   const recheck = (change) => {
     host.supersedeAsks();
@@ -319,7 +319,7 @@ export const makeConvertVerb = (host) => {
       patch: convert.patch, patchIdentity: convert.patchIdentity,
       rom: convert.source, romFacts: convert.sourceFacts,
       sourceReport: convert.sourceReport, verificationPolicy: convert.verificationPolicy, framing: convert.framing,
-    }, host.surface()?.surfaceConsoleHeaders ?? [])}`);
+    }, host.surface().surfaceConsoleHeaders)}`);
 
   const headerControlSurfaces = () => {
     if (!convert.patch || !convert.source || impedimentSpoken()) return false;
@@ -388,12 +388,12 @@ export const makeConvertVerb = (host) => {
     if (actAnswered()) return sentenceMarkup();
     return html`
       ${sentenceMarkup()}
-      ${formatPickerMarkup(host.surface()?.surfaceFormats ?? [], convert.formatToken, convert.moreFormatsOpen)}
+      ${formatPickerMarkup(host.surface().surfaceFormats, convert.formatToken, convert.moreFormatsOpen)}
       ${sourceGroupMarkup()}
       ${headerControlSurfaces() ? headerControlMarkup(convert.framing, host.surface().surfaceConsoleHeaders) : nothing}
       ${bench.metadataGroupMarkup(fileFieldMarkup)}
       ${bench.constraintsGroupMarkup()}
-      ${encodingSpeaks() ? encodingPickerMarkup(host.surface()?.surfaceEncodings ?? [],
+      ${encodingSpeaks() ? encodingPickerMarkup(host.surface().surfaceEncodings,
                                                 convert.metadataEncoding, convert.moreEncodingsOpen) : nothing}
       ${convert.patch && !impedimentSpoken() ? optionsMarkup() : nothing}`;
   };

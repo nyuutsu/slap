@@ -1,5 +1,5 @@
-// Both seats are defining inputs, not matched ones: slap cannot know which file is the original,
-// so a drop lands in the original seat first and the swap link is the recourse.
+// Both seats are defining inputs, not matched ones: slap cannot know which file is the original;
+// the swap link is the recourse, and admitDroppedFile owns the seating order.
 
 import { html, nothing } from '../../vendor/lit-html/lit-html.js';
 import { CheckVerdict } from './../engine-vocabulary.mjs';
@@ -28,7 +28,7 @@ const atRest = () => ({
 export const makeCreateVerb = (host) => {
   let create = atRest();
 
-  const surfaceRow = () => host.surface()?.surfaceFormats.find((row) => row.formatToken === create.formatToken) ?? null;
+  const surfaceRow = () => host.surface().surfaceFormats.find((row) => row.formatToken === create.formatToken) ?? null;
 
   // Every input change re-judges the whole request; which changes matter is the engine's knowledge, not the page's.
   const recheck = (change) => {
@@ -219,7 +219,7 @@ export const makeCreateVerb = (host) => {
     return html`
       ${sentenceMarkup()}
       ${create.original && create.modified && !actRunning() ? swapSeatsMarkup : nothing}
-      ${formatPickerMarkup(host.surface()?.surfaceFormats ?? [], create.formatToken, create.moreFormatsOpen)}
+      ${formatPickerMarkup(host.surface().surfaceFormats, create.formatToken, create.moreFormatsOpen)}
       ${bench.metadataGroupMarkup(fileFieldMarkup)}
       ${bench.constraintsGroupMarkup()}`;
   };

@@ -52,7 +52,7 @@ export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
   });
   let bench = atRest();
 
-  const fieldRoster = () => host.surface()?.surfaceMetadataFields ?? [];
+  const fieldRoster = () => host.surface().surfaceMetadataFields;
   const formatAcceptsField = (fieldName) => (surfaceRow()?.formatAcceptedFields ?? []).includes(fieldName);
   const acceptedRosterRows = () => fieldRoster().filter((row) => formatAcceptsField(row.describedMetadataField));
   const fieldConcealed = (fieldName) =>
@@ -87,7 +87,6 @@ export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
       bench.toggledFields[fieldName] ? toggleRequests[fieldName] ?? null : null,
     Choice: (choiceVocabulary, { fieldName }) =>
       fieldConcealed(fieldName) ? null : chosenChoiceValue(fieldName, choiceVocabulary.contents),
-    // the blob and the DIZ ride lanes of their own, with the verbs
     File: () => null,
   });
 

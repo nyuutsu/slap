@@ -7,7 +7,7 @@ export RUSTFLAGS += -C target-cpu=native
 
 # Two flavors, one dist-newstyle. `make` iterates at -O0 with info-table provenance (both declared in cabal.project);
 # `make optimized` asks for -O2, which cabal keeps in its own output directory, so the flavors never disturb each other.
-.PHONY: all build optimized rusty-slap staticlib-wiring install man test haddock wasm wasm-optimized wasm-staticlib-wiring wasm-link-check wasm-parity-check wasm-worker-rig rusty-slap-wasm web web-optimized web-check web-rig web-deploy clean
+.PHONY: all build optimized rusty-slap staticlib-wiring install man test haddock wasm wasm-optimized wasm-staticlib-wiring wasm-link-check wasm-parity-check wasm-worker-rig rusty-slap-wasm web web-optimized web-bake-surface web-check web-rig web-deploy clean
 
 all: build
 
@@ -165,6 +165,10 @@ web-optimized: wasm
 	. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal build slap-web-reactor -O2 $(WASM_CABAL_FLAGS)
 	$(call assemble-web,-O2)
 
+# The stage furniture's rosters, spoken by the engine and baked into a page module; rebake when the census says they drifted.
+web-bake-surface: build
+	node web-page/bake-engine-surface.mjs "$$(cabal -v0 list-bin slap-web-reactor)"
+
 # Every fixture's real envelopes through the page's renderers; a shape surprise throws here, not in a browser.
 web-check: build
 	@workdir="$$(mktemp -d)"; trap 'rm -rf "$$workdir"' EXIT; \
@@ -175,7 +179,15 @@ web-rig: web
 	@echo "the page is at http://127.0.0.1:8001/"
 	@python3 -m http.server --bind 127.0.0.1 --directory dist-web 8001
 
-web-deploy: web-optimized
+# The wasm rides precompressed: Caddy serves the sidecars as-is, so the wire pays brotli's ratio and the droplet no CPU.
+# Compression is cached by content digest — an unchanged reactor never pays for brotli -q 11 twice.
+web-deploy: web-optimized web-check
+	@wasmDigest="$$(sha256sum dist-web/reactor/slap-web-reactor.wasm | cut -d' ' -f1)"; \
+	 compressedCache="dist-newstyle-wasm/precompressed"; mkdir -p "$$compressedCache"; \
+	 if [ ! -f "$$compressedCache/$$wasmDigest.br" ]; then brotli -q 11 -o "$$compressedCache/$$wasmDigest.br" dist-web/reactor/slap-web-reactor.wasm; fi; \
+	 if [ ! -f "$$compressedCache/$$wasmDigest.gz" ]; then gzip -9 -c dist-web/reactor/slap-web-reactor.wasm > "$$compressedCache/$$wasmDigest.gz"; fi; \
+	 cp "$$compressedCache/$$wasmDigest.br" dist-web/reactor/slap-web-reactor.wasm.br; \
+	 cp "$$compressedCache/$$wasmDigest.gz" dist-web/reactor/slap-web-reactor.wasm.gz
 	rsync -az --delete dist-web/ droplet:/var/slap/
 	@echo "deployed to https://slap.nyuu.page"
 
