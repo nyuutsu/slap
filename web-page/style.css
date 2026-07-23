@@ -1,16 +1,15 @@
 /* The room: warm cream, grape identity, coral for the one main action.
    Joy lives at the hello and the payoff; the working surfaces stay calm. */
 
-@font-face { font-family: 'Baloo 2';        src: url(fonts/baloo2.woff2) format('woff2');            font-weight: 400 800;  font-display: swap; }
-@font-face { font-family: 'Nunito';         src: url(fonts/nunito.woff2) format('woff2');            font-weight: 200 1000; font-display: swap; }
-@font-face { font-family: 'Space Mono';     src: url(fonts/spacemono-400.woff2) format('woff2');     font-weight: 400;      font-display: swap; }
-@font-face { font-family: 'Space Mono';     src: url(fonts/spacemono-700.woff2) format('woff2');     font-weight: 700;      font-display: swap; }
-@font-face { font-family: 'IM Fell English'; src: url(fonts/imfell-400-italic.woff2) format('woff2'); font-style: italic;    font-display: swap; }
-@font-face { font-family: 'Sarasa Mono J';   src: url(fonts/sarasamonoj-400.woff2) format('woff2');   font-weight: 400;      font-display: swap; }
+@font-face { font-family: 'Baloo 2';            src: url(fonts/baloo2.woff2) format('woff2');                       font-weight: 400 800; font-display: swap; }
+@font-face { font-family: 'Nunito';             src: url(fonts/nunito.woff2) format('woff2');                       font-weight: 200 1000; font-display: swap; }
+@font-face { font-family: 'IM Fell English';    src: url(fonts/imfell-400-italic.woff2) format('woff2');            font-style: italic;   font-display: swap; }
+@font-face { font-family: 'Sarasa Mono J';      src: url(fonts/sarasamonoj-400.woff2) format('woff2');              font-weight: 400;     font-display: swap; }
+@font-face { font-family: 'Sarasa Mono J';      src: url(fonts/sarasamonoj-700.woff2) format('woff2');              font-weight: 700;     font-display: swap; }
 
 /* Sarasa's stand-ins while it downloads, size-adjusted to its half-em advance: whichever local mono
    paints first occupies exactly the columns Sarasa will, so its arrival changes letterforms, never layout.
-   Each local is spelled twice because Firefox matches local() by full or PostScript name, never family. */
+   Each local is spelled in every name it answers to, because Firefox matches local() by full or PostScript name, never family. */
 @font-face { font-family: 'Sarasa Stand-in'; src: local('Menlo'), local('Menlo-Regular'), local('Menlo Regular'); size-adjust: 83.02%; }
 @font-face { font-family: 'Sarasa Stand-in'; src: local('Consolas'), local('Consolas Regular'); size-adjust: 90.91%; }
 @font-face { font-family: 'Sarasa Stand-in'; src: local('DejaVu Sans Mono'), local('DejaVuSansMono'); size-adjust: 83.02%; }
@@ -52,8 +51,7 @@
 
   --display: 'Baloo 2', system-ui, sans-serif;
   --body: 'Nunito', system-ui, sans-serif;
-  --mono: 'Space Mono', ui-monospace, Menlo, Consolas, monospace;
-  --terminal-mono: 'Sarasa Mono J', 'Sarasa Stand-in', ui-monospace, Menlo, Consolas, monospace;
+  --mono: 'Sarasa Mono J', 'Sarasa Stand-in', ui-monospace, Menlo, Consolas, monospace;
 }
 
 * { box-sizing: border-box; }
@@ -113,7 +111,7 @@ button { font: inherit; cursor: pointer; }
 
 .motd { text-decoration: none; display: inline-block; }
 .motd-banner {
-  font-family: var(--terminal-mono);
+  font-family: var(--mono);
   background: var(--terminal-room);
   color: var(--terminal-ink);
   border-radius: 9px;
@@ -434,7 +432,7 @@ legend.choice-label { padding: 0; }
 .tutor-label .quiet-button { font-size: 11px; letter-spacing: 0.08em; }
 .terminal {
   cursor: pointer;
-  font-family: var(--terminal-mono); font-size: 13.5px; line-height: 1.75;
+  font-family: var(--mono); font-size: 13.5px; line-height: 1.75;
   background: var(--terminal-room); color: var(--terminal-ink);
   border-radius: 10px; padding: 13px 15px; margin: 0;
   white-space: pre-wrap; overflow-wrap: anywhere;
