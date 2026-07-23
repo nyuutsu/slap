@@ -10,3 +10,6 @@
 [submodule "vendor/browser_wasi_shim"]
 	path = vendor/browser_wasi_shim
 	url = ../browser_wasi_shim.git
+[submodule "web-page/vendor/lit-html"]
+	path = web-page/vendor/lit-html
+	url = ../lit-html.git

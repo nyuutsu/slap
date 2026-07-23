@@ -1,7 +1,7 @@
 // The metadata bench the two emit verbs stand on. Every fact behind these controls arrives from describeSurface;
 // the page brings only its labels and glosses. The blob and DIZ lanes stay with their verbs, whose intents differ.
 
-import { html } from './dom.mjs';
+import { html, nothing } from '../vendor/lit-html/lit-html.js';
 import { groupMarkup, toggleMarkup } from './controls.mjs';
 import { flagWord, valueWord, quotedWord } from './command-tutor.mjs';
 import { requestKeyOf, utf8Text, toggleRequests, fieldLabel, fieldWhy,
@@ -30,16 +30,13 @@ export const storiedText = (fieldName, labelText) => (fieldStories[fieldName]
   ? html`<span class="has-story" tabindex="0" data-story="${fieldName}">${labelText}</span>`
   : labelText);
 
-const storiedAttribute = (fieldName) => fieldStories[fieldName] && html`data-story="${fieldName}"`;
-
-// The counter is the textarea's own sibling: the live listener reaches it through their shared parent.
 export const countedTextareaMarkup = ({ setting, placeholder, typed, ceiling }) => (ceiling
   ? html`<div class="counted-lane">
-      <textarea class="field-textarea" data-setting="${setting}" data-ceiling="${ceiling}"
-        aria-describedby="${setting}-count" placeholder="${placeholder}">${typed}</textarea>
+      <textarea class="field-textarea" data-setting="${setting}"
+        aria-describedby="${setting}-count" placeholder="${placeholder}" .value=${typed}></textarea>
       <span class="byte-count${byteCountOf(typed) > ceiling ? ' over-ceiling' : ''}"
         id="${setting}-count">${byteCountOf(typed)} / ${ceiling} bytes</span></div>`
-  : html`<textarea class="field-textarea" data-setting="${setting}" placeholder="${placeholder}">${typed}</textarea>`);
+  : html`<textarea class="field-textarea" data-setting="${setting}" placeholder="${placeholder}" .value=${typed}></textarea>`);
 
 export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
   const atRest = () => ({
@@ -123,7 +120,7 @@ export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
       : 'one window, the whole file, unless you say otherwise.';
   };
 
-  const whySpan = (fieldName) => fieldWhy(fieldName) && html` <span class="why">— ${fieldWhy(fieldName)}</span>`;
+  const whySpan = (fieldName) => (fieldWhy(fieldName) ? html` <span class="why">— ${fieldWhy(fieldName)}</span>` : nothing);
 
   const fieldCeiling = (fieldName) =>
     (surfaceRow()?.formatTextFieldCeilings ?? []).find(([ceilingField]) => ceilingField === fieldName)?.[1] ?? null;
@@ -134,17 +131,18 @@ export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
     const typed = bench.fieldValues[fieldName] ?? '';
     return html`<div class="field">
       <label class="field-label" for="meta-${fieldName}">${storiedText(fieldName, fieldLabel(fieldName, row.metadataFieldFlag))}</label>
-      <input class="field-input" type="${inputType}" ${inputType === 'number' && html`min="1" step="1"`}
-        ${ceiling && html`data-ceiling="${ceiling}" aria-describedby="meta-${fieldName}-count"`}
-        ${storiedAttribute(fieldName)}
-        id="meta-${fieldName}" data-setting="field" data-field="${fieldName}" value="${typed}">
-      ${ceiling && html`<span class="byte-count${byteCountOf(typed) > ceiling ? ' over-ceiling' : ''}"
-        id="meta-${fieldName}-count">${byteCountOf(typed)} / ${ceiling} bytes</span>`}
-      ${fieldName === 'MetadataWindowSize' && html`<span class="choice-row">${windowUnits.map((unit) => html`<button
+      <input class="field-input" type="${inputType}"
+        min=${inputType === 'number' ? '1' : nothing} step=${inputType === 'number' ? '1' : nothing}
+        aria-describedby=${ceiling ? `meta-${fieldName}-count` : nothing}
+        data-story=${fieldStories[fieldName] ? fieldName : nothing}
+        id="meta-${fieldName}" data-setting="field" data-field="${fieldName}" .value=${typed}>
+      ${ceiling ? html`<span class="byte-count${byteCountOf(typed) > ceiling ? ' over-ceiling' : ''}"
+        id="meta-${fieldName}-count">${byteCountOf(typed)} / ${ceiling} bytes</span>` : nothing}
+      ${fieldName === 'MetadataWindowSize' ? html`<span class="choice-row">${windowUnits.map((unit) => html`<button
         class="chip${bench.windowUnit === unit.token ? ' on' : ''}" aria-pressed="${bench.windowUnit === unit.token}"
-        data-action="window-unit" data-unit="${unit.token}">${unit.token}</button>`)}</span>`}
+        data-action="window-unit" data-unit="${unit.token}">${unit.token}</button>`)}</span>` : nothing}
       ${whySpan(fieldName)}
-      ${fieldGloss(fieldName) && html`<p class="field-gloss">${fieldGloss(fieldName)}</p>`}
+      ${fieldGloss(fieldName) ? html`<p class="field-gloss">${fieldGloss(fieldName)}</p>` : nothing}
     </div>`;
   };
 
@@ -162,7 +160,7 @@ export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
       <div class="choice-row">${choicePairs.map(([token]) => (token === defaultToken
         ? html`<span class="chip-stack">${chip(token)}<span class="role-whisper">default</span></span>`
         : chip(token)))}</div>
-      ${gloss && html`<p class="choice-gloss">${gloss}</p>`}</div>`;
+      ${gloss ? html`<p class="choice-gloss">${gloss}</p>` : nothing}</div>`;
   };
 
   const controlMarkup = (row, fileFieldMarkup) => {
@@ -170,11 +168,11 @@ export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
     const kind = row.metadataFieldControlKind;
     if (fieldConcealed(fieldName)) return null;
     if (kind.tag === 'ToggleField')
-      return toggleRequests[fieldName] && toggleMarkup({
+      return toggleRequests[fieldName] ? toggleMarkup({
         id: `meta-${fieldName}`, setting: 'toggle', field: fieldName,
         checked: !!bench.toggledFields[fieldName],
         label: fieldLabel(fieldName, row.metadataFieldFlag), why: fieldWhy(fieldName),
-      });
+      }) : null;
     if (kind.tag === 'ChoiceField') return choiceRowMarkup(row, kind.contents.contents);
     if (kind.tag === 'FileField') return fileFieldMarkup(fieldName);
     return textFieldMarkup(row, kind.tag === 'NumberField' ? 'number' : 'text');
@@ -248,22 +246,8 @@ export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
       toggle: (checked, { field }) => recheck(() => { bench.toggledFields[field] = checked; }),
       constraint: (checked, { field }) => recheck(() => { bench.chosenConstraints[field] = checked; }),
     },
+    typings: {
+      field: (value, { field }) => { bench.fieldValues[field] = value; host.render(); },
+    },
   };
-};
-
-/* ------------------------------------------------------- stage listener ---- */
-
-// The count is measured where it lands rather than through a render, which would tear focus out of the field being typed in.
-// It is the page's own arithmetic; the engine's sentence about the length arrives at the check.
-export const wireByteCountListener = (host) => {
-  host.stage().addEventListener('input', (event) => {
-    const input = event.target.closest?.('.field-input[data-ceiling], .field-textarea[data-ceiling]');
-    if (!input) return;
-    const counter = input.parentElement.querySelector('.byte-count');
-    if (!counter) return;
-    const typedBytes = byteCountOf(input.value);
-    const ceiling = Number(input.dataset.ceiling);
-    counter.textContent = `${typedBytes} / ${ceiling} bytes`;
-    counter.classList.toggle('over-ceiling', typedBytes > ceiling);
-  });
 };

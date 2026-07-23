@@ -1,7 +1,7 @@
 // Everything the engine decides — can this patch go backwards, did that rom come out of it — arrives through the host's asks;
 // this module owns only undo's shape and voice.
 
-import { html } from './../dom.mjs';
+import { html, nothing } from '../../vendor/lit-html/lit-html.js';
 import { groupMarkup, toggleMarkup, seatSlotMarkup, heldSeatMarkup, swapSeatsMarkup } from './../controls.mjs';
 import { undoFactsCardMarkup } from './../facts-card.mjs';
 import { voiceLines, plainVoice, workingVoice, revertedVoice, refusalVoice } from './../answer-surface.mjs';
@@ -212,10 +212,10 @@ export const makeUndoVerb = (host) => {
     // options serve the act, so none surface for a patch that cannot be peeled
     return html`
       ${sentenceMarkup()}
-      ${operandsSatisfied && !undo.running && undo.patchIdentity?.refused && swapSeatsMarkup}
-      ${!undo.patch && peelNoteMarkup}
+      ${operandsSatisfied && !undo.running && undo.patchIdentity?.refused ? swapSeatsMarkup : nothing}
+      ${!undo.patch ? peelNoteMarkup : nothing}
       ${undoFactsCardMarkup(undo, patchPeels() && !impedimentSpoken())}
-      ${operandsSatisfied && patchPeels() && !impedimentSpoken() && optionsMarkup()}`;
+      ${operandsSatisfied && patchPeels() && !impedimentSpoken() ? optionsMarkup() : nothing}`;
   };
 
   /* ------------------------------------------------------------ voice ---- */
@@ -274,7 +274,7 @@ export const makeUndoVerb = (host) => {
     actMarkup: () => {
       if (undo.outcome || undo.running) return html``;
       const ready = host.hasSession() && undo.patch && undo.patched && !refusalCertain();
-      return html`<button class="run" data-action="run" ${!ready && html`disabled`}>${runLabel}</button>`;
+      return html`<button class="run" data-action="run" ?disabled=${!ready}>${runLabel}</button>`;
     },
     admitDroppedFile: (sorting, file) => admitFile(sorting === 'SortsAsPatch' ? 'patch' : 'patched', file),
     admitPickedFile,

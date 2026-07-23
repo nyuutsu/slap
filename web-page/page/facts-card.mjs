@@ -3,7 +3,7 @@
 // undo asks "did this rom come out of it?". The verdicts are the engine's ('checkApply' / 'checkUndo');
 // the cards only put them into sentences.
 
-import { html } from './dom.mjs';
+import { html, nothing } from '../vendor/lit-html/lit-html.js';
 import { base64ToHex, crc32Hex, checkKindNoun, humanByteSize, matchVerbFor, proseList } from './readouts.mjs';
 import { mismatchSentence } from './verification-speech.mjs';
 
@@ -12,11 +12,11 @@ const factsFrame = (file, facts, verdictRow) => html`<div class="facts-card">
     <span class="file-name">${file.name}</span>
     <span class="file-size">${humanByteSize(file.size)}</span>
   </div>
-  ${facts && html`<div class="hashes">
+  ${facts ? html`<div class="hashes">
     CRC32&nbsp; <b>${crc32Hex(facts.romCRC32)}</b><br>
     MD5&nbsp;&nbsp;&nbsp; <b>${base64ToHex(facts.romMD5)}</b><br>
     SHA1&nbsp;&nbsp; <b>${base64ToHex(facts.romSHA1)}</b>
-  </div>`}
+  </div>` : nothing}
   ${verdictRow}
 </div>`;
 

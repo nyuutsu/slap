@@ -1,6 +1,6 @@
 // slap's page root. Every fact on screen is asked of the engine: the page holds opinions, never knowledge.
 
-import { markupOf, html } from './dom.mjs';
+import { html, nothing, render } from '../vendor/lit-html/lit-html.js';
 import { openReactorSession, classifyBootFailure, answerOf, advisoriesOf, ReactorJobCancelled } from './reactor-session.mjs';
 import { seatMascot } from './mascot.mjs';
 import { voiceLines, bootFailureVoice } from './answer-surface.mjs';
@@ -11,7 +11,6 @@ import { makeCreateVerb } from './verbs/create.mjs';
 import { makeConvertVerb } from './verbs/convert.mjs';
 import { makeInfoVerb, makeExplainVerb } from './verbs/reads.mjs';
 import { wireStoryListeners } from './stories.mjs';
-import { wireByteCountListener } from './metadata-form.mjs';
 import { fieldStories } from './metadata-controls.mjs';
 import { pickerStories } from './format-picker.mjs';
 
@@ -47,7 +46,7 @@ const host = {
   // an answer from an older epoch arrives about files no longer on screen, and is dropped unheard
   wheneverStillCurrent: (deliver) => {
     const epochAtAsk = epoch;
-    return (value) => { if (epoch === epochAtAsk) { deliver(value); render(); } };
+    return (value) => { if (epoch === epochAtAsk) { deliver(value); renderPage(); } };
   },
   supersedeAsks: () => { epoch += 1; },
 
@@ -57,12 +56,12 @@ const host = {
     console.error(askFailure);
     noticeLine = String(askFailure?.message ?? askFailure);
     fellow?.droop();
-    render();
+    renderPage();
   },
 
   notice: () => noticeLine,
   setNotice: (line) => { noticeLine = line; },
-  render: () => render(),
+  render: () => renderPage(),
   surface: () => sessionIfOpen()?.surface ?? null,
   hasSession: () => sessionStanding.tag === 'SessionOpen',
   fellow: {
@@ -81,7 +80,7 @@ const host = {
     location.hash = 'explain';
   },
   // a view-transient line in the voice box; the next render puts the state's voice back
-  murmur: (spokenMarkup) => { element('voice').innerHTML = markupOf(spokenMarkup); },
+  murmur: (spokenMarkup) => { render(spokenMarkup, element('voice')); },
   stage: () => element('stage'),
 };
 
@@ -97,14 +96,13 @@ const verbs = {
 // Most keys name an engine metadata field; the page's own furniture brings nouns of its own.
 const storybook = { ...fieldStories, ...pickerStories, ...tutorStories };
 wireStoryListeners(host, storybook, () => verbs[currentVerb].storiesQuiet?.() ?? false);
-wireByteCountListener(host);
 
 /* --------------------------------------------------------------- render ---- */
 
 const verbTabsMarkup = () => {
   const tab = (verbName, quieter) => html`<button
     class="verb${quieter ? ' lesser' : ''}${verbName === currentVerb ? ' on' : ''}"
-    ${verbName === currentVerb && html`aria-current="page"`}
+    aria-current=${verbName === currentVerb ? 'page' : nothing}
     data-action="choose-verb" data-verb="${verbName}">${verbName}</button>`;
   return html`${headlinerVerbs.map((verbName) => tab(verbName, false))}<span class="verb-gap"></span>
     ${quieterVerbs.map((verbName) => tab(verbName, true))}`;
@@ -129,30 +127,39 @@ const startElapsedClock = () => {
 };
 const stopElapsedClock = () => { if (elapsedClock !== null) { clearInterval(elapsedClock); elapsedClock = null; } };
 
-const render = () => {
+// The copy button's word answers on the button itself, where the eyes already are, then reverts after a breath.
+let copyButtonWord = 'copy';
+let copyWordTimer = null;
+
+const tutorMarkup = (words) => html`
+  <p class="tutor-label">
+    <span class="has-story" tabindex="0" data-story="CommandEquivalent">command equivalent</span>
+    <button class="quiet-button" data-action="copy-command">${copyButtonWord}</button>
+  </p>
+  <pre class="terminal" id="command" data-action="copy-command">${commandMarkup(words)}</pre>`;
+
+const renderPage = () => {
   const verb = verbs[currentVerb];
-  element('verbs').innerHTML = markupOf(verbTabsMarkup());
-  element('stage').innerHTML = markupOf(verb.stageMarkup());
+  render(verbTabsMarkup(), element('verbs'));
+  render(verb.stageMarkup(), element('stage'));
   // a failed boot owns the voice box: a verb's voice would put a friendly face on a dead page
-  element('voice').innerHTML = markupOf(sessionStanding.tag === 'SessionFailedToOpen'
+  render(sessionStanding.tag === 'SessionFailedToOpen'
     ? bootFailureVoice(sessionStanding.bootFailureShape)
-    : verb.voiceMarkup());
-  element('command').innerHTML = markupOf(commandMarkup(verb.commandWords()));
-  element('act').innerHTML = markupOf(verb.actMarkup());
+    : verb.voiceMarkup(), element('voice'));
+  render(tutorMarkup(verb.commandWords()), element('tutor'));
+  render(verb.actMarkup(), element('act'));
 };
 
 /* --------------------------------------------------------------- wiring ---- */
 
-// The button's own word carries the answer, because the tutor is the one thing on the page no render rebuilds:
-// a line in the voice box would be wiped by the next interaction that redraws it.
-let copyWordTimer = null;
+const sayOnTheButton = (word) => {
+  copyButtonWord = word;
+  clearTimeout(copyWordTimer);
+  copyWordTimer = setTimeout(() => { copyButtonWord = 'copy'; renderPage(); }, 1600);
+  renderPage();
+};
+
 const copyCommand = async () => {
-  const button = element('copy-command');
-  const sayOnTheButton = (word) => {
-    button.textContent = word;
-    clearTimeout(copyWordTimer);
-    copyWordTimer = setTimeout(() => { button.textContent = 'copy'; }, 1600);
-  };
   try {
     await navigator.clipboard.writeText(element('command').textContent.trim());
     sayOnTheButton('copied');
@@ -160,12 +167,6 @@ const copyCommand = async () => {
     sayOnTheButton('copy it by hand');
   }
 };
-
-// The strip answers the gesture people try on it anyway, and stands aside for a selection:
-// dragging across part of a command is someone taking that part by hand, and copying over them would be rude.
-element('command').addEventListener('click', () => {
-  if (document.getSelection()?.isCollapsed !== false) copyCommand();
-});
 
 const filePicker = element('file-picker');
 
@@ -185,6 +186,9 @@ document.addEventListener('click', (event) => {
     return;
   }
   if (action === 'copy-command') {
+    // The strip answers the gesture people try on it anyway, and stands aside for a selection:
+    // dragging across part of a command is someone taking that part by hand, and copying over them would be rude.
+    if (control.matches('pre') && document.getSelection()?.isCollapsed === false) return;
     copyCommand();
     return;
   }
@@ -198,6 +202,14 @@ document.addEventListener('change', (event) => {
   noticeLine = null;
   const control = event.target;
   verbs[currentVerb].settings[setting]?.(control.type === 'checkbox' ? control.checked : control.value, control.dataset);
+});
+
+// The typing lane: each keystroke redraws what the page computes itself — byte counts, the command strip —
+// while the engine re-asks wait for 'change', the settled value being the one worth judging.
+document.addEventListener('input', (event) => {
+  const setting = event.target.dataset.setting;
+  if (!setting) return;
+  verbs[currentVerb].typings?.[setting]?.(event.target.value, event.target.dataset);
 });
 
 filePicker.addEventListener('change', () => {
@@ -214,7 +226,7 @@ const routeDroppedFiles = async (files) => {
   if (sessionStanding.tag === 'SessionFailedToOpen') return;   // the boot-failure card is already the answer
   if (sessionStanding.tag === 'SessionOpening') {
     noticeLine = voiceLines.stillGettingSet;
-    render();
+    renderPage();
     return;
   }
   noticeLine = null;
@@ -249,22 +261,22 @@ const arriveAtVerb = (verbName) => {
   fellow?.settle();
   // an answer dropped while this verb was off stage — another verb's supersede — never comes back by itself
   verbs[verbName].askAgain();
-  render();
+  renderPage();
 };
 
 addEventListener('hashchange', () => arriveAtVerb(verbNamedByHash() ?? 'apply'));
 
 currentVerb = verbNamedByHash() ?? 'apply';
-render();
+renderPage();
 seatMascot(element('fellow')).then((seated) => { fellow = seated; }).catch(console.error);
 openReactorSession().then((openedSession) => {
   sessionStanding = { tag: 'SessionOpen', session: openedSession };
   noticeLine = null;   // a "still getting set" answer is stale the moment the page is set
   Object.values(verbs).forEach((verb) => verb.askAgain());
-  render();
+  renderPage();
 }).catch((bootFailure) => {
   console.error(bootFailure);
   sessionStanding = { tag: 'SessionFailedToOpen', bootFailureShape: classifyBootFailure(bootFailure) };
   fellow?.droop();
-  render();
+  renderPage();
 });

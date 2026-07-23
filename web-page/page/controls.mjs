@@ -1,6 +1,6 @@
 // The control shapes every verb builds its stage from, one home each.
 
-import { html } from './dom.mjs';
+import { html, nothing } from '../vendor/lit-html/lit-html.js';
 
 export const groupMarkup = (heading, body) => html`<div class="group"><h3>${heading}</h3>${body}</div>`;
 
@@ -14,9 +14,9 @@ export const admonitionMarkup = (kind, spokenContents) => html`<p class="advisor
 // so the toggling, the label click and the announced state stay the browser's own.
 export const toggleMarkup = ({ id, setting, checked, label, why, field }) => html`<div class="toggle">
   <input class="toggle-input" type="checkbox" id="${id}" data-setting="${setting}"
-    ${field && html`data-field="${field}"`} ${checked && html`checked`}>
+    data-field=${field ?? nothing} .checked=${checked}>
   <label class="chip toggle-chip" for="${id}">${label}</label>
-  ${why && html`<span class="why">— ${why}</span>`}
+  ${why ? html`<span class="why">— ${why}</span>` : nothing}
 </div>`;
 
 // An empty slot wears its role word, so the empty sentence teaches the operation.
@@ -28,12 +28,12 @@ export const swapSeatsMarkup = html`<p class="swap-line"><button class="quiet-bu
 
 export const seatSlotMarkup = (seat, roleWord, file, chipWord) => file
   ? html`<button class="slot filled" data-action="pick-file" data-seat="${seat}">${file.name}</button>${
-      chipWord && html`<span class="format-chip">${chipWord}</span>`}`
+      chipWord ? html`<span class="format-chip">${chipWord}</span>` : nothing}`
   : html`<button class="slot empty" data-action="pick-file" data-seat="${seat}">${roleWord}</button>`;
 
 // While an act runs, the seats it reads are held: shown, not clickable.
 export const heldSeatMarkup = (file, chipWord) => html`<span class="slot filled inert">${file.name}</span>${
-  chipWord && html`<span class="format-chip">${chipWord}</span>`}`;
+  chipWord ? html`<span class="format-chip">${chipWord}</span>` : nothing}`;
 
 // Two same-type seats keep their role words in view once filled — order alone is ambiguous — as a whisper under the name.
 export const roleWhisperedSlotMarkup = (seat, roleWord, file) => file
@@ -52,13 +52,13 @@ export const headerControlMarkup = (framing, consoleRows) => {
       ${modeChip('RemoveHeader', 'it has one — take it off')}
       ${modeChip('AddHeader', "it hasn't got one — pretend it has")}
     </div>
-    ${chosenMode !== 'TakeInputAsIs' && html`
+    ${chosenMode !== 'TakeInputAsIs' ? html`
       <p class="choice-label">which console</p>
       <div class="choice-row">${consoleRows.map((row) => html`<button
         class="chip${framing.console?.consoleToken === row.consoleToken ? ' on' : ''}"
         aria-pressed="${framing.console?.consoleToken === row.consoleToken}"
         data-action="set-console" data-console="${row.consoleToken}">${row.consoleName}</button>`)}</div>
-      <p class="aside">slap can't know whether your copy is headered — you can. It'll say what it did.</p>`}`);
+      <p class="aside">slap can't know whether your copy is headered — you can. It'll say what it did.</p>` : nothing}`);
 };
 
 // The console a fresh directive starts on; snes, because headered roms usually are snes roms.
@@ -74,14 +74,14 @@ export const encodingPickerMarkup = (encodingFamilies, chosenEncoding, moreEncod
     <p class="aside explainer">Some formats store text — descriptions, author names — without
     recording its encoding, and slap reads it as UTF-8. If a patch came from, say, a Japanese release and
     its text looks wrong, that's something slap can't know but you might: pick the encoding and slap re-reads.</p>
-    ${!chosenIsUncommon && html`<button class="more-chip${encodingsOpen ? ' open' : ''}"
+    ${!chosenIsUncommon ? html`<button class="more-chip${encodingsOpen ? ' open' : ''}"
       aria-expanded="${encodingsOpen}" data-action="more-encodings">
-      ${encodingsOpen ? 'fewer encodings' : 'choose an encoding'}</button>`}
-    ${encodingsOpen && encodingFamilies.map((family) => html`<div class="encoding-family">
+      ${encodingsOpen ? 'fewer encodings' : 'choose an encoding'}</button>` : nothing}
+    ${encodingsOpen ? encodingFamilies.map((family) => html`<div class="encoding-family">
       <span class="family-label">${family.advertisedFamilyLabel}</span>
       <div class="choice-row">${family.advertisedFamilyMembers.map((token) => html`<button
         class="chip${chosenEncoding === token ? ' on' : ''}"
         aria-pressed="${chosenEncoding === token}"
         data-action="set-encoding" data-token="${token}">${token}</button>`)}</div>
-    </div>`)}`);
+    </div>`) : nothing}`);
 };

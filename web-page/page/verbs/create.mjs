@@ -1,7 +1,7 @@
 // Both seats are defining inputs, not matched ones: slap cannot know which file is the original,
 // so a drop lands in the original seat first and the swap link is the recourse.
 
-import { html } from './../dom.mjs';
+import { html, nothing } from '../../vendor/lit-html/lit-html.js';
 import { roleWhisperedSlotMarkup, heldSeatMarkup, swapSeatsMarkup } from './../controls.mjs';
 import { voiceLines, plainVoice, workingVoice, bottledVoice, blockedVoice, refusalVoice,
          advisoryMarkup } from './../answer-surface.mjs';
@@ -185,7 +185,7 @@ export const makeCreateVerb = (host) => {
     ${laneChips('blob-lane', create.blob.lane)}
     ${create.blob.lane === 'typed'
       ? html`<textarea class="field-textarea" data-setting="blob-text"
-          placeholder="a name, a version, a note: whatever you'd want found in here">${create.blob.text}</textarea>`
+          placeholder="a name, a version, a note: whatever you'd want found in here" .value=${create.blob.text}></textarea>`
       : html`<div class="choice-row"><button class="chip" data-action="pick-file"
           data-seat="blob-file">${create.blob.file?.name ?? 'choose a file…'}</button></div>
         <p class="aside">Any file at all; the bytes go in exactly as they are.</p>`}`;
@@ -209,7 +209,7 @@ export const makeCreateVerb = (host) => {
     if (create.outcome) return sentenceMarkup();
     return html`
       ${sentenceMarkup()}
-      ${create.original && create.modified && !create.running && swapSeatsMarkup}
+      ${create.original && create.modified && !create.running ? swapSeatsMarkup : nothing}
       ${formatPickerMarkup(host.surface()?.surfaceFormats ?? [], create.formatToken, create.moreFormatsOpen)}
       ${bench.metadataGroupMarkup(fileFieldMarkup)}
       ${bench.constraintsGroupMarkup()}`;
@@ -267,7 +267,7 @@ export const makeCreateVerb = (host) => {
     actMarkup: () => {
       if (create.outcome || create.running) return html``;
       const ready = host.hasSession() && create.formatToken && create.original && create.modified && !refusalCertain();
-      return html`<button class="run" data-action="run" ${!ready && html`disabled`}>${runLabel}</button>`;
+      return html`<button class="run" data-action="run" ?disabled=${!ready}>${runLabel}</button>`;
     },
     // Both seats are roms, so the sorting is unused; the original seat fills first because
     // "the first one I dropped" reads as the original. A full bench starts a fresh pair, original first again,
@@ -318,6 +318,11 @@ export const makeCreateVerb = (host) => {
       ...bench.settings,
       'blob-text': (value) => recheck(() => { create.blob.text = value; }),
       'diz-text': (value) => recheck(() => { create.diz.text = value; }),
+    },
+    typings: {
+      ...bench.typings,
+      'blob-text': (value) => { create.blob.text = value; host.render(); },
+      'diz-text': (value) => { create.diz.text = value; host.render(); },
     },
   };
 };

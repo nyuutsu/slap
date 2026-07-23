@@ -1,7 +1,7 @@
 // The surface says what formats exist; the opinion — which tiles to recommend, and with what words — lives here.
 // A format with no words still shows, under "more formats", unadorned.
 
-import { html } from './dom.mjs';
+import { html, nothing } from '../vendor/lit-html/lit-html.js';
 import { groupMarkup, admonitionMarkup } from './controls.mjs';
 
 const recommendedTokens = ['bps', 'xdelta3', 'ppf3'];
@@ -27,7 +27,7 @@ const formatNotes = {
 
 const chosenFormatNoteMarkup = (chosenToken) => {
   const note = formatNotes[chosenToken];
-  return note && admonitionMarkup('note', note);
+  return note ? admonitionMarkup('note', note) : nothing;
 };
 
 export const pickerStories = {
@@ -55,13 +55,13 @@ export const formatPickerMarkup = (surfaceRows, chosenToken, moreFormatsOpen) =>
   const moreOpen = moreFormatsOpen || chosenIsQuieter;
   return groupMarkup('format', html`
     <div class="tiles">${recommendedRows.map((row) => tileMarkup(row, chosenToken, false))}</div>
-    ${curioRow && tileMarkup(curioRow, chosenToken, true)}
-    ${!chosenIsQuieter && html`<button class="more-chip${moreOpen ? ' open' : ''}" aria-expanded="${moreOpen}"
+    ${curioRow ? tileMarkup(curioRow, chosenToken, true) : nothing}
+    ${!chosenIsQuieter ? html`<button class="more-chip${moreOpen ? ' open' : ''}" aria-expanded="${moreOpen}"
       data-action="more-formats" data-story="MoreFormats">
-      ${moreOpen ? 'fewer formats' : `more formats (${quieterRows.length})`}</button>`}
-    ${moreOpen && html`<div class="choice-row">${quieterRows.map((row) => html`<button
+      ${moreOpen ? 'fewer formats' : `more formats (${quieterRows.length})`}</button>` : nothing}
+    ${moreOpen ? html`<div class="choice-row">${quieterRows.map((row) => html`<button
       class="chip${row.formatToken === chosenToken ? ' on' : ''}"
       aria-pressed="${row.formatToken === chosenToken}"
-      data-action="choose-format" data-token="${row.formatToken}">${row.formatToken}</button>`)}</div>`}
+      data-action="choose-format" data-token="${row.formatToken}">${row.formatToken}</button>`)}</div>` : nothing}
     ${chosenFormatNoteMarkup(chosenToken)}`);
 };

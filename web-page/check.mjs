@@ -8,13 +8,15 @@ import { execFileSync } from 'node:child_process';
 import { writeFileSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { markupOf } from './page/dom.mjs';
-import { infoReadoutMarkup, embeddedContentsOf, embeddedContentMarkup,
-         heatModel, heatBarMarkup, heatCaption, walkMarkup, structureOverviewMarkup,
-         analysisRegionsOf, analysisAsidesMarkup } from './page/read-panels.mjs';
-import { applyFactsCardMarkup, undoFactsCardMarkup } from './page/facts-card.mjs';
-import { patchedVoice, revertedVoice, bottledVoice, convertedVoice, blockedVoice,
-         advisoryMarkup } from './page/answer-surface.mjs';
+import './lit-html-stunt-hook.mjs';
+
+const { markupOf } = await import('./lit-html-stunt.mjs');
+const { infoReadoutMarkup, embeddedContentsOf, embeddedContentMarkup,
+        heatModel, heatBarMarkup, heatCaption, walkMarkup, structureOverviewMarkup,
+        analysisRegionsOf, analysisAsidesMarkup } = await import('./page/read-panels.mjs');
+const { applyFactsCardMarkup, undoFactsCardMarkup } = await import('./page/facts-card.mjs');
+const { patchedVoice, revertedVoice, bottledVoice, convertedVoice, blockedVoice,
+        advisoryMarkup } = await import('./page/answer-surface.mjs');
 
 const [probePath, romPath, ...patchPaths] = process.argv.slice(2);
 if (!probePath || !romPath || patchPaths.length === 0) {

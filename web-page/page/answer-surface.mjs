@@ -1,7 +1,7 @@
 // The one home for slap's voice: everything the engine says — refusals, success verdicts,
 // advisories riding either — lands in this box, and the fellow beside it gives it a face.
 
-import { html } from './dom.mjs';
+import { html } from '../vendor/lit-html/lit-html.js';
 import { admonitionMarkup } from './controls.mjs';
 import { buildStamp } from './build-stamp.mjs';
 import { checkKindNoun, crc32Hex, matchVerbFor, proseList } from './readouts.mjs';

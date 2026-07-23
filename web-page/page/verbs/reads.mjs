@@ -1,7 +1,7 @@
 // The read verbs, a family of two. info answers "what is this patch" as a facts glance;
 // explain answers "what does it do to the bytes" as info-plus — the same readout, then the structure.
 
-import { html } from './../dom.mjs';
+import { html, nothing } from '../../vendor/lit-html/lit-html.js';
 import { groupMarkup, toggleMarkup, seatSlotMarkup, encodingPickerMarkup } from './../controls.mjs';
 import { voiceLines, plainVoice, advisoryMarkup } from './../answer-surface.mjs';
 import { verbWord, flagWord, valueWord, namedOr } from './../command-tutor.mjs';
@@ -218,7 +218,7 @@ export const makeExplainVerb = (host) => {
     read.reading.model ??= heatModel(regions, analysis.analysisSummary);
     return html`<div class="results">
       ${structureOverviewMarkup(regions, explanation.explanationInfo.infoLines)}
-      ${read.reading.model && html`<div class="bar-shelf">${heatBarMarkup(read.reading.model)}</div>`}
+      ${read.reading.model ? html`<div class="bar-shelf">${heatBarMarkup(read.reading.model)}</div>` : nothing}
       ${analysisAsidesMarkup(analysis)}
       ${embeddedContentMarkup(explanation.explanationInfo)}
     </div>`;
@@ -246,9 +246,9 @@ export const makeExplainVerb = (host) => {
       ${sentence}
       ${infoReadoutMarkup(explanationInfo, core.chipWord() ?? formatLabelWord(explanationInfo.infoFormat.formatLabel))}
       ${structurePanelMarkup(answered)}
-      ${core.encodingSpeaks() && textEncodingGroupMarkup()}
+      ${core.encodingSpeaks() ? textEncodingGroupMarkup() : nothing}
       ${optionsMarkup()}
-      ${read.everyRecord && html`<div class="results">${walkMarkup(regions, read.walkRowsShown)}</div>`}`;
+      ${read.everyRecord ? html`<div class="results">${walkMarkup(regions, read.walkRowsShown)}</div>` : nothing}`;
   };
 
   // The heat bar's hover caption updates in place — a hover is not a state change; wired once, against the stage.

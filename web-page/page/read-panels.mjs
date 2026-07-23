@@ -2,7 +2,7 @@
 // explain is structure: the analysis drawn as a heatmap of the rebuilt file — where and how much changed, at a glance —
 // with the record walk below for whoever wants to dig. Two renderers over one model; the terminal's dump is the other.
 
-import { html } from './dom.mjs';
+import { html, nothing } from '../vendor/lit-html/lit-html.js';
 import { groupedCount, humanByteSize } from './readouts.mjs';
 
 const hexOffset = (offset) => `0x${offset.toString(16).padStart(6, '0')}`;
@@ -49,7 +49,7 @@ export const infoReadoutMarkup = (info, formatName) => html`
     ${info.infoEmbedded.map((embed) => readoutRow(embed.embeddedLabel, embeddedFieldGlance(embed.embeddedField)))}
     ${readoutRow(countUnitWord(info.infoUnit), groupedCount(info.infoTally))}
     ${totalBytesRow(info.infoBytes)}
-    ${info.infoRange && readoutRow('range', rangePhrase(info.infoRange))}
+    ${info.infoRange ? readoutRow('range', rangePhrase(info.infoRange)) : nothing}
   </div></div>`;
 
 export const embeddedContentsOf = (info) =>
@@ -195,7 +195,7 @@ export const structureOverviewMarkup = (regions, infoLines) => {
   return html`<div class="readout">
     ${readoutRow('modified', `${groupedCount(totalModified)} bytes (${breakdown})`)}
     ${readoutRow('range', `${hexOffset(firstOffset)} – ${hexOffset(lastByte)}`)}
-    ${sizeChange !== null && readoutRow('size change', `${sizeChange >= 0 ? '+' : ''}${groupedCount(sizeChange)} bytes`)}
+    ${sizeChange !== null ? readoutRow('size change', `${sizeChange >= 0 ? '+' : ''}${groupedCount(sizeChange)} bytes`) : nothing}
     ${readoutRow('record sizes', sizesGlance)}
   </div>`;
 };
@@ -256,10 +256,10 @@ export const walkLegendMarkup = (regions) => {
 export const walkMarkup = (regions, rowsShown) => html`
   ${walkLegendMarkup(regions)}
   <div class="walk">${regions.slice(0, rowsShown).map(walkRow)}</div>
-  ${regions.length > rowsShown && html`<div class="walk-more">
+  ${regions.length > rowsShown ? html`<div class="walk-more">
     <button class="quiet-button" data-action="walk-more">show 2,000 more</button>
     <span class="aside">— ${groupedCount(regions.length - rowsShown)} further records below</span>
-  </div>`}`;
+  </div>` : nothing}`;
 
 /* ------------------------------------------------------------ assembly ---- */
 

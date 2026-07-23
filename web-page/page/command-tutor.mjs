@@ -1,7 +1,7 @@
 // Each verb folds its own command words from the same state its form and its declaration read, so the three cannot disagree;
 // and a fold never shows a filename nobody chose: a file that isn't real yet stays a role-word placeholder.
 
-import { html } from './dom.mjs';
+import { html } from '../vendor/lit-html/lit-html.js';
 
 export const verbWord = (word) => ({ kind: 'verb-word', word });
 export const flagWord = (word) => ({ kind: 'flag-word', word });

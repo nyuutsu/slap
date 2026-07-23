@@ -1,7 +1,7 @@
 // Everything the engine decides — the verdict, the rescue, the unasked fix — arrives through the host's asks;
 // this module owns only apply's shape and voice.
 
-import { html } from './../dom.mjs';
+import { html, nothing } from '../../vendor/lit-html/lit-html.js';
 import { groupMarkup, toggleMarkup, seatSlotMarkup, heldSeatMarkup, swapSeatsMarkup,
          headerControlMarkup, preseededConsoleRow } from './../controls.mjs';
 import { applyFactsCardMarkup } from './../facts-card.mjs';
@@ -229,10 +229,10 @@ export const makeApplyVerb = (host) => {
 
     return html`
       ${sentenceMarkup()}
-      ${operandsSatisfied && !apply.running && apply.patchIdentity?.refused && swapSeatsMarkup}
+      ${operandsSatisfied && !apply.running && apply.patchIdentity?.refused ? swapSeatsMarkup : nothing}
       ${applyFactsCardMarkup(apply, host.surface()?.surfaceConsoleHeaders ?? [])}
-      ${headerControlSurfaces && headerControlMarkup(apply.framing, host.surface().surfaceConsoleHeaders)}
-      ${operandsSatisfied && !impedimentSpoken() && optionsMarkup()}`;
+      ${headerControlSurfaces ? headerControlMarkup(apply.framing, host.surface().surfaceConsoleHeaders) : nothing}
+      ${operandsSatisfied && !impedimentSpoken() ? optionsMarkup() : nothing}`;
   };
 
   /* ------------------------------------------------------------ voice ---- */
@@ -292,7 +292,7 @@ export const makeApplyVerb = (host) => {
     actMarkup: () => {
       if (apply.outcome || apply.running) return html``;
       const ready = host.hasSession() && apply.patch && apply.rom && !refusalCertain();
-      return html`<button class="run" data-action="run" ${!ready && html`disabled`}>${runLabel}</button>`;
+      return html`<button class="run" data-action="run" ?disabled=${!ready}>${runLabel}</button>`;
     },
     admitDroppedFile: (sorting, file) => admitFile(sorting === 'SortsAsPatch' ? 'patch' : 'rom', file),
     admitPickedFile,

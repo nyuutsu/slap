@@ -5,7 +5,7 @@
 // Everything else crosses verbatim, so a warmed engine message reaches the page with no work here,
 // and one that makes a row redundant means deleting the row, never syncing it.
 
-import { html } from './dom.mjs';
+import { html } from '../vendor/lit-html/lit-html.js';
 import { crc32Hex, groupedCount } from './readouts.mjs';
 
 // A mismatch's typed payload, said plainly. The two commonest kinds get their values spelled out;

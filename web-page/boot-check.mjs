@@ -3,6 +3,8 @@
 // and the boot-failure card must take the voice box and outlive a verb change.
 // Run from dist-web, where the reactor's modules sit at the paths the page imports them by.
 
+// The stunt stands in for lit — and it throws where lit would quietly misrender, so this boot doubles as a template check.
+import './lit-html-stunt-hook.mjs';
 import { ReactorNeverArrived } from './reactor/reactor-client.mjs';
 
 const fakeElement = () => ({
@@ -34,7 +36,7 @@ console.error = (failure, ...rest) => { if (!(failure instanceof ReactorNeverArr
 await import('./page/main.mjs');
 await new Promise((wakeAfterBootSettles) => setTimeout(wakeAfterBootSettles, 0));
 
-const { markupOf } = await import('./page/dom.mjs');
+const { markupOf } = await import('./lit-html-stunt.mjs');
 const { bootFailureVoice } = await import('./page/answer-surface.mjs');
 
 // the exact card the arranged failure must produce: a boot that lands in the wrong arm fails here

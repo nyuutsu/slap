@@ -1,6 +1,6 @@
 // A seated rom turns the run into apply-and-recreate, so the rom seat wears apply's whole preflight.
 
-import { html } from './../dom.mjs';
+import { html, nothing } from '../../vendor/lit-html/lit-html.js';
 import { groupMarkup, toggleMarkup, seatSlotMarkup, heldSeatMarkup, inertSlotMarkup,
          headerControlMarkup, encodingPickerMarkup, preseededConsoleRow } from './../controls.mjs';
 import { applyFactsCardMarkup } from './../facts-card.mjs';
@@ -327,10 +327,10 @@ export const makeConvertVerb = (host) => {
     const chip = (token, label) => html`<button class="chip${lane === token ? ' on' : ''}"
       aria-pressed="${lane === token}" data-action="${laneAction}" data-lane="${token}">${label}</button>`;
     return html`<div class="choice-row">
-      ${carried && chip('keep', 'keep theirs')}
+      ${carried ? chip('keep', 'keep theirs') : nothing}
       ${chip('typed', carried ? 'replace it' : 'type it')}
       ${chip('file', 'use a file')}
-      ${carried && chip('drop', 'drop it')}
+      ${carried ? chip('drop', 'drop it') : nothing}
     </div>`;
   };
 
@@ -339,11 +339,11 @@ export const makeConvertVerb = (host) => {
     return html`
       <p class="choice-label">${storiedText('MetadataEmbeddedBlob', fieldLabel('MetadataEmbeddedBlob'))}</p>
       ${laneChips('blob-lane', convert.blob, fieldCarried('MetadataEmbeddedBlob'))}
-      ${lane === 'typed' && html`<textarea class="field-textarea" data-setting="blob-text"
-          placeholder="a name, a version, a note: whatever you'd want found in here">${convert.blob.text}</textarea>`}
-      ${lane === 'file' && html`<div class="choice-row"><button class="chip" data-action="pick-file"
+      ${lane === 'typed' ? html`<textarea class="field-textarea" data-setting="blob-text"
+          placeholder="a name, a version, a note: whatever you'd want found in here" .value=${convert.blob.text}></textarea>` : nothing}
+      ${lane === 'file' ? html`<div class="choice-row"><button class="chip" data-action="pick-file"
           data-seat="blob-file">${convert.blob.file?.name ?? 'choose a file…'}</button></div>
-        <p class="aside">Any file at all; the bytes go in exactly as they are.</p>`}`;
+        <p class="aside">Any file at all; the bytes go in exactly as they are.</p>` : nothing}`;
   };
 
   const dizLanesMarkup = () => {
@@ -351,11 +351,11 @@ export const makeConvertVerb = (host) => {
     return html`
       <p class="choice-label">${storiedText('MetadataFileIdDiz', fieldLabel('MetadataFileIdDiz'))}</p>
       ${laneChips('diz-lane', convert.diz, fieldCarried('MetadataFileIdDiz'))}
-      ${lane === 'typed' && countedTextareaMarkup({ setting: 'diz-text',
+      ${lane === 'typed' ? countedTextareaMarkup({ setting: 'diz-text',
           placeholder: "the FILE_ID.DIZ text, as you'd like it carried",
-          typed: convert.diz.text, ceiling: bench.fieldCeiling('MetadataFileIdDiz') })}
-      ${lane === 'file' && html`<div class="choice-row"><button class="chip" data-action="pick-file"
-          data-seat="diz-file">${convert.diz.file?.name ?? 'choose a file…'}</button></div>`}`;
+          typed: convert.diz.text, ceiling: bench.fieldCeiling('MetadataFileIdDiz') }) : nothing}
+      ${lane === 'file' ? html`<div class="choice-row"><button class="chip" data-action="pick-file"
+          data-seat="diz-file">${convert.diz.file?.name ?? 'choose a file…'}</button></div>` : nothing}`;
   };
 
   const fileFieldMarkup = (fieldName) => {
@@ -381,12 +381,12 @@ export const makeConvertVerb = (host) => {
       ${sentenceMarkup()}
       ${formatPickerMarkup(host.surface()?.surfaceFormats ?? [], convert.formatToken, convert.moreFormatsOpen)}
       ${sourceGroupMarkup()}
-      ${headerControlSurfaces() && headerControlMarkup(convert.framing, host.surface().surfaceConsoleHeaders)}
+      ${headerControlSurfaces() ? headerControlMarkup(convert.framing, host.surface().surfaceConsoleHeaders) : nothing}
       ${bench.metadataGroupMarkup(fileFieldMarkup)}
       ${bench.constraintsGroupMarkup()}
-      ${encodingSpeaks() && encodingPickerMarkup(host.surface()?.surfaceEncodings ?? [],
-                                                 convert.metadataEncoding, convert.moreEncodingsOpen)}
-      ${convert.patch && !impedimentSpoken() && optionsMarkup()}`;
+      ${encodingSpeaks() ? encodingPickerMarkup(host.surface()?.surfaceEncodings ?? [],
+                                                convert.metadataEncoding, convert.moreEncodingsOpen) : nothing}
+      ${convert.patch && !impedimentSpoken() ? optionsMarkup() : nothing}`;
   };
 
   /* ------------------------------------------------------------ voice ---- */
@@ -466,7 +466,7 @@ export const makeConvertVerb = (host) => {
     actMarkup: () => {
       if (convert.outcome || convert.running) return html``;
       const ready = host.hasSession() && convert.patch && convert.formatToken && !refusalCertain();
-      return html`<button class="run" data-action="run" ${!ready && html`disabled`}>${runLabel}</button>`;
+      return html`<button class="run" data-action="run" ?disabled=${!ready}>${runLabel}</button>`;
     },
     admitDroppedFile: (sorting, file) => (sorting === 'SortsAsPatch' ? admitPatch(file) : admitSource(file)),
     admitPickedFile: (seat, file) => {
@@ -523,6 +523,11 @@ export const makeConvertVerb = (host) => {
       dialect: (checked) => rereadPatch(() => {
         convert.ppf1Origin = checked ? 'PPF1OriginAmiga' : 'PPF1OriginPC';
       }),
+    },
+    typings: {
+      ...bench.typings,
+      'blob-text': (value) => { convert.blob.text = value; host.render(); },
+      'diz-text': (value) => { convert.diz.text = value; host.render(); },
     },
   };
 };
