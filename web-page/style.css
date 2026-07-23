@@ -8,13 +8,23 @@
 @font-face { font-family: 'IM Fell English'; src: url(fonts/imfell-400-italic.woff2) format('woff2'); font-style: italic;    font-display: swap; }
 @font-face { font-family: 'Sarasa Mono J';   src: url(fonts/sarasamonoj-400.woff2) format('woff2');   font-weight: 400;      font-display: swap; }
 
+/* Sarasa's stand-ins while it downloads, size-adjusted to its half-em advance: whichever local mono
+   paints first occupies exactly the columns Sarasa will, so its arrival changes letterforms, never layout.
+   Each local is spelled twice because Firefox matches local() by full or PostScript name, never family. */
+@font-face { font-family: 'Sarasa Stand-in'; src: local('Menlo'), local('Menlo-Regular'), local('Menlo Regular'); size-adjust: 83.02%; }
+@font-face { font-family: 'Sarasa Stand-in'; src: local('Consolas'), local('Consolas Regular'); size-adjust: 90.91%; }
+@font-face { font-family: 'Sarasa Stand-in'; src: local('DejaVu Sans Mono'), local('DejaVuSansMono'); size-adjust: 83.02%; }
+@font-face { font-family: 'Sarasa Stand-in'; src: local('Roboto Mono'), local('RobotoMono-Regular'), local('Roboto Mono Regular'); size-adjust: 83.32%; }
+
 :root {
   --room: #FBF4EA;
   --panel: #FFFFFF;
   --hairline: #ECD9C4;
   --ink: #3D3A34;
   --ink-soft: #7A5647;
-  --whisper: #857059;
+  --whisper: #7E6A54;
+  /* the ink for reversed ground: words sitting on grape or coral */
+  --ink-reversed: #FFFFFF;
 
   --grape: #8E44AD;
   --grape-tint: #F5EDF9;
@@ -23,7 +33,7 @@
   --amber: #E8912B;
   /* the bright coral and amber carry no words: anything to be read in either hue takes the ink below it */
   --coral-ink: #A8431E;
-  --amber-ink: #A8680F;
+  --amber-ink: #9A5F0D;
 
   /* a dash marks what is not filled or opened yet, in the family of the words it stands with */
   --dash-warm: #A9885C;
@@ -43,7 +53,7 @@
   --display: 'Baloo 2', system-ui, sans-serif;
   --body: 'Nunito', system-ui, sans-serif;
   --mono: 'Space Mono', ui-monospace, Menlo, Consolas, monospace;
-  --terminal-mono: 'Sarasa Mono J', ui-monospace, Menlo, Consolas, monospace;
+  --terminal-mono: 'Sarasa Mono J', 'Sarasa Stand-in', ui-monospace, Menlo, Consolas, monospace;
 }
 
 * { box-sizing: border-box; }
@@ -81,10 +91,10 @@ button { font: inherit; cursor: pointer; }
 /* ---------------------------------------------------------- masthead ---- */
 
 .masthead { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 26px; flex-wrap: wrap; }
-@media (max-width: 620px) {
+@media (max-width: 640px) {
   .masthead { flex-wrap: nowrap; gap: 12px; }
   .sticker { flex: none; }
-  .motd { flex: 1 1 0; min-width: 0; }
+  .motd { flex: 0 1 auto; min-width: 0; }
   .motd-banner { display: flex; width: 100%; }
   .motd-lines { min-width: 0; }
 }
@@ -110,10 +120,13 @@ button { font: inherit; cursor: pointer; }
   padding: 9px 14px;
   display: inline-flex; align-items: center; text-align: left;
 }
+/* 17 columns at Sarasa's half-em advance, reserved before the font arrives:
+   a fallback's wider glyphs paint inside the same box instead of resizing it when the real font lands. */
 .motd-wordmark {
   margin: 0;
   font-family: inherit;
   font-size: 12px; line-height: 1.12;
+  width: 8.5em; overflow: hidden;
   color: var(--terminal-value);
 }
 .motd-lines   { font-size: 12px; line-height: 1.5; }
@@ -133,7 +146,7 @@ button { font: inherit; cursor: pointer; }
 .motd:hover .motd-cursor,
 .motd:focus-visible .motd-cursor { opacity: 1; animation: motdCursorBlink 1.02s steps(1, end) infinite; }
 .motd:focus-visible { outline: 2px solid var(--terminal-flag); outline-offset: 2px; border-radius: 9px; }
-@media (max-width: 620px) { .motd-wordmark { display: none; } }
+@media (max-width: 640px) { .motd-wordmark { display: none; } }
 
 .visually-hidden {
   position: absolute;
@@ -236,7 +249,7 @@ button { font: inherit; cursor: pointer; }
   padding: 7px 13px;
 }
 .chip:hover { border-color: var(--grape); }
-.chip.on { background: var(--grape); border-color: var(--grape); color: #fff; }
+.chip.on { background: var(--grape); border-color: var(--grape); color: var(--ink-reversed); }
 .choice-label { font-family: var(--mono); font-size: 11.5px; color: var(--whisper); margin: 12px 0 6px; }
 
 .toggle { display: flex; align-items: center; gap: 9px; margin: 10px 0 2px; }
@@ -245,7 +258,7 @@ button { font: inherit; cursor: pointer; }
 .toggle-chip { cursor: pointer; }
 /* the tick's seat is never empty: a hollow ring holds it while off, so the chip reads fillable and never shifts */
 .toggle-chip::before { content: '○'; display: inline-block; width: 1.2em; color: var(--whisper); }
-.toggle-input:checked + .toggle-chip { background: var(--grape); border-color: var(--grape); color: #fff; }
+.toggle-input:checked + .toggle-chip { background: var(--grape); border-color: var(--grape); color: var(--ink-reversed); }
 .toggle-input:checked + .toggle-chip::before { content: '✓'; color: inherit; }
 .toggle-input:focus-visible + .toggle-chip { outline: 2px solid var(--grape); outline-offset: 2px; }
 
@@ -259,7 +272,7 @@ legend.choice-label { padding: 0; }
 
 /* ------------------------------------------------------------ create ---- */
 
-.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 4px 0 10px; }
+.tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 4px 0 10px; }
 .tile {
   display: flex; flex-direction: column; gap: 6px; text-align: left;
   background: var(--room); border: 1px solid var(--hairline); border-radius: 10px;
@@ -316,7 +329,6 @@ legend.choice-label { padding: 0; }
 .field-input[type="number"] { flex: 0 0 auto; width: 11ch; appearance: textfield; }
 .field-input[type="number"]::-webkit-outer-spin-button,
 .field-input[type="number"]::-webkit-inner-spin-button { appearance: none; margin: 0; }
-.field-input:focus, .field-textarea:focus { outline: none; border-color: var(--grape); }
 .field-input:invalid { border-color: var(--coral-deep); }
 .field-textarea { width: 100%; min-height: 64px; resize: vertical; margin-top: 4px; }
 .counted-lane .byte-count { display: block; text-align: right; margin-top: 3px; }
@@ -438,7 +450,7 @@ legend.choice-label { padding: 0; }
 .act { margin-top: 16px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .run {
   font-family: var(--display); font-weight: 700; font-size: 17px;
-  background: var(--coral); color: #fff;
+  background: var(--coral); color: var(--ink-reversed);
   border: none; border-radius: 12px;
   padding: 11px 34px;
   box-shadow: 0 3px 0 rgba(198, 89, 47, 0.35);
