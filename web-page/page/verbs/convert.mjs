@@ -1,6 +1,7 @@
 // A seated rom turns the run into apply-and-recreate, so the rom seat wears apply's whole preflight.
 
 import { html, nothing } from '../../vendor/lit-html/lit-html.js';
+import { Verdict, CheckVerdict, Sorting, EmbeddedField } from './../engine-vocabulary.mjs';
 import { groupMarkup, toggleMarkup, seatSlotMarkup, heldSeatMarkup, inertSlotMarkup,
          headerControlMarkup, encodingPickerMarkup, preseededConsoleRow } from './../controls.mjs';
 import { applyFactsCardMarkup } from './../facts-card.mjs';
@@ -29,8 +30,8 @@ const atRest = () => ({
   blob: { lane: null, text: '', file: null, fileBase64: null },
   diz:  { lane: null, text: '', file: null, fileBytes: null },
   checkAnswer: null,
-  running: null,
-  outcome: null,
+  // apply's act doctrine: AtRest | Running{cancel} | Converted | Refused | Fell
+  act: { tag: 'AtRest' },
 });
 
 export const makeConvertVerb = (host) => {
@@ -73,7 +74,7 @@ export const makeConvertVerb = (host) => {
 
   const fieldCarried = (fieldName) =>
     (convert.patchReading?.answered?.infoEmbedded ?? []).some((embed) =>
-      embed.embeddedField.tag !== 'FieldAbsent' && carriedFieldLabels[embed.embeddedLabel] === fieldName);
+      embed.embeddedField.tag !== EmbeddedField.Absent && carriedFieldLabels[embed.embeddedLabel] === fieldName);
 
   const laneOf = (laneState, carried) => laneState.lane ?? (carried ? 'keep' : 'typed');
 
@@ -194,15 +195,18 @@ export const makeConvertVerb = (host) => {
 
   /* ------------------------------------------------------------ seats ---- */
 
-  const abandonOutcome = () => {
-    if (convert.outcome?.converted) URL.revokeObjectURL(convert.outcome.converted.downloadHref);
-    convert.outcome = null;
+  const actRunning  = () => convert.act.tag === 'Running';
+  const actAnswered = () => convert.act.tag !== 'AtRest' && !actRunning();
+
+  const abandonAct = () => {
+    if (convert.act.tag === 'Converted') URL.revokeObjectURL(convert.act.downloadHref);
+    convert.act = { tag: 'AtRest' };
   };
 
   const admitPatch = (file) => {
-    if (convert.running) return;
+    if (actRunning()) return;
     host.supersedeAsks();
-    abandonOutcome();
+    abandonAct();
     convert.patch = file;
     convert.patchIdentity = null;
     convert.patchReading = null;
@@ -218,9 +222,9 @@ export const makeConvertVerb = (host) => {
   };
 
   const admitSource = (file) => {
-    if (convert.running) return;
+    if (actRunning()) return;
     host.supersedeAsks();
-    abandonOutcome();
+    abandonAct();
     convert.source = file;
     convert.sourceFacts = null;
     convert.sourceReport = null;
@@ -234,7 +238,7 @@ export const makeConvertVerb = (host) => {
     const stateAtPick = convert;
     file.arrayBuffer()
       .then(host.wheneverStillCurrent((buffer) => {
-        if (convert !== stateAtPick || convert.running || convert.outcome) return;
+        if (convert !== stateAtPick || convert.act.tag !== 'AtRest') return;
         recheck(() => { convert.blob = { lane: 'file', text: convert.blob.text, file, fileBase64: base64OfBuffer(buffer) }; });
       }))
       .catch(host.askFailed);
@@ -244,7 +248,7 @@ export const makeConvertVerb = (host) => {
     const stateAtPick = convert;
     file.arrayBuffer()
       .then(host.wheneverStillCurrent((buffer) => {
-        if (convert !== stateAtPick || convert.running || convert.outcome) return;
+        if (convert !== stateAtPick || convert.act.tag !== 'AtRest') return;
         recheck(() => { convert.diz = { lane: 'file', text: convert.diz.text, file, fileBytes: new Uint8Array(buffer) }; });
       }))
       .catch(host.askFailed);
@@ -255,37 +259,37 @@ export const makeConvertVerb = (host) => {
   const convertedName = () => `${stemOf(convert.patch.name)}${surfaceRow().formatFileExtension}`;
 
   const runConvert = () => {
-    if (!convert.patch || !convert.formatToken || convert.running) return;
+    if (!convert.patch || !convert.formatToken || actRunning()) return;
     const job = host.startJob('convert', { patch: convert.patch, source: convert.source, declaration: declaration() });
     if (!job) return;
-    convert.running = { cancel: job.cancel };
+    convert.act = { tag: 'Running', cancel: job.cancel };
     host.fellow.beginFidgeting();
     host.render();
 
     job.answered.then(({ envelope, tail }) => {
-      convert.running = null;
       host.fellow.settle();
       const { answered, refused, advisories } = host.openEnvelope(envelope);
       if (answered) {
         const downloadName = convertedName();
         const downloadHref = URL.createObjectURL(new Blob([tail]));
-        convert.outcome = { converted: {
+        convert.act = {
+          tag: 'Converted',
           formatName: surfaceRow().formatDisplayName, advisories, downloadName, downloadHref, patchBytes: tail,
-        } };
+        };
         host.download(downloadHref, downloadName);
         host.fellow.smile();
       } else {
-        convert.outcome = { refused: { spokenError: refused.spokenError, sentence: refused.spokenErrorSentence, advisories } };
+        convert.act = { tag: 'Refused', spokenError: refused.spokenError, sentence: refused.spokenErrorSentence, advisories };
         host.fellow.droop();
       }
       host.render();
     }).catch((jobFailure) => {
-      convert.running = null;
       host.fellow.settle();
       if (host.wasCancelled(jobFailure)) {
+        convert.act = { tag: 'AtRest' };
         host.setNotice(voiceLines.cancelled);
       } else {
-        convert.outcome = { failed: { sentence: jobFailure.message, advisories: [] } };
+        convert.act = { tag: 'Fell', sentence: jobFailure.message, advisories: [] };
         host.fellow.droop();
       }
       host.render();
@@ -297,7 +301,7 @@ export const makeConvertVerb = (host) => {
   const chipWord = () => convert.patchIdentity?.answered?.spokenIdentityFormatName ?? null;
 
   const sentenceMarkup = () => html`<p class="sentence">convert
-    ${convert.running ? heldSeatMarkup(convert.patch, chipWord()) : seatSlotMarkup('patch', 'patch', convert.patch, chipWord())} to
+    ${actRunning() ? heldSeatMarkup(convert.patch, chipWord()) : seatSlotMarkup('patch', 'patch', convert.patch, chipWord())} to
     ${convert.formatToken
       ? html`<span class="slot filled inert">${convert.formatToken}</span>`
       : html`<span class="slot empty inert">format</span>`}</p>`;
@@ -305,7 +309,7 @@ export const makeConvertVerb = (host) => {
   const sourceGroupMarkup = () => groupMarkup('the original rom', html`
     <p class="aside">Some conversions read straight from the patch; others need the rom the patch was made for —
       when yours does, slap says so. With the rom in hand, slap applies the patch and re-diffs the result.</p>
-    <div class="choice-row">${convert.running
+    <div class="choice-row">${actRunning()
       ? (convert.source ? heldSeatMarkup(convert.source, null) : inertSlotMarkup('rom'))
       : seatSlotMarkup('source', 'rom', convert.source, null)}</div>
     ${applyFactsCardMarkup({
@@ -318,8 +322,8 @@ export const makeConvertVerb = (host) => {
     if (!convert.patch || !convert.source || impedimentSpoken()) return false;
     const verdict = convert.sourceReport?.sourceVerdict;
     return convert.framing.tag !== 'TakeInputAsIs'
-      || verdict?.tag === 'VerdictUncheckable'
-      || (verdict?.tag === 'VerdictDiffers' && convert.sourceReport.sourceRescue.length > 1);
+      || verdict?.tag === Verdict.Uncheckable
+      || (verdict?.tag === Verdict.Differs && convert.sourceReport.sourceRescue.length > 1);
   };
 
   const laneChips = (laneAction, laneState, carried) => {
@@ -376,7 +380,7 @@ export const makeConvertVerb = (host) => {
   };
 
   const stageMarkup = () => {
-    if (convert.outcome) return sentenceMarkup();
+    if (actAnswered()) return sentenceMarkup();
     return html`
       ${sentenceMarkup()}
       ${formatPickerMarkup(host.surface()?.surfaceFormats ?? [], convert.formatToken, convert.moreFormatsOpen)}
@@ -392,10 +396,9 @@ export const makeConvertVerb = (host) => {
   /* ------------------------------------------------------------ voice ---- */
 
   const voiceMarkup = () => {
-    if (convert.outcome?.converted) return convertedVoice(convert.outcome.converted);
-    if (convert.outcome?.refused) return refusalVoice(convert.outcome.refused, 'convert');
-    if (convert.outcome?.failed) return refusalVoice(convert.outcome.failed, 'convert');
-    if (convert.running) return workingVoice(voiceLines.rebottling);
+    if (convert.act.tag === 'Converted') return convertedVoice(convert.act);
+    if (convert.act.tag === 'Refused' || convert.act.tag === 'Fell') return refusalVoice(convert.act, 'convert');
+    if (actRunning()) return workingVoice(voiceLines.rebottling);
     if (host.notice()) return plainVoice(host.notice());
     if (convert.patchIdentity?.refused)
       return html`<p class="refusal">${convert.patchIdentity.refused.spokenErrorSentence}</p>`;
@@ -408,10 +411,10 @@ export const makeConvertVerb = (host) => {
       return html`<p class="refusal">${convert.checkAnswer.refused.spokenErrorSentence}</p>`;
     const forewarnings = advisoryMarkup(convert.checkAnswer.advisories ?? []);
     const verdict = convert.checkAnswer.answered;
-    if (verdict?.tag === 'SpokenBlocked') return html`${blockedVoice(verdict.contents)}${forewarnings}`;
+    if (verdict?.tag === CheckVerdict.Blocked) return html`${blockedVoice(verdict.contents)}${forewarnings}`;
     // the seated rom's own verdict outranks the ready line: a mismatch will refuse at apply's door
     if (convert.source && convert.verificationPolicy === 'EnforceVerification'
-        && convert.sourceReport?.sourceVerdict?.tag === 'VerdictDiffers') {
+        && convert.sourceReport?.sourceVerdict?.tag === Verdict.Differs) {
       const rescue = convert.sourceReport.sourceRescue;
       if (rescue.length === 1 && convert.framing.tag === 'TakeInputAsIs')
         return html`${plainVoice(voiceLines.headeredButRescued)}${forewarnings}`;
@@ -453,9 +456,9 @@ export const makeConvertVerb = (host) => {
 
   const refusalCertain = () => {
     if (convert.patchIdentity?.refused || impedimentSpoken()) return true;
-    if (convert.checkAnswer?.refused || convert.checkAnswer?.answered?.tag === 'SpokenBlocked') return true;
+    if (convert.checkAnswer?.refused || convert.checkAnswer?.answered?.tag === CheckVerdict.Blocked) return true;
     if (convert.verificationPolicy === 'SkipVerification') return false;
-    if (convert.sourceReport?.sourceVerdict?.tag !== 'VerdictDiffers') return false;
+    if (convert.sourceReport?.sourceVerdict?.tag !== Verdict.Differs) return false;
     return !(convert.framing.tag === 'TakeInputAsIs' && convert.sourceReport.sourceRescue.length === 1);
   };
 
@@ -464,11 +467,11 @@ export const makeConvertVerb = (host) => {
     voiceMarkup,
     commandWords,
     actMarkup: () => {
-      if (convert.outcome || convert.running) return html``;
+      if (convert.act.tag !== 'AtRest') return html``;
       const ready = host.hasSession() && convert.patch && convert.formatToken && !refusalCertain();
       return html`<button class="run" data-action="run" ?disabled=${!ready}>${runLabel}</button>`;
     },
-    admitDroppedFile: (sorting, file) => (sorting === 'SortsAsPatch' ? admitPatch(file) : admitSource(file)),
+    admitDroppedFile: (sorting, file) => (sorting === Sorting.AsPatch ? admitPatch(file) : admitSource(file)),
     admitPickedFile: (seat, file) => {
       if (seat === 'blob-file') admitBlobFile(file);
       else if (seat === 'diz-file') admitDizFile(file);
@@ -476,11 +479,11 @@ export const makeConvertVerb = (host) => {
       else admitPatch(file);
     },
     askAgain: askUnanswered,
-    storiesQuiet: () => !!(convert.outcome || convert.running),
+    storiesQuiet: () => convert.act.tag !== 'AtRest',
     actions: {
       ...bench.actions,
       'choose-format': ({ token }) => {
-        if (convert.running) return;
+        if (actRunning()) return;
         recheck(() => { convert.formatToken = token; });
       },
       'more-formats': () => { convert.moreFormatsOpen = !convert.moreFormatsOpen; host.render(); },
@@ -498,14 +501,13 @@ export const makeConvertVerb = (host) => {
       }),
       'set-encoding': ({ token }) => rereadPatch(() => { convert.metadataEncoding = token; }),
       run: runConvert,
-      'cancel-run': () => convert.running?.cancel(),
+      'cancel-run': () => { if (actRunning()) convert.act.cancel(); },
       'look-inside': () => {
-        const converted = convert.outcome?.converted;
-        if (converted) host.lookInside(new File([converted.patchBytes], converted.downloadName));
+        if (convert.act.tag === 'Converted') host.lookInside(new File([convert.act.patchBytes], convert.act.downloadName));
       },
       'start-over': () => {
         host.supersedeAsks();
-        abandonOutcome();
+        abandonAct();
         convert = atRest();
         bench.reset();
         host.fellow.settle();

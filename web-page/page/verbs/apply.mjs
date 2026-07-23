@@ -2,6 +2,7 @@
 // this module owns only apply's shape and voice.
 
 import { html, nothing } from '../../vendor/lit-html/lit-html.js';
+import { Verdict, Sorting, matcherOver } from './../engine-vocabulary.mjs';
 import { groupMarkup, toggleMarkup, seatSlotMarkup, heldSeatMarkup, swapSeatsMarkup,
          headerControlMarkup, preseededConsoleRow } from './../controls.mjs';
 import { applyFactsCardMarkup } from './../facts-card.mjs';
@@ -12,6 +13,8 @@ import { identifyDeclaration } from './../declarations.mjs';
 
 const runLabel = 'Patch';
 
+// The act is one value, so "running and answered at once" has no spelling:
+// AtRest | Running{cancel} | Patched{voice payload} | Refused{spokenError, sentence, advisories} | Fell{sentence, advisories}.
 const atRest = () => ({
   patch: null, patchIdentity: null,
   rom: null, romFacts: null,
@@ -19,8 +22,7 @@ const atRest = () => ({
   framing: { tag: 'TakeInputAsIs', console: null },
   verificationPolicy: 'EnforceVerification',
   ppf1Origin: 'PPF1OriginPC',
-  running: null,
-  outcome: null,
+  act: { tag: 'AtRest' },
 });
 
 const patchedName = (romFile) => {
@@ -29,6 +31,17 @@ const patchedName = (romFile) => {
     ? `${romFile.name.slice(0, lastDot)}-patched${romFile.name.slice(lastDot)}`
     : `${romFile.name}-patched`;
 };
+
+// The weighing's word while everything is still in hand; Differs consults the rescue before despairing.
+const weighingVoiceLine = matcherOver(Verdict, {
+  Matches:     () => voiceLines.match,
+  Uncheckable: () => voiceLines.uncheckable,
+  Differs: (_mismatches, { sourceRescue, framingUntouched }) => {
+    if (sourceRescue.length === 1 && framingUntouched) return voiceLines.headeredButRescued;
+    if (sourceRescue.length > 1) return voiceLines.differsManyWays;
+    return voiceLines.differsHopeless;
+  },
+});
 
 export const makeApplyVerb = (host) => {
   let apply = atRest();
@@ -75,15 +88,18 @@ export const makeApplyVerb = (host) => {
 
   /* ------------------------------------------------------------ seats ---- */
 
-  const abandonOutcome = () => {
-    if (apply.outcome?.patched) URL.revokeObjectURL(apply.outcome.patched.downloadHref);
-    apply.outcome = null;
+  const actRunning  = () => apply.act.tag === 'Running';
+  const actAnswered = () => apply.act.tag !== 'AtRest' && !actRunning();
+
+  const abandonAct = () => {
+    if (apply.act.tag === 'Patched') URL.revokeObjectURL(apply.act.downloadHref);
+    apply.act = { tag: 'AtRest' };
   };
 
   const admitFile = (seat, file) => {
-    if (apply.running) return;
+    if (actRunning()) return;
     host.supersedeAsks();
-    abandonOutcome();
+    abandonAct();
     if (seat === 'patch') {
       apply.patch = file;
       apply.patchIdentity = null;
@@ -101,9 +117,9 @@ export const makeApplyVerb = (host) => {
 
   // Both seats at once, for the two moves that are one move: swapping them, and a patch taking its own seat.
   const seatBothFiles = (patchFile, romFile) => {
-    if (apply.running) return;
+    if (actRunning()) return;
     host.supersedeAsks();
-    abandonOutcome();
+    abandonAct();
     apply.patch = patchFile;
     apply.rom = romFile;
     apply.patchIdentity = null;
@@ -126,7 +142,7 @@ export const makeApplyVerb = (host) => {
     if (seat !== 'rom' || patchSeatReadable) return;
     host.ask('classify', { file })
       ?.then(host.wheneverStillCurrent(({ answered }) => {
-        if (answered !== 'SortsAsPatch' || apply.rom !== file) return;
+        if (answered !== Sorting.AsPatch || apply.rom !== file) return;
         seatBothFiles(file, displacedFromPatchSeat);
       }))
       .catch(host.askFailed);
@@ -160,15 +176,14 @@ export const makeApplyVerb = (host) => {
   /* ---------------------------------------------------------- the act ---- */
 
   const runApply = () => {
-    if (!apply.patch || !apply.rom || apply.running) return;
+    if (!apply.patch || !apply.rom || actRunning()) return;
     const job = host.startJob('apply', { patch: apply.patch, rom: apply.rom, declaration: declaration() });
     if (!job) return;
-    apply.running = { cancel: job.cancel };
+    apply.act = { tag: 'Running', cancel: job.cancel };
     host.fellow.beginFidgeting();
     host.render();
 
     job.answered.then(({ envelope, tail }) => {
-      apply.running = null;
       host.fellow.settle();
       const { answered, refused, advisories } = host.openEnvelope(envelope);
       if (answered) {
@@ -176,24 +191,24 @@ export const makeApplyVerb = (host) => {
         const downloadHref = URL.createObjectURL(new Blob([tail]));
         const inputReframed = apply.framing.tag !== 'TakeInputAsIs'
           || advisories.some((advisory) => advisory.spokenAdvisory.tag === 'InputReframedToMatchPatch');
-        apply.outcome = { patched: {
-          spoken: answered, advisories, downloadName, downloadHref, inputReframed,
+        apply.act = {
+          tag: 'Patched', spoken: answered, advisories, downloadName, downloadHref, inputReframed,
           romCrc32: inputReframed ? null : (apply.romFacts?.romCRC32 ?? null),
-        } };
+        };
         host.download(downloadHref, downloadName);
         host.fellow.smile();
       } else {
-        apply.outcome = { refused: { spokenError: refused.spokenError, sentence: refused.spokenErrorSentence, advisories } };
+        apply.act = { tag: 'Refused', spokenError: refused.spokenError, sentence: refused.spokenErrorSentence, advisories };
         host.fellow.droop();
       }
       host.render();
     }).catch((jobFailure) => {
-      apply.running = null;
       host.fellow.settle();
       if (host.wasCancelled(jobFailure)) {
+        apply.act = { tag: 'AtRest' };
         host.setNotice(voiceLines.cancelled);
       } else {
-        apply.outcome = { failed: { sentence: jobFailure.message, advisories: [] } };
+        apply.act = { tag: 'Fell', sentence: jobFailure.message, advisories: [] };
         host.fellow.droop();
       }
       host.render();
@@ -205,7 +220,7 @@ export const makeApplyVerb = (host) => {
   const chipWord = () => apply.patchIdentity?.answered?.spokenIdentityFormatName ?? null;
 
   const slotFor = (seat, roleWord, file, slotChipWord) =>
-    apply.running ? heldSeatMarkup(file, slotChipWord) : seatSlotMarkup(seat, roleWord, file, slotChipWord);
+    actRunning() ? heldSeatMarkup(file, slotChipWord) : seatSlotMarkup(seat, roleWord, file, slotChipWord);
 
   const sentenceMarkup = () => html`<p class="sentence">apply
     ${slotFor('patch', 'patch', apply.patch, chipWord())} to
@@ -218,18 +233,18 @@ export const makeApplyVerb = (host) => {
     ${dialectTogglesMarkup(apply.patchIdentity?.answered?.spokenIdentityDialects ?? [], apply.ppf1Origin)}`);
 
   const stageMarkup = () => {
-    if (apply.outcome) return sentenceMarkup();
+    if (actAnswered()) return sentenceMarkup();
 
     const operandsSatisfied = apply.patch && apply.rom;
     const verdict = apply.sourceReport?.sourceVerdict;
     const headerControlSurfaces = operandsSatisfied && (
       apply.framing.tag !== 'TakeInputAsIs'
-      || verdict?.tag === 'VerdictUncheckable'
-      || (verdict?.tag === 'VerdictDiffers' && apply.sourceReport.sourceRescue.length > 1));
+      || verdict?.tag === Verdict.Uncheckable
+      || (verdict?.tag === Verdict.Differs && apply.sourceReport.sourceRescue.length > 1));
 
     return html`
       ${sentenceMarkup()}
-      ${operandsSatisfied && !apply.running && apply.patchIdentity?.refused ? swapSeatsMarkup : nothing}
+      ${operandsSatisfied && !actRunning() && apply.patchIdentity?.refused ? swapSeatsMarkup : nothing}
       ${applyFactsCardMarkup(apply, host.surface()?.surfaceConsoleHeaders ?? [])}
       ${headerControlSurfaces ? headerControlMarkup(apply.framing, host.surface().surfaceConsoleHeaders) : nothing}
       ${operandsSatisfied && !impedimentSpoken() ? optionsMarkup() : nothing}`;
@@ -238,10 +253,9 @@ export const makeApplyVerb = (host) => {
   /* ------------------------------------------------------------ voice ---- */
 
   const voiceMarkup = () => {
-    if (apply.outcome?.patched) return patchedVoice(apply.outcome.patched);
-    if (apply.outcome?.refused) return refusalVoice(apply.outcome.refused, 'apply');
-    if (apply.outcome?.failed) return refusalVoice(apply.outcome.failed, 'apply');
-    if (apply.running) return workingVoice(voiceLines.patching);
+    if (apply.act.tag === 'Patched') return patchedVoice(apply.act);
+    if (apply.act.tag === 'Refused' || apply.act.tag === 'Fell') return refusalVoice(apply.act, 'apply');
+    if (actRunning()) return workingVoice(voiceLines.patching);
     if (host.notice()) return plainVoice(host.notice());
     if (apply.patchIdentity?.refused)
       return html`<p class="refusal">${apply.patchIdentity.refused.spokenErrorSentence}</p>`;
@@ -252,13 +266,10 @@ export const makeApplyVerb = (host) => {
     if (!apply.rom) return plainVoice(voiceLines.patchOnly);
     if (apply.verificationPolicy === 'SkipVerification') return plainVoice(voiceLines.verificationOff);
     if (!apply.sourceReport) return plainVoice(voiceLines.sizingUp);
-    const verdict = apply.sourceReport.sourceVerdict;
-    if (verdict.tag === 'VerdictMatches') return plainVoice(voiceLines.match);
-    if (verdict.tag === 'VerdictUncheckable') return plainVoice(voiceLines.uncheckable);
-    const rescue = apply.sourceReport.sourceRescue;
-    if (rescue.length === 1 && apply.framing.tag === 'TakeInputAsIs') return plainVoice(voiceLines.headeredButRescued);
-    if (rescue.length > 1) return plainVoice(voiceLines.differsManyWays);
-    return plainVoice(voiceLines.differsHopeless);
+    return plainVoice(weighingVoiceLine(apply.sourceReport.sourceVerdict, {
+      sourceRescue: apply.sourceReport.sourceRescue,
+      framingUntouched: apply.framing.tag === 'TakeInputAsIs',
+    }));
   };
 
   /* ------------------------------------------------------------ tutor ---- */
@@ -281,7 +292,7 @@ export const makeApplyVerb = (host) => {
   const refusalCertain = () => {
     if (apply.patchIdentity?.refused || impedimentSpoken()) return true;
     if (apply.verificationPolicy === 'SkipVerification') return false;
-    if (apply.sourceReport?.sourceVerdict?.tag !== 'VerdictDiffers') return false;
+    if (apply.sourceReport?.sourceVerdict?.tag !== Verdict.Differs) return false;
     return !(apply.framing.tag === 'TakeInputAsIs' && apply.sourceReport.sourceRescue.length === 1);
   };
 
@@ -290,11 +301,11 @@ export const makeApplyVerb = (host) => {
     voiceMarkup,
     commandWords,
     actMarkup: () => {
-      if (apply.outcome || apply.running) return html``;
+      if (apply.act.tag !== 'AtRest') return html``;
       const ready = host.hasSession() && apply.patch && apply.rom && !refusalCertain();
       return html`<button class="run" data-action="run" ?disabled=${!ready}>${runLabel}</button>`;
     },
-    admitDroppedFile: (sorting, file) => admitFile(sorting === 'SortsAsPatch' ? 'patch' : 'rom', file),
+    admitDroppedFile: (sorting, file) => admitFile(sorting === Sorting.AsPatch ? 'patch' : 'rom', file),
     admitPickedFile,
     askAgain: askUnanswered,
     actions: {
@@ -308,14 +319,14 @@ export const makeApplyVerb = (host) => {
           .find((row) => row.consoleToken === consoleToken);
       }),
       run: runApply,
-      'cancel-run': () => apply.running?.cancel(),
+      'cancel-run': () => { if (actRunning()) apply.act.cancel(); },
       'swap-seats': () => {
         seatBothFiles(apply.rom, apply.patch);
         host.fellow.nod();
       },
       'start-over': () => {
         host.supersedeAsks();
-        abandonOutcome();
+        abandonAct();
         apply = atRest();
         host.fellow.settle();
         host.render();

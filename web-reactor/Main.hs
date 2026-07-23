@@ -40,6 +40,7 @@ import Slap.Web.Declaration (DeclaredAnalyzeRequest, DeclaredApplyRequest,
                              decodedDeclaration, inspectRequestOf, undoRequestOf)
 import Slap.Web.Envelope (encodeEnvelope, encodeEnvelopeAndTail,
                           speakCreatedPatch, speakPatchIdentity, speakPatchedRom, speakRevertedRom, speakVerdict)
+import Slap.Web.Vocabulary (spokenVocabulary)
 
 foreign export ccall "slap_web_link_check" slapWebLinkCheck :: IO Word32
 
@@ -211,6 +212,11 @@ surfaceEnvelope = encodeEnvelope (noAdvisories (Right describeSurface))
 classifyEnvelope :: ByteString -> ByteString
 classifyEnvelope fileBytes = encodeEnvelope (noAdvisories (Right (droppedFileAnswerFor (classifyDroppedFile fileBytes))))
 
+-- | The engine's own wire vocabulary. Only the render census asks, to audit the page's tables,
+-- so the verb lives on the native probe alone — the browser never needs it and the reactor doesn't carry it.
+vocabularyEnvelope :: ByteString
+vocabularyEnvelope = encodeEnvelope (noAdvisories (Right spokenVocabulary))
+
 identifyEnvelope :: DeclaredIdentifyRequest -> PatchFileContents -> ByteString
 identifyEnvelope declared patchBytes = encodeEnvelope (noAdvisories (speakPatchIdentity <$>
   identifyPatch (declaredIdentifyDialects declared) (declaredIdentifyMetadataEncoding declared) patchBytes))
@@ -301,6 +307,7 @@ main = do
   arguments <- getArgs
   case arguments of
     ["surface"]              -> ByteString.putStr surfaceEnvelope
+    ["vocabulary"]           -> ByteString.putStr vocabularyEnvelope
     ["classify", filePath]   -> ByteString.putStr . classifyEnvelope =<< ByteString.readFile filePath
     ["identify", patchPath, declarationPath] -> do
       declared   <- declarationFrom declarationPath
@@ -358,7 +365,7 @@ main = do
       handedSource <- traverse (fmap InputFileContents . ByteString.readFile) (listToMaybe maybeSourcePath)
       ByteString.putStr =<< convertEnvelopeAndTail declared patchBytes handedSource
     _ -> die ("usage: slap-web-reactor VERB...  (writes the verb's envelope — an act's, with its byte tail — to stdout)\n"
-           ++ "  surface | classify FILE | identify PATCH DECLARATION | describe-rom ROM\n"
+           ++ "  surface | vocabulary | classify FILE | identify PATCH DECLARATION | describe-rom ROM\n"
            ++ "  inspect PATCH DECLARATION | analyze PATCH DECLARATION\n"
            ++ "  check-apply PATCH ROM DECLARATION | check-undo PATCH PATCHED DECLARATION\n"
            ++ "  check-create ORIGINAL MODIFIED DECLARATION | check-convert PATCH DECLARATION [SOURCE]\n"

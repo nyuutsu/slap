@@ -2,6 +2,7 @@
 // the page brings only its labels and glosses. The blob and DIZ lanes stay with their verbs, whose intents differ.
 
 import { html, nothing } from '../vendor/lit-html/lit-html.js';
+import { ControlKind, WindowDefault, matcherOver } from './engine-vocabulary.mjs';
 import { groupMarkup, toggleMarkup } from './controls.mjs';
 import { flagWord, valueWord, quotedWord } from './command-tutor.mjs';
 import { requestKeyOf, utf8Text, toggleRequests, fieldLabel, fieldWhy,
@@ -73,25 +74,26 @@ export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
     return chosenPair ? chosenPair[1] : null;
   };
 
+  // Each arm answers with the value the declaration should carry, or null for a field with nothing to say.
+  const declaredValueForKind = matcherOver(ControlKind, {
+    FreeText: (_noContents, { fieldName }) =>
+      bench.fieldValues[fieldName] ? utf8Text(bench.fieldValues[fieldName]) : null,
+    Number: (_noContents, { fieldName }) =>
+      fieldName === 'MetadataWindowSize' ? windowSizeBytes() : wholePositive(bench.fieldValues[fieldName]),
+    Toggle: (_noContents, { fieldName }) =>
+      bench.toggledFields[fieldName] ? toggleRequests[fieldName] ?? null : null,
+    Choice: (choiceVocabulary, { fieldName }) =>
+      fieldConcealed(fieldName) ? null : chosenChoiceValue(fieldName, choiceVocabulary.contents),
+    // the blob and the DIZ ride lanes of their own, with the verbs
+    File: () => null,
+  });
+
   const declarationFields = () => {
     const requested = {};
     for (const row of acceptedRosterRows()) {
       const fieldName = row.describedMetadataField;
-      const kind = row.metadataFieldControlKind;
-      if (kind.tag === 'FreeTextField') {
-        if (bench.fieldValues[fieldName]) requested[requestKeyOf(fieldName)] = utf8Text(bench.fieldValues[fieldName]);
-      } else if (kind.tag === 'NumberField') {
-        const declaredCount = fieldName === 'MetadataWindowSize'
-          ? windowSizeBytes()
-          : wholePositive(bench.fieldValues[fieldName]);
-        if (declaredCount) requested[requestKeyOf(fieldName)] = declaredCount;
-      } else if (kind.tag === 'ToggleField') {
-        if (bench.toggledFields[fieldName] && toggleRequests[fieldName])
-          requested[requestKeyOf(fieldName)] = toggleRequests[fieldName];
-      } else if (kind.tag === 'ChoiceField' && !fieldConcealed(fieldName)) {
-        const chosenValue = chosenChoiceValue(fieldName, kind.contents.contents);
-        if (chosenValue !== null) requested[requestKeyOf(fieldName)] = chosenValue;
-      }
+      const declaredValue = declaredValueForKind(row.metadataFieldControlKind, { fieldName });
+      if (declaredValue !== null) requested[requestKeyOf(fieldName)] = declaredValue;
     }
     return requested;
   };
@@ -115,7 +117,7 @@ export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
     if (fieldName !== 'MetadataWindowSize') return null;
     const windowDefault = surfaceRow()?.formatWindowDefault;
     if (!windowDefault) return null;
-    return windowDefault.tag === 'WindowsOfBytes'
+    return windowDefault.tag === WindowDefault.WindowsOfBytes
       ? `${humanByteSize(windowDefault.contents)} windows unless you say otherwise.`
       : 'one window, the whole file, unless you say otherwise.';
   };
@@ -163,20 +165,26 @@ export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
       ${gloss ? html`<p class="choice-gloss">${gloss}</p>` : nothing}</div>`;
   };
 
-  const controlMarkup = (row, fileFieldMarkup) => {
-    const fieldName = row.describedMetadataField;
-    const kind = row.metadataFieldControlKind;
-    if (fieldConcealed(fieldName)) return null;
-    if (kind.tag === 'ToggleField')
+  // A toggle field with no request spelling gets no control: quiet, never wrong (toggleRequests' own doctrine).
+  const controlForKind = matcherOver(ControlKind, {
+    FreeText: (_noContents, { row }) => textFieldMarkup(row, 'text'),
+    Number:   (_noContents, { row }) => textFieldMarkup(row, 'number'),
+    Toggle: (_noContents, { row }) => {
+      const fieldName = row.describedMetadataField;
       return toggleRequests[fieldName] ? toggleMarkup({
         id: `meta-${fieldName}`, setting: 'toggle', field: fieldName,
         checked: !!bench.toggledFields[fieldName],
         label: fieldLabel(fieldName, row.metadataFieldFlag), why: fieldWhy(fieldName),
       }) : null;
-    if (kind.tag === 'ChoiceField') return choiceRowMarkup(row, kind.contents.contents);
-    if (kind.tag === 'FileField') return fileFieldMarkup(fieldName);
-    return textFieldMarkup(row, kind.tag === 'NumberField' ? 'number' : 'text');
-  };
+    },
+    Choice: (choiceVocabulary, { row }) => choiceRowMarkup(row, choiceVocabulary.contents),
+    File: (_noContents, { row, fileFieldMarkup }) => fileFieldMarkup(row.describedMetadataField),
+  });
+
+  const controlMarkup = (row, fileFieldMarkup) =>
+    fieldConcealed(row.describedMetadataField)
+      ? null
+      : controlForKind(row.metadataFieldControlKind, { row, fileFieldMarkup });
 
   const metadataGroupMarkup = (fileFieldMarkup) => {
     const rows = acceptedRosterRows();
@@ -199,27 +207,29 @@ export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
 
   /* ------------------------------------------------------------ tutor ---- */
 
+  // Gated exactly as the declaration is, so a value the declaration dropped is never tutored.
+  const tutorWordsForKind = matcherOver(ControlKind, {
+    FreeText: (_noContents, { fieldName, flag }) =>
+      bench.fieldValues[fieldName] ? [flagWord(flag), quotedWord(bench.fieldValues[fieldName])] : [],
+    Number: (_noContents, { fieldName, flag }) => {
+      if (!(fieldName === 'MetadataWindowSize' ? windowSizeBytes() : wholePositive(bench.fieldValues[fieldName]))) return [];
+      const suffix = fieldName === 'MetadataWindowSize' ? chosenWindowUnit().suffix : '';
+      return [flagWord(flag), valueWord(`${wholePositive(bench.fieldValues[fieldName])}${suffix}`)];
+    },
+    Toggle: (_noContents, { fieldName, flag }) =>
+      bench.toggledFields[fieldName] && toggleRequests[fieldName] ? [flagWord(flag)] : [],
+    Choice: (_choiceVocabulary, { fieldName, flag }) =>
+      bench.chosenChoices[fieldName] && !fieldConcealed(fieldName)
+        ? [flagWord(flag), valueWord(bench.chosenChoices[fieldName])] : [],
+    File: (_noContents, { fieldName, flag, fileFieldWords }) => fileFieldWords(fieldName, flag),
+  });
+
   const commandWords = (fileFieldWords) => {
     const words = [];
-    for (const row of acceptedRosterRows()) {
-      const fieldName = row.describedMetadataField;
-      const kind = row.metadataFieldControlKind;
-      const flag = `--${row.metadataFieldFlag}`;
-      if (kind.tag === 'FreeTextField' && bench.fieldValues[fieldName])
-        words.push(flagWord(flag), quotedWord(bench.fieldValues[fieldName]));
-      // gated exactly as the declaration is, so a value it dropped is never tutored
-      if (kind.tag === 'NumberField'
-          && (fieldName === 'MetadataWindowSize' ? windowSizeBytes() : wholePositive(bench.fieldValues[fieldName]))) {
-        const suffix = fieldName === 'MetadataWindowSize' ? chosenWindowUnit().suffix : '';
-        words.push(flagWord(flag), valueWord(`${wholePositive(bench.fieldValues[fieldName])}${suffix}`));
-      }
-      if (kind.tag === 'ToggleField' && bench.toggledFields[fieldName] && toggleRequests[fieldName])
-        words.push(flagWord(flag));
-      if (kind.tag === 'ChoiceField' && bench.chosenChoices[fieldName] && !fieldConcealed(fieldName))
-        words.push(flagWord(flag), valueWord(bench.chosenChoices[fieldName]));
-      if (kind.tag === 'FileField')
-        words.push(...fileFieldWords(fieldName, flag));
-    }
+    for (const row of acceptedRosterRows())
+      words.push(...tutorWordsForKind(row.metadataFieldControlKind, {
+        fieldName: row.describedMetadataField, flag: `--${row.metadataFieldFlag}`, fileFieldWords,
+      }));
     for (const [constraintName, control] of Object.entries(constraintControls))
       if (bench.chosenConstraints[constraintName] && (surfaceRow()?.formatConstraints ?? []).includes(constraintName))
         words.push(flagWord(control.terminalFlag));

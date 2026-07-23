@@ -2,6 +2,7 @@
 // this module owns only undo's shape and voice.
 
 import { html, nothing } from '../../vendor/lit-html/lit-html.js';
+import { Verdict, UndoAnswer, Sorting, matcherOver } from './../engine-vocabulary.mjs';
 import { groupMarkup, toggleMarkup, seatSlotMarkup, heldSeatMarkup, swapSeatsMarkup } from './../controls.mjs';
 import { undoFactsCardMarkup } from './../facts-card.mjs';
 import { voiceLines, plainVoice, workingVoice, revertedVoice, refusalVoice } from './../answer-surface.mjs';
@@ -11,14 +12,14 @@ import { identifyDeclaration } from './../declarations.mjs';
 
 const runLabel = 'Peel';
 
+// The act as one value, apply's doctrine: AtRest | Running{cancel} | Reverted | Refused | Fell.
 const atRest = () => ({
   patch: null, patchIdentity: null,
   patched: null, patchedFacts: null,
   verdict: null,
   verificationPolicy: 'EnforceVerification',
   ppf1Origin: 'PPF1OriginPC',
-  running: null,
-  outcome: null,
+  act: { tag: 'AtRest' },
 });
 
 const revertedName = (patchedFile) => {
@@ -27,6 +28,12 @@ const revertedName = (patchedFile) => {
     ? `${patchedFile.name.slice(0, lastDot)}-reverted${patchedFile.name.slice(lastDot)}`
     : `${patchedFile.name}-reverted`;
 };
+
+const weighingVoiceLine = matcherOver(Verdict, {
+  Matches:     () => voiceLines.undoMatch,
+  Uncheckable: () => voiceLines.undoUncheckable,
+  Differs:     () => voiceLines.undoDiffers,
+});
 
 const peelNoteMarkup = html`<div class="group"><p class="aside">Only three kinds of patch can
   be peeled. A <b>ups</b> patch is its own reverse, and a <b>ninja2</b> is too — one that shrinks
@@ -45,7 +52,7 @@ export const makeUndoVerb = (host) => {
 
   const patchPeels = () => {
     const answer = undoAnswer();
-    return answer === 'PatchIsItsOwnReverse' || answer === 'PatchCarriesUndoData';
+    return answer === UndoAnswer.PatchIsItsOwnReverse || answer === UndoAnswer.PatchCarriesUndoData;
   };
 
   const impedimentSpoken = () => undo.patchIdentity?.answered?.spokenIdentityImpediment ?? null;
@@ -82,15 +89,18 @@ export const makeUndoVerb = (host) => {
 
   /* ------------------------------------------------------------ seats ---- */
 
-  const abandonOutcome = () => {
-    if (undo.outcome?.reverted) URL.revokeObjectURL(undo.outcome.reverted.downloadHref);
-    undo.outcome = null;
+  const actRunning  = () => undo.act.tag === 'Running';
+  const actAnswered = () => undo.act.tag !== 'AtRest' && !actRunning();
+
+  const abandonAct = () => {
+    if (undo.act.tag === 'Reverted') URL.revokeObjectURL(undo.act.downloadHref);
+    undo.act = { tag: 'AtRest' };
   };
 
   const admitFile = (seat, file) => {
-    if (undo.running) return;
+    if (actRunning()) return;
     host.supersedeAsks();
-    abandonOutcome();
+    abandonAct();
     if (seat === 'patch') {
       undo.patch = file;
       undo.patchIdentity = null;
@@ -108,9 +118,9 @@ export const makeUndoVerb = (host) => {
 
   // Both seats at once, for the two moves that are one move: swapping them, and a patch taking its own seat.
   const seatBothFiles = (patchFile, patchedFile) => {
-    if (undo.running) return;
+    if (actRunning()) return;
     host.supersedeAsks();
-    abandonOutcome();
+    abandonAct();
     undo.patch = patchFile;
     undo.patched = patchedFile;
     undo.patchIdentity = null;
@@ -129,7 +139,7 @@ export const makeUndoVerb = (host) => {
     if (seat !== 'patched' || patchSeatReadable) return;
     host.ask('classify', { file })
       ?.then(host.wheneverStillCurrent(({ answered }) => {
-        if (answered !== 'SortsAsPatch' || undo.patched !== file) return;
+        if (answered !== Sorting.AsPatch || undo.patched !== file) return;
         seatBothFiles(file, displacedFromPatchSeat);
       }))
       .catch(host.askFailed);
@@ -154,35 +164,34 @@ export const makeUndoVerb = (host) => {
   /* ---------------------------------------------------------- the act ---- */
 
   const runUndo = () => {
-    if (!undo.patch || !undo.patched || undo.running) return;
+    if (!undo.patch || !undo.patched || actRunning()) return;
     const job = host.startJob('undo', { patch: undo.patch, patched: undo.patched, declaration: declaration() });
     if (!job) return;
-    undo.running = { cancel: job.cancel };
+    undo.act = { tag: 'Running', cancel: job.cancel };
     host.fellow.beginFidgeting();
     host.render();
 
     job.answered.then(({ envelope, tail }) => {
-      undo.running = null;
       host.fellow.settle();
       const { answered, refused, advisories } = host.openEnvelope(envelope);
       if (answered) {
         const downloadName = revertedName(undo.patched);
         const downloadHref = URL.createObjectURL(new Blob([tail]));
-        undo.outcome = { reverted: { spoken: answered, advisories, downloadName, downloadHref } };
+        undo.act = { tag: 'Reverted', spoken: answered, advisories, downloadName, downloadHref };
         host.download(downloadHref, downloadName);
         host.fellow.smile();
       } else {
-        undo.outcome = { refused: { spokenError: refused.spokenError, sentence: refused.spokenErrorSentence, advisories } };
+        undo.act = { tag: 'Refused', spokenError: refused.spokenError, sentence: refused.spokenErrorSentence, advisories };
         host.fellow.droop();
       }
       host.render();
     }).catch((jobFailure) => {
-      undo.running = null;
       host.fellow.settle();
       if (host.wasCancelled(jobFailure)) {
+        undo.act = { tag: 'AtRest' };
         host.setNotice(voiceLines.cancelled);
       } else {
-        undo.outcome = { failed: { sentence: jobFailure.message, advisories: [] } };
+        undo.act = { tag: 'Fell', sentence: jobFailure.message, advisories: [] };
         host.fellow.droop();
       }
       host.render();
@@ -194,7 +203,7 @@ export const makeUndoVerb = (host) => {
   const chipWord = () => undo.patchIdentity?.answered?.spokenIdentityFormatName ?? null;
 
   const slotFor = (seat, roleWord, file, slotChipWord) =>
-    undo.running ? heldSeatMarkup(file, slotChipWord) : seatSlotMarkup(seat, roleWord, file, slotChipWord);
+    actRunning() ? heldSeatMarkup(file, slotChipWord) : seatSlotMarkup(seat, roleWord, file, slotChipWord);
 
   const sentenceMarkup = () => html`<p class="sentence">peel
     ${slotFor('patch', 'patch', undo.patch, chipWord())} from
@@ -207,12 +216,12 @@ export const makeUndoVerb = (host) => {
     ${dialectTogglesMarkup(undo.patchIdentity?.answered?.spokenIdentityDialects ?? [], undo.ppf1Origin)}`);
 
   const stageMarkup = () => {
-    if (undo.outcome) return sentenceMarkup();
+    if (actAnswered()) return sentenceMarkup();
     const operandsSatisfied = undo.patch && undo.patched;
     // options serve the act, so none surface for a patch that cannot be peeled
     return html`
       ${sentenceMarkup()}
-      ${operandsSatisfied && !undo.running && undo.patchIdentity?.refused ? swapSeatsMarkup : nothing}
+      ${operandsSatisfied && !actRunning() && undo.patchIdentity?.refused ? swapSeatsMarkup : nothing}
       ${!undo.patch ? peelNoteMarkup : nothing}
       ${undoFactsCardMarkup(undo, patchPeels() && !impedimentSpoken())}
       ${operandsSatisfied && patchPeels() && !impedimentSpoken() ? optionsMarkup() : nothing}`;
@@ -221,28 +230,25 @@ export const makeUndoVerb = (host) => {
   /* ------------------------------------------------------------ voice ---- */
 
   const voiceMarkup = () => {
-    if (undo.outcome?.reverted) return revertedVoice(undo.outcome.reverted);
-    if (undo.outcome?.refused) return refusalVoice(undo.outcome.refused, 'undo');
-    if (undo.outcome?.failed) return refusalVoice(undo.outcome.failed, 'undo');
-    if (undo.running) return workingVoice(voiceLines.peeling);
+    if (undo.act.tag === 'Reverted') return revertedVoice(undo.act);
+    if (undo.act.tag === 'Refused' || undo.act.tag === 'Fell') return refusalVoice(undo.act, 'undo');
+    if (actRunning()) return workingVoice(voiceLines.peeling);
     if (host.notice()) return plainVoice(host.notice());
     if (undo.patchIdentity?.refused)
       return html`<p class="refusal">${undo.patchIdentity.refused.spokenErrorSentence}</p>`;
     const blocked = impedimentSpoken();
     if (blocked) return html`<p class="refusal">${blocked.spokenErrorSentence}</p>`;
     const answer = undoAnswer();
-    if (answer === 'FormatHasNoUndo') return plainVoice(voiceLines.undoOneWay);
-    if (answer === 'AuthorOmittedUndoData') return plainVoice(voiceLines.undoDataOmitted);
+    if (answer === UndoAnswer.FormatHasNoUndo) return plainVoice(voiceLines.undoOneWay);
+    if (answer === UndoAnswer.AuthorOmittedUndoData) return plainVoice(voiceLines.undoDataOmitted);
     if (!undo.patch && !undo.patched) return plainVoice(voiceLines.undoResting);
     if (!undo.patch) return plainVoice(voiceLines.undoRomOnly);
     if (!undo.patchIdentity) return plainVoice(voiceLines.sizingUp);
     if (!undo.patched)
-      return plainVoice(answer === 'PatchIsItsOwnReverse' ? voiceLines.undoSelfInverse : voiceLines.undoCarriesData);
+      return plainVoice(answer === UndoAnswer.PatchIsItsOwnReverse ? voiceLines.undoSelfInverse : voiceLines.undoCarriesData);
     if (undo.verificationPolicy === 'SkipVerification') return plainVoice(voiceLines.verificationOff);
     if (!undo.verdict) return plainVoice(voiceLines.sizingUp);
-    if (undo.verdict.tag === 'VerdictMatches') return plainVoice(voiceLines.undoMatch);
-    if (undo.verdict.tag === 'VerdictUncheckable') return plainVoice(voiceLines.undoUncheckable);
-    return plainVoice(voiceLines.undoDiffers);
+    return plainVoice(weighingVoiceLine(undo.verdict));
   };
 
   /* ------------------------------------------------------------ tutor ---- */
@@ -262,9 +268,9 @@ export const makeUndoVerb = (host) => {
   const refusalCertain = () => {
     if (undo.patchIdentity?.refused || impedimentSpoken()) return true;
     const answer = undoAnswer();
-    if (answer === 'FormatHasNoUndo' || answer === 'AuthorOmittedUndoData') return true;
+    if (answer === UndoAnswer.FormatHasNoUndo || answer === UndoAnswer.AuthorOmittedUndoData) return true;
     if (undo.verificationPolicy === 'SkipVerification') return false;
-    return undo.verdict?.tag === 'VerdictDiffers';
+    return undo.verdict?.tag === Verdict.Differs;
   };
 
   return {
@@ -272,23 +278,23 @@ export const makeUndoVerb = (host) => {
     voiceMarkup,
     commandWords,
     actMarkup: () => {
-      if (undo.outcome || undo.running) return html``;
+      if (undo.act.tag !== 'AtRest') return html``;
       const ready = host.hasSession() && undo.patch && undo.patched && !refusalCertain();
       return html`<button class="run" data-action="run" ?disabled=${!ready}>${runLabel}</button>`;
     },
-    admitDroppedFile: (sorting, file) => admitFile(sorting === 'SortsAsPatch' ? 'patch' : 'patched', file),
+    admitDroppedFile: (sorting, file) => admitFile(sorting === Sorting.AsPatch ? 'patch' : 'patched', file),
     admitPickedFile,
     askAgain: askUnanswered,
     actions: {
       run: runUndo,
-      'cancel-run': () => undo.running?.cancel(),
+      'cancel-run': () => { if (actRunning()) undo.act.cancel(); },
       'swap-seats': () => {
         seatBothFiles(undo.patched, undo.patch);
         host.fellow.nod();
       },
       'start-over': () => {
         host.supersedeAsks();
-        abandonOutcome();
+        abandonAct();
         undo = atRest();
         host.fellow.settle();
         host.render();

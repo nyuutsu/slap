@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import './lit-html-stunt-hook.mjs';
 
 const { markupOf } = await import('./lit-html-stunt.mjs');
+const { UndoAnswer, spokenTagsOf, spokenVocabularies, wireSumNameOf } = await import('./page/engine-vocabulary.mjs');
 const { infoReadoutMarkup, embeddedContentsOf, embeddedContentMarkup,
         heatModel, heatBarMarkup, heatCaption, walkMarkup, structureOverviewMarkup,
         analysisRegionsOf, analysisAsidesMarkup } = await import('./page/read-panels.mjs');
@@ -68,8 +69,6 @@ const splitAct = (framedPayload) => {
            tail: framedPayload.subarray(4 + envelopeLength) };
 };
 
-const knownUndoAnswers = ['PatchIsItsOwnReverse', 'PatchCarriesUndoData', 'AuthorOmittedUndoData', 'FormatHasNoUndo'];
-
 // The verbs' states rebuilt small: just the fields their cards read.
 const applyCardFor = (identified, report) => applyFactsCardMarkup({
   patch: { name: 'patch' }, patchIdentity: { answered: identified },
@@ -86,6 +85,22 @@ const undoCardFor = (identified, verdict, verificationPolicy) => undoFactsCardMa
 const mustRender = (what, markup) => {
   if (typeof markupOf(markup) !== 'string') throw new Error(`${what} rendered nothing`);
 };
+
+// The page's tables are transcriptions of the engine's sums, and the engine is the one authority that can
+// audit a transcription: every table must carry exactly the constructors the engine speaks for its sum.
+const engineSums = new Map(JSON.parse(probeBytes('vocabulary').toString()).envelopeAnswer.Right
+  .map((spokenSum) => [spokenSum.spokenSumName, spokenSum.spokenSumTags]));
+for (const table of spokenVocabularies) {
+  const engineTags = engineSums.get(wireSumNameOf(table));
+  if (!engineTags) throw new Error(`the engine speaks no sum named ${wireSumNameOf(table)}`);
+  const pageTags = spokenTagsOf(table);
+  const unlearned = engineTags.filter((wireTag) => !pageTags.includes(wireTag));
+  const invented  = pageTags.filter((wireTag) => !engineTags.includes(wireTag));
+  if (unlearned.length > 0 || invented.length > 0)
+    throw new Error(`the ${wireSumNameOf(table)} table disagrees with the engine`
+      + (unlearned.length > 0 ? ` — constructors the page never learned: ${unlearned.join(', ')}` : '')
+      + (invented.length > 0 ? ` — spellings the engine does not speak: ${invented.join(', ')}` : ''));
+}
 
 let renderedCount = 0, peeledCount = 0, refusedCount = 0;
 for (const patchPath of patchPaths) {
@@ -117,13 +132,13 @@ for (const patchPath of patchPaths) {
 
   const identified = askProbe('identify', patchPath).envelopeAnswer.Right;
   const spokenUndo = identified.spokenIdentityUndo;
-  if (!knownUndoAnswers.includes(spokenUndo))
+  if (!spokenTagsOf(UndoAnswer).includes(spokenUndo))
     throw new Error(`${patchPath}: an undo answer the page doesn't know: ${spokenUndo}`);
 
   mustRender(`${patchPath} apply verdict`,
     applyCardFor(identified, askProbe('check-apply', patchPath, romPath).envelopeAnswer.Right));
 
-  if (spokenUndo === 'PatchIsItsOwnReverse' || spokenUndo === 'PatchCarriesUndoData') {
+  if (spokenUndo === UndoAnswer.PatchIsItsOwnReverse || spokenUndo === UndoAnswer.PatchCarriesUndoData) {
     const appliedAct = splitAct(probeBytes('apply', patchPath, romPath, declarationPaths.apply));
     if (!('Right' in appliedAct.envelope.envelopeAnswer))
       throw new Error(`${patchPath}: the census rom does not take this patch — ${appliedAct.envelope.envelopeAnswer.Left.spokenErrorSentence}`);
@@ -233,5 +248,6 @@ if (forewarned.envelopeAdvisories.length === 0)
   throw new Error('the over-long NINJA2 title raised no forewarning');
 for (const advisory of advisoryMarkup(forewarned.envelopeAdvisories)) mustRender('forewarning', advisory);
 
-console.log(`render census: ${renderedCount} patches rendered whole, ${peeledCount} peels spoken, ${refusedCount} refused with a sentence, `
+console.log(`render census: ${spokenVocabularies.length} vocabulary tables audited against the engine's own, `
+  + `${renderedCount} patches rendered whole, ${peeledCount} peels spoken, ${refusedCount} refused with a sentence, `
   + 'create checked both ways and bottled with a forewarning spoken, convert asked both ways and re-bottled both lanes');

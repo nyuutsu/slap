@@ -194,6 +194,7 @@ library slap-web
   exposed-modules:  Slap.Web
                   , Slap.Web.Declaration
                   , Slap.Web.Envelope
+                  , Slap.Web.Vocabulary
   hs-source-dirs:   web
   ghc-options:      -g2
   build-depends:

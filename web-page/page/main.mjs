@@ -19,10 +19,14 @@ const headlinerVerbs = ['apply', 'create', 'explain'];
 const quieterVerbs = ['undo', 'convert', 'info'];
 const allVerbs = [...headlinerVerbs, ...quieterVerbs];
 
-let currentVerb = 'apply';
-let sessionStanding = { tag: 'SessionOpening' };
-let epoch = 0;
-let noticeLine = null;   // one transient line (e.g. "cancelled"); any fresh interaction retires it
+// The page's own state, whole. Everything else that varies in this module is machinery:
+// timers, a drag counter, the copy button's word, the fellow's handle.
+const page = {
+  verbOnStage: 'apply',                // follows the hash, the one authority; written only by arriveAtVerb
+  session: { tag: 'SessionOpening' },  // → SessionOpen{session} | SessionFailedToOpen{bootFailureShape}
+  noticeLine: null,                    // one transient line (e.g. "cancelled"); any fresh interaction retires it
+  askEpoch: 0,
+};
 let fellow = null;
 
 const element = (id) => document.getElementById(id);
@@ -34,7 +38,7 @@ const element = (id) => document.getElementById(id);
 
 const openEnvelope = (envelope) => ({ ...answerOf(envelope), advisories: advisoriesOf(envelope) });
 
-const sessionIfOpen = () => sessionStanding.tag === 'SessionOpen' ? sessionStanding.session : null;
+const sessionIfOpen = () => page.session.tag === 'SessionOpen' ? page.session.session : null;
 
 const host = {
   // resolves to the opened envelope: { answered | refused, advisories }
@@ -45,25 +49,25 @@ const host = {
 
   // an answer from an older epoch arrives about files no longer on screen, and is dropped unheard
   wheneverStillCurrent: (deliver) => {
-    const epochAtAsk = epoch;
-    return (value) => { if (epoch === epochAtAsk) { deliver(value); renderPage(); } };
+    const epochAtAsk = page.askEpoch;
+    return (value) => { if (page.askEpoch === epochAtAsk) { deliver(value); renderPage(); } };
   },
-  supersedeAsks: () => { epoch += 1; },
+  supersedeAsks: () => { page.askEpoch += 1; },
 
   // a failed ask — a reactor trap, a Worker death — surfaces in the voice box;
   // a swallowed failure would leave a "reading…" line up forever, promising an answer that is never coming
   askFailed: (askFailure) => {
     console.error(askFailure);
-    noticeLine = String(askFailure?.message ?? askFailure);
+    page.noticeLine = String(askFailure?.message ?? askFailure);
     fellow?.droop();
     renderPage();
   },
 
-  notice: () => noticeLine,
-  setNotice: (line) => { noticeLine = line; },
+  notice: () => page.noticeLine,
+  setNotice: (line) => { page.noticeLine = line; },
   render: () => renderPage(),
   surface: () => sessionIfOpen()?.surface ?? null,
-  hasSession: () => sessionStanding.tag === 'SessionOpen',
+  hasSession: () => page.session.tag === 'SessionOpen',
   fellow: {
     ...Object.fromEntries(['nod', 'lean', 'smile', 'droop'].map((mood) => [mood, () => fellow?.[mood]()])),
     beginFidgeting: () => { fellow?.beginFidgeting(); startElapsedClock(); },
@@ -95,14 +99,14 @@ const verbs = {
 
 // Most keys name an engine metadata field; the page's own furniture brings nouns of its own.
 const storybook = { ...fieldStories, ...pickerStories, ...tutorStories };
-wireStoryListeners(host, storybook, () => verbs[currentVerb].storiesQuiet?.() ?? false);
+wireStoryListeners(host, storybook, () => verbs[page.verbOnStage].storiesQuiet?.() ?? false);
 
 /* --------------------------------------------------------------- render ---- */
 
 const verbTabsMarkup = () => {
   const tab = (verbName, quieter) => html`<button
-    class="verb${quieter ? ' lesser' : ''}${verbName === currentVerb ? ' on' : ''}"
-    aria-current=${verbName === currentVerb ? 'page' : nothing}
+    class="verb${quieter ? ' lesser' : ''}${verbName === page.verbOnStage ? ' on' : ''}"
+    aria-current=${verbName === page.verbOnStage ? 'page' : nothing}
     data-action="choose-verb" data-verb="${verbName}">${verbName}</button>`;
   return html`${headlinerVerbs.map((verbName) => tab(verbName, false))}<span class="verb-gap"></span>
     ${quieterVerbs.map((verbName) => tab(verbName, true))}`;
@@ -139,12 +143,12 @@ const tutorMarkup = (words) => html`
   <pre class="terminal" id="command" data-action="copy-command">${commandMarkup(words)}</pre>`;
 
 const renderPage = () => {
-  const verb = verbs[currentVerb];
+  const verb = verbs[page.verbOnStage];
   render(verbTabsMarkup(), element('verbs'));
   render(verb.stageMarkup(), element('stage'));
   // a failed boot owns the voice box: a verb's voice would put a friendly face on a dead page
-  render(sessionStanding.tag === 'SessionFailedToOpen'
-    ? bootFailureVoice(sessionStanding.bootFailureShape)
+  render(page.session.tag === 'SessionFailedToOpen'
+    ? bootFailureVoice(page.session.bootFailureShape)
     : verb.voiceMarkup(), element('voice'));
   render(tutorMarkup(verb.commandWords()), element('tutor'));
   render(verb.actMarkup(), element('act'));
@@ -173,7 +177,7 @@ const filePicker = element('file-picker');
 document.addEventListener('click', (event) => {
   const control = event.target.closest('[data-action]');
   if (!control) return;
-  noticeLine = null;
+  page.noticeLine = null;
   const action = control.dataset.action;
   if (action === 'choose-verb') {
     // the hash is the one authority on the shown verb; arriveAtVerb answers its change
@@ -192,16 +196,16 @@ document.addEventListener('click', (event) => {
     copyCommand();
     return;
   }
-  verbs[currentVerb].actions[action]?.(control.dataset);
+  verbs[page.verbOnStage].actions[action]?.(control.dataset);
 });
 
 // A setting's value is its checkbox state or its typed text; the dataset rides along for per-field settings.
 document.addEventListener('change', (event) => {
   const setting = event.target.dataset.setting;
   if (!setting) return;
-  noticeLine = null;
+  page.noticeLine = null;
   const control = event.target;
-  verbs[currentVerb].settings[setting]?.(control.type === 'checkbox' ? control.checked : control.value, control.dataset);
+  verbs[page.verbOnStage].settings[setting]?.(control.type === 'checkbox' ? control.checked : control.value, control.dataset);
 });
 
 // The typing lane: each keystroke redraws what the page computes itself — byte counts, the command strip —
@@ -209,30 +213,30 @@ document.addEventListener('change', (event) => {
 document.addEventListener('input', (event) => {
   const setting = event.target.dataset.setting;
   if (!setting) return;
-  verbs[currentVerb].typings?.[setting]?.(event.target.value, event.target.dataset);
+  verbs[page.verbOnStage].typings?.[setting]?.(event.target.value, event.target.dataset);
 });
 
 filePicker.addEventListener('change', () => {
   const [file] = filePicker.files;
   if (file) {
-    noticeLine = null;
-    verbs[currentVerb].admitPickedFile(filePicker.dataset.seat, file);
+    page.noticeLine = null;
+    verbs[page.verbOnStage].admitPickedFile(filePicker.dataset.seat, file);
   }
   filePicker.value = '';
 });
 
 /* Drop anywhere: the whole page is the target, and slap sorts the files itself. */
 const routeDroppedFiles = async (files) => {
-  if (sessionStanding.tag === 'SessionFailedToOpen') return;   // the boot-failure card is already the answer
-  if (sessionStanding.tag === 'SessionOpening') {
-    noticeLine = voiceLines.stillGettingSet;
+  if (page.session.tag === 'SessionFailedToOpen') return;   // the boot-failure card is already the answer
+  if (page.session.tag === 'SessionOpening') {
+    page.noticeLine = voiceLines.stillGettingSet;
     renderPage();
     return;
   }
-  noticeLine = null;
+  page.noticeLine = null;
   for (const file of [...files].slice(0, 2)) {
     const { answered } = await host.ask('classify', { file });
-    verbs[currentVerb].admitDroppedFile(answered, file);
+    verbs[page.verbOnStage].admitDroppedFile(answered, file);
   }
 };
 
@@ -255,9 +259,9 @@ const verbNamedByHash = () => {
 };
 
 const arriveAtVerb = (verbName) => {
-  if (verbName === currentVerb) return;
-  currentVerb = verbName;
-  noticeLine = null;
+  if (verbName === page.verbOnStage) return;
+  page.verbOnStage = verbName;
+  page.noticeLine = null;
   fellow?.settle();
   // an answer dropped while this verb was off stage — another verb's supersede — never comes back by itself
   verbs[verbName].askAgain();
@@ -266,17 +270,17 @@ const arriveAtVerb = (verbName) => {
 
 addEventListener('hashchange', () => arriveAtVerb(verbNamedByHash() ?? 'apply'));
 
-currentVerb = verbNamedByHash() ?? 'apply';
+page.verbOnStage = verbNamedByHash() ?? 'apply';
 renderPage();
 seatMascot(element('fellow')).then((seated) => { fellow = seated; }).catch(console.error);
 openReactorSession().then((openedSession) => {
-  sessionStanding = { tag: 'SessionOpen', session: openedSession };
-  noticeLine = null;   // a "still getting set" answer is stale the moment the page is set
+  page.session = { tag: 'SessionOpen', session: openedSession };
+  page.noticeLine = null;   // a "still getting set" answer is stale the moment the page is set
   Object.values(verbs).forEach((verb) => verb.askAgain());
   renderPage();
 }).catch((bootFailure) => {
   console.error(bootFailure);
-  sessionStanding = { tag: 'SessionFailedToOpen', bootFailureShape: classifyBootFailure(bootFailure) };
+  page.session = { tag: 'SessionFailedToOpen', bootFailureShape: classifyBootFailure(bootFailure) };
   fellow?.droop();
   renderPage();
 });

@@ -2,6 +2,7 @@
 // so a drop lands in the original seat first and the swap link is the recourse.
 
 import { html, nothing } from '../../vendor/lit-html/lit-html.js';
+import { CheckVerdict } from './../engine-vocabulary.mjs';
 import { roleWhisperedSlotMarkup, heldSeatMarkup, swapSeatsMarkup } from './../controls.mjs';
 import { voiceLines, plainVoice, workingVoice, bottledVoice, blockedVoice, refusalVoice,
          advisoryMarkup } from './../answer-surface.mjs';
@@ -20,8 +21,8 @@ const atRest = () => ({
   blob: { lane: 'typed', text: '', file: null, fileBase64: null },
   diz:  { lane: 'typed', text: '', file: null, fileText: null },
   checkAnswer: null,
-  running: null,
-  outcome: null,
+  // apply's act doctrine: AtRest | Running{cancel} | Bottled | Refused | Fell
+  act: { tag: 'AtRest' },
 });
 
 export const makeCreateVerb = (host) => {
@@ -81,15 +82,18 @@ export const makeCreateVerb = (host) => {
 
   /* ------------------------------------------------------------ seats ---- */
 
-  const abandonOutcome = () => {
-    if (create.outcome?.bottled) URL.revokeObjectURL(create.outcome.bottled.downloadHref);
-    create.outcome = null;
+  const actRunning  = () => create.act.tag === 'Running';
+  const actAnswered = () => create.act.tag !== 'AtRest' && !actRunning();
+
+  const abandonAct = () => {
+    if (create.act.tag === 'Bottled') URL.revokeObjectURL(create.act.downloadHref);
+    create.act = { tag: 'AtRest' };
   };
 
   const admitFile = (seat, file) => {
-    if (create.running) return;
+    if (actRunning()) return;
     host.supersedeAsks();
-    abandonOutcome();
+    abandonAct();
     if (seat === 'original') create.original = file;
     else create.modified = file;
     create.checkAnswer = null;
@@ -103,7 +107,7 @@ export const makeCreateVerb = (host) => {
     const stateAtPick = create;
     file.arrayBuffer()
       .then(host.wheneverStillCurrent((buffer) => {
-        if (create !== stateAtPick || create.running || create.outcome) return;
+        if (create !== stateAtPick || create.act.tag !== 'AtRest') return;
         recheck(() => { create.blob = { lane: 'file', text: create.blob.text, file, fileBase64: base64OfBuffer(buffer) }; });
       }))
       .catch(host.askFailed);
@@ -113,7 +117,7 @@ export const makeCreateVerb = (host) => {
     const stateAtPick = create;
     file.text()
       .then(host.wheneverStillCurrent((dizText) => {
-        if (create !== stateAtPick || create.running || create.outcome) return;
+        if (create !== stateAtPick || create.act.tag !== 'AtRest') return;
         recheck(() => { create.diz = { lane: 'file', text: create.diz.text, file, fileText: dizText }; });
       }))
       .catch(host.askFailed);
@@ -124,37 +128,37 @@ export const makeCreateVerb = (host) => {
   const bottledName = () => `${stemOf(create.modified.name)}${surfaceRow().formatFileExtension}`;
 
   const runCreate = () => {
-    if (!create.formatToken || !create.original || !create.modified || create.running) return;
+    if (!create.formatToken || !create.original || !create.modified || actRunning()) return;
     const job = host.startJob('create', { original: create.original, modified: create.modified, declaration: declaration() });
     if (!job) return;
-    create.running = { cancel: job.cancel };
+    create.act = { tag: 'Running', cancel: job.cancel };
     host.fellow.beginFidgeting();
     host.render();
 
     job.answered.then(({ envelope, tail }) => {
-      create.running = null;
       host.fellow.settle();
       const { answered, refused, advisories } = host.openEnvelope(envelope);
       if (answered) {
         const downloadName = bottledName();
         const downloadHref = URL.createObjectURL(new Blob([tail]));
-        create.outcome = { bottled: {
+        create.act = {
+          tag: 'Bottled',
           formatName: surfaceRow().formatDisplayName, advisories, downloadName, downloadHref, patchBytes: tail,
-        } };
+        };
         host.download(downloadHref, downloadName);
         host.fellow.smile();
       } else {
-        create.outcome = { refused: { spokenError: refused.spokenError, sentence: refused.spokenErrorSentence, advisories } };
+        create.act = { tag: 'Refused', spokenError: refused.spokenError, sentence: refused.spokenErrorSentence, advisories };
         host.fellow.droop();
       }
       host.render();
     }).catch((jobFailure) => {
-      create.running = null;
       host.fellow.settle();
       if (host.wasCancelled(jobFailure)) {
+        create.act = { tag: 'AtRest' };
         host.setNotice(voiceLines.cancelled);
       } else {
-        create.outcome = { failed: { sentence: jobFailure.message, advisories: [] } };
+        create.act = { tag: 'Fell', sentence: jobFailure.message, advisories: [] };
         host.fellow.droop();
       }
       host.render();
@@ -164,7 +168,7 @@ export const makeCreateVerb = (host) => {
   /* ------------------------------------------------------------ stage ---- */
 
   const slotFor = (seat, roleWord, file) =>
-    create.running ? heldSeatMarkup(file, null) : roleWhisperedSlotMarkup(seat, roleWord, file);
+    actRunning() ? heldSeatMarkup(file, null) : roleWhisperedSlotMarkup(seat, roleWord, file);
 
   const sentenceMarkup = () => html`<p class="sentence">bottle the difference between
     ${slotFor('original', 'original', create.original)} and
@@ -206,10 +210,10 @@ export const makeCreateVerb = (host) => {
   };
 
   const stageMarkup = () => {
-    if (create.outcome) return sentenceMarkup();
+    if (actAnswered()) return sentenceMarkup();
     return html`
       ${sentenceMarkup()}
-      ${create.original && create.modified && !create.running ? swapSeatsMarkup : nothing}
+      ${create.original && create.modified && !actRunning() ? swapSeatsMarkup : nothing}
       ${formatPickerMarkup(host.surface()?.surfaceFormats ?? [], create.formatToken, create.moreFormatsOpen)}
       ${bench.metadataGroupMarkup(fileFieldMarkup)}
       ${bench.constraintsGroupMarkup()}`;
@@ -218,10 +222,9 @@ export const makeCreateVerb = (host) => {
   /* ------------------------------------------------------------ voice ---- */
 
   const voiceMarkup = () => {
-    if (create.outcome?.bottled) return bottledVoice(create.outcome.bottled);
-    if (create.outcome?.refused) return refusalVoice(create.outcome.refused, 'create');
-    if (create.outcome?.failed) return refusalVoice(create.outcome.failed, 'create');
-    if (create.running) return workingVoice(voiceLines.bottling);
+    if (create.act.tag === 'Bottled') return bottledVoice(create.act);
+    if (create.act.tag === 'Refused' || create.act.tag === 'Fell') return refusalVoice(create.act, 'create');
+    if (actRunning()) return workingVoice(voiceLines.bottling);
     if (host.notice()) return plainVoice(host.notice());
     if (!create.original && !create.modified) return plainVoice(voiceLines.createResting);
     if (!create.modified) return plainVoice(voiceLines.createOriginalOnly);
@@ -232,7 +235,7 @@ export const makeCreateVerb = (host) => {
       return html`<p class="refusal">${create.checkAnswer.refused.spokenErrorSentence}</p>`;
     const forewarnings = advisoryMarkup(create.checkAnswer.advisories ?? []);
     const verdict = create.checkAnswer.answered;
-    if (verdict?.tag === 'SpokenBlocked') return html`${blockedVoice(verdict.contents)}${forewarnings}`;
+    if (verdict?.tag === CheckVerdict.Blocked) return html`${blockedVoice(verdict.contents)}${forewarnings}`;
     return html`${plainVoice(voiceLines.createReady)}${forewarnings}`;
   };
 
@@ -258,14 +261,14 @@ export const makeCreateVerb = (host) => {
   /* ---------------------------------------------------------- surface ---- */
 
   const refusalCertain = () =>
-    !!create.checkAnswer?.refused || create.checkAnswer?.answered?.tag === 'SpokenBlocked';
+    !!create.checkAnswer?.refused || create.checkAnswer?.answered?.tag === CheckVerdict.Blocked;
 
   return {
     stageMarkup,
     voiceMarkup,
     commandWords,
     actMarkup: () => {
-      if (create.outcome || create.running) return html``;
+      if (create.act.tag !== 'AtRest') return html``;
       const ready = host.hasSession() && create.formatToken && create.original && create.modified && !refusalCertain();
       return html`<button class="run" data-action="run" ?disabled=${!ready}>${runLabel}</button>`;
     },
@@ -273,7 +276,7 @@ export const makeCreateVerb = (host) => {
     // "the first one I dropped" reads as the original. A full bench starts a fresh pair, original first again,
     // so a re-dropped pair never buries its first file in the modified seat.
     admitDroppedFile: (_sorting, file) => {
-      if (create.running) return;
+      if (actRunning()) return;
       if (create.original && create.modified) create.modified = null;
       admitFile(!create.original ? 'original' : 'modified', file);
     },
@@ -283,31 +286,30 @@ export const makeCreateVerb = (host) => {
       else admitFile(seat, file);
     },
     askAgain: askUnanswered,
-    storiesQuiet: () => !!(create.outcome || create.running),
+    storiesQuiet: () => create.act.tag !== 'AtRest',
     actions: {
       ...bench.actions,
       'choose-format': ({ token }) => {
-        if (create.running) return;
+        if (actRunning()) return;
         recheck(() => { create.formatToken = token; });
       },
       'more-formats': () => { create.moreFormatsOpen = !create.moreFormatsOpen; host.render(); },
       'blob-lane': ({ lane }) => recheck(() => { create.blob.lane = lane; }),
       'diz-lane': ({ lane }) => recheck(() => { create.diz.lane = lane; }),
       run: runCreate,
-      'cancel-run': () => create.running?.cancel(),
+      'cancel-run': () => { if (actRunning()) create.act.cancel(); },
       'look-inside': () => {
-        const bottled = create.outcome?.bottled;
-        if (bottled) host.lookInside(new File([bottled.patchBytes], bottled.downloadName));
+        if (create.act.tag === 'Bottled') host.lookInside(new File([create.act.patchBytes], create.act.downloadName));
       },
       'swap-seats': () => {
-        if (create.running) return;
-        abandonOutcome();
+        if (actRunning()) return;
+        abandonAct();
         recheck(() => { [create.original, create.modified] = [create.modified, create.original]; });
         host.fellow.nod();
       },
       'start-over': () => {
         host.supersedeAsks();
-        abandonOutcome();
+        abandonAct();
         create = atRest();
         bench.reset();
         host.fellow.settle();

@@ -3,6 +3,7 @@
 // with the record walk below for whoever wants to dig. Two renderers over one model; the terminal's dump is the other.
 
 import { html, nothing } from '../vendor/lit-html/lit-html.js';
+import { Payload, CopySource, ByteCount, Summarized, Section, Detail, EmbeddedField, matcherOver } from './engine-vocabulary.mjs';
 import { groupedCount, humanByteSize } from './readouts.mjs';
 
 const hexOffset = (offset) => `0x${offset.toString(16).padStart(6, '0')}`;
@@ -15,28 +16,28 @@ const readoutRow = (label, value) => html`<div class="readout-row">
   <span class="readout-label">${label}</span><span class="readout-value">${value}</span></div>`;
 
 // A FieldContent's positional parts, named once.
-const embeddedFieldParts = (field) => {
-  const [wireBase64, reading, substitutionCount] = field.contents;
-  return { wireBase64, reading, substitutionCount };
-};
+const embeddedFieldParts = ([wireBase64, reading, substitutionCount]) =>
+  ({ wireBase64, reading, substitutionCount });
 
 // A reading that decoded cleanly counts in characters; one that had to substitute is really
 // bytes, and says so — the terminal's own glance (sizeGlance, Slap.Display.EmbeddedContent).
-const embeddedFieldGlance = (field) => {
-  if (field.tag === 'FieldAbsent') return '(none)';
-  if (field.tag === 'FieldEmpty') return '(empty)';
-  const { wireBase64, reading, substitutionCount } = embeddedFieldParts(field);
-  return substitutionCount === 0
-    ? `${groupedCount([...reading.encodedTextContent].length)} characters`
-    : `${groupedCount(base64Bytes(wireBase64).length)} bytes`;
-};
+const embeddedFieldGlance = matcherOver(EmbeddedField, {
+  Absent: () => '(none)',
+  Empty:  () => '(empty)',
+  Content: (positionalParts) => {
+    const { wireBase64, reading, substitutionCount } = embeddedFieldParts(positionalParts);
+    return substitutionCount === 0
+      ? `${groupedCount([...reading.encodedTextContent].length)} characters`
+      : `${groupedCount(base64Bytes(wireBase64).length)} bytes`;
+  },
+});
 
 const countUnitWord = (unit) => unit.toLowerCase();
 
 // infoBytes and summaryBytes are the engine's Maybe: null for formats with no byte total to speak of.
 const totalBytesRow = (infoBytes) =>
-  infoBytes?.tag === 'TotalOutputBytes' ? readoutRow('output', `${groupedCount(infoBytes.contents)} bytes`)
-  : infoBytes?.tag === 'TotalPayloadBytes' ? readoutRow('payload', `${groupedCount(infoBytes.contents)} bytes`)
+  infoBytes?.tag === ByteCount.TotalOutput ? readoutRow('output', `${groupedCount(infoBytes.contents)} bytes`)
+  : infoBytes?.tag === ByteCount.TotalPayload ? readoutRow('payload', `${groupedCount(infoBytes.contents)} bytes`)
   : null;
 
 const rangePhrase = (range) =>
@@ -54,20 +55,25 @@ export const infoReadoutMarkup = (info, formatName) => html`
 
 export const embeddedContentsOf = (info) =>
   info.infoEmbedded.flatMap((embed, seatIndex) =>
-    embed.embeddedField.tag === 'FieldContent'
-      ? [{ seatIndex, label: embed.embeddedLabel, ...embeddedFieldParts(embed.embeddedField) }]
+    embed.embeddedField.tag === EmbeddedField.Content
+      ? [{ seatIndex, label: embed.embeddedLabel, ...embeddedFieldParts(embed.embeddedField.contents) }]
       : []);
 
 /* ------------------------------------------------------------- explain ---- */
 
-const payloadCategory = (payload) =>
-  payload.tag === 'PayloadWrite' ? 'write'
-  : payload.tag === 'PayloadFill' ? 'fill'
-  : payload.tag === 'PayloadXOR' ? 'xor'
-  : payload.tag === 'PayloadMeta' ? 'meta'
-  : payload.contents === 'FromSource' ? 'copy-source'
-  : payload.contents === 'FromTarget' ? 'copy-target'
-  : 'copy-patch';
+const copyCategory = matcherOver(CopySource, {
+  FromSource: () => 'copy-source',
+  FromTarget: () => 'copy-target',
+  FromPatch:  () => 'copy-patch',
+});
+
+const payloadCategory = matcherOver(Payload, {
+  Write: () => 'write',
+  Fill:  () => 'fill',
+  XOR:   () => 'xor',
+  Meta:  () => 'meta',
+  Copy:  (copySource) => copyCategory(copySource),
+});
 
 const categoryWords = {
   'copy-source': 'kept from the source', 'copy-target': 'copied from earlier output',
@@ -78,16 +84,16 @@ const categoryWords = {
 // A region leaves the file as it was only when it copies the source from the very offset it lands on.
 // Everything else — writes, fills, XORs, moved copies — changes what's there.
 const leavesBytesAsTheyWere = (region) =>
-  region.regionPayload.tag === 'PayloadCopy' && region.regionPayload.contents === 'FromSource'
+  region.regionPayload.tag === Payload.Copy && region.regionPayload.contents === CopySource.FromSource
   && region.regionAnnotation.annotationDetails.some(
-       (detail) => detail.tag === 'DetailSource' && detail.contents === region.regionOffset);
+       (detail) => detail.tag === Detail.Source && detail.contents === region.regionOffset);
 
 // The heatmap's model: the file divided into equal buckets, each holding how many of its bytes the patch changes.
 // Bucketing is a display choice, not a fact: 54,000 alternating regions would be unreadable drawn one by one,
 // and "where and how much" is the question.
 export const heatModel = (regions, summary) => {
   const regionEnd = (region) => region.regionOffset + region.regionSize;
-  const domain = summary?.tag === 'Summary' && summary.contents.summaryBytes?.tag === 'TotalOutputBytes'
+  const domain = summary?.tag === Summarized.Summary && summary.contents.summaryBytes?.tag === ByteCount.TotalOutput
     ? summary.contents.summaryBytes.contents
     : regions.reduce((furthest, region) => Math.max(furthest, regionEnd(region)), 0);
   if (domain <= 0) return null;
@@ -138,23 +144,24 @@ export const heatCaption = (model, bucket) => {
 
 // explain opens what info only glances at: the content itself, decoded under the chosen encoding.
 export const embeddedContentMarkup = (info) => info.infoEmbedded
-  .filter((embed) => embed.embeddedField.tag === 'FieldContent')
+  .filter((embed) => embed.embeddedField.tag === EmbeddedField.Content)
   .map((embed) => html`
     <div class="blob">
       <div class="blob-header">${embed.embeddedLabel} · ${embeddedFieldGlance(embed.embeddedField)}</div>
-      <pre>${embeddedFieldParts(embed.embeddedField).reading.encodedTextContent}</pre>
+      <pre>${embeddedFieldParts(embed.embeddedField.contents).reading.encodedTextContent}</pre>
     </div>`);
 
 /* ------------------------------------------------ the structure overview ---- */
 /* The overview the terminal's explain derives from these same regions:
    how much the patch touches and how, where it reaches, how the record sizes run. */
 
-const payloadKindNoun = (payload) =>
-  payload.tag === 'PayloadWrite' ? 'writes'
-  : payload.tag === 'PayloadFill' ? 'fills'
-  : payload.tag === 'PayloadCopy' ? 'copies'
-  : payload.tag === 'PayloadXOR' ? 'XOR'
-  : 'structural';
+const payloadKindNoun = matcherOver(Payload, {
+  Write: () => 'writes',
+  Fill:  () => 'fills',
+  Copy:  () => 'copies',
+  XOR:   () => 'XOR',
+  Meta:  () => 'structural',
+});
 
 // The sizes exist only as rendered rows, so the fold reads them back — the terminal's own trick.
 const parseSizeLine = (infoLines, label) => {
@@ -203,40 +210,38 @@ export const structureOverviewMarkup = (regions, infoLines) => {
 /* ----------------------------------------------------------- the walk ---- */
 
 // The page's phrasing of each annotation detail — the same facts the terminal's renderer speaks, worn a little differently.
-const detailPhrases = {
-  DetailRLE: () => '(RLE)',
-  DetailUndo: () => '(undo data)',
-  DetailDelta: (delta) => `(delta ${delta >= 0 ? '+' : ''}${groupedCount(delta)})`,
-  DetailSkip: (skipped) => `(skip ${groupedCount(skipped)})`,
-  DetailAdd: (added) => `(add ${groupedCount(added)})`,
-  DetailCopy: (copied) => `(copy ${groupedCount(copied)})`,
-  DetailSeek: (moved) => `(seek ${moved >= 0 ? '+' : ''}${groupedCount(moved)})`,
-  DetailSource: (sourceOffset) => `(source ${hexOffset(sourceOffset)})`,
-  DetailSourceIndex: (sourceIndex) => `from source ${sourceIndex}`,
-  DetailCRC16: ([sourceCrc, targetCrc]) =>
+const detailPhrase = matcherOver(Detail, {
+  RLE:  () => '(RLE)',
+  Undo: () => '(undo data)',
+  Delta: (delta) => `(delta ${delta >= 0 ? '+' : ''}${groupedCount(delta)})`,
+  Skip: (skipped) => `(skip ${groupedCount(skipped)})`,
+  Add:  (added) => `(add ${groupedCount(added)})`,
+  Copy: (copied) => `(copy ${groupedCount(copied)})`,
+  Seek: (moved) => `(seek ${moved >= 0 ? '+' : ''}${groupedCount(moved)})`,
+  Source: (sourceOffset) => `(source ${hexOffset(sourceOffset)})`,
+  SourceIndex: (sourceIndex) => `from source ${sourceIndex}`,
+  CRC16: ([sourceCrc, targetCrc]) =>
     `(src CRC16 ${sourceCrc.toString(16).padStart(4, '0')}, tgt CRC16 ${targetCrc.toString(16).padStart(4, '0')})`,
-  DetailCursorUnderflow: ([cursorKind, underflow]) =>
+  CursorUnderflow: ([cursorKind, underflow]) =>
     `⚠ ${cursorKind} cursor underflow: ${underflow} (patch invalid here)`,
-};
+});
 
 const annotationPhrase = (annotation) =>
-  annotation.annotationDetails
-    .map((detail) => (detailPhrases[detail.tag] ?? (() => ''))(detail.contents))
-    .filter((phrase) => phrase !== '')
-    .join('  ');
+  annotation.annotationDetails.map((detail) => detailPhrase(detail)).join('  ');
 
-const payloadGlimpse = (payload) => {
-  if (payload.tag === 'PayloadWrite' || payload.tag === 'PayloadXOR') {
-    const bytes = base64Bytes(payload.contents);
-    const shown = [...bytes.slice(0, 16)].map(hexByte).join(' ');
-    return html`<div class="walk-hex">${shown}${bytes.length > 16 ? ' …' : ''}</div>`;
-  }
-  if (payload.tag === 'PayloadFill') {
-    const [fillByte, repeatCount] = payload.contents;
-    return html`<div class="walk-hex">${hexByte(fillByte)} × ${groupedCount(repeatCount)}</div>`;
-  }
-  return null;
+const carriedBytesGlimpse = (wireBase64) => {
+  const bytes = base64Bytes(wireBase64);
+  const shown = [...bytes.slice(0, 16)].map(hexByte).join(' ');
+  return html`<div class="walk-hex">${shown}${bytes.length > 16 ? ' …' : ''}</div>`;
 };
+
+const payloadGlimpse = matcherOver(Payload, {
+  Write: carriedBytesGlimpse,
+  XOR:   carriedBytesGlimpse,
+  Fill: ([fillByte, repeatCount]) => html`<div class="walk-hex">${hexByte(fillByte)} × ${groupedCount(repeatCount)}</div>`,
+  Copy: () => null,
+  Meta: () => null,
+});
 
 const walkRow = (region) => html`
   <div class="walk-row">
@@ -264,11 +269,15 @@ export const walkMarkup = (regions, rowsShown) => html`
 /* ------------------------------------------------------------ assembly ---- */
 
 export const analysisRegionsOf = (analysis) =>
-  analysis.analysisSections.flatMap((section) => section.tag === 'SectionRegions' ? section.contents : []);
+  analysis.analysisSections.flatMap((section) => section.tag === Section.Regions ? section.contents : []);
 
-export const analysisAsidesMarkup = (analysis) => analysis.analysisSections.map((section) =>
-  section.tag === 'SectionText' ? html`<p class="aside">${section.contents}</p>`
-  : section.tag === 'SectionLabeled' ? html`<div class="readout">
-      <p class="readout-heading">${section.contents[0]}</p>
-      ${section.contents[1].map((line) => readoutRow(line.infoLineLabel, line.infoLineValue))}</div>`
-  : null);
+const sectionAsideMarkup = matcherOver(Section, {
+  Text: (spokenText) => html`<p class="aside">${spokenText}</p>`,
+  Labeled: ([heading, lines]) => html`<div class="readout">
+      <p class="readout-heading">${heading}</p>
+      ${lines.map((line) => readoutRow(line.infoLineLabel, line.infoLineValue))}</div>`,
+  // the regions render as the structure panels, never as an aside
+  Regions: () => null,
+});
+
+export const analysisAsidesMarkup = (analysis) => analysis.analysisSections.map((section) => sectionAsideMarkup(section));

@@ -2,6 +2,7 @@
 // explain answers "what does it do to the bytes" as info-plus — the same readout, then the structure.
 
 import { html, nothing } from '../../vendor/lit-html/lit-html.js';
+import { Sorting } from './../engine-vocabulary.mjs';
 import { groupMarkup, toggleMarkup, seatSlotMarkup, encodingPickerMarkup } from './../controls.mjs';
 import { voiceLines, plainVoice, advisoryMarkup } from './../answer-surface.mjs';
 import { verbWord, flagWord, valueWord, namedOr } from './../command-tutor.mjs';
@@ -119,7 +120,7 @@ const makeReadCore = (host, { verbName, wireVerb, declaration, restingLine, read
 
 // A dropped rom has no seat on a read verb; the patch seat takes what sorts as a patch.
 const admitSorted = (host, core) => (sorting, file) => {
-  if (sorting === 'SortsAsPatch') core.admitPatch(file);
+  if (sorting === Sorting.AsPatch) core.admitPatch(file);
   else { host.setNotice(voiceLines.sortsAsRom); host.render(); }
 };
 

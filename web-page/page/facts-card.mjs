@@ -4,6 +4,7 @@
 // the cards only put them into sentences.
 
 import { html, nothing } from '../vendor/lit-html/lit-html.js';
+import { Verdict, matcherOver } from './engine-vocabulary.mjs';
 import { base64ToHex, crc32Hex, checkKindNoun, humanByteSize, matchVerbFor, proseList } from './readouts.mjs';
 import { mismatchSentence } from './verification-speech.mjs';
 
@@ -49,6 +50,23 @@ const rescueStory = (rescue, consoleRows, verificationEnforced, framingUntouched
     header ${rescueMotion(find)} — but verification is off, so slap will apply to these bytes exactly as handed.</p>`;
 };
 
+const applyWeighingRow = matcherOver(Verdict, {
+  Matches: (checkKinds, { apply }) => html`<div class="verdict good"><span class="mark">✓</span>
+      <span>This is the rom <b>${apply.patch.name}</b> expects —
+        its ${proseList(checkKinds.map(checkKindNoun))} ${matchVerbFor(checkKinds)}.</span></div>`,
+
+  Uncheckable: (_declaredNothing, { apply }) => html`<div class="verdict shrug"><span class="mark">~</span>
+      <span><b>${apply.patch.name}</b> doesn't record which rom it's for, so slap can't check this one for you.</span></div>`,
+
+  Differs: (mismatches, { apply, consoleRows }) => html`<div class="verdict puzzled"><span class="mark">!</span>
+    <span><b>${apply.patch.name}</b> isn't sure about this rom.
+      ${mismatches.map((mismatch) => html`<span class="mismatch-line">${mismatchSentence(mismatch)}</span>`)}
+      ${rescueStory(apply.sourceReport.sourceRescue, consoleRows,
+                    apply.verificationPolicy === 'EnforceVerification',
+                    apply.framing.tag === 'TakeInputAsIs')}
+    </span></div>`,
+});
+
 const applyVerdictRow = (apply, consoleRows) => {
   if (!apply.patch)
     return html`<div class="verdict waiting"><span class="mark">·</span>
@@ -57,32 +75,30 @@ const applyVerdictRow = (apply, consoleRows) => {
   if (apply.patchIdentity?.refused || apply.patchIdentity?.answered?.spokenIdentityImpediment) return null;
   if (!apply.sourceReport)
     return html`<div class="verdict waiting"><span class="mark">·</span><span>checking…</span></div>`;
-
-  const verdict = apply.sourceReport.sourceVerdict;
-  const patchName = apply.patch.name;
-
-  if (verdict.tag === 'VerdictMatches')
-    return html`<div class="verdict good"><span class="mark">✓</span>
-      <span>This is the rom <b>${patchName}</b> expects —
-        its ${proseList(verdict.contents.map(checkKindNoun))} ${matchVerbFor(verdict.contents)}.</span></div>`;
-
-  if (verdict.tag === 'VerdictUncheckable')
-    return html`<div class="verdict shrug"><span class="mark">~</span>
-      <span><b>${patchName}</b> doesn't record which rom it's for, so slap can't check this one for you.</span></div>`;
-
-  const verificationEnforced = apply.verificationPolicy === 'EnforceVerification';
-  const framingUntouched = apply.framing.tag === 'TakeInputAsIs';
-  return html`<div class="verdict puzzled"><span class="mark">!</span>
-    <span><b>${patchName}</b> isn't sure about this rom.
-      ${verdict.contents.map((mismatch) => html`<span class="mismatch-line">${mismatchSentence(mismatch)}</span>`)}
-      ${rescueStory(apply.sourceReport.sourceRescue, consoleRows, verificationEnforced, framingUntouched)}
-    </span></div>`;
+  return applyWeighingRow(apply.sourceReport.sourceVerdict, { apply, consoleRows });
 };
 
 export const applyFactsCardMarkup = (apply, consoleRows) =>
   apply.rom ? factsFrame(apply.rom, apply.romFacts, applyVerdictRow(apply, consoleRows)) : html``;
 
 /* ------------------------------------------------------------------- undo ---- */
+
+const undoWeighingRow = matcherOver(Verdict, {
+  Matches: (checkKinds, { undo }) => html`<div class="verdict good"><span class="mark">✓</span>
+      <span>This is the rom <b>${undo.patch.name}</b> produces —
+        its ${proseList(checkKinds.map(checkKindNoun))} ${matchVerbFor(checkKinds)}.</span></div>`,
+
+  Uncheckable: (_declaredNothing, { undo }) => html`<div class="verdict shrug"><span class="mark">~</span>
+      <span><b>${undo.patch.name}</b> doesn't record what it produces, so slap can't check this rom against it.</span></div>`,
+
+  Differs: (mismatches, { undo }) => html`<div class="verdict puzzled"><span class="mark">!</span>
+    <span><b>${undo.patch.name}</b> doesn't recognize this as a rom it produces.
+      ${mismatches.map((mismatch) => html`<span class="mismatch-line">${mismatchSentence(mismatch)}</span>`)}
+      <p class="rescue-line">${undo.verificationPolicy === 'EnforceVerification'
+        ? html`You can still <i>skip verification</i> below and peel it as handed.`
+        : html`Verification is off, so slap will peel these bytes exactly as handed.`}</p>
+    </span></div>`,
+});
 
 const undoVerdictRow = (undo, patchPeels) => {
   if (!undo.patch)
@@ -92,25 +108,7 @@ const undoVerdictRow = (undo, patchPeels) => {
   if (undo.patchIdentity && !patchPeels) return null;
   if (!undo.verdict)
     return html`<div class="verdict waiting"><span class="mark">·</span><span>checking…</span></div>`;
-
-  const patchName = undo.patch.name;
-
-  if (undo.verdict.tag === 'VerdictMatches')
-    return html`<div class="verdict good"><span class="mark">✓</span>
-      <span>This is the rom <b>${patchName}</b> produces —
-        its ${proseList(undo.verdict.contents.map(checkKindNoun))} ${matchVerbFor(undo.verdict.contents)}.</span></div>`;
-
-  if (undo.verdict.tag === 'VerdictUncheckable')
-    return html`<div class="verdict shrug"><span class="mark">~</span>
-      <span><b>${patchName}</b> doesn't record what it produces, so slap can't check this rom against it.</span></div>`;
-
-  return html`<div class="verdict puzzled"><span class="mark">!</span>
-    <span><b>${patchName}</b> doesn't recognize this as a rom it produces.
-      ${undo.verdict.contents.map((mismatch) => html`<span class="mismatch-line">${mismatchSentence(mismatch)}</span>`)}
-      <p class="rescue-line">${undo.verificationPolicy === 'EnforceVerification'
-        ? html`You can still <i>skip verification</i> below and peel it as handed.`
-        : html`Verification is off, so slap will peel these bytes exactly as handed.`}</p>
-    </span></div>`;
+  return undoWeighingRow(undo.verdict, { undo });
 };
 
 export const undoFactsCardMarkup = (undo, patchPeels) =>
