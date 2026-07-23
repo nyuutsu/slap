@@ -85,8 +85,11 @@ const host = {
     verbs.explain.admitPickedFile('patch', file);
     location.hash = 'explain';
   },
-  // a view-transient line in the voice box; the next render puts the state's voice back
-  murmur: (spokenMarkup) => { render(spokenMarkup, element('voice')); },
+  // a story's card floats over the voice box, rendered inside it so the live region announces the story;
+  // the state's words hold the flow beneath, so speaking never moves the page, and the next render lifts the card away
+  murmur: (spokenMarkup) => {
+    render(html`${stateVoiceMarkup()}<div class="story-card">${spokenMarkup}</div>`, element('voice'));
+  },
   stage: () => element('stage'),
 };
 
@@ -109,7 +112,7 @@ wireStoryListeners(host, storybook, () => verbs[page.verbOnStage].storiesQuiet?.
 const verbTabsMarkup = () => {
   const tab = (verbName, quieter) => html`<button type="button" role="tab" id="tab-${verbName}"
     class="verb${quieter ? ' lesser' : ''}${verbName === page.verbOnStage ? ' on' : ''}"
-    aria-selected="${verbName === page.verbOnStage}"
+    aria-selected="${verbName === page.verbOnStage}" aria-controls="stage"
     tabindex=${verbName === page.verbOnStage ? '0' : '-1'}
     data-action="choose-verb" data-verb="${verbName}">${verbName}</button>`;
   return html`${headlinerVerbs.map((verbName) => tab(verbName, false))}<span class="verb-gap" aria-hidden="true"></span>
@@ -146,15 +149,17 @@ const tutorMarkup = (words) => html`
   </p>
   <pre class="terminal" id="command" data-action="copy-command">${commandMarkup(words)}</pre>`;
 
+// a failed boot owns the voice box: a verb's voice would put a friendly face on a dead page
+const stateVoiceMarkup = () => page.session.tag === 'SessionFailedToOpen'
+  ? bootFailureVoice(page.session.bootFailureShape)
+  : verbs[page.verbOnStage].voiceMarkup();
+
 const renderPage = () => {
   const verb = verbs[page.verbOnStage];
   render(verbTabsMarkup(), element('verbs'));
   render(html`<h2 class="visually-hidden">${page.verbOnStage}</h2>${verb.stageMarkup()}`, element('stage'));
   element('stage').setAttribute('aria-labelledby', `tab-${page.verbOnStage}`);
-  // a failed boot owns the voice box: a verb's voice would put a friendly face on a dead page
-  render(page.session.tag === 'SessionFailedToOpen'
-    ? bootFailureVoice(page.session.bootFailureShape)
-    : verb.voiceMarkup(), element('voice'));
+  render(stateVoiceMarkup(), element('voice'));
   render(tutorMarkup(verb.commandWords()), element('tutor'));
   render(verb.actMarkup(), element('act'));
 };
@@ -177,7 +182,6 @@ const copyCommand = async () => {
   }
 };
 
-// Arrow keys walk the verb tabs; the hash stays the one authority, the keys only drive it.
 element('verbs').addEventListener('keydown', (event) => {
   const stepped = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
   const landed = { Home: 0, End: allVerbs.length - 1 }[event.key];
@@ -204,7 +208,6 @@ document.addEventListener('click', (event) => {
   page.noticeLine = null;
   const action = control.dataset.action;
   if (action === 'choose-verb') {
-    // the hash is the one authority on the shown verb; arriveAtVerb answers its change
     location.hash = control.dataset.verb;
     return;
   }
@@ -292,6 +295,7 @@ const arriveAtVerb = (verbName) => {
   renderPage();
 };
 
+// the hash is the one authority on the shown verb; tab clicks and arrow keys only drive it
 addEventListener('hashchange', () => arriveAtVerb(verbNamedByHash() ?? 'apply'));
 
 page.verbOnStage = verbNamedByHash() ?? 'apply';

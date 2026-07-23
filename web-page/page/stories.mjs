@@ -1,8 +1,9 @@
 // Wired once against the whole page rather than the stage alone, so any element marking itself data-story joins in.
-// A story is a view-transient, never state: leaving renders the voice box back to what the state says,
-// and a control being typed in keeps its story, because that render would tear focus out of the input.
-// The .has-story buttons carry aria-expanded, saying whether their story is the one being spoken;
-// a press speaks it, Escape or leaving settles it.
+// A story is a view-transient, never state: it floats over the voice box in a .story-card,
+// because a story that grew the box would slide the page out from under the pointer that asked, and the leave-speak-leave loop would thrash.
+// Leaving settles it — the voice box renders back to what the state says — except a control being typed in,
+// whose story stays, because that render would tear focus out of the input.
+// The .has-story buttons carry aria-expanded; a press speaks, Escape settles, and the card itself counts as staying.
 
 import { plainVoice } from './answer-surface.mjs';
 
@@ -33,11 +34,11 @@ export const wireStoryListeners = (host, storybook, storiesQuietNow) => {
   };
 
   const settleStory = (event) => {
-    const storied = event.target.closest?.('[data-story]');
-    if (!storied) return;
-    if (event.relatedTarget && storied.contains(event.relatedTarget)) return;
-    if (storied.contains(document.activeElement)) return;
-    quietStory(storied);
+    const departed = event.target.closest?.('[data-story], .story-card');
+    if (!departed || !spokenStoried) return;
+    if (event.relatedTarget?.closest?.('[data-story], .story-card')) return;
+    if (spokenStoried.contains(document.activeElement)) return;
+    quietStory(spokenStoried);
   };
 
   document.addEventListener('mouseover', speakStory);
