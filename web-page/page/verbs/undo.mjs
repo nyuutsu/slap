@@ -5,7 +5,7 @@ import { html, nothing } from '../../vendor/lit-html/lit-html.js';
 import { Verdict, UndoAnswer, Sorting, matcherOver } from './../engine-vocabulary.mjs';
 import { groupMarkup, toggleMarkup, seatSlotMarkup, heldSeatMarkup, swapSeatsMarkup } from './../controls.mjs';
 import { undoFactsCardMarkup } from './../facts-card.mjs';
-import { voiceLines, plainVoice, workingVoice, revertedVoice, refusalVoice } from './../answer-surface.mjs';
+import { voiceLines, plainVoice, restingVoice, workingVoice, revertedVoice, refusalVoice } from './../answer-surface.mjs';
 import { verbWord, flagWord, fileWord, namedOr, placeholderWord } from './../command-tutor.mjs';
 import { dialectControls, dialectTogglesMarkup } from './../dialect-controls.mjs';
 import { identifyDeclaration } from './../declarations.mjs';
@@ -244,7 +244,7 @@ export const makeUndoVerb = (host) => {
     const answer = undoAnswer();
     if (answer === UndoAnswer.FormatHasNoUndo) return plainVoice(voiceLines.undoOneWay);
     if (answer === UndoAnswer.AuthorOmittedUndoData) return plainVoice(voiceLines.undoDataOmitted);
-    if (!undo.patch && !undo.patched) return plainVoice(voiceLines.undoResting);
+    if (!undo.patch && !undo.patched) return restingVoice(voiceLines.undoResting);
     if (!undo.patch) return plainVoice(voiceLines.undoRomOnly);
     if (!undo.patchIdentity) return plainVoice(voiceLines.sizingUp);
     if (!undo.patched)

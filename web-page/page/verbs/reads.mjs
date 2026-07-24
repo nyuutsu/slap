@@ -4,7 +4,7 @@
 import { html, nothing } from '../../vendor/lit-html/lit-html.js';
 import { Sorting } from './../engine-vocabulary.mjs';
 import { groupMarkup, toggleMarkup, seatSlotMarkup, encodingPickerMarkup } from './../controls.mjs';
-import { voiceLines, plainVoice, advisoryMarkup } from './../answer-surface.mjs';
+import { voiceLines, plainVoice, restingVoice, advisoryMarkup } from './../answer-surface.mjs';
 import { verbWord, flagWord, valueWord, namedOr } from './../command-tutor.mjs';
 import { dialectControls, dialectTogglesMarkup } from './../dialect-controls.mjs';
 import { identifyDeclaration } from './../declarations.mjs';
@@ -79,7 +79,7 @@ const makeReadCore = (host, { verbName, wireVerb, declaration, restingLine, read
 
   const voiceMarkup = () => {
     if (host.notice()) return plainVoice(host.notice());
-    if (!read.patch) return plainVoice(restingLine);
+    if (!read.patch) return restingVoice(restingLine);
     if (read.reading?.refused) return html`
       <p class="refusal">${read.reading.refused.spokenErrorSentence}</p>
       ${advisoryMarkup(read.reading.advisories)}`;

@@ -4,7 +4,7 @@
 import { html, nothing } from '../../vendor/lit-html/lit-html.js';
 import { CheckVerdict } from './../engine-vocabulary.mjs';
 import { roleWhisperedSlotMarkup, heldSeatMarkup, swapSeatsMarkup, chipRadioMarkup } from './../controls.mjs';
-import { voiceLines, plainVoice, workingVoice, bottledVoice, blockedVoice, refusalVoice,
+import { voiceLines, plainVoice, restingVoice, workingVoice, bottledVoice, blockedVoice, refusalVoice,
          advisoryMarkup } from './../answer-surface.mjs';
 import { verbWord, flagWord, valueWord, quotedWord, fileWord, namedOr, placeholderWord } from './../command-tutor.mjs';
 import { utf8Text, typedTextFlags, fieldLabel } from './../metadata-controls.mjs';
@@ -231,7 +231,7 @@ export const makeCreateVerb = (host) => {
     if (create.act.tag === 'Refused' || create.act.tag === 'Fell') return refusalVoice(create.act, 'create');
     if (actRunning()) return workingVoice(voiceLines.bottling);
     if (host.notice()) return plainVoice(host.notice());
-    if (!create.original && !create.modified) return plainVoice(voiceLines.createResting);
+    if (!create.original && !create.modified) return restingVoice(voiceLines.createResting);
     if (!create.modified) return plainVoice(voiceLines.createOriginalOnly);
     if (!create.original) return plainVoice(voiceLines.createModifiedOnly);
     if (!create.formatToken) return plainVoice(voiceLines.createNeedsFormat);

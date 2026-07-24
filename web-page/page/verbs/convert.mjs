@@ -5,7 +5,7 @@ import { Verdict, CheckVerdict, Sorting, EmbeddedField } from './../engine-vocab
 import { groupMarkup, toggleMarkup, seatSlotMarkup, heldSeatMarkup, inertSlotMarkup,
          headerControlMarkup, encodingPickerMarkup, preseededConsoleRow, chipRadioMarkup } from './../controls.mjs';
 import { applyFactsCardMarkup } from './../facts-card.mjs';
-import { voiceLines, plainVoice, workingVoice, convertedVoice, blockedVoice, refusalVoice,
+import { voiceLines, plainVoice, restingVoice, workingVoice, convertedVoice, blockedVoice, refusalVoice,
          advisoryMarkup } from './../answer-surface.mjs';
 import { verbWord, flagWord, valueWord, quotedWord, fileWord, namedOr, placeholderWord } from './../command-tutor.mjs';
 import { utf8Text, typedTextFlags, dropFlags, carriedFieldLabels, fieldLabel } from './../metadata-controls.mjs';
@@ -409,7 +409,7 @@ export const makeConvertVerb = (host) => {
       return html`<p class="refusal">${convert.patchIdentity.refused.spokenErrorSentence}</p>`;
     const blocked = impedimentSpoken();
     if (blocked) return html`<p class="refusal">${blocked.spokenErrorSentence}</p>`;
-    if (!convert.patch) return plainVoice(convert.source ? voiceLines.convertRomOnly : voiceLines.convertResting);
+    if (!convert.patch) return convert.source ? plainVoice(voiceLines.convertRomOnly) : restingVoice(voiceLines.convertResting);
     if (!convert.formatToken) return plainVoice(voiceLines.convertNeedsFormat);
     if (!convert.checkAnswer) return plainVoice(voiceLines.sizingUp);
     if (convert.checkAnswer.refused)

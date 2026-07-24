@@ -6,7 +6,7 @@ import { Verdict, Sorting, matcherOver } from './../engine-vocabulary.mjs';
 import { groupMarkup, toggleMarkup, seatSlotMarkup, heldSeatMarkup, swapSeatsMarkup,
          headerControlMarkup, preseededConsoleRow } from './../controls.mjs';
 import { applyFactsCardMarkup } from './../facts-card.mjs';
-import { voiceLines, plainVoice, workingVoice, patchedVoice, refusalVoice } from './../answer-surface.mjs';
+import { voiceLines, plainVoice, restingVoice, workingVoice, patchedVoice, refusalVoice } from './../answer-surface.mjs';
 import { verbWord, flagWord, valueWord, fileWord, namedOr, placeholderWord } from './../command-tutor.mjs';
 import { dialectControls, dialectTogglesMarkup } from './../dialect-controls.mjs';
 import { identifyDeclaration } from './../declarations.mjs';
@@ -264,7 +264,7 @@ export const makeApplyVerb = (host) => {
       return html`<p class="refusal">${apply.patchIdentity.refused.spokenErrorSentence}</p>`;
     const blocked = impedimentSpoken();
     if (blocked) return html`<p class="refusal">${blocked.spokenErrorSentence}</p>`;
-    if (!apply.patch && !apply.rom) return plainVoice(voiceLines.resting);
+    if (!apply.patch && !apply.rom) return restingVoice(voiceLines.resting);
     if (!apply.patch) return plainVoice(voiceLines.romOnly);
     if (!apply.rom) return plainVoice(voiceLines.patchOnly);
     if (apply.verificationPolicy === 'SkipVerification') return plainVoice(voiceLines.verificationOff);
