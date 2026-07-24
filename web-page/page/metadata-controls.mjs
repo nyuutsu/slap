@@ -101,10 +101,8 @@ const choiceWords = {
   },
 };
 
-export const choiceGloss = (fieldName, chosenToken, defaultToken) => {
-  if (chosenToken) return choiceWords[fieldName]?.tokens[chosenToken] ?? null;
-  return defaultToken ? `${defaultToken} unless you say otherwise.` : null;
-};
+export const choiceGloss = (fieldName, chosenToken) =>
+  chosenToken ? choiceWords[fieldName]?.tokens[chosenToken] ?? null : null;
 
 // The longer stories the fellow tells when a control is hovered or focused. (All DRAFT.)
 export const fieldStories = {

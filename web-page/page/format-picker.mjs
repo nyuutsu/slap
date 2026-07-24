@@ -1,11 +1,10 @@
-// The surface says what formats exist; the opinion — which tiles to recommend, and with what words — lives here.
+// The surface says what formats exist; the opinion — which formats get tiles, and with what words — lives here.
 // A format with no words still shows, under "more formats", unadorned.
 
 import { html, nothing } from '../vendor/lit-html/lit-html.js';
 import { groupMarkup, admonitionMarkup, chipRadioMarkup } from './controls.mjs';
 
-const recommendedTokens = ['bps', 'xdelta3', 'ppf3'];
-const curioToken = 'rfc-vcdiff';
+const tileTokens = ['bps', 'xdelta3', 'ppf3', 'rfc-vcdiff'];
 
 const tileCopy = {
   bps: "The safe default. Checks it's patching the right file, survives size changes, and every modern patcher reads it.",
@@ -38,10 +37,10 @@ export const pickerStories = {
 };
 
 // A tile is the format radio group's grandest label; the quiet chips below answer to the same group.
-const tileMarkup = (row, chosenToken, curio) => html`<input class="choice-input" type="radio" name="format"
+const tileMarkup = (row, chosenToken) => html`<input class="choice-input" type="radio" name="format"
   id="format-${row.formatToken}" data-setting="format" value="${row.formatToken}"
   .checked=${row.formatToken === chosenToken}>
-  <label class="tile${curio ? ' curio' : ''}${row.formatToken === chosenToken ? ' on' : ''}"
+  <label class="tile${row.formatToken === chosenToken ? ' on' : ''}"
     for="format-${row.formatToken}">
   <span class="tile-name">${row.formatDisplayName}</span>
   <span class="tile-copy">${tileCopy[row.formatToken] ?? ''}</span></label>`;
@@ -49,16 +48,14 @@ const tileMarkup = (row, chosenToken, curio) => html`<input class="choice-input"
 export const formatPickerMarkup = (surfaceRows, chosenToken, moreFormatsOpen) => {
   if (surfaceRows.length === 0) return null;
   const rowByToken = (token) => surfaceRows.find((row) => row.formatToken === token);
-  const recommendedRows = recommendedTokens.map(rowByToken).filter(Boolean);
-  const curioRow = rowByToken(curioToken);
-  const spotlit = new Set([...recommendedTokens, curioToken]);
+  const tileRows = tileTokens.map(rowByToken).filter(Boolean);
+  const spotlit = new Set(tileTokens);
   const quieterRows = surfaceRows.filter((row) => !spotlit.has(row.formatToken));
   const chosenIsQuieter = quieterRows.some((row) => row.formatToken === chosenToken);
   const moreOpen = moreFormatsOpen || chosenIsQuieter;
   return groupMarkup('format', html`
     <fieldset class="choice-fieldset"><legend class="visually-hidden">format</legend>
-    <div class="tiles">${recommendedRows.map((row) => tileMarkup(row, chosenToken, false))}</div>
-    ${curioRow ? tileMarkup(curioRow, chosenToken, true) : nothing}
+    <div class="tiles">${tileRows.map((row) => tileMarkup(row, chosenToken))}</div>
     ${!chosenIsQuieter ? html`<button type="button" class="more-chip${moreOpen ? ' open' : ''}" aria-expanded="${moreOpen}"
       data-action="more-formats" data-story="MoreFormats">
       ${moreOpen ? 'fewer formats' : `more formats (${quieterRows.length})`}</button>` : nothing}

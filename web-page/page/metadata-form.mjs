@@ -163,7 +163,7 @@ export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
     const fieldName = row.describedMetadataField;
     const defaultToken = (surfaceRow()?.formatChoiceDefaults ?? [])
       .find(([defaultField]) => defaultField === fieldName)?.[1] ?? null;
-    const gloss = choiceGloss(fieldName, bench.chosenChoices[fieldName], defaultToken);
+    const gloss = choiceGloss(fieldName, bench.chosenChoices[fieldName]);
     const chip = (token) => html`<input class="choice-input" type="checkbox" id="meta-${fieldName}-${token}"
         data-setting="choose-meta" data-field="${fieldName}" data-token="${token}"
         .checked=${bench.chosenChoices[fieldName] === token}>
