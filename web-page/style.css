@@ -15,6 +15,19 @@
 @font-face { font-family: 'Sarasa Stand-in'; src: local('DejaVu Sans Mono'), local('DejaVuSansMono'); size-adjust: 83.02%; }
 @font-face { font-family: 'Sarasa Stand-in'; src: local('Roboto Mono'), local('RobotoMono-Regular'), local('Roboto Mono Regular'); size-adjust: 83.32%; }
 
+/* The speaking fonts' stand-ins, one row per metric family. Each wears the target's own ascent, descent, and
+   line gap, plus a size-adjust matching frequency-weighted average advances measured from the faces themselves:
+   the swap changes letterforms, never line count nor baseline. Liberation Sans carries Arial's metrics by design,
+   so the one row serves every spelling. */
+@font-face { font-family: 'Nunito Stand-in'; src: local('Arial'), local('ArialMT'), local('Liberation Sans'), local('LiberationSans');
+             font-weight: 200 1000; size-adjust: 97.86%; ascent-override: 101.1%; descent-override: 35.3%; line-gap-override: 0%; }
+@font-face { font-family: 'Baloo Stand-in'; src: local('Arial'), local('ArialMT'), local('Liberation Sans'), local('LiberationSans');
+             font-weight: 400 800; size-adjust: 96.8%; ascent-override: 107.8%; descent-override: 52.4%; line-gap-override: 0%; }
+@font-face { font-family: 'Fell Stand-in'; src: local('Georgia Italic'), local('Georgia-Italic'), local('Georgia');
+             font-style: italic; size-adjust: 77.67%; ascent-override: 90.53%; descent-override: 36.33%; line-gap-override: 0%; }
+@font-face { font-family: 'Fell Stand-in'; src: local('Times New Roman Italic'), local('TimesNewRomanPS-ItalicMT'), local('Times New Roman');
+             font-style: italic; size-adjust: 86.57%; ascent-override: 90.53%; descent-override: 36.33%; line-gap-override: 0%; }
+
 :root {
   --room: #FBF4EA;
   --panel: #FFFFFF;
@@ -71,8 +84,8 @@
   --space-one-and-a-half: calc(var(--type-text) * 1.5);   /* 27px */
   --space-double: calc(var(--type-text) * 2);             /* 36px */
 
-  --display: 'Baloo 2', system-ui, sans-serif;
-  --body: 'Nunito', system-ui, sans-serif;
+  --display: 'Baloo 2', 'Baloo Stand-in', system-ui, sans-serif;
+  --body: 'Nunito', 'Nunito Stand-in', system-ui, sans-serif;
   --mono: 'Sarasa Mono J', 'Sarasa Stand-in', ui-monospace, Menlo, Consolas, monospace;
 }
 
@@ -363,12 +376,10 @@ legend.choice-label { padding: 0; }
    never speaks off-screen; reaching its place, it settles back into the flow.
    The ground dissolves upward instead of ending at an edge, so what scrolls behind fades rather than hitting
    a wall — and the fellow's head stands in the dissolve, taller than the bar that seats him. */
-@media (min-width: 641px) {
-  .answer {
-    position: sticky; bottom: 0; z-index: 4;
-    padding: 0 0 var(--space-quarter);
-    background: linear-gradient(to bottom, transparent, var(--room) var(--space-whole));
-  }
+.answer {
+  position: sticky; bottom: 0; z-index: 4;
+  padding: 0 0 var(--space-quarter);
+  background: linear-gradient(to bottom, transparent, var(--room) var(--space-whole));
 }
 .fellow-seat { flex: none; width: 92px; height: 92px; }
 .fellow-seat svg { width: 100%; height: 100%; overflow: visible; cursor: pointer; transform-origin: 50% 50%; }
@@ -533,7 +544,7 @@ legend.choice-label { padding: 0; }
   padding: var(--space-three-quarters) var(--space-whole); margin: var(--space-three-quarters) 0; font-size: var(--type-text); color: var(--ink-soft);
 }
 .noscript-note a { color: var(--grape); }
-.makers-mark { font-family: 'IM Fell English', serif; font-style: italic; font-size: var(--type-text); color: var(--ink-soft); text-decoration: none; }
+.makers-mark { font-family: 'IM Fell English', 'Fell Stand-in', serif; font-style: italic; font-size: var(--type-text); color: var(--ink-soft); text-decoration: none; }
 .makers-mark:hover { color: var(--grape); }
 .amber-dot { color: var(--amber); }
 
@@ -557,10 +568,13 @@ legend.choice-label { padding: 0; }
 /* ------------------------------------------------------------ mobile ---- */
 
 @media (max-width: 640px) {
-  .answer { flex-direction: column; align-items: flex-start; }
-  .fellow-seat { width: 76px; height: 76px; }
+  .fellow-seat { width: 64px; height: 64px; }
   .run { width: 100%; }
-  .signature { flex-direction: column; }
+  .signature { flex-direction: column; align-items: flex-end; }
+  /* the stacked field has no label column, and wrapped walk rows keep no offset column:
+     the indents that aligned under them have nothing to point at, so both sit flush */
+  .field-gloss { margin-left: 0; }
+  .walk-hex { padding-left: 0; }
   .tiles { grid-template-columns: 1fr; }
   .field { flex-direction: column; align-items: stretch; gap: 3px; }
   .field-label { flex: none; }
