@@ -154,6 +154,7 @@ define assemble-web
 	cp web-reactor/reactor-client.mjs web-reactor/envelope-worker.mjs dist-web/reactor/
 	cp "$$(. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal -v0 list-bin slap-web-reactor $(1) $(WASM_CABAL_FLAGS))" dist-web/reactor/slap-web-reactor.wasm
 	cp -r vendor/browser_wasi_shim/dist dist-web/vendor/browser_wasi_shim/
+	node web-page/bake-service-worker.mjs dist-web "$$(git describe --always --dirty --exclude='*')"
 	cd dist-web && node boot-check.mjs
 endef
 

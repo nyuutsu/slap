@@ -303,6 +303,10 @@ addEventListener('hashchange', () => arriveAtVerb(verbNamedByHash() ?? 'apply'))
 page.verbOnStage = verbNamedByHash() ?? 'apply';
 renderPage();
 seatMascot(element('fellow')).then((seated) => { fellow = seated; }).catch(console.error);
+// the page needs no server after load, so the worker precaches it whole: visits are instant, offline works,
+// and a deploy takes over only when every slap tab has closed — one visit late, never a mixed generation.
+// registration is pinned to the real host, so the rig and the node checks never meet it
+if (location.hostname === 'slap.nyuu.page') navigator.serviceWorker?.register('/sw.js').catch(console.error);
 openReactorSession().then((openedSession) => {
   // the page was built against one engine's surface; an engine that booted speaking another must not answer for it
   if (JSON.stringify(openedSession.surface) !== JSON.stringify(engineSurface))
