@@ -17,13 +17,14 @@ const filesUnder = (branch, keep) => readdirSync(join(distRoot, branch), { withF
 const precachePaths = [
   '/',
   '/style.css',
+  '/manifest.json',
   '/vendor/lit-html/lit-html.js',
   ...filesUnder('page', () => true),
   ...filesUnder('page/verbs', () => true),
   ...filesUnder('reactor', (name) => !name.endsWith('.br') && !name.endsWith('.gz')),
   ...filesUnder('vendor/browser_wasi_shim/dist', (name) => name.endsWith('.js')),
   ...filesUnder('fonts', (name) => name.endsWith('.woff2')),
-  ...filesUnder('art', (name) => name.endsWith('.svg')),
+  ...filesUnder('art', (name) => name.endsWith('.svg') || name.endsWith('.png') || name.endsWith('.webp')),
 ].sort();
 
 // The cache is keyed by content, not by commit alone: trial deploys share one "-dirty" describe,

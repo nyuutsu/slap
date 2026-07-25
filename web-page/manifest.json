@@ -1,0 +1,14 @@
+{
+  "name": "slap",
+  "short_name": "slap",
+  "description": "slap applies, creates, examines, and converts ROM patches in twenty formats, detecting the format automatically. Also available as a command-line tool.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#FBF4EA",
+  "theme_color": "#FBF4EA",
+  "icons": [
+    { "src": "/art/slap-icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/art/slap-icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
