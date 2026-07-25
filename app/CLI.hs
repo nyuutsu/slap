@@ -631,6 +631,7 @@ convertWithSourceParser = ConvertWithSource
 createFormatParser :: Parser CreateFormat
 createFormatParser = option (eitherReader parseCreateFormat)
   (long "format" <> metavar "FMT" <> value (CreateDifferential CreateBPS)
+    <> completeWith advertisedCreateFormats
     <> help ("Output format: " ++ intercalate ", " advertisedCreateFormats
               ++ " (default: bps)"))
 
@@ -639,6 +640,7 @@ createFormatParser = option (eitherReader parseCreateFormat)
 convertToParser :: Parser CreateFormat
 convertToParser = option (eitherReader parseCreateFormat)
   (long "to" <> short 't' <> metavar "FMT"
+    <> completeWith advertisedCreateFormats
     <> help ("Target format: " ++ intercalate ", " advertisedCreateFormats))
 
 -- | The one compression request a command line can make: decline compression, or name the xdelta3 secondary compressor.

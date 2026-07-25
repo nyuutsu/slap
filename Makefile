@@ -33,7 +33,10 @@ build: staticlib-wiring
 optimized: staticlib-wiring
 	cabal build exe:slap -O2
 
-# Copy the optimized binary onto your PATH. PREFIX defaults to ~/.local; override it (PREFIX=/usr/local may need sudo).
+# Copy the optimized binary onto your PATH, with its man page and its shell completions.
+# PREFIX defaults to ~/.local; override it (PREFIX=/usr/local may need sudo).
+# The completions come out of the CLI parser itself, so they cannot drift from the flags slap actually takes;
+# all three shells are written whichever shell runs this, because a staged install has no shell of its own to detect.
 install: optimized
 	mkdir -p "$(DESTDIR)$(PREFIX)/bin"
 	cp "$$(cabal -v0 list-bin -O2 slap)" "$(DESTDIR)$(PREFIX)/bin/slap"
@@ -45,6 +48,17 @@ install: optimized
 	else \
 	  echo "help2man not found; skipping man page (emerge dev-util/help2man to include it)"; \
 	fi
+	@slapBinary="$$(cabal -v0 list-bin -O2 slap)"; \
+	 mkdir -p "$(DESTDIR)$(PREFIX)/share/bash-completion/completions" \
+	          "$(DESTDIR)$(PREFIX)/share/zsh/site-functions" \
+	          "$(DESTDIR)$(PREFIX)/share/fish/vendor_completions.d"; \
+	 "$$slapBinary" --bash-completion-script "$(PREFIX)/bin/slap" > "$(DESTDIR)$(PREFIX)/share/bash-completion/completions/slap"; \
+	 "$$slapBinary" --zsh-completion-script  "$(PREFIX)/bin/slap" > "$(DESTDIR)$(PREFIX)/share/zsh/site-functions/_slap"; \
+	 "$$slapBinary" --fish-completion-script "$(PREFIX)/bin/slap" > "$(DESTDIR)$(PREFIX)/share/fish/vendor_completions.d/slap.fish"; \
+	 echo "installed completions for bash, zsh, and fish under $(DESTDIR)$(PREFIX)/share"
+	@case "$(PREFIX)" in /usr|/usr/local) ;; *) \
+	  printf '%s\n' "  bash and fish find these on their own; zsh searches only the directories in its fpath, so add" \
+	                "  fpath=($(PREFIX)/share/zsh/site-functions \$$fpath)   to ~/.zshrc, above compinit";; esac
 
 # Generate slap.1 from the built binary's --help/--version (help2man, so it never drifts). View with: man ./slap.1
 man: build
