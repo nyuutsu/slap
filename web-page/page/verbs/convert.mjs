@@ -12,7 +12,7 @@ import { utf8Text, typedTextFlags, dropFlags, carriedFieldLabels, fieldLabel } f
 import { dialectControls, dialectTogglesMarkup } from './../dialect-controls.mjs';
 import { identifyDeclaration } from './../declarations.mjs';
 import { makeMetadataBench, storiedText, base64OfBuffer, countedTextareaMarkup } from './../metadata-form.mjs';
-import { formatPickerMarkup } from './../format-picker.mjs';
+import { formatPickerMarkup, formatSeatMarkup, formatGroupId } from './../format-picker.mjs';
 import { stemOf } from './../readouts.mjs';
 
 const runLabel = 'Rebottle';
@@ -256,6 +256,15 @@ export const makeConvertVerb = (host) => {
 
   /* ---------------------------------------------------------- the act ---- */
 
+  // What the run still waits on, as the places it would point at. Resting on a waiting run outlines all of them
+  // at once — the fellow's box among them, since the words for why are already in his mouth.
+  const runReadiness = () => {
+    if (!host.hasSession() || refusalCertain()) return { tag: 'Waiting', pointAt: ['voice'] };
+    const awaited = [!convert.patch && 'seat-patch', !convert.formatToken && formatGroupId,
+                     romStanding().owed && !convert.source && 'seat-source'].filter(Boolean);
+    return awaited.length === 0 ? { tag: 'Ready' } : { tag: 'Waiting', pointAt: ['voice', ...awaited] };
+  };
+
   const convertedName = () => `${stemOf(convert.patch.name)}${surfaceRow().formatFileExtension}`;
 
   const runConvert = () => {
@@ -303,23 +312,49 @@ export const makeConvertVerb = (host) => {
 
   const chipWord = () => convert.patchIdentity?.answered?.spokenIdentityFormatName ?? null;
 
-  const sentenceMarkup = () => html`<p class="sentence">convert
-    ${actRunning() ? heldSeatMarkup(convert.patch, chipWord()) : seatSlotMarkup('patch', 'patch', convert.patch, chipWord())} to
-    ${convert.formatToken
-      ? html`<span class="slot filled inert">${convert.formatToken}</span>`
-      : html`<span class="slot empty inert">format</span>`}</p>`;
+  // The three things slap can know about the rom, each carrying the word it says and whether the blank is owed.
+  // (Copy: DRAFT.)
+  const RomStanding = Object.freeze({
+    MayBeWanted: Object.freeze({ whisper: 'only needed for some formats', owed: false }),
+    Wanted:      Object.freeze({ whisper: 'needed for this one',         owed: true  }),
+    NotWanted:   Object.freeze({ whisper: 'not needed for this one',     owed: false }),
+  });
 
-  const sourceGroupMarkup = () => groupMarkup('the original rom', html`
-    <p class="aside">Some conversions read straight from the patch; others need the rom the patch was made for —
-      when yours does, slap says so. With the rom in hand, slap applies the patch and re-diffs the result.</p>
-    <div class="choice-row">${actRunning()
-      ? (convert.source ? heldSeatMarkup(convert.source, null) : inertSlotMarkup('rom'))
-      : seatSlotMarkup('source', 'rom', convert.source, null)}</div>
-    ${applyFactsCardMarkup({
-      patch: convert.patch, patchIdentity: convert.patchIdentity,
-      rom: convert.source, romFacts: convert.sourceFacts,
-      sourceReport: convert.sourceReport, verificationPolicy: convert.verificationPolicy, framing: convert.framing,
-    }, host.surface().surfaceConsoleHeaders)}`);
+  // Which one holds turns on the chosen format as much as on the patch, so it is asked of the engine on every
+  // change: a blocked request offering ProvideSourceRom is slap saying the rom would settle it.
+  const romStanding = () => {
+    const verdict = convert.checkAnswer?.answered;
+    if (!convert.patch || !convert.formatToken || !verdict) return RomStanding.MayBeWanted;
+    if (verdict.tag !== CheckVerdict.Blocked) return RomStanding.NotWanted;
+    return verdict.contents.some((gap) => gap.spokenGapResolutions.some((way) => way.tag === 'ProvideSourceRom'))
+      ? RomStanding.Wanted : RomStanding.NotWanted;
+  };
+
+  // The rom is an operand, not a setting, so it stands in the sentence: the second line is the same sentence, continued.
+  const sentenceMarkup = () => {
+    const standing = romStanding();
+    return html`<p class="sentence">convert
+      ${actRunning() ? heldSeatMarkup(convert.patch, chipWord()) : seatSlotMarkup('patch', 'patch', convert.patch, chipWord())} to
+      ${formatSeatMarkup(convert.formatToken)}</p>
+    <p class="sentence second">with ${actRunning()
+      ? (convert.source ? heldSeatMarkup(convert.source, null) : inertSlotMarkup("the rom it's for"))
+      : html`<span class="slot-stack">${romSeatMarkup(standing)}<span class="role-whisper"
+          id="rom-standing">${standing.whisper}</span></span>`}</p>`;
+  };
+
+  // The blank names the rom it wants, so the prose need not, and wears the owed colour only while slap knows it is owed.
+  const romSeatMarkup = (standing) => (convert.source
+    ? html`<button type="button" class="slot filled has-story" id="seat-source" aria-describedby="rom-standing"
+        data-action="pick-file" data-seat="source" data-story="SourceRom">${convert.source.name}</button>`
+    : html`<button type="button" class="slot empty has-story${standing.owed ? ' owed' : ''}"
+        id="seat-source" aria-describedby="rom-standing"
+        data-action="pick-file" data-seat="source" data-story="SourceRom">the rom it's for</button>`);
+
+  const romFactsMarkup = () => applyFactsCardMarkup({
+    patch: convert.patch, patchIdentity: convert.patchIdentity,
+    rom: convert.source, romFacts: convert.sourceFacts,
+    sourceReport: convert.sourceReport, verificationPolicy: convert.verificationPolicy, framing: convert.framing,
+  }, host.surface().surfaceConsoleHeaders);
 
   const headerControlSurfaces = () => {
     if (!convert.patch || !convert.source || impedimentSpoken()) return false;
@@ -388,11 +423,10 @@ export const makeConvertVerb = (host) => {
     if (actAnswered()) return sentenceMarkup();
     return html`
       ${sentenceMarkup()}
+      ${romFactsMarkup()}
       ${formatPickerMarkup(host.surface().surfaceFormats, convert.formatToken, convert.moreFormatsOpen)}
-      ${sourceGroupMarkup()}
       ${headerControlSurfaces() ? headerControlMarkup(convert.framing, host.surface().surfaceConsoleHeaders) : nothing}
-      ${bench.metadataGroupMarkup(fileFieldMarkup)}
-      ${bench.constraintsGroupMarkup()}
+      ${bench.foldedBenchMarkup(fileFieldMarkup)}
       ${encodingSpeaks() ? encodingPickerMarkup(host.surface().surfaceEncodings,
                                                 convert.metadataEncoding, convert.moreEncodingsOpen) : nothing}
       ${convert.patch && !impedimentSpoken() ? optionsMarkup() : nothing}`;
@@ -468,13 +502,15 @@ export const makeConvertVerb = (host) => {
   };
 
   return {
+    runReadiness,
     stageMarkup,
     voiceMarkup,
     commandWords,
     actMarkup: () => {
       if (convert.act.tag !== 'AtRest') return html``;
-      const ready = host.hasSession() && convert.patch && convert.formatToken && !refusalCertain();
-      return html`<button class="run" type="submit" form="stage" ?disabled=${!ready}>${runLabel}</button>`;
+      const readiness = runReadiness();
+      return html`<button class="run" type="submit" form="stage" aria-disabled="${readiness.tag === 'Waiting'}"
+        data-points-at=${readiness.tag === 'Waiting' ? readiness.pointAt.join(' ') : nothing}>${runLabel}</button>`;
     },
     admitDroppedFile: (sorting, file) => (sorting === Sorting.AsPatch ? admitPatch(file) : admitSource(file)),
     admitPickedFile: (seat, file) => {
@@ -487,6 +523,7 @@ export const makeConvertVerb = (host) => {
     storiesQuiet: () => convert.act.tag !== 'AtRest',
     actions: {
       'more-formats': () => { convert.moreFormatsOpen = !convert.moreFormatsOpen; host.render(); },
+      'fold-bench': () => { bench.toggleBench(); host.render(); },
       'more-encodings': () => { convert.moreEncodingsOpen = !convert.moreEncodingsOpen; host.render(); },
       run: runConvert,
       'cancel-run': () => { if (actRunning()) convert.act.cancel(); },

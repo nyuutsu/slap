@@ -49,6 +49,7 @@ export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
     toggledFields: {},
     chosenChoices: {},   // choice fields, by chosen token; the engine value is looked up at declaration time
     chosenConstraints: {},
+    benchOpen: false,
   });
   let bench = atRest();
 
@@ -204,6 +205,19 @@ export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
     return groupMarkup('metadata', html`${rows.map((row) => controlMarkup(row, fileFieldMarkup))}`);
   };
 
+  // Nothing in here is ever required — the format answers all of it when you say nothing — so it folds away,
+  // and the sentence keeps the stage. (Copy: DRAFT.)
+  const foldedBenchMarkup = (fileFieldMarkup) => {
+    const metadata = metadataGroupMarkup(fileFieldMarkup);
+    const constraints = constraintsGroupMarkup();
+    if (!metadata && !constraints) return null;
+    return html`
+      <button type="button" class="more-chip${bench.benchOpen ? ' open' : ''}" aria-expanded="${bench.benchOpen}"
+        aria-controls="metadata-options" data-action="fold-bench" data-story="TheBench">
+        ${bench.benchOpen ? 'hide metadata options' : 'show metadata options'}</button>
+      <div id="metadata-options">${bench.benchOpen ? html`${metadata}${constraints}` : nothing}</div>`;
+  };
+
   const constraintsGroupMarkup = () => {
     const toggles = (surfaceRow()?.formatConstraints ?? []).flatMap((constraintName) => {
       const control = constraintControls[constraintName];
@@ -254,8 +268,8 @@ export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
     fieldCeiling,
     declarationFields,
     constraintsDeclaration,
-    metadataGroupMarkup,
-    constraintsGroupMarkup,
+    foldedBenchMarkup,
+    toggleBench: () => { bench.benchOpen = !bench.benchOpen; },
     commandWords,
     settings: {
       field: (value, { field }) => recheck(() => { bench.fieldValues[field] = value; }),

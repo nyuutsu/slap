@@ -175,6 +175,14 @@ export const makeApplyVerb = (host) => {
 
   /* ---------------------------------------------------------- the act ---- */
 
+  // What the run still waits on, as the places it would point at. Resting on a waiting run outlines all of them
+  // at once — the fellow's box among them, since the words for why are already in his mouth.
+  const runReadiness = () => {
+    if (!host.hasSession() || refusalCertain()) return { tag: 'Waiting', pointAt: ['voice'] };
+    const awaited = [!apply.patch && 'seat-patch', !apply.rom && 'seat-rom'].filter(Boolean);
+    return awaited.length === 0 ? { tag: 'Ready' } : { tag: 'Waiting', pointAt: ['voice', ...awaited] };
+  };
+
   const runApply = () => {
     if (!apply.patch || !apply.rom || actRunning()) return;
     const job = host.startJob('apply', { patch: apply.patch, rom: apply.rom, declaration: declaration() });
@@ -300,13 +308,15 @@ export const makeApplyVerb = (host) => {
   };
 
   return {
+    runReadiness,
     stageMarkup,
     voiceMarkup,
     commandWords,
     actMarkup: () => {
       if (apply.act.tag !== 'AtRest') return html``;
-      const ready = host.hasSession() && apply.patch && apply.rom && !refusalCertain();
-      return html`<button class="run" type="submit" form="stage" ?disabled=${!ready}>${runLabel}</button>`;
+      const readiness = runReadiness();
+      return html`<button class="run" type="submit" form="stage" aria-disabled="${readiness.tag === 'Waiting'}"
+        data-points-at=${readiness.tag === 'Waiting' ? readiness.pointAt.join(' ') : nothing}>${runLabel}</button>`;
     },
     admitDroppedFile: (sorting, file) => admitFile(sorting === Sorting.AsPatch ? 'patch' : 'rom', file),
     admitPickedFile,

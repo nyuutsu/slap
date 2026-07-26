@@ -195,11 +195,12 @@ element('verbs').addEventListener('keydown', (event) => {
   element(`tab-${walkedToVerb}`)?.focus();
 });
 
-// Enter in a field runs the verb through the form's own submission — the run button is its submit button,
-// so a disabled button stalls implicit submission the browser's own way.
+// Enter in a field runs the verb through the form's own submission — the run button is its submit button.
+// A run still waiting does not fire; resting on it has already outlined what it waits for.
 element('stage').addEventListener('submit', (event) => {
   event.preventDefault();
-  verbs[page.verbOnStage].actions.run?.();
+  const verb = verbs[page.verbOnStage];
+  if ((verb.runReadiness?.() ?? { tag: 'Ready' }).tag === 'Ready') verb.actions.run?.();
 });
 
 const filePicker = element('file-picker');

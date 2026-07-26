@@ -213,16 +213,24 @@ button { font: inherit; cursor: pointer; }
 /* ---------------------------------------------------------- sentence ---- */
 
 .sentence { font-family: var(--body); font-size: var(--type-text); line-height: 2.5; color: var(--ink); margin: var(--space-quarter) 0 var(--space-half); }
+.sentence.second { margin-top: calc(-1 * var(--space-half)); }
 .swap-line { margin: calc(-1 * var(--space-quarter)) 0 2px; }
 .slot { background: none; border: none; padding: 0 5px; font: inherit; line-height: 1.45; }
 .slot.empty { color: var(--whisper); border-bottom: 2px dashed var(--dash-warm); }
 .slot.empty:hover { color: var(--grape); border-bottom-color: var(--grape); }
 .slot.filled { color: var(--ink); border-bottom: 2px solid var(--grape); }
+/* a blank slap knows you still owe it, in the colour the page keeps for things not yet answered */
+.slot.empty.owed { color: var(--grape); border-bottom-color: var(--dash-grape); }
+/* a storied slot keeps the seat's dashes: the asterisk already says the fellow will speak */
+.slot.has-story:hover, .slot.has-story:focus-visible { text-decoration: none; }
 .slot.inert { cursor: default; }
 .slot-stack { display: inline-block; position: relative; }
+/* Centred under what it names, on one line however wide: boxed to the blank's own width it would wrap
+   into whatever sits below. */
 .role-whisper {
-  position: absolute; left: 0; right: 0; top: 100%; margin-top: calc(-1 * var(--space-half));
-  text-align: center; font-family: var(--body); font-size: var(--type-micro); line-height: 1;
+  position: absolute; left: 50%; transform: translateX(-50%); top: 100%;
+  margin-top: calc(-1 * var(--space-half)); white-space: nowrap;
+  font-family: var(--body); font-size: var(--type-micro); line-height: 1;
   color: var(--whisper); pointer-events: none;
 }
 .format-chip {
@@ -276,6 +284,8 @@ button { font: inherit; cursor: pointer; }
 .advisory-face { flex: none; margin-top: 1px; }
 
 .choice-row { display: flex; gap: var(--space-half); flex-wrap: wrap; margin: var(--space-quarter) 0; }
+/* a row stands ready to be named even while it holds nothing, so it takes no space until it does */
+.choice-row:empty { display: none; }
 .chip {
   font-family: var(--mono); font-size: var(--type-micro);
   background: var(--panel); color: var(--ink);
@@ -343,7 +353,22 @@ legend.choice-label { padding: 0; }
 /* the hanging whisper needs headroom when the row wraps, and below the row either way */
 .choice-row:has(.chip-stack) { row-gap: var(--space-whole); margin-bottom: var(--space-whole); }
 .choice-gloss { color: var(--ink-soft); font-size: var(--type-micro); margin: var(--space-quarter) 0 2px; }
-/* a story is marked the way a footnote is: the asterisk finds the eye across a form, and hovering makes good on it.
+/* The sentence's format blank. Its neighbours are seats that open when pressed; this one is answered in the
+   group below, so it wears that group's dress — the quiet-formats chip, in the sentence's own face, since a
+   sentence never mixes typefaces — and fills solid once a format is chosen. */
+.format-seat {
+  font: inherit; line-height: 1.45; display: inline-block;
+  color: var(--grape); background: none;
+  border: 1px dashed var(--dash-grape); border-radius: var(--radius-pick);
+  padding: 1px 10px;
+}
+.format-seat.chosen { border-style: solid; border-color: var(--hairline); background: var(--grape-tint); }
+/* the chip's own answer to a pointer, in place of the underline a story would otherwise draw */
+.format-seat:hover, .format-seat:focus-visible { text-decoration: none; border-color: var(--grape); background: var(--grape-tint); }
+/* where a spoken story is pointing */
+.pointed-at { outline: 2px solid var(--grape); outline-offset: 3px; }
+
+/* a story is marked the way a footnote is: the asterisk finds the eye across a form, and resting on it makes good.
    it is raised on a zero line-height, so marking a label never moves the line the label sits on. */
 .has-story { cursor: help; background: none; border: 0; padding: 0; color: inherit; text-align: inherit; }
 .has-story::after {
@@ -407,6 +432,9 @@ legend.choice-label { padding: 0; }
 .voice .plain-line { margin: 0; color: var(--ink-soft); }
 .voice .story-hint { margin-top: var(--space-quarter); font-size: var(--type-micro); color: var(--whisper); }
 .voice .story-hint .story-mark { color: var(--grape); font-weight: 700; }
+.voice .story-hint .pill-mark {
+  color: var(--grape); border: 1px dashed var(--dash-grape); border-radius: var(--radius-pick); padding: 0 7px;
+}
 .voice .breathing { animation: breathing 1.9s ease-in-out infinite; }
 @keyframes breathing { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 .voice .elapsed { font-family: var(--mono); font-size: var(--type-micro); color: var(--whisper); font-variant-numeric: tabular-nums; }
@@ -522,7 +550,9 @@ legend.choice-label { padding: 0; }
   box-shadow: 0 3px 0 rgba(198, 89, 47, 0.35);
 }
 .run:hover { filter: brightness(1.05); }
-.run:disabled { background: #EADFD2; color: #B29A82; box-shadow: none; cursor: not-allowed; }
+/* a run that is not ready stays dim, and answers a pointer by outlining everything it is still waiting on */
+.run[aria-disabled="true"] { background: #EADFD2; color: #B29A82; box-shadow: none; }
+.run[aria-disabled="true"]:hover { filter: none; }
 .quiet-button {
   font-family: var(--mono); font-size: var(--type-micro); color: var(--whisper);
   background: none; border: none;
@@ -544,9 +574,9 @@ legend.choice-label { padding: 0; }
   padding: var(--space-three-quarters) var(--space-whole); margin: var(--space-three-quarters) 0; font-size: var(--type-text); color: var(--ink-soft);
 }
 .noscript-note a { color: var(--grape); }
-.makers-mark { font-family: 'IM Fell English', 'Fell Stand-in', serif; font-style: italic; font-size: var(--type-text); color: var(--ink-soft); text-decoration: none; }
-.makers-mark:hover { color: var(--grape); }
-.amber-dot { color: var(--amber); }
+.makers-mark { font-family: 'IM Fell English', 'Fell Stand-in', serif; font-style: italic; font-size: var(--type-text); color: var(--ink-soft); margin: 0; }
+.makers-mark a { color: var(--ink-soft); text-decoration: underline; text-underline-offset: 3px; }
+.makers-mark a:hover { color: var(--grape); }
 
 /* ---------------------------------------------------------- dropveil ---- */
 

@@ -14,29 +14,42 @@ export const wireStoryListeners = (host, storybook, storiesQuietNow) => {
     if (storied.classList?.contains('has-story')) storied.setAttribute('aria-expanded', String(expanded));
   };
 
+  // A control may name places on the stage to point at — a word standing for a choice made elsewhere,
+  // or a run naming everything it still waits on.
+  const markPointedAt = (pointer, pointing) => {
+    for (const placeId of (pointer.dataset?.pointsAt ?? '').split(' ').filter(Boolean))
+      document.getElementById(placeId)?.classList.toggle('pointed-at', pointing);
+  };
+
+  // Pointing and speaking are the same gesture — rest on a thing, it answers; leave, it settles — so a control
+  // that only points rides the same wiring, and simply says nothing.
   const speakStory = (event) => {
     if (storiesQuietNow()) return;
-    const storied = event.target.closest('[data-story]');
-    const story = storied && storybook[storied.dataset.story];
-    if (!story) return;
-    if (spokenStoried && spokenStoried !== storied) markExpanded(spokenStoried, false);
+    const storied = event.target.closest('[data-story], [data-points-at]');
+    if (!storied) return;
+    const story = storybook[storied.dataset.story];
+    if (!story && !storied.dataset.pointsAt) return;
+    if (spokenStoried && spokenStoried !== storied) { markExpanded(spokenStoried, false); markPointedAt(spokenStoried, false); }
     markExpanded(storied, true);
+    markPointedAt(storied, true);
     spokenStoried = storied;
+    if (!story) return;
     host.fellow.lean();
     host.murmur(plainVoice(story));
   };
 
   const quietStory = (storied) => {
     markExpanded(storied, false);
+    markPointedAt(storied, false);
     if (spokenStoried === storied) spokenStoried = null;
     host.fellow.settle();
     host.render();
   };
 
   const settleStory = (event) => {
-    const departed = event.target.closest?.('[data-story], .story-card');
+    const departed = event.target.closest?.('[data-story], [data-points-at], .story-card');
     if (!departed || !spokenStoried) return;
-    if (event.relatedTarget?.closest?.('[data-story], .story-card')) return;
+    if (event.relatedTarget?.closest?.('[data-story], [data-points-at], .story-card')) return;
     if (spokenStoried.contains(document.activeElement)) return;
     quietStory(spokenStoried);
   };

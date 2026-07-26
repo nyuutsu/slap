@@ -6,6 +6,14 @@ import { groupMarkup, admonitionMarkup, chipRadioMarkup } from './controls.mjs';
 
 const tileTokens = ['bps', 'xdelta3', 'ppf3', 'rfc-vcdiff'];
 
+export const formatGroupId = 'format-group';
+
+// The sentence's other blanks are seats: press one and it opens. This one is answered in the group below,
+// so it wears that group's dress rather than a seat's underline, and points there instead of opening.
+export const formatSeatMarkup = (chosenToken) => html`<button type="button"
+  class="format-seat has-story${chosenToken ? ' chosen' : ''}"
+  data-story="ChooseFormat" data-points-at="${formatGroupId}">${chosenToken ?? 'format'}</button>`;
+
 const tileCopy = {
   bps: "The safe default. Checks it's patching the right file, survives size changes, and every modern patcher reads it.",
   xdelta3: 'For big files. Compresses the patch, so disc images and large roms stay manageable.',
@@ -30,6 +38,17 @@ const chosenFormatNoteMarkup = (chosenToken) => {
 };
 
 export const pickerStories = {
+  // PLACEHOLDER — the maintainer's voice goes here
+  TheBench:
+    'nothing in here is required — the format fills in its own answers when you say nothing. '
+    + 'open it to name the patch, to carry a description or a FILE_ID.DIZ, or to hold slap to a constraint.',
+  // PLACEHOLDER — the maintainer's voice goes here
+  SourceRom:
+    'some conversions read straight from the patch; others need the rom the patch was made for — '
+    + 'when yours does, i say so under the blank. with the rom in hand i apply the patch and re-diff the result.',
+  // PLACEHOLDER — the maintainer's voice goes here
+  ChooseFormat:
+    'the format is chosen in the format box below — pick a tile there and this word fills itself in.',
   MoreFormats:
     'every format slap can write is on this shelf — the quieter ones unfold as chips. '
     + 'reach for one when the patcher or community on the receiving end expects it; '
@@ -57,11 +76,11 @@ export const formatPickerMarkup = (surfaceRows, chosenToken, moreFormatsOpen) =>
     <fieldset class="choice-fieldset"><legend class="visually-hidden">format</legend>
     <div class="tiles">${tileRows.map((row) => tileMarkup(row, chosenToken))}</div>
     ${!chosenIsQuieter ? html`<button type="button" class="more-chip${moreOpen ? ' open' : ''}" aria-expanded="${moreOpen}"
-      data-action="more-formats" data-story="MoreFormats">
-      ${moreOpen ? 'fewer formats' : `more formats (${quieterRows.length})`}</button>` : nothing}
-    ${moreOpen ? html`<div class="choice-row">${quieterRows.map((row) =>
+      aria-controls="quieter-formats" data-action="more-formats" data-story="MoreFormats">
+      ${moreOpen ? 'show fewer formats' : `show more formats (${quieterRows.length})`}</button>` : nothing}
+    <div class="choice-row" id="quieter-formats">${moreOpen ? quieterRows.map((row) =>
       chipRadioMarkup({ groupName: 'format', setting: 'format', token: row.formatToken,
-                        checked: row.formatToken === chosenToken, label: row.formatToken }))}</div>` : nothing}
+                        checked: row.formatToken === chosenToken, label: row.formatToken })) : nothing}</div>
     </fieldset>
-    ${chosenFormatNoteMarkup(chosenToken)}`);
+    ${chosenFormatNoteMarkup(chosenToken)}`, formatGroupId);
 };

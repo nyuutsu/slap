@@ -60,7 +60,8 @@ export const plainVoice = (line) => html`<p class="plain-line">${line}</p>`;
 
 // The empty-handed voice: the verb's inducement, and under it the fellow explaining the story mark. (Copy: DRAFT.)
 export const restingVoice = (inducement) => html`${plainVoice(inducement)}
-  <p class="plain-line story-hint">rest on anything wearing a <span class="story-mark">*</span> — i'll explain it.</p>`;
+  <p class="plain-line story-hint">rest on anything wearing a <span class="story-mark">*</span>
+    or <span class="pill-mark">this outline</span> — i'll explain it.</p>`;
 
 export const workingVoice = (line = voiceLines.working) => html`
   <p class="plain-line"><span class="breathing">${line}</span> <span class="elapsed" id="work-elapsed"></span></p>

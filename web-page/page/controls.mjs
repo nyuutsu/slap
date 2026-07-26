@@ -2,7 +2,9 @@
 
 import { html, nothing } from '../vendor/lit-html/lit-html.js';
 
-export const groupMarkup = (heading, body) => html`<div class="group"><h3>${heading}</h3>${body}</div>`;
+// A group may carry an id, so a word elsewhere on the stage can point the eye at it.
+export const groupMarkup = (heading, body, groupId) =>
+  html`<div class="group" id=${groupId ?? nothing}><h3>${heading}</h3>${body}</div>`;
 
 // One garment for every aside the context raises, so text that came from what you just chose looks the part.
 const admonitionFaces = { note: 'art/note.webp', warning: 'art/warning.webp' };
@@ -34,9 +36,9 @@ export const swapSeatsMarkup = html`<p class="swap-line"><button type="button" c
   data-action="swap-seats">the wrong way round? swap them</button></p>`;
 
 export const seatSlotMarkup = (seat, roleWord, file, chipWord) => file
-  ? html`<button type="button" class="slot filled" data-action="pick-file" data-seat="${seat}">${file.name}</button>${
+  ? html`<button type="button" class="slot filled" id="seat-${seat}" data-action="pick-file" data-seat="${seat}">${file.name}</button>${
       chipWord ? html`<span class="format-chip">${chipWord}</span>` : nothing}`
-  : html`<button type="button" class="slot empty" data-action="pick-file" data-seat="${seat}">${roleWord}</button>`;
+  : html`<button type="button" class="slot empty" id="seat-${seat}" data-action="pick-file" data-seat="${seat}">${roleWord}</button>`;
 
 // While an act runs, the seats it reads are held: shown, not clickable.
 export const heldSeatMarkup = (file, chipWord) => html`<span class="slot filled inert">${file.name}</span>${
@@ -44,9 +46,10 @@ export const heldSeatMarkup = (file, chipWord) => html`<span class="slot filled 
 
 // Two same-type seats keep their role words in view once filled — order alone is ambiguous — as a whisper under the name.
 export const roleWhisperedSlotMarkup = (seat, roleWord, file) => file
-  ? html`<span class="slot-stack"><button type="button" class="slot filled" data-action="pick-file"
-      data-seat="${seat}">${file.name}</button><span class="role-whisper">${roleWord}</span></span>`
-  : html`<button type="button" class="slot empty" data-action="pick-file" data-seat="${seat}">${roleWord}</button>`;
+  ? html`<span class="slot-stack"><button type="button" class="slot filled" id="seat-${seat}" data-action="pick-file"
+      data-seat="${seat}" aria-describedby="whisper-${seat}">${file.name}</button><span class="role-whisper"
+      id="whisper-${seat}">${roleWord}</span></span>`
+  : html`<button type="button" class="slot empty" id="seat-${seat}" data-action="pick-file" data-seat="${seat}">${roleWord}</button>`;
 
 // The header directive control: apply's source and convert's --with wear the same one.
 export const headerControlMarkup = (framing, consoleRows) => {

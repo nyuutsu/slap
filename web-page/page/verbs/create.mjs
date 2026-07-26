@@ -9,7 +9,7 @@ import { voiceLines, plainVoice, restingVoice, workingVoice, bottledVoice, block
 import { verbWord, flagWord, valueWord, quotedWord, fileWord, namedOr, placeholderWord } from './../command-tutor.mjs';
 import { utf8Text, typedTextFlags, fieldLabel } from './../metadata-controls.mjs';
 import { makeMetadataBench, storiedText, base64OfBuffer, countedTextareaMarkup } from './../metadata-form.mjs';
-import { formatPickerMarkup } from './../format-picker.mjs';
+import { formatPickerMarkup, formatSeatMarkup, formatGroupId } from './../format-picker.mjs';
 import { stemOf } from './../readouts.mjs';
 
 const runLabel = 'Bottle';
@@ -125,6 +125,15 @@ export const makeCreateVerb = (host) => {
 
   /* ---------------------------------------------------------- the act ---- */
 
+  // What the run still waits on, as the places it would point at. Resting on a waiting run outlines all of them
+  // at once — the fellow's box among them, since the words for why are already in his mouth.
+  const runReadiness = () => {
+    if (!host.hasSession() || refusalCertain()) return { tag: 'Waiting', pointAt: ['voice'] };
+    const awaited = [!create.original && 'seat-original', !create.modified && 'seat-modified',
+                     !create.formatToken && formatGroupId].filter(Boolean);
+    return awaited.length === 0 ? { tag: 'Ready' } : { tag: 'Waiting', pointAt: ['voice', ...awaited] };
+  };
+
   const bottledName = () => `${stemOf(create.modified.name)}${surfaceRow().formatFileExtension}`;
 
   const runCreate = () => {
@@ -176,9 +185,7 @@ export const makeCreateVerb = (host) => {
   const sentenceMarkup = () => html`<p class="sentence">bottle the difference between
     ${slotFor('original', 'original', create.original)} and
     ${slotFor('modified', 'modified', create.modified)} as
-    ${create.formatToken
-      ? html`<span class="slot filled inert">${create.formatToken}</span>`
-      : html`<span class="slot empty inert">format</span>`}</p>`;
+    ${formatSeatMarkup(create.formatToken)}</p>`;
 
   const laneChoiceMarkup = (settingName, fieldName, currentLane) => html`
     <fieldset class="choice-fieldset"><legend class="visually-hidden">${fieldLabel(fieldName)}</legend>
@@ -220,8 +227,7 @@ export const makeCreateVerb = (host) => {
       ${sentenceMarkup()}
       ${create.original && create.modified && !actRunning() ? swapSeatsMarkup : nothing}
       ${formatPickerMarkup(host.surface().surfaceFormats, create.formatToken, create.moreFormatsOpen)}
-      ${bench.metadataGroupMarkup(fileFieldMarkup)}
-      ${bench.constraintsGroupMarkup()}`;
+      ${bench.foldedBenchMarkup(fileFieldMarkup)}`;
   };
 
   /* ------------------------------------------------------------ voice ---- */
@@ -269,13 +275,15 @@ export const makeCreateVerb = (host) => {
     !!create.checkAnswer?.refused || create.checkAnswer?.answered?.tag === CheckVerdict.Blocked;
 
   return {
+    runReadiness,
     stageMarkup,
     voiceMarkup,
     commandWords,
     actMarkup: () => {
       if (create.act.tag !== 'AtRest') return html``;
-      const ready = host.hasSession() && create.formatToken && create.original && create.modified && !refusalCertain();
-      return html`<button class="run" type="submit" form="stage" ?disabled=${!ready}>${runLabel}</button>`;
+      const readiness = runReadiness();
+      return html`<button class="run" type="submit" form="stage" aria-disabled="${readiness.tag === 'Waiting'}"
+        data-points-at=${readiness.tag === 'Waiting' ? readiness.pointAt.join(' ') : nothing}>${runLabel}</button>`;
     },
     // Both seats are roms, so the sorting is unused; the original seat fills first because
     // "the first one I dropped" reads as the original. A full bench starts a fresh pair, original first again,
@@ -294,6 +302,7 @@ export const makeCreateVerb = (host) => {
     storiesQuiet: () => create.act.tag !== 'AtRest',
     actions: {
       'more-formats': () => { create.moreFormatsOpen = !create.moreFormatsOpen; host.render(); },
+      'fold-bench': () => { bench.toggleBench(); host.render(); },
       run: runCreate,
       'cancel-run': () => { if (actRunning()) create.act.cancel(); },
       'look-inside': () => {
