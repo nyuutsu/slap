@@ -3,8 +3,8 @@
 
 export const constraintControls = {
   SMCShapeConstraint: {
-    controlLabel: 'require SMC-shaped size',
-    controlWhy: 'refuse a truncation marker at a size SNESTool would not accept',
+    controlLabel: "stay within SNESTool's limits",
+    controlWhy: 'a very old dos patcher. you almost certainly don\'t need this',
     terminalFlag: '--require-smc-shaped-target-size',
     requestKey: 'requestedSMCShape',
     chosenRequirement: 'RequireSMCShapedTruncation',

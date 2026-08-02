@@ -1,7 +1,7 @@
 {
   "name": "slap",
   "short_name": "slap",
-  "description": "slap applies, creates, examines, and converts ROM patches in twenty formats, detecting the format automatically. Also available as a command-line tool.",
+  "description": "slap applies, creates, converts and inspects ROM patches in twenty formats. Available in your browser and in the terminal.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

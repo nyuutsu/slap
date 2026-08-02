@@ -201,7 +201,6 @@ export const makeApplyVerb = (host) => {
           || advisories.some((advisory) => advisory.spokenAdvisory.tag === 'InputReframedToMatchPatch');
         apply.act = {
           tag: 'Patched', spoken: answered, advisories, downloadName, downloadHref, inputReframed,
-          romCrc32: inputReframed ? null : (apply.romFacts?.romCRC32 ?? null),
         };
         host.download(downloadHref, downloadName);
         host.fellow.smile();
@@ -251,7 +250,9 @@ export const makeApplyVerb = (host) => {
     const headerControlSurfaces = operandsSatisfied && (
       apply.framing.tag !== 'TakeInputAsIs'
       || verdict?.tag === Verdict.Uncheckable
-      || (verdict?.tag === Verdict.Differs && apply.sourceReport.sourceRescue.length > 1));
+      || (verdict?.tag === Verdict.Differs
+          && (apply.sourceReport.sourceRescue.length > 1
+              || apply.verificationPolicy === 'SkipVerification')));
 
     return html`
       ${sentenceMarkup()}

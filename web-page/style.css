@@ -392,7 +392,9 @@ legend.choice-label { padding: 0; }
 .field-textarea { width: 100%; min-height: 64px; resize: vertical; margin-top: var(--space-quarter); }
 .counted-lane .byte-count { display: block; text-align: right; margin-top: 3px; }
 
-.way-out { margin: 2px 0 var(--space-quarter); font-size: var(--type-micro); color: var(--ink-soft); }
+/* A way out is the friendliest thing in a blocked answer, so it is dressed as speech and only the mark is faint. */
+.way-out { margin: 2px 0 var(--space-quarter); padding-left: 1em; text-indent: -1em; color: var(--ink-soft); }
+.way-out::before { content: '· '; color: var(--whisper); }
 
 /* ------------------------------------------------------------ answer ---- */
 
@@ -432,8 +434,10 @@ legend.choice-label { padding: 0; }
 .voice .plain-line { margin: 0; color: var(--ink-soft); }
 .voice .story-hint { margin-top: var(--space-quarter); font-size: var(--type-micro); color: var(--whisper); }
 .voice .story-hint .story-mark { color: var(--grape); font-weight: 700; }
+/* The pill is showing the reader what a pill looks like, so it must not break across two lines. */
 .voice .story-hint .pill-mark {
   color: var(--grape); border: 1px dashed var(--dash-grape); border-radius: var(--radius-pick); padding: 0 7px;
+  white-space: nowrap;
 }
 .voice .breathing { animation: breathing 1.9s ease-in-out infinite; }
 @keyframes breathing { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }

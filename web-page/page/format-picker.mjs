@@ -15,21 +15,53 @@ export const formatSeatMarkup = (chosenToken) => html`<button type="button"
   data-story="ChooseFormat" data-points-at="${formatGroupId}">${chosenToken ?? 'format'}</button>`;
 
 const tileCopy = {
-  bps: "The safe default. Checks it's patching the right file, survives size changes, and every modern patcher reads it.",
-  xdelta3: 'For big files. Compresses the patch, so disc images and large roms stay manageable.',
-  ppf3: 'For PlayStation disc images. Can carry undo data and a FILE_ID.DIZ.',
-  'rfc-vcdiff': 'The VCDIFF standard itself. It works — but nothing out there applies it except slap. Here because it is interesting, not because you should ship it.',
+  bps: 'A safe default. Verifies the input, output, and itself, handles size changes, and is widely understood.',
+  xdelta3: 'Popular, lots of features, and particularly good with large files.',
+  ppf3: 'Designed with PlayStation disc images in mind. Can carry undo data and a description file.',
+  'rfc-vcdiff': 'The VCDIFF standard, exactly. Considerable overlap with, but distinct from, xdelta3. Included as a curio.',
 };
 
 // A note describes; it does not rank. Only some formats carry one, and silence is fine.
 const formatNotes = {
-  'rfc-vcdiff': 'RFC 3284, straight from the standard. slap is the only patcher we know of that reads one.',
-  ips: 'The lingua franca: almost every patcher ever written can apply an IPS. Offsets are 24 bits wide, so a record reaches about 16 MB.',
-  ips32: 'IPS with 32-bit offsets, reaching well past the 16 MB mark.',
-  ppf1: 'Icarus of Paradox, for the PlayStation scene — the first of the three PPFs.',
-  ppf2: "Paradox's second pass: adds a validation block and room for a FILE_ID.DIZ.",
-  ups: 'byuu\'s symmetric format: a UPS patch is its own reverse, so it always peels back off.',
-  xdelta1: "Joshua MacDonald's original xdelta, 1997 to 2003.",
+  ips:
+    'The original. Nigh every patcher ever written can apply, and probably make, this. '
+    + 'Can describe changes to roughly the first 16MiB of a file. '
+    + 'In practice this means IPS is for files of size 16MiB or less.',
+  ips32: 'IPS, but wider. Used internally by a certain Nintendo Switch firmware replacement.',
+  ebp: "The format used by Lyrositor's EBPatcher. Basically IPS-with-metadata.",
+  ups: "near/byuu's symmetric format: a UPS patch, when applied a second time, gives back the original file.",
+  ppf1:
+    'The first of three formats created by Icarus (of the "Paradox" warez/demoscene group), '
+    + 'for the PlayStation scene.',
+  ppf2:
+    'The second of three formats created by Icarus (of the "Paradox" warez/demoscene group), '
+    + 'for the PlayStation scene. Adds a validity check and room for a description file.',
+  ppf4:
+    'Created by Pyriel and used for their Suikoden-franchise-on-the-Playstation patches. '
+    + 'First-class support for growing the output file; this is unusual, since the PlayStation is disc-based.',
+  pmsr: 'The format used by Star Rod, a toolkit for editing the Paper Mario (N64) decompilation.',
+  dps: 'Created by Deufeufeu for their Nintendo DS patches.',
+  ninja1:
+    'Derrick Sobodash\'s first format, 2004. Unusual in that it can carry a directive to '
+    + '"put the input rom into a normalized form" (such as de-interleaving, removing headers, etc) before patching.',
+  ninja2:
+    'Derrick Sobodash\'s second format. Reversible, like UPS. Unusual in that it can carry a directive to '
+    + '"put the input rom into a normalized form" (such as de-interleaving, removing headers, etc) before patching. '
+    + 'Lots of metadata options.',
+  gdiff: 'Submitted to the W3C by Marimba, Inc in 1997. Used for software updates.',
+  bsdiff: 'Colin Percival\'s format, created for FreeBSD\'s binary updates and adopted by many update systems since.',
+  xdelta1:
+    'The first of Joshua MacDonald\'s xdeltas, from the late nineties. '
+    + 'Its control data rides in EDSIO, a serialization framework of the author\'s own.',
+  'aps-n64':
+    'Silo & Fractal (of the "Black Bag" warez/demoscene group)\'s "Advanced Patching System". '
+    + 'Designed with the N64 in mind. No relation to APS-GBA.',
+  'aps-gba':
+    'HackMew\'s "Alternate Patching System". Designed with the GBA in mind. No relation to APS-N64.',
+  'rfc-vcdiff': html`Includes genuinely esoteric stuff that, to our knowledge, we are the first to implement
+    an <i>encoder</i> for. Namely: when it makes the patch smaller, we'll include "custom code-tables"
+    and/or use "vcd_target". Decoders for those parts exist but are obscure. Google made one.
+    xdelta3 refuses them outright.`,
 };
 
 const chosenFormatNoteMarkup = (chosenToken) => {
@@ -38,21 +70,20 @@ const chosenFormatNoteMarkup = (chosenToken) => {
 };
 
 export const pickerStories = {
-  // PLACEHOLDER — the maintainer's voice goes here
   TheBench:
-    'nothing in here is required — the format fills in its own answers when you say nothing. '
-    + 'open it to name the patch, to carry a description or a FILE_ID.DIZ, or to hold slap to a constraint.',
-  // PLACEHOLDER — the maintainer's voice goes here
+    'nothing in here is required. whatever you leave blank, the format answers for itself. '
+    + 'some of it changes what the patch says about itself, like a title or a note. '
+    + 'the rest changes how it gets made.',
   SourceRom:
-    'some conversions read straight from the patch; others need the rom the patch was made for — '
-    + 'when yours does, i say so under the blank. with the rom in hand i apply the patch and re-diff the result.',
-  // PLACEHOLDER — the maintainer's voice goes here
+    'some patches carry everything i need to rebottle them. others want the rom they\'re for, '
+    + 'and i\'ll say so under the blank if this one does. '
+    + 'with the rom in hand, i apply the patch and bottle the difference fresh.',
   ChooseFormat:
-    'the format is chosen in the format box below — pick a tile there and this word fills itself in.',
+    'this word fills itself in. the choosing happens where i\'m pointing.',
   MoreFormats:
-    'every format slap can write is on this shelf — the quieter ones unfold as chips. '
-    + 'reach for one when the patcher or community on the receiving end expects it; '
-    + 'otherwise the tiles above are the recommendation.',
+    'every format i can write is here. '
+    + 'the quiet ones are for when whoever\'s getting the patch expects one in particular. '
+    + 'when nobody\'s asking, the ones i put up front are my recommendation.',
 };
 
 // A tile is the format radio group's grandest label; the quiet chips below answer to the same group.
@@ -80,7 +111,7 @@ export const formatPickerMarkup = (surfaceRows, chosenToken, moreFormatsOpen) =>
       ${moreOpen ? 'show fewer formats' : `show more formats (${quieterRows.length})`}</button>` : nothing}
     <div class="choice-row" id="quieter-formats">${moreOpen ? quieterRows.map((row) =>
       chipRadioMarkup({ groupName: 'format', setting: 'format', token: row.formatToken,
-                        checked: row.formatToken === chosenToken, label: row.formatToken })) : nothing}</div>
+                        checked: row.formatToken === chosenToken, label: row.formatDisplayName })) : nothing}</div>
     </fieldset>
     ${chosenFormatNoteMarkup(chosenToken)}`, formatGroupId);
 };

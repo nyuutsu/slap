@@ -59,7 +59,7 @@ const fieldWords = {
   MetadataVerificationInclusion: { label: 'omit verification', why: 'no checks for whoever applies it' },
   MetadataPatchCompression:      { label: 'skip compression', why: 'bigger patch, plainer bytes' },
   MetadataSecondaryCompressor:   { label: 'compress with' },
-  MetadataStability:             { label: 'mark unstable', why: 'flags the patch as a work in progress' },
+  MetadataStability:             { label: 'mark unstable', why: 'a work in progress; it applies just the same either way' },
   MetadataRomType:               { label: 'rom type' },
   MetadataImageType:             { label: 'image type' },
   MetadataFileIdDiz:             { label: 'FILE_ID.DIZ' },
@@ -68,7 +68,7 @@ const fieldWords = {
   MetadataDate:                  { label: 'date' },
   MetadataWebsite:               { label: 'website' },
   MetadataTextMode:              { label: 'text mode' },
-  MetadataEmbeddedBlob:          { label: 'embedded metadata' },
+  MetadataEmbeddedBlob:          { label: 'embedded data' },
   MetadataXDelta1FromName:       { label: 'source name', why: "recorded in the patch; defaults to the file's own" },
   MetadataXDelta1ToName:         { label: 'target name', why: "recorded in the patch; defaults to the file's own" },
   MetadataWindowSize:            { label: 'window size' },
@@ -82,21 +82,21 @@ export const fieldWhy = (fieldName) => fieldWords[fieldName]?.why ?? null;
 const choiceWords = {
   MetadataSecondaryCompressor: {
     tokens: {
-      lzma: "xz-style LZMA2 — the canonical tool's own pick.",
-      djw:  "xdelta3's own static Huffman coder.",
-      fgk:  "adaptive Huffman — xdelta3's demonstration codec.",
+      lzma: 'the same compression xz uses, and squeezes hardest of the three.',
+      djw:  "xdelta3's own. it doesn't squeeze as hard.",
+      fgk:  "xdelta3's own, and its source calls it a demonstration.",
     },
   },
   MetadataImageType: {
     tokens: {
-      bin: 'a raw .bin disc image, 2352-byte sectors.',
-      gi:  'a Global Image (.gi) dump.',
+      bin: 'the right answer for everything except a primodvd image.',
+      gi:  'a primodvd image, which puts the checked bytes somewhere else.',
     },
   },
   MetadataTextMode: {
     tokens: {
-      utf8:       'declares the texts as UTF-8.',
-      undeclared: 'leaves the encoding unstated, as older patches did.',
+      utf8:       'says the text is UTF-8, which it is.',
+      undeclared: "same bytes; the patch just won't say so.",
     },
   },
 };
@@ -104,22 +104,35 @@ const choiceWords = {
 export const choiceGloss = (fieldName, chosenToken) =>
   chosenToken ? choiceWords[fieldName]?.tokens[chosenToken] ?? null : null;
 
-// The longer stories the fellow tells when a control is hovered or focused. (All DRAFT.)
+// Both name fields are the same story told from either end.
+const xdelta1NameStory =
+  'xdelta1 keeps the names of the two files a patch was made from. '
+  + "the classic tool falls back to them when you don't name files yourself, "
+  + 'opening the from-name and writing the to-name. '
+  + 'i always have both names already, so i just record these and show them back to you.';
+
+// The longer stories the fellow tells when a control is hovered or focused.
 export const fieldStories = {
   MetadataWindowSize:
-    'a VCDIFF patch is written in windows, each one a self-contained slice of the output. '
-    + 'smaller windows help weaker decoders; bigger ones compress a little better. '
+    'a vcdiff patch is written in windows. each one is a self-contained slice of the output. '
+    + 'smaller windows are kinder to weaker decoders, bigger ones squeeze a little more. '
     + "empty means the format's own default, and that's a fine place to leave it.",
   MetadataSecondaryCompressor:
-    "inside the patch, each window's sections can take a second layer of packing. "
-    + 'this picks the algorithm; skip compression switches the layer off entirely.',
+    "each window's sections can take a second layer of packing inside the patch. "
+    + 'this picks the algorithm. skip compression turns the layer off altogether.',
   MetadataImageType:
-    'PPF3 checks the patch against a sample of the disc image, and .bin and .gi images '
-    + 'lay that sample out differently — this says which kind yours is.',
+    'ppf3 checks its patch against a sample of the original, and different kinds of disc image '
+    + 'lay that sample out differently. this says which kind the original is. '
+    + "if you're not sure, bin is the usual answer and already the default.",
   MetadataEmbeddedBlob:
-    "a free-form note carried inside the patch itself. type it and slap wraps it properly; "
-    + 'hand over a file and the bytes go in exactly as they are.',
+    'the patch can carry a free-form note inside itself. '
+    + "type one and i'll dress it the way the format wants. "
+    + 'hand me a file instead and the bytes go in exactly as they are.',
   MetadataFileIdDiz:
-    'the old bulletin-board description file, carried inside the patch. '
-    + 'PPF tools show it when someone inspects the patch.',
+    'file_id.diz is an old bulletin board thing, a little description file. '
+    + 'this one rides inside the patch, and ppf tools show it to anyone who asks the patch about itself.',
+  MetadataTextMode:
+    "when one of these turns up, i can't work out the encoding from the patch, so i ask which one to use.",
+  MetadataXDelta1FromName: xdelta1NameStory,
+  MetadataXDelta1ToName: xdelta1NameStory,
 };

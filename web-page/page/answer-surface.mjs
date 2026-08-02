@@ -5,7 +5,6 @@ import { html } from '../vendor/lit-html/lit-html.js';
 import { Verdict, Standing, matcherOver } from './engine-vocabulary.mjs';
 import { admonitionMarkup } from './controls.mjs';
 import { buildStamp } from './build-stamp.mjs';
-import { checkKindNoun, crc32Hex, matchVerbFor, proseList } from './readouts.mjs';
 import { spokenRefusalMarkup, spokenAdvisorySentence } from './verification-speech.mjs';
 import { dialectControls } from './dialect-controls.mjs';
 import { constraintLabel } from './constraint-controls.mjs';
@@ -13,72 +12,80 @@ import { fieldLabel } from './metadata-controls.mjs';
 
 // The fellow's short lines, lowercase and unhurried. One clause each; the cards carry the detail.
 export const voiceLines = {
-  stillGettingSet: 'still getting set — hold that thought.',
-  resting: 'drop a patch and a rom — i\'ll sort out which is which.',
-  romOnly: 'got the rom — now the patch that goes on it.',
-  patchOnly: 'got the patch — now the rom it\'s for.',
+  stillGettingSet: 'still waking up. hand me those again in a second?',
+  resting: 'hand me a patch and a rom. i\'ll sort out which is which.',
+  romOnly: 'got the rom. now i need the patch that goes on it.',
+  patchOnly: 'got the patch. now i need the rom it\'s for.',
   sizingUp: 'sizing them up…',
-  match: 'yep — that\'s the one. slap it on.',
-  headeredButRescued: 'almost — it\'s headered. i\'ll set the header aside and patch what\'s under it.',
-  differsHopeless: 'hmm — that doesn\'t look like the rom this patch wants.',
-  differsManyWays: 'a header\'s involved, but more than one arrangement fits — pick one below.',
-  uncheckable: 'this patch doesn\'t say which rom it wants, so i can\'t check it for you.',
-  verificationOff: 'verification\'s off — i\'ll take these bytes exactly as handed.',
-  undoResting: 'drop a patch and the rom it made — i\'ll take the patch back off.',
-  undoRomOnly: 'got the rom — now the patch to peel off it.',
-  undoSelfInverse: 'this patch is its own reverse — now the rom it made.',
-  undoCarriesData: 'this patch carries its undo data — now the rom it made.',
-  undoOneWay: 'this patch is one-way — it says how to get there, not how to get back.',
-  undoDataOmitted: 'this patch was made without undo data — that was its author\'s choice, not something you can recover.',
-  undoMatch: 'yep — that\'s the rom this patch makes. peel it off.',
-  undoDiffers: 'hmm — that doesn\'t look like the rom this patch makes.',
-  undoUncheckable: 'this patch doesn\'t say what it makes, so i can\'t check this rom for you.',
-  working: 'working…',
+  match: 'yep, they match. slap it on?',
+  headeredButRescued: 'almost. these two are off by a header. i\'ll square that up.',
+  differsHopeless: 'hmm. that doesn\'t look like the rom this patch wants.',
+  differsManyWays: 'huh. more than one header arrangement fits these two. that\'s rare. i\'ll take your word for which.',
+  uncheckable: 'this patch doesn\'t say which rom it wants, so i can\'t check this one for you.',
+  verificationOff: 'alright, no checking. i\'ll take the files just as they are.',
+  undoResting: 'hand me a patch and the rom it made. i\'ll take the patch off.',
+  undoRomOnly: 'got the rom. now i need the patch to peel off it.',
+  undoSelfInverse: 'this patch is its own reverse. now i need the rom it made.',
+  undoCarriesData: 'this patch carries its undo data. now i need the rom it made.',
+  undoOneWay: 'this patch is one-way. it says how to get there, but not how to get back.',
+  undoDataOmitted: 'this one was made without its undo data, so the way back isn\'t in it.',
+  undoMatch: 'yep, they match. peel it off?',
+  undoDiffers: 'hmm. that doesn\'t look like the rom this patch makes.',
+  undoUncheckable: 'this patch doesn\'t say what it makes, so i can\'t check this one for you.',
   bottling: 'bottling it…',
   rebottling: 'rebottling it…',
   patching: 'patching…',
   peeling: 'peeling it off…',
-  cancelled: 'cancelled — nothing was written.',
-  infoResting: 'hand me a patch — i\'ll tell you what it says about itself.',
-  explainResting: 'hand me a patch — i\'ll show you what it does.',
+  cancelled: 'okay, stopped. nothing was made.',
+  infoResting: 'hand me a patch and i\'ll tell you what it says about itself.',
+  explainResting: 'hand me a patch and i\'ll show you what it does.',
   reading: 'reading…',
   infoRead: 'here\'s what it says about itself.',
   explainRead: 'here\'s the shape of it.',
-  sortsAsRom: 'that one reads as a rom — this tab wants a patch.',
-  createResting: 'drop the original and the changed file — first one in counts as the original.',
-  createOriginalOnly: 'got one — now the changed file it became.',
-  createModifiedOnly: 'got the changed one — now the original it came from.',
-  createNeedsFormat: 'now pick a format for it — the tiles say which and why.',
-  createReady: 'all set — bottle it.',
-  convertResting: 'hand me a patch — i\'ll rebottle it as another format.',
-  convertRomOnly: 'got the rom — now the patch to rebottle.',
-  convertNeedsFormat: 'now pick the format it should become.',
-  convertReady: 'all set — rebottle it.',
+  sortsAsRom: 'that one reads as a rom. got a patch for me?',
+  createResting: 'hand me the before and the after and i\'ll bottle the difference.',
+  createOriginalOnly: 'got the original. now i need the changed one.',
+  createModifiedOnly: 'got the changed one. now i need the original.',
+  createNeedsFormat: 'both in hand. what should i bottle it as?',
+  createReady: 'all set. bottle it?',
+  convertResting: 'hand me a patch and i\'ll rebottle it as another format.',
+  convertRomOnly: 'got the rom. now i need the patch to rebottle.',
+  convertNeedsFormat: 'what should it become?',
+  convertReady: 'all set. rebottle it?',
+};
+
+export const refusalOpenings = {
+  apply:   'i couldn\'t patch it.',
+  undo:    'i couldn\'t peel it.',
+  create:  'i couldn\'t bottle it.',
+  convert: 'i couldn\'t rebottle it.',
+  fell:    'something broke on my end.',
 };
 
 export const plainVoice = (line) => html`<p class="plain-line">${line}</p>`;
 
-// The empty-handed voice: the verb's inducement, and under it the fellow explaining the story mark. (Copy: DRAFT.)
+// The empty-handed voice: the verb's inducement, and under it the fellow explaining the story mark.
 export const restingVoice = (inducement) => html`${plainVoice(inducement)}
   <p class="plain-line story-hint">rest on anything wearing a <span class="story-mark">*</span>
-    or <span class="pill-mark">this outline</span> — i'll explain it.</p>`;
+    or <span class="pill-mark">this outline</span> and i'll explain it.</p>`;
 
-export const workingVoice = (line = voiceLines.working) => html`
+export const workingVoice = (line) => html`
   <p class="plain-line"><span class="breathing">${line}</span> <span class="elapsed" id="work-elapsed"></span></p>
   <div class="afterward"><button type="button" class="quiet-button" data-action="cancel-run">cancel</button></div>`;
 
 const bootFailureSentences = (bootFailureShape) => {
   switch (bootFailureShape.tag) {
     case 'WebAssemblySwitchedOff': return html`
-      <p class="plain-line">webassembly is switched off in this browser, so slap can't start.</p>
-      ${admonitionMarkup('note', html`that's nearly always a setting, not the browser's age — in edge it's the enhanced
-        security mode, and adding this site to that mode's exceptions turns webassembly back on.
-        the slap command line has no such ceiling.`)}`;
+      <p class="plain-line">this browser has webassembly switched off.
+        that's the bit i'm made of, so i can't do anything here.</p>
+      ${admonitionMarkup('note', html`that's nearly always because of a setting, rather than the browser not
+        supporting it. in edge it's the <code>enhanced security mode</code>, and adding this site to that
+        mode's exceptions turns webassembly back on.`)}`;
     case 'ReactorNeverArrived': return html`
-      <p class="plain-line">slap's engine didn't download — a reload usually fixes this.</p>
+      <p class="plain-line">the rest of me didn't download. a reload usually sorts that out.</p>
       <p class="refusal boot-detail">${bootFailureShape.detail}</p>`;
     case 'BootFell': return html`
-      <p class="plain-line">slap couldn't start in this browser.</p>
+      <p class="plain-line">i couldn't get myself started in this browser.</p>
       <p class="refusal boot-detail">${bootFailureShape.detail}</p>`;
   }
 };
@@ -93,43 +100,53 @@ export const advisoryMarkup = (advisories) => advisories.map((advisory) => admon
 const inputVerdictSentence = matcherOver(Verdict, {
   // A reframed input's own sentence is the advisory below: the verdicts describe the framed form,
   // and quoting the handed file's hash beside them would misattribute the match.
-  Matches: (checkKinds, { romCrcHexValue, inputReframed }) => {
-    if (inputReframed) return null;
-    return checkKinds.includes('DeclaredCRC32') && romCrcHexValue
-      ? html`<p class="said">Your rom hashed to <code>${romCrcHexValue}</code> — exactly what the patch expected.</p>`
-      : html`<p class="said">Your rom matches everything the patch declares about it —
-          its ${proseList(checkKinds.map(checkKindNoun))}.</p>`;
-  },
+  Matches: (_checkKinds, { inputReframed }) =>
+    (inputReframed ? null : html`<p class="said">yep, that was the right rom.</p>`),
   Differs: () =>
-    html`<p class="said">Your rom isn't what the patch declared — you asked slap to go ahead anyway, so it did.</p>`,
+    html`<p class="said">that wasn't the rom this patch wanted.</p>`,
   Uncheckable: () =>
-    html`<p class="said">The patch declares nothing about its source, so there was nothing to check your rom against.</p>`,
+    html`<p class="said">this patch doesn't say which rom it wants, so there was nothing to check yours against.</p>`,
 });
 
 const outputVerdictSentence = matcherOver(Verdict, {
   Matches: (_checkKinds, { anInputSentencePrecedes }) =>
-    html`<p class="said">${anInputSentencePrecedes ? 'And the' : 'The'} result is exactly what the patch promised. It worked.</p>`,
-  Differs: () =>
-    html`<p class="said">The result differs from what the patch promised — with verification off, it was written anyway.</p>`,
-  // nothing was promised about the result, so there is nothing to say
-  Uncheckable: () => null,
+    html`<p class="said">${anInputSentencePrecedes ? 'and ' : ''}what came out is just what the patch promised.</p>`,
+  Differs: (_mismatches, { anInputSentencePrecedes }) =>
+    html`<p class="said">${anInputSentencePrecedes ? 'and ' : ''}what came out isn't what the patch promised.</p>`,
+  // Only reached beside a checkable input: a patch silent on both sides is spoken whole, above.
+  Uncheckable: (_declaredNothing, { anInputSentencePrecedes }) =>
+    html`<p class="said">${anInputSentencePrecedes ? 'and ' : ''}that's everything this patch checks.
+      it records the rom going in, not the one coming out.</p>`,
 });
 
-const verdictSentences = (spoken, romCrcHexValue, inputReframed) => {
+// What the verdicts below are about, whenever the patch worked on a form of the rom other than the file itself.
+// The advisories beneath name the procedure; this only has to say that one ran, and whether anything came back.
+const reshapingSentence = (advisories) => {
+  const spokenTags = advisories.map((advisory) => advisory.spokenAdvisory.tag);
+  if (!spokenTags.includes('RomImageNormalized')) return null;
+  const somethingRestored = spokenTags.includes('RomImageContentRestored');
+  return html`<p class="said">this patch was made against a cleaned-up form of the rom,
+    so i cleaned yours up the same way before patching.
+    ${somethingRestored ? 'what i set aside went back on afterwards.' : "what's coming back is that cleaned-up form."}</p>`;
+};
+
+const verdictSentences = (spoken, inputReframed, reshaping) => {
   const input = spoken.spokenPatchedRomInputVerdict;
   const output = spoken.spokenPatchedRomOutputVerdict;
 
-  if (spoken.spokenPatchedRomStanding !== Standing.DescribeTheFiles)
+  // The verdicts weigh the normalized form; they may only be spoken once a sentence has said so.
+  if (spoken.spokenPatchedRomStanding !== Standing.DescribeTheFiles && !reshaping)
     return [html`<p class="said">Here's your patched rom.</p>`];
 
-  if (input.tag === Verdict.Uncheckable && output.tag === Verdict.Uncheckable)
-    return [html`<p class="said">This patch carries no checks at all, so there was nothing to prove —
-      given your files, this is the correct result for them.</p>`];
+  const sentences = [reshaping].filter(Boolean);
 
-  const sentences = [];
-  const inputSentence = inputVerdictSentence(input, { romCrcHexValue, inputReframed });
+  if (input.tag === Verdict.Uncheckable && output.tag === Verdict.Uncheckable)
+    return [...sentences, html`<p class="said">no checks in this patch, so there was nothing to compare.
+      if your rom was right, so is this.</p>`];
+
+  const inputSentence = inputVerdictSentence(input, { inputReframed });
   if (inputSentence) sentences.push(inputSentence);
-  const outputSentence = outputVerdictSentence(output, { anInputSentencePrecedes: sentences.length > 0 });
+  const outputSentence = outputVerdictSentence(output, { anInputSentencePrecedes: inputSentence !== null });
   if (outputSentence) sentences.push(outputSentence);
   return sentences;
 };
@@ -141,30 +158,31 @@ const downloadRowMarkup = (downloadName, downloadHref) => html`
     <span class="aside">is in your downloads</span>
   </div>`;
 
-export const patchedVoice = ({ spoken, advisories, downloadName, downloadHref, romCrc32, inputReframed }) => html`
+export const patchedVoice = ({ spoken, advisories, downloadName, downloadHref, inputReframed }) => html`
   <p class="headline">patched! <span class="sparkle" aria-hidden="true">✦ ✧</span></p>
-  ${verdictSentences(spoken, romCrc32 === null ? null : crc32Hex(romCrc32), inputReframed)}
+  ${verdictSentences(spoken, inputReframed, reshapingSentence(advisories))}
   ${advisoryMarkup(advisories)}
   ${downloadRowMarkup(downloadName, downloadHref)}
   <div class="afterward"><button type="button" class="chip" data-action="start-over">do another</button></div>`;
 
 const handedVerdictSentence = matcherOver(Verdict, {
-  Matches: (checkKinds) => html`<p class="said">Your rom is exactly what this patch produces —
-      its ${proseList(checkKinds.map(checkKindNoun))} ${matchVerbFor(checkKinds)}.</p>`,
+  Matches: () =>
+    html`<p class="said">yep, that was the rom this patch makes.</p>`,
   Differs: () =>
-    html`<p class="said">Your rom isn't what the patch produces — you asked slap to go ahead anyway, so it did.</p>`,
+    html`<p class="said">that wasn't the rom this patch makes.</p>`,
   Uncheckable: () =>
-    html`<p class="said">The patch doesn't record what it produces, so your rom went in unchecked.</p>`,
+    html`<p class="said">this patch doesn't say what it makes, so there was nothing to check yours against.</p>`,
 });
 
-// "And the", because a handed-rom sentence always comes first: every handed verdict speaks one.
+// A handed-rom sentence always comes first, so these open with "and": every handed verdict speaks one.
 const restoredVerdictSentence = matcherOver(Verdict, {
-  Matches: () => html`<p class="said">And the reverted rom is exactly
-      the original the patch was made from. It worked.</p>`,
-  Differs: () => html`<p class="said">The reverted rom differs from the original the patch records —
-      with verification off, it was written anyway.</p>`,
+  Matches: () =>
+    html`<p class="said">and what came back is the original this patch was made from.</p>`,
+  Differs: () =>
+    html`<p class="said">and what came back isn't the original this patch records.</p>`,
   Uncheckable: () =>
-    html`<p class="said">The patch doesn't record the original, so the reverted rom is yours to judge.</p>`,
+    html`<p class="said">and that's everything this patch checks.
+      it records the rom it makes, not the one it started from.</p>`,
 });
 
 // Undo's two verdicts read crosswise: the handed rom is weighed as the patch's product,
@@ -174,8 +192,8 @@ const revertedSentences = (spoken) => {
   const restored = spoken.spokenRevertedRomOutputVerdict;
 
   if (handed.tag === Verdict.Uncheckable && restored.tag === Verdict.Uncheckable)
-    return [html`<p class="said">This patch carries no checks at all, so there was nothing to prove —
-      given your files, this is the correct reversal for them.</p>`];
+    return [html`<p class="said">no checks in this patch, so there was nothing to compare.
+      if that was the rom it makes, this is the original.</p>`];
 
   return [handedVerdictSentence(handed), restoredVerdictSentence(restored)];
 };
@@ -187,15 +205,15 @@ export const revertedVoice = ({ spoken, advisories, downloadName, downloadHref }
   ${downloadRowMarkup(downloadName, downloadHref)}
   <div class="afterward"><button type="button" class="chip" data-action="start-over">do another</button></div>`;
 
-export const refusalVoice = ({ spokenError, sentence, advisories }, verbName) => html`
+export const refusalVoice = ({ tag, spokenError, sentence, advisories }, verbName) => html`
+  ${plainVoice(refusalOpenings[tag === 'Fell' ? 'fell' : verbName])}
   ${spokenRefusalMarkup(spokenError, sentence, verbName)}
   ${advisoryMarkup(advisories)}
   <div class="afterward"><button type="button" class="chip" data-action="start-over">start over</button></div>`;
 
 export const bottledVoice = ({ formatName, advisories, downloadName, downloadHref }) => html`
   <p class="headline">bottled! <span class="sparkle" aria-hidden="true">✦ ✧</span></p>
-  <p class="said">Here's your ${formatName} patch — the difference between your two files,
-    ready to hand to anyone.</p>
+  <p class="said">that's the difference between your two files, bottled as ${formatName}.</p>
   ${advisoryMarkup(advisories)}
   ${downloadRowMarkup(downloadName, downloadHref)}
   <div class="afterward">
@@ -205,7 +223,7 @@ export const bottledVoice = ({ formatName, advisories, downloadName, downloadHre
 
 export const convertedVoice = ({ formatName, advisories, downloadName, downloadHref }) => html`
   <p class="headline">converted! <span class="sparkle" aria-hidden="true">✦ ✧</span></p>
-  <p class="said">Here's your patch again, rebottled as ${formatName}.</p>
+  <p class="said">same patch, ${formatName} this time. it patches the same way.</p>
   ${advisoryMarkup(advisories)}
   ${downloadRowMarkup(downloadName, downloadHref)}
   <div class="afterward">
@@ -217,14 +235,15 @@ export const convertedVoice = ({ formatName, advisories, downloadName, downloadH
 // and a resolution the page hasn't met yet shows its bare tag rather than nothing.
 const resolutionLine = (resolution) => {
   switch (resolution.tag) {
-    case 'ProvideSourceRom':       return 'hand over the source rom and slap can compute the rest';
-    case 'ChooseDifferentFormat':  return 'a different format above can hold this';
-    case 'ChooseTargetPreserving': return 'another target format would keep it';
-    case 'DropConstraint':         return `un-tick ${constraintLabel(resolution.contents)}`;
-    case 'DropMetadataField':      return `clear ${fieldLabel(resolution.contents)}`;
-    case 'ProvideMetadataField':   return `fill in ${fieldLabel(resolution.contents)}`;
-    case 'AmendMetadataField':     return `a shorter ${fieldLabel(resolution.contents)} would fit`;
-    case 'DropDialect':            return `switch off ${dialectControls[resolution.contents]?.controlLabel ?? resolution.contents}`;
+    case 'ProvideSourceRom':       return html`give me the rom it's for and i can work out the rest.`;
+    case 'ChooseDifferentFormat':  return html`another format could manage this one.`;
+    case 'ChooseTargetPreserving': return html`some other formats would keep it.`;
+    case 'DropConstraint':         return html`switching <i>${constraintLabel(resolution.contents)}</i> off would do it.`;
+    case 'DropMetadataField':      return html`clearing <i>${fieldLabel(resolution.contents)}</i> would do it.`;
+    case 'ProvideMetadataField':   return html`filling in <i>${fieldLabel(resolution.contents)}</i> would do it.`;
+    case 'AmendMetadataField':     return html`a shorter <i>${fieldLabel(resolution.contents)}</i> would fit.`;
+    case 'DropDialect':            return html`switching
+      <i>${dialectControls[resolution.contents]?.controlLabel ?? resolution.contents}</i> off would do it.`;
     default:                       return resolution.tag;
   }
 };
@@ -232,4 +251,4 @@ const resolutionLine = (resolution) => {
 // A blocked emit is not a refusal of the whole request — each gap speaks slap's sentence, then its ways out.
 export const blockedVoice = (gaps) => html`${gaps.map((gap) => html`
   <p class="refusal">${gap.spokenGapReason.spokenErrorSentence}</p>
-  ${gap.spokenGapResolutions.map((resolution) => html`<p class="way-out">· ${resolutionLine(resolution)}</p>`)}`)}`;
+  ${gap.spokenGapResolutions.map((resolution) => html`<p class="way-out">${resolutionLine(resolution)}</p>`)}`)}`;

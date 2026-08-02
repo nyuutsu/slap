@@ -146,7 +146,7 @@ let copyWordTimer = null;
 
 const tutorMarkup = (words) => html`
   <p class="tutor-label">
-    <button type="button" class="has-story" aria-expanded="false" data-story="CommandEquivalent">command equivalent</button>
+    <button type="button" class="has-story" aria-expanded="false" data-story="CliTutor">cli tutor</button>
     <button type="button" class="quiet-button" data-action="copy-command">${copyButtonWord}</button>
   </p>
   <pre class="terminal" id="command" data-action="copy-command">${commandMarkup(words)}</pre>`;
@@ -303,7 +303,11 @@ addEventListener('hashchange', () => arriveAtVerb(verbNamedByHash() ?? 'apply'))
 
 page.verbOnStage = verbNamedByHash() ?? 'apply';
 renderPage();
-seatMascot(element('fellow')).then((seated) => { fellow = seated; }).catch(console.error);
+// A boot that fails before his artwork arrives has no one to tell; he reads the settled state on arriving instead.
+seatMascot(element('fellow')).then((seated) => {
+  fellow = seated;
+  if (page.session.tag === 'SessionFailedToOpen') fellow.reel();
+}).catch(console.error);
 // the page needs no server after load, so the worker precaches it whole: visits are instant, offline works,
 // and a deploy takes over only when every slap tab has closed — one visit late, never a mixed generation.
 // registration is pinned to the real host, so the rig and the node checks never meet it
@@ -319,6 +323,6 @@ openReactorSession().then((openedSession) => {
 }).catch((bootFailure) => {
   console.error(bootFailure);
   page.session = { tag: 'SessionFailedToOpen', bootFailureShape: classifyBootFailure(bootFailure) };
-  fellow?.droop();
+  fellow?.reel();
   renderPage();
 });

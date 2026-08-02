@@ -35,10 +35,9 @@ const weighingVoiceLine = matcherOver(Verdict, {
   Differs:     () => voiceLines.undoDiffers,
 });
 
-const peelNoteMarkup = html`<div class="group"><p class="aside">Only three kinds of patch can
-  be peeled. A <b>ups</b> patch is its own reverse, and a <b>ninja2</b> is too — one that shrinks
-  the file carries the trimmed tail along. A <b>ppf3</b> can be, if whoever made it included undo
-  data. Everything else is one-way — a patch says how to get there, not how to get back.</p></div>`;
+const peelNoteMarkup = html`<div class="group"><p class="aside">Most patches are one-way. They say
+  how to get there, not how to get back. The exceptions are <b>UPS</b> and <b>NINJA2</b>, which are
+  their own reverse, and <b>PPF3</b>, if whoever made it included undo data.</p></div>`;
 
 export const makeUndoVerb = (host) => {
   let undo = atRest();

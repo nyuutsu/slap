@@ -57,12 +57,12 @@ export const headerControlMarkup = (framing, consoleRows) => {
   const modeChip = (framingTag, label) =>
     chipRadioMarkup({ groupName: 'framing', setting: 'framing', token: framingTag,
                       checked: chosenMode === framingTag, label });
-  return groupMarkup("the rom's header", html`
-    <fieldset class="choice-fieldset"><legend class="visually-hidden">the rom's header</legend>
+  return groupMarkup("header controls", html`
+    <fieldset class="choice-fieldset"><legend class="visually-hidden">header controls</legend>
     <div class="choice-row">
       ${modeChip('TakeInputAsIs', 'take it as it is')}
-      ${modeChip('RemoveHeader', 'it has one — take it off')}
-      ${modeChip('AddHeader', "it hasn't got one — pretend it has")}
+      ${modeChip('RemoveHeader', 'it has one, so take it off')}
+      ${modeChip('AddHeader', "it hasn't got one, so pretend it has")}
     </div></fieldset>
     ${chosenMode !== 'TakeInputAsIs' ? html`
       <fieldset class="choice-fieldset"><legend class="choice-label">which console</legend>
@@ -70,7 +70,7 @@ export const headerControlMarkup = (framing, consoleRows) => {
         chipRadioMarkup({ groupName: 'console', setting: 'console', token: row.consoleToken,
                           checked: framing.console?.consoleToken === row.consoleToken, label: row.consoleName }))}</div>
       </fieldset>
-      <p class="aside">slap can't know whether your copy is headered — you can. It'll say what it did.</p>` : nothing}`);
+      <p class="aside">Only you can know whether your copy has one.</p>` : nothing}`);
 };
 
 // The console a fresh directive starts on; snes, because headered roms usually are snes roms.
@@ -83,12 +83,13 @@ export const encodingPickerMarkup = (encodingFamilies, chosenEncoding, moreEncod
   const chosenIsUncommon = chosenEncoding !== 'utf-8';
   const encodingsOpen = moreEncodingsOpen || chosenIsUncommon;
   return groupMarkup('text encoding', html`
-    <p class="aside explainer">Some formats store text — descriptions, author names — without
-    recording its encoding, and slap reads it as UTF-8. If a patch came from, say, a Japanese release and
-    its text looks wrong, that's something slap can't know but you might: pick the encoding and slap re-reads.</p>
+    <p class="aside explainer">Some formats store text as metadata, like a description or an author's name,
+    without recording how that text was encoded. We attempt to interpret metadata as UTF-8 (which is,
+    conveniently, a superset of ASCII). If the text comes out garbled, it may have been encoded some other way.
+    We can't know, but you might. In that case, we'll try again with whichever encoding you pick.</p>
     ${!chosenIsUncommon ? html`<button type="button" class="more-chip${encodingsOpen ? ' open' : ''}"
       aria-expanded="${encodingsOpen}" data-action="more-encodings">
-      ${encodingsOpen ? 'fewer encodings' : 'choose an encoding'}</button>` : nothing}
+      ${encodingsOpen ? 'hide encodings' : 'show encodings'}</button>` : nothing}
     ${encodingsOpen ? html`<fieldset class="choice-fieldset"><legend class="visually-hidden">text encoding</legend>
     ${encodingFamilies.map((family) => html`<div class="encoding-family">
       <span class="family-label">${family.advertisedFamilyLabel}</span>

@@ -361,7 +361,9 @@ export const makeConvertVerb = (host) => {
     const verdict = convert.sourceReport?.sourceVerdict;
     return convert.framing.tag !== 'TakeInputAsIs'
       || verdict?.tag === Verdict.Uncheckable
-      || (verdict?.tag === Verdict.Differs && convert.sourceReport.sourceRescue.length > 1);
+      || (verdict?.tag === Verdict.Differs
+          && (convert.sourceReport.sourceRescue.length > 1
+              || convert.verificationPolicy === 'SkipVerification'));
   };
 
   const laneChoiceMarkup = (settingName, fieldName, laneState, carried) => {
@@ -395,7 +397,7 @@ export const makeConvertVerb = (host) => {
       <p class="choice-label">${storiedText('MetadataFileIdDiz', fieldLabel('MetadataFileIdDiz'))}</p>
       ${laneChoiceMarkup('diz-lane', 'MetadataFileIdDiz', convert.diz, fieldCarried('MetadataFileIdDiz'))}
       ${lane === 'typed' ? countedTextareaMarkup({ setting: 'diz-text',
-          placeholder: "the FILE_ID.DIZ text, as you'd like it carried",
+          placeholder: "the text you'd like carried along inside the patch",
           typed: convert.diz.text, ceiling: bench.fieldCeiling('MetadataFileIdDiz'),
           labelledBy: 'story-MetadataFileIdDiz' }) : nothing}
       ${lane === 'file' ? html`<div class="choice-row"><button type="button" class="chip" data-action="pick-file"

@@ -24,8 +24,7 @@ export const commandMarkup = (words) => html`${words.map(({ kind, word }) =>
 )}`;
 
 export const tutorStories = {
-  CommandEquivalent:
-    'slap is a command line program, and this is the command that does what you have set up here. '
-    + 'it rewrites itself as you go, so it is always the one to run — copy it and it works, '
-    + 'on this machine or anyone else\'s, with no browser involved.',
+  CliTutor:
+    'i also work in the terminal. this command keeps up with everything you set here. '
+    + 'take it with you and it\'ll do exactly what i was about to.',
 };

@@ -34,17 +34,20 @@ export const mismatchSentence = (mismatch) => {
 const refusalOverrides = {
   VerificationFatal: {
     apply: (mismatch) => html`
-      <p class="said">That rom isn't the one this patch declares — so nothing was written.</p>
+      <p class="said">That rom isn't the one this patch declares, so nothing was made.</p>
       <p class="said">${mismatchSentence(mismatch)}</p>
-      <p class="said"><i>skip verification</i>, up in the options, applies it anyway — the mismatches become warnings.</p>`,
+      <p class="said">If you'd rather apply it anyway, <i>skip verification</i> does exactly that,
+        and the mismatches become warnings.</p>`,
     undo: (mismatch) => html`
-      <p class="said">The rom doesn't match what this patch declares — so nothing was written.</p>
+      <p class="said">This rom doesn't match what the patch declares, so nothing was made.</p>
       <p class="said">${mismatchSentence(mismatch)}</p>
-      <p class="said"><i>skip verification</i>, up in the options, peels it anyway — the mismatches become warnings.</p>`,
+      <p class="said">If you'd rather peel it anyway, <i>skip verification</i> does exactly that,
+        and the mismatches become warnings.</p>`,
     convert: (mismatch) => html`
-      <p class="said">That rom isn't the one this patch declares — so nothing was written.</p>
+      <p class="said">That rom isn't the one this patch declares, so nothing was made.</p>
       <p class="said">${mismatchSentence(mismatch)}</p>
-      <p class="said"><i>skip verification</i>, up in the options, converts with it anyway — the mismatches become warnings.</p>`,
+      <p class="said">If you'd rather convert with it anyway, <i>skip verification</i> does exactly that,
+        and the mismatches become warnings.</p>`,
   },
 };
 

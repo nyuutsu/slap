@@ -4,6 +4,7 @@
 // Run from dist-web, where the reactor's modules sit at the paths the page imports them by.
 
 // The stunt stands in for lit — and it throws where lit would quietly misrender, so this boot doubles as a template check.
+import { readFileSync } from 'node:fs';
 import './lit-html-stunt-hook.mjs';
 import { ReactorNeverArrived } from './reactor/reactor-client.mjs';
 
@@ -57,4 +58,19 @@ for (const shape of [{ tag: 'WebAssemblySwitchedOff' }, { tag: 'BootFell', detai
   if (shape.detail && !cardMarkup.includes(shape.detail)) throw new Error(`the ${shape.tag} card dropped its detail`);
 }
 
-console.log('boot check: every module resolved, every verb constructed, the first render survived, and a failed boot keeps its card up');
+// The one sentence strangers read before arriving is written out four times, in three syntaxes,
+// with nothing but this to keep them the same sentence.
+const describedAs = (text, where) => {
+  const spellings = [...text.matchAll(/"description":\s*"([^"]+)"|name="description" content="([^"]+)"|property="og:description" content="([^"]+)"/g)]
+    .map((found) => found[1] ?? found[2] ?? found[3]);
+  if (spellings.length === 0) throw new Error(`${where} carries no description`);
+  return spellings;
+};
+const descriptions = [...describedAs(readFileSync('index.html', 'utf8'), 'index.html'),
+                      ...describedAs(readFileSync('manifest.json', 'utf8'), 'manifest.json')];
+if (descriptions.length !== 4) throw new Error(`expected four descriptions, found ${descriptions.length}`);
+if (new Set(descriptions).size !== 1)
+  throw new Error(`the four descriptions have drifted apart:\n  ${[...new Set(descriptions)].join('\n  ')}`);
+
+console.log('boot check: every module resolved, every verb constructed, the first render survived, '
+  + 'a failed boot keeps its card up, and all four descriptions still say the same sentence');

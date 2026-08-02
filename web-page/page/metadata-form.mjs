@@ -213,9 +213,9 @@ export const makeMetadataBench = (host, { surfaceRow, recheck }) => {
     if (!metadata && !constraints) return null;
     return html`
       <button type="button" class="more-chip${bench.benchOpen ? ' open' : ''}" aria-expanded="${bench.benchOpen}"
-        aria-controls="metadata-options" data-action="fold-bench" data-story="TheBench">
-        ${bench.benchOpen ? 'hide metadata options' : 'show metadata options'}</button>
-      <div id="metadata-options">${bench.benchOpen ? html`${metadata}${constraints}` : nothing}</div>`;
+        aria-controls="extras" data-action="fold-bench" data-story="TheBench">
+        ${bench.benchOpen ? 'hide extras' : 'show extras'}</button>
+      <div id="extras">${bench.benchOpen ? html`${metadata}${constraints}` : nothing}</div>`;
   };
 
   const constraintsGroupMarkup = () => {

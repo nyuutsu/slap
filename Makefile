@@ -159,16 +159,21 @@ wasm-worker-rig: wasm
 # `make web` carries the everyday -O0 reactor for quick iteration; the deploy ships the -O2 one,
 # which runs the heavy analyses at full speed and weighs half as much on the wire.
 # The stamp keeps describe to hash and "-dirty": a tag name could carry an apostrophe into the stamp's quoted JS literal.
+# describe's own --dirty counts a submodule's uncommitted work as dirt, which says nothing about the page it stamps,
+# so the suffix is decided separately by a diff-index that ignores it. A moved submodule pointer still counts.
+stampedHash = $$(stamp=$$(git describe --always --exclude='*'); \
+                 git diff-index --quiet --ignore-submodules=dirty HEAD || stamp="$$stamp-dirty"; \
+                 printf %s "$$stamp")
 define assemble-web
 	@if [ ! -f vendor/browser_wasi_shim/dist/index.js ]; then git submodule update --init vendor/browser_wasi_shim; fi
 	rm -rf dist-web
 	mkdir -p dist-web/reactor dist-web/vendor/browser_wasi_shim
 	cp -r web-page/. dist-web/
-	printf "export const buildStamp = 'this page was built on %s (%s)';\n" "$$(date +%F)" "$$(git describe --always --dirty --exclude='*')" > dist-web/page/build-stamp.mjs
+	printf "export const buildStamp = 'this page was built on %s (%s)';\n" "$$(date +%F)" "$(stampedHash)" > dist-web/page/build-stamp.mjs
 	cp web-reactor/reactor-client.mjs web-reactor/envelope-worker.mjs dist-web/reactor/
 	cp "$$(. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal -v0 list-bin slap-web-reactor $(1) $(WASM_CABAL_FLAGS))" dist-web/reactor/slap-web-reactor.wasm
 	cp -r vendor/browser_wasi_shim/dist dist-web/vendor/browser_wasi_shim/
-	node web-page/bake-service-worker.mjs dist-web "$$(git describe --always --dirty --exclude='*')"
+	node web-page/bake-service-worker.mjs dist-web "$(stampedHash)"
 	cd dist-web && node boot-check.mjs
 endef
 

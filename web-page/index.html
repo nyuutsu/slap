@@ -4,17 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>slap</title>
-<meta name="description" content="slap applies, creates, examines, and converts ROM patches in twenty formats, detecting the format automatically. Also available as a command-line tool.">
+<meta name="description" content="slap applies, creates, converts and inspects ROM patches in twenty formats. Available in your browser and in the terminal.">
 <meta name="theme-color" content="#FBF4EA">
 <link rel="canonical" href="https://slap.nyuu.page/">
 <meta property="og:title" content="slap">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://slap.nyuu.page/">
 <meta property="og:site_name" content="nyuu.page">
-<meta property="og:description" content="slap applies, creates, examines, and converts ROM patches in twenty formats, detecting the format automatically. Also available as a command-line tool.">
+<meta property="og:description" content="slap applies, creates, converts and inspects ROM patches in twenty formats. Available in your browser and in the terminal.">
 <meta name="twitter:card" content="summary">
 <meta property="og:image" content="https://slap.nyuu.page/art/slap-card.png">
-<meta property="og:image:alt" content="the slap sticker: a bandage beside the word slap">
+<meta property="og:image:alt" content="a bandage beside the word slap">
 <link rel="icon" href="art/bandage.svg" type="image/svg+xml">
 <link rel="icon" href="art/slap-mark-32.png" sizes="32x32" type="image/png">
 <link rel="apple-touch-icon" href="art/slap-icon-180.png">
@@ -31,7 +31,7 @@
   "applicationCategory": "UtilitiesApplication",
   "operatingSystem": "Any browser with WebAssembly",
   "browserRequirements": "Requires WebAssembly",
-  "description": "slap applies, creates, examines, and converts ROM patches in twenty formats, detecting the format automatically. Also available as a command-line tool.",
+  "description": "slap applies, creates, converts and inspects ROM patches in twenty formats. Available in your browser and in the terminal.",
   "featureList": [
     "APS-GBA",
     "APS-N64",
@@ -89,7 +89,7 @@
         <span class="motd-lines">
           <span class="motd-label">MOTD:</span> btw, I also work in the terminal<br>
           <span class="motd-prompt" aria-hidden="true">❯</span> <span class="motd-command">slap</span> <span class="motd-flag">--help</span><span class="motd-cursor" aria-hidden="true"></span>
-          <span class="visually-hidden"> — slap releases on GitHub</span>
+          <span class="visually-hidden">, slap releases on GitHub</span>
         </span>
       </span>
     </a>
@@ -101,9 +101,12 @@
 
   <main>
     <noscript>
-      <p class="noscript-note">slap does its patching here in the browser, so it wants javascript switched on to do
-        anything at all. if you would rather it did not run in a browser: the same slap runs at a terminal, and asks
-        nothing of the sort. it is on <a href="https://github.com/nyuutsu/slap">github</a>.</p>
+      <p class="noscript-note">the scripts here run slap in your browser and nothing else:
+        no analytics, no ads, no uploading.</p>
+      <p class="noscript-note">it also works in the terminal, where it handles bigger files than this page can.
+        (web slap is 32-bit, for wasm reasons.) the source is on
+        <a href="https://github.com/nyuutsu/slap">github</a>.</p>
+      <p class="noscript-note">the web version is cuter.</p>
     </noscript>
     <form class="stage" id="stage" role="tabpanel"></form>
 
@@ -112,7 +115,7 @@
       <div class="voice" id="voice" aria-live="polite" tabindex="-1"></div>
     </section>
 
-    <section class="tutor" id="tutor" aria-label="command equivalent"></section>
+    <section class="tutor" id="tutor" aria-label="cli tutor"></section>
 
     <div class="act" id="act"></div>
   </main>
@@ -124,7 +127,7 @@
 </div>
 
 <div class="dropveil" id="dropveil" hidden>
-  <span>drop them anywhere — slap will sort them out</span>
+  <span>anywhere is fine</span>
 </div>
 
 <input type="file" id="file-picker" hidden>

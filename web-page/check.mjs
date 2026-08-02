@@ -149,7 +149,7 @@ for (const patchPath of patchPaths) {
     if (!('Right' in appliedAct.envelope.envelopeAnswer))
       throw new Error(`${patchPath}: the census rom does not take this patch — ${appliedAct.envelope.envelopeAnswer.Left.spokenErrorSentence}`);
     mustRender(`${patchPath} patched voice`, patchedVoice({ spoken: appliedAct.envelope.envelopeAnswer.Right,
-      advisories: [], downloadName: 'rom', downloadHref: '', romCrc32: null, inputReframed: false }));
+      advisories: [], downloadName: 'rom', downloadHref: '', inputReframed: false }));
     const patchedPath = join(declarationDir, 'patched.bin');
     writeFileSync(patchedPath, appliedAct.tail);
 
@@ -257,4 +257,78 @@ for (const advisory of advisoryMarkup(forewarned.envelopeAdvisories)) mustRender
 console.log(`render census: ${spokenVocabularies.length} vocabulary tables audited against the engine's own, `
   + 'the baked surface matched the engine word for word, '
   + `${renderedCount} patches rendered whole, ${peeledCount} peels spoken, ${refusedCount} refused with a sentence, `
-  + 'create checked both ways and bottled with a forewarning spoken, convert asked both ways and re-bottled both lanes');
+  + 'create checked both ways and bottled with a forewarning spoken, convert asked both ways and re-bottled both lanes, '
+  + 'and a ROM type reshaped the rom both ways, its header put back once and let go once');
+
+// A ROM type applies the patch to a canonical form of the rom, so the verdicts describe bytes nobody handed over
+// and the page must say so before speaking them. No fixture carries one, so both restore disciplines are built here.
+
+const normalizationBody = Buffer.from(
+  Array.from({ length: 0x8000 }, (_, offset) => (offset * 7 + 11) & 0xFF));
+const normalizationBodyChanged = Buffer.from(normalizationBody);
+normalizationBodyChanged.fill(0xEE, 0x40, 0x60);
+
+const wrappedRom = (name, wrapper, body) => {
+  const path = join(declarationDir, name);
+  writeFileSync(path, Buffer.concat([wrapper, body]));
+  return path;
+};
+const iNESHeader = Buffer.concat([Buffer.from('NES\x1a', 'binary'), Buffer.alloc(12)]);
+const smartCardHeader = Buffer.alloc(0x200);
+
+const romTypeCreateDeclaration = (verbKey, formatTag, formatConstructor, platform) =>
+  declarationPathFor(verbKey, {
+    ...plainCreateDeclaration(formatTag, formatConstructor),
+    declaredCreateMetadata: { requestedFileIdDiz: { tag: 'InheritFileIdDiz' },
+                              requestedEmbeddedBlob: { tag: 'InheritEmbeddedBlob' },
+                              requestedRomType: platform },
+  });
+
+const mintedNormalizingPatch = (name, originalPath, modifiedPath, createDeclarationPath) => {
+  const minted = splitAct(probeBytes('create', originalPath, modifiedPath, createDeclarationPath));
+  if (!('Right' in minted.envelope.envelopeAnswer))
+    throw new Error(`the ${name} normalizing create refused — ${minted.envelope.envelopeAnswer.Left.spokenErrorSentence}`);
+  const path = join(declarationDir, `${name}.patch`);
+  writeFileSync(path, minted.tail);
+  return path;
+};
+
+const reshapedApply = (name, patchPath, sourcePath) => {
+  const applied = splitAct(probeBytes('apply', patchPath, sourcePath, declarationPaths.apply));
+  if (!('Right' in applied.envelope.envelopeAnswer))
+    throw new Error(`the ${name} normalizing apply refused — ${applied.envelope.envelopeAnswer.Left.spokenErrorSentence}`);
+  const spoken = applied.envelope.envelopeAnswer.Right;
+  const advisories = applied.envelope.envelopeAdvisories;
+  if (spoken.spokenPatchedRomStanding !== 'VerdictsWithheldReshaped')
+    throw new Error(`the ${name} apply did not reshape: ${spoken.spokenPatchedRomStanding}`);
+  if (!advisories.some((advisory) => advisory.spokenAdvisory.tag === 'RomImageNormalized'))
+    throw new Error(`the ${name} apply reshaped without narrating a normalization`);
+  return { spoken, advisories, outputLength: applied.tail.length,
+           voice: markupOf(patchedVoice({ spoken, advisories, downloadName: 'rom', downloadHref: '',
+                                          inputReframed: false })) };
+};
+
+const nesRestored = reshapedApply('NES',
+  mintedNormalizingPatch('nes', wrappedRom('nes-original.nes', iNESHeader, normalizationBody),
+                         wrappedRom('nes-modified.nes', iNESHeader, normalizationBodyChanged),
+                         romTypeCreateDeclaration('create-nes', 'CreateDifferential', 'CreateNINJA2', 'PlatformNES')),
+  join(declarationDir, 'nes-original.nes'));
+
+const gameBoyDropped = reshapedApply('Game Boy',
+  mintedNormalizingPatch('gb', wrappedRom('gb-original.gb', smartCardHeader, normalizationBody),
+                         wrappedRom('gb-modified.gb', smartCardHeader, normalizationBodyChanged),
+                         romTypeCreateDeclaration('create-gb', 'CreateDirect', 'CreateNINJA1', 'PlatformGB')),
+  join(declarationDir, 'gb-original.gb'));
+
+if (!nesRestored.advisories.some((advisory) => advisory.spokenAdvisory.tag === 'RomImageContentRestored'))
+  throw new Error('the NES apply restored nothing, so the put-back arm went unrendered');
+if (gameBoyDropped.advisories.some((advisory) => advisory.spokenAdvisory.tag === 'RomImageContentRestored'))
+  throw new Error('the Game Boy apply restored something, so the dropped arm went unrendered');
+if (nesRestored.outputLength !== iNESHeader.length + normalizationBody.length)
+  throw new Error('the NES output did not come back wearing its header');
+if (gameBoyDropped.outputLength !== normalizationBody.length)
+  throw new Error('the Game Boy output did not come back without its header');
+if (!nesRestored.voice.includes('went back on'))
+  throw new Error('the restored voice did not say the wrapping came back');
+if (!gameBoyDropped.voice.includes('cleaned-up form'))
+  throw new Error('the dropped voice did not say the cleaned-up form is what returns');

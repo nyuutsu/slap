@@ -210,7 +210,7 @@ export const makeCreateVerb = (host) => {
     <p class="choice-label">${storiedText('MetadataFileIdDiz', fieldLabel('MetadataFileIdDiz'))}</p>
     ${laneChoiceMarkup('diz-lane', 'MetadataFileIdDiz', create.diz.lane)}
     ${create.diz.lane === 'typed'
-      ? countedTextareaMarkup({ setting: 'diz-text', placeholder: "the FILE_ID.DIZ text, as you'd like it carried",
+      ? countedTextareaMarkup({ setting: 'diz-text', placeholder: "the text you'd like carried along inside the patch",
           typed: create.diz.text, ceiling: bench.fieldCeiling('MetadataFileIdDiz'), labelledBy: 'story-MetadataFileIdDiz' })
       : html`<div class="choice-row"><button type="button" class="chip" data-action="pick-file"
           data-seat="diz-file">${create.diz.file?.name ?? 'choose a file…'}</button></div>`}`;

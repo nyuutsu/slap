@@ -160,7 +160,7 @@ export const makeInfoVerb = (host) => {
     return groupMarkup('extract', html`
       <div class="choice-row">${carried.map(({ seatIndex, label }) => html`<button type="button" class="chip"
         data-action="extract-embed" data-seat-index="${seatIndex}">download ${label}</button>`)}</div>
-      <p class="aside">Byte-exact — the patch's own bytes, not a re-encode.</p>`);
+      <p class="aside">these come out exactly as the patch stores them.</p>`);
   };
 
   const stageMarkup = () => {
@@ -252,8 +252,9 @@ export const makeExplainVerb = (host) => {
       ${read.everyRecord ? html`<div class="results">${walkMarkup(regions, read.walkRowsShown)}</div>` : nothing}`;
   };
 
-  // The heat bar's hover caption updates in place — a hover is not a state change; wired once, against the stage.
-  host.stage().addEventListener('mouseover', (event) => {
+  // The heat bar's caption updates in place — resting on a stretch is not a state change; wired once, against the stage.
+  // A pointer event rather than a mouse one, so a touch reaches the numbers too.
+  host.stage().addEventListener('pointerover', (event) => {
     const cell = event.target.closest('.heat-cell');
     const model = core.state().reading?.model;
     if (!cell || !model) return;

@@ -78,7 +78,7 @@ const payloadCategory = matcherOver(Payload, {
 const categoryWords = {
   'copy-source': 'kept from the source', 'copy-target': 'copied from earlier output',
   'copy-patch': 'copied from the patch', write: 'new bytes', fill: 'a fill',
-  xor: 'an XOR delta', meta: 'metadata',
+  xor: 'an XOR delta', meta: 'structural',
 };
 
 // A region leaves the file as it was only when it copies the source from the very offset it lands on.
@@ -129,8 +129,8 @@ export const heatBarMarkup = (model) => html`
     return html`<div class="heat-cell" data-bucket="${bucket}"
       style="background:${heatColor(changedBytes / span)}"></div>`;
   })}</div>
-  <p class="map-caption" data-role="heat-caption">hover the bar to inspect a stretch</p>
-  <div class="heat-legend"><span>untouched</span><span class="heat-scale"></span><span>rewritten</span></div>`;
+  <p class="map-caption" data-role="heat-caption">rest anywhere on the bar to see what changed there</p>
+  <div class="heat-legend"><span>untouched</span><span class="heat-scale"></span><span>touched</span></div>`;
 
 export const heatCaption = (model, bucket) => {
   const start = Math.floor(bucket * model.bucketSpan);
@@ -159,7 +159,7 @@ const payloadKindNoun = matcherOver(Payload, {
   Write: () => 'writes',
   Fill:  () => 'fills',
   Copy:  () => 'copies',
-  XOR:   () => 'XOR',
+  XOR:   () => 'XOR deltas',
   Meta:  () => 'structural',
 });
 
@@ -263,7 +263,7 @@ export const walkMarkup = (regions, rowsShown) => html`
   <div class="walk">${regions.slice(0, rowsShown).map(walkRow)}</div>
   ${regions.length > rowsShown ? html`<div class="walk-more">
     <button type="button" class="quiet-button" data-action="walk-more">show 2,000 more</button>
-    <span class="aside">— ${groupedCount(regions.length - rowsShown)} further records below</span>
+    <span class="aside">${groupedCount(regions.length - rowsShown)} further records below</span>
   </div>` : nothing}`;
 
 /* ------------------------------------------------------------ assembly ---- */
