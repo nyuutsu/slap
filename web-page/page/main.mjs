@@ -12,6 +12,7 @@ import { makeCreateVerb } from './verbs/create.mjs';
 import { makeConvertVerb } from './verbs/convert.mjs';
 import { makeInfoVerb, makeExplainVerb } from './verbs/reads.mjs';
 import { wireStoryListeners } from './stories.mjs';
+import { watchForNewerPage, takeTheNewerPage } from './newer-page.mjs';
 import { fieldStories } from './metadata-controls.mjs';
 import { pickerStories } from './format-picker.mjs';
 
@@ -226,6 +227,10 @@ document.addEventListener('click', (event) => {
     copyCommand();
     return;
   }
+  if (action === 'take-newer-page') {
+    takeTheNewerPage();
+    return;
+  }
   verbs[page.verbOnStage].actions[action]?.(control.dataset);
 });
 
@@ -308,10 +313,8 @@ seatMascot(element('fellow')).then((seated) => {
   fellow = seated;
   if (page.session.tag === 'SessionFailedToOpen') fellow.reel();
 }).catch(console.error);
-// the page needs no server after load, so the worker precaches it whole: visits are instant, offline works,
-// and a deploy takes over only when every slap tab has closed — one visit late, never a mixed generation.
-// registration is pinned to the real host, so the rig and the node checks never meet it
-if (location.hostname === 'slap.nyuu.page') navigator.serviceWorker?.register('/sw.js').catch(console.error);
+// the fellow's offer of a newer page lives in restingVoice, so learning of one is a render
+watchForNewerPage(renderPage);
 openReactorSession().then((openedSession) => {
   // the page was built against one engine's surface; an engine that booted speaking another must not answer for it
   if (JSON.stringify(openedSession.surface) !== JSON.stringify(engineSurface))

@@ -1,9 +1,10 @@
 // The one home for slap's voice: everything the engine says — refusals, success verdicts,
 // advisories riding either — lands in this box, and the fellow beside it gives it a face.
 
-import { html } from '../vendor/lit-html/lit-html.js';
+import { html, nothing } from '../vendor/lit-html/lit-html.js';
 import { Verdict, Standing, matcherOver } from './engine-vocabulary.mjs';
 import { admonitionMarkup } from './controls.mjs';
+import { newerPageWaiting } from './newer-page.mjs';
 import { buildStamp } from './build-stamp.mjs';
 import { spokenRefusalMarkup, spokenAdvisorySentence } from './verification-speech.mjs';
 import { dialectControls } from './dialect-controls.mjs';
@@ -64,10 +65,14 @@ export const refusalOpenings = {
 
 export const plainVoice = (line) => html`<p class="plain-line">${line}</p>`;
 
-// The empty-handed voice: the verb's inducement, and under it the fellow explaining the story mark.
+// The empty-handed voice: the verb's inducement, the fellow explaining the story mark, and his offer of
+// a newer page when one waits. Every verb speaks this only over an empty table, which is what keeps the
+// offer from ever interrupting held files or an answer.
 export const restingVoice = (inducement) => html`${plainVoice(inducement)}
   <p class="plain-line story-hint">rest on anything wearing a <span class="story-mark">*</span>
-    or <span class="pill-mark">this outline</span> and i'll explain it.</p>`;
+    or <span class="pill-mark">this outline</span> and i'll explain it.</p>
+  ${newerPageWaiting() ? html`<p class="plain-line">oh, a newer page turned up while you were here. want it?
+    <button type="button" class="quiet-button" data-action="take-newer-page">take it</button></p>` : nothing}`;
 
 export const workingVoice = (line) => html`
   <p class="plain-line"><span class="breathing">${line}</span> <span class="elapsed" id="work-elapsed"></span></p>
