@@ -35,15 +35,19 @@
   --ink: #3D3A34;
   --ink-soft: #7A5647;
   --whisper: #7E6A54;
-  /* the ink for reversed ground: words sitting on grape or coral */
-  --ink-reversed: #FFFFFF;
+  /* A saturated fill names the ink that reads on it, and only ever carries that ink at --weight-loud:
+     thin strokes on a saturated ground bloom into it, which is the glare, not the hue. */
+  --ink-on-grape: #FFFFFF;
+  --ink-on-coral: #4A1F0B;
 
   --grape: #8E44AD;
   --grape-tint: #F5EDF9;
+  /* a word in the grape hue on a light ground takes this one, dark enough for tint, room, or panel */
+  --grape-deep: #6C2D83;
   --coral: #F26B43;
   --coral-deep: #C6592F;
   --amber: #E8912B;
-  /* the bright coral and amber carry no words: anything to be read in either hue takes the ink below it */
+  /* the bright coral and amber carry no words in their own hue: anything read in either takes the ink below it */
   --coral-ink: #A8431E;
   --amber-ink: #9A5F0D;
 
@@ -60,13 +64,20 @@
   --terminal-verb: #D9ABFA;      --terminal-flag: #7EE787;
   --terminal-value: #FFC66D;
 
-  /* The field labels' own column, and where the glosses under them start:
-     19 Sarasa columns — the longest label, "omit verification", plus its story asterisk. */
+  /* The field labels' own column, and where the glosses under them start.
+     Set when the labels were monospace and 19 columns wide; Nunito at this size is narrower,
+     so it still clears the longest label ("omit verification", plus its story asterisk) with room left over. */
   --label-column: calc(var(--type-micro) * 9.5);
 
+  /* The weights of speech. Anything small, and anything on a saturated fill, takes firm or louder. */
+  --weight-plain: 400;     /* prose at reading size */
+  --weight-firm: 600;      /* controls, labels, and every whisper: enough stroke to survive being small */
+  --weight-loud: 700;      /* words on a fill, and the marks that carry a verdict */
+  --weight-display: 800;   /* the sticker */
+
   /* The sizes of speech, each a 1.25 step from the next. Everything the page says wears one of these. */
-  --type-micro: 14.5px;    /* whispers: labels, counts, glosses, chrome */
-  --type-text: 18px;       /* the speaking voice: prose, inputs, the sentence */
+  --type-micro: 14.5px;    /* whispers: glosses, captions, readouts */
+  --type-text: 18px;       /* the speaking voice: prose, inputs, the sentence, and anything you press */
   --type-emphasis: 22.5px; /* what leads: the run button, the sticker word */
   --type-display: 28px;    /* what celebrates: the headline */
 
@@ -108,7 +119,7 @@ body {
   position: absolute; left: 20px; top: -100px; z-index: 10;
   background: var(--panel); color: var(--ink);
   border: 1px solid var(--grape); border-radius: var(--radius-pick);
-  padding: var(--space-half) var(--space-three-quarters); font-family: var(--mono); font-size: var(--type-micro);
+  padding: var(--space-half) var(--space-three-quarters); font-family: var(--body); font-size: var(--type-micro);
 }
 .skip-link:focus { top: 12px; }
 
@@ -142,7 +153,7 @@ button { font: inherit; cursor: pointer; }
   box-shadow: 0 4px 0 rgba(90, 51, 39, 0.12);
 }
 .sticker img { display: block; }
-.sticker-word { font-family: var(--display); font-weight: 800; font-size: var(--type-emphasis); line-height: 1; color: var(--grape); margin: 0; }
+.sticker-word { font-family: var(--display); font-weight: var(--weight-display); font-size: var(--type-emphasis); line-height: 1; color: var(--grape-deep); margin: 0; }
 
 .motd { text-decoration: none; display: inline-block; }
 /* The banner's type, spacing, and curves are its own, outside the page's token systems: every number in it is glyph arithmetic. */
@@ -200,13 +211,13 @@ button { font: inherit; cursor: pointer; }
   margin-bottom: var(--space-one-and-a-half);
 }
 .verb {
-  font-family: var(--mono); font-size: var(--type-micro);
+  font-family: var(--body); font-size: var(--type-text); font-weight: var(--weight-firm);
   background: none; border: none; color: var(--whisper);
   padding: var(--space-half) var(--space-three-quarters); margin-bottom: -1px;
   border-bottom: 2px solid transparent;
 }
-.verb:hover { color: var(--grape); }
-.verb.on { color: var(--grape); font-weight: 700; border-bottom-color: var(--grape); }
+.verb:hover { color: var(--grape-deep); }
+.verb.on { color: var(--grape-deep); font-weight: var(--weight-loud); border-bottom-color: var(--grape); }
 .verb.lesser { padding: var(--space-half) var(--space-half); }
 .verb-gap { width: 1px; height: 15px; background: var(--hairline); margin: 0 var(--space-half); }
 
@@ -217,10 +228,10 @@ button { font: inherit; cursor: pointer; }
 .swap-line { margin: calc(-1 * var(--space-quarter)) 0 2px; }
 .slot { background: none; border: none; padding: 0 5px; font: inherit; line-height: 1.45; }
 .slot.empty { color: var(--whisper); border-bottom: 2px dashed var(--dash-warm); }
-.slot.empty:hover { color: var(--grape); border-bottom-color: var(--grape); }
+.slot.empty:hover { color: var(--grape-deep); border-bottom-color: var(--grape); }
 .slot.filled { color: var(--ink); border-bottom: 2px solid var(--grape); }
 /* a blank slap knows you still owe it, in the colour the page keeps for things not yet answered */
-.slot.empty.owed { color: var(--grape); border-bottom-color: var(--dash-grape); }
+.slot.empty.owed { color: var(--grape-deep); border-bottom-color: var(--dash-grape); }
 /* a storied slot keeps the seat's dashes: the asterisk already says the fellow will speak */
 .slot.has-story:hover, .slot.has-story:focus-visible { text-decoration: none; }
 .slot.inert { cursor: default; }
@@ -234,8 +245,8 @@ button { font: inherit; cursor: pointer; }
   color: var(--whisper); pointer-events: none;
 }
 .format-chip {
-  font-family: var(--mono); font-size: var(--type-micro); letter-spacing: 0.06em;
-  color: var(--grape); background: var(--grape-tint);
+  font-family: var(--body); font-size: var(--type-micro); font-weight: var(--weight-firm);
+  color: var(--grape-deep); background: var(--grape-tint);
   border: 1px solid var(--hairline); border-radius: var(--radius-pick);
   padding: 2px var(--space-half); margin-left: var(--space-quarter); vertical-align: 2px;
 }
@@ -250,13 +261,13 @@ button { font: inherit; cursor: pointer; }
   margin: var(--space-three-quarters) 0;
 }
 .facts-card .file-line { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-half); flex-wrap: wrap; }
-.facts-card .file-name { font-family: var(--mono); font-size: var(--type-text); }
+.facts-card .file-name { font-family: var(--body); font-size: var(--type-text); }
 .facts-card .file-size { font-family: var(--mono); font-size: var(--type-micro); color: var(--whisper); }
 .facts-card .hashes { font-family: var(--mono); font-size: var(--type-micro); color: var(--whisper); margin-top: var(--space-half); line-height: 1.9; overflow-wrap: anywhere; }
-.facts-card .hashes b { color: var(--ink); font-weight: 400; }
+.facts-card .hashes b { color: var(--ink); font-weight: var(--weight-plain); }
 
 .verdict { display: flex; gap: var(--space-half); align-items: flex-start; margin-top: var(--space-three-quarters); padding-top: var(--space-half); border-top: 1px solid var(--hairline); font-size: var(--type-text); }
-.verdict .mark { font-family: var(--mono); font-weight: 700; flex: none; }
+.verdict .mark { font-family: var(--body); font-weight: var(--weight-loud); font-size: var(--type-emphasis); line-height: 1.1; flex: none; }
 .verdict.good     { color: var(--ok-ink); }
 .verdict.puzzled  { color: var(--caution-ink); }
 .verdict.shrug    { color: var(--ink-soft); }
@@ -267,7 +278,7 @@ button { font: inherit; cursor: pointer; }
 .rescue-way { margin: var(--space-quarter) 0 0; }
 
 .group h3 {
-  font-family: var(--mono); font-size: var(--type-micro); font-weight: 700;
+  font-family: var(--body); font-size: var(--type-micro); font-weight: var(--weight-loud);
   letter-spacing: 0.08em; color: var(--whisper);
   margin: 0 0 var(--space-half);
 }
@@ -287,14 +298,14 @@ button { font: inherit; cursor: pointer; }
 /* a row stands ready to be named even while it holds nothing, so it takes no space until it does */
 .choice-row:empty { display: none; }
 .chip {
-  font-family: var(--mono); font-size: var(--type-micro);
+  font-family: var(--body); font-size: var(--type-text); font-weight: var(--weight-firm);
   background: var(--panel); color: var(--ink);
   border: 1px solid var(--hairline); border-radius: var(--radius-pick);
   padding: var(--space-half) var(--space-three-quarters);
 }
 .chip:hover { border-color: var(--grape); }
-.chip.on { background: var(--grape); border-color: var(--grape); color: var(--ink-reversed); }
-.choice-label { font-family: var(--mono); font-size: var(--type-micro); color: var(--whisper); margin: var(--space-three-quarters) 0 var(--space-quarter); }
+.chip.on { background: var(--grape); border-color: var(--grape); color: var(--ink-on-grape); font-weight: var(--weight-loud); }
+.choice-label { font-family: var(--body); font-size: var(--type-micro); font-weight: var(--weight-firm); color: var(--whisper); margin: var(--space-three-quarters) 0 var(--space-quarter); }
 
 .toggle { display: flex; align-items: center; gap: var(--space-half); margin: var(--space-half) 0 2px; }
 .toggle + .toggle { border-top: 1px solid var(--hairline); padding-top: var(--space-half); }
@@ -302,7 +313,7 @@ button { font: inherit; cursor: pointer; }
 .toggle-chip { cursor: pointer; }
 /* the tick's seat is never empty: a hollow ring holds it while off, so the chip reads fillable and never shifts */
 .toggle-chip::before { content: '○'; display: inline-block; width: 1.2em; color: var(--whisper); }
-.toggle-input:checked + .toggle-chip { background: var(--grape); border-color: var(--grape); color: var(--ink-reversed); }
+.toggle-input:checked + .toggle-chip { background: var(--grape); border-color: var(--grape); color: var(--ink-on-grape); font-weight: var(--weight-loud); }
 .toggle-input:checked + .toggle-chip::before { content: '✓'; color: inherit; }
 .toggle-input:focus-visible + .toggle-chip { outline: 2px solid var(--grape); outline-offset: 2px; }
 
@@ -324,14 +335,14 @@ legend.choice-label { padding: 0; }
 }
 .tile:hover { border-color: var(--grape); }
 .tile.on { border-color: var(--grape); background: var(--grape-tint); }
-.tile-name { font-family: var(--display); font-weight: 700; font-size: var(--type-text); color: var(--ink); }
-.tile.on .tile-name { color: var(--grape); }
+.tile-name { font-family: var(--display); font-weight: var(--weight-loud); font-size: var(--type-text); color: var(--ink); }
+.tile.on .tile-name { color: var(--grape-deep); }
 .tile-copy { font-size: var(--type-micro); color: var(--ink-soft); line-height: 1.45; }
 
 /* the dashed border borrows the empty slot's promise of more; the chip shape previews what unfolds */
 .more-chip {
-  font-family: var(--mono); font-size: var(--type-micro);
-  color: var(--grape); background: none;
+  font-family: var(--body); font-size: var(--type-text); font-weight: var(--weight-firm);
+  color: var(--grape-deep); background: none;
   border: 1px dashed var(--dash-grape); border-radius: var(--radius-pick);
   padding: var(--space-half) var(--space-three-quarters);
 }
@@ -339,7 +350,7 @@ legend.choice-label { padding: 0; }
 .more-chip.open { border-style: solid; }
 
 .field { display: flex; align-items: baseline; gap: var(--space-half); margin: var(--space-half) 0; flex-wrap: wrap; }
-.field-label { font-family: var(--mono); font-size: var(--type-micro); color: var(--whisper); flex: 0 0 var(--label-column); }
+.field-label { font-family: var(--body); font-size: var(--type-micro); font-weight: var(--weight-firm); color: var(--whisper); flex: 0 0 var(--label-column); }
 /* the gloss takes the whole line under the control it speaks for, standing where the control stands */
 .field-gloss { flex: 0 0 100%; margin: 2px 0 0 calc(var(--label-column) + var(--space-half));
                color: var(--ink-soft); font-size: var(--type-micro); }
@@ -358,7 +369,7 @@ legend.choice-label { padding: 0; }
    sentence never mixes typefaces — and fills solid once a format is chosen. */
 .format-seat {
   font: inherit; line-height: 1.45; display: inline-block;
-  color: var(--grape); background: none;
+  color: var(--grape-deep); background: none;
   border: 1px dashed var(--dash-grape); border-radius: var(--radius-pick);
   padding: 1px 10px;
 }
@@ -372,11 +383,11 @@ legend.choice-label { padding: 0; }
    it is raised on a zero line-height, so marking a label never moves the line the label sits on. */
 .has-story { cursor: help; background: none; border: 0; padding: 0; color: inherit; text-align: inherit; }
 .has-story::after {
-  content: '*'; color: var(--grape); font-weight: 700;
+  content: '*'; color: var(--grape-deep); font-weight: var(--weight-loud);
   vertical-align: super; font-size: 0.8em; line-height: 0; margin-left: 1px;
 }
 .has-story:hover, .has-story:focus-visible {
-  color: var(--grape);
+  color: var(--grape-deep);
   text-decoration: underline dotted var(--grape); text-underline-offset: 3px;
 }
 .field-input, .field-textarea {
@@ -433,17 +444,17 @@ legend.choice-label { padding: 0; }
 }
 .voice .plain-line { margin: 0; color: var(--ink-soft); }
 .voice .story-hint { margin-top: var(--space-quarter); font-size: var(--type-micro); color: var(--whisper); }
-.voice .story-hint .story-mark { color: var(--grape); font-weight: 700; }
+.voice .story-hint .story-mark { color: var(--grape-deep); font-weight: var(--weight-loud); }
 /* The pill is showing the reader what a pill looks like, so it must not break across two lines. */
 .voice .story-hint .pill-mark {
-  color: var(--grape); border: 1px dashed var(--dash-grape); border-radius: var(--radius-pick); padding: 0 7px;
+  color: var(--grape-deep); border: 1px dashed var(--dash-grape); border-radius: var(--radius-pick); padding: 0 7px;
   white-space: nowrap;
 }
 .voice .breathing { animation: breathing 1.9s ease-in-out infinite; }
 @keyframes breathing { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 .voice .elapsed { font-family: var(--mono); font-size: var(--type-micro); color: var(--whisper); font-variant-numeric: tabular-nums; }
 @media (prefers-reduced-motion: reduce) { .voice .breathing { animation: none; } }
-.voice .headline { font-family: var(--display); font-weight: 700; font-size: var(--type-display); color: var(--grape); margin: 0 0 var(--space-half); line-height: 1.2; }
+.voice .headline { font-family: var(--display); font-weight: var(--weight-loud); font-size: var(--type-display); color: var(--grape-deep); margin: 0 0 var(--space-half); line-height: 1.2; }
 .voice .headline .sparkle { color: var(--amber); font-size: var(--type-emphasis); }
 .voice .said { margin: 0 0 var(--space-quarter); }
 .voice .said code { font-family: var(--mono); font-size: var(--type-micro); background: var(--room); border: 1px solid var(--hairline); border-radius: var(--radius-inside); padding: 1px 5px; }
@@ -455,9 +466,9 @@ legend.choice-label { padding: 0; }
 .voice .download {
   display: flex; align-items: center; gap: var(--space-half); flex-wrap: wrap;
   margin-top: var(--space-three-quarters); padding-top: var(--space-three-quarters); border-top: 1px solid var(--hairline);
-  font-family: var(--mono); font-size: var(--type-micro);
+  font-family: var(--body); font-size: var(--type-micro);
 }
-.voice .download .arrow { color: var(--ok-ink); font-weight: 700; }
+.voice .download .arrow { color: var(--ok-ink); font-weight: var(--weight-loud); }
 .voice .download a { color: var(--ink); }
 .voice .download .aside { color: var(--whisper); }
 .voice .afterward { display: flex; gap: var(--space-half); flex-wrap: wrap; margin-top: var(--space-three-quarters); }
@@ -476,10 +487,10 @@ legend.choice-label { padding: 0; }
 /* 17 Sarasa columns: "data segment MD5", the widest label a reader speaks, and one to breathe. */
 .readout-label { color: var(--whisper); flex: 0 0 calc(var(--type-micro) * 8.5); }
 .readout-value { color: var(--ink); overflow-wrap: anywhere; }
-.readout-heading { font-family: var(--mono); font-size: var(--type-micro); letter-spacing: 0.08em; color: var(--whisper); margin: var(--space-three-quarters) 0 var(--space-quarter); }
+.readout-heading { font-family: var(--body); font-size: var(--type-micro); letter-spacing: 0.08em; color: var(--whisper); margin: var(--space-three-quarters) 0 var(--space-quarter); }
 
 .bar-shelf { margin-top: var(--space-three-quarters); }
-.map-label { font-family: var(--mono); font-size: var(--type-micro); color: var(--whisper); margin: 0 0 var(--space-half); }
+.map-label { font-family: var(--body); font-size: var(--type-micro); color: var(--whisper); margin: 0 0 var(--space-half); }
 .heat-map { display: flex; height: 32px; border-radius: var(--radius-inside); overflow: hidden; border: 1px solid var(--hairline); }
 .heat-cell { flex: 1; cursor: crosshair; }
 .map-caption { font-family: var(--mono); font-size: var(--type-micro); color: var(--ink-soft); margin: var(--space-half) 0 var(--space-quarter); min-height: 1.3em; }
@@ -517,17 +528,17 @@ legend.choice-label { padding: 0; }
 .walk-more { display: flex; align-items: baseline; gap: var(--space-half); margin-top: var(--space-half); font-size: var(--type-micro); }
 
 .blob { border: 1px solid var(--hairline); border-radius: var(--radius-hold); background: #FDF9F2; margin: var(--space-quarter) 0 var(--space-three-quarters); }
-.blob-header { font-family: var(--mono); font-size: var(--type-micro); color: var(--whisper); padding: var(--space-half) var(--space-three-quarters); border-bottom: 1px solid var(--hairline); }
+.blob-header { font-family: var(--body); font-size: var(--type-micro); color: var(--whisper); padding: var(--space-half) var(--space-three-quarters); border-bottom: 1px solid var(--hairline); }
 .blob pre { margin: 0; padding: var(--space-half) var(--space-three-quarters); font-family: var(--mono); font-size: var(--type-micro); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; }
 
 .encoding-family { display: flex; gap: var(--space-half); align-items: baseline; margin: var(--space-quarter) 0; }
-.family-label { font-family: var(--mono); font-size: var(--type-micro); color: var(--whisper); flex: 0 0 84px; text-align: right; }
+.family-label { font-family: var(--body); font-size: var(--type-micro); color: var(--whisper); flex: 0 0 84px; text-align: right; }
 
 /* ------------------------------------------------------------- tutor ---- */
 
 .tutor-label {
   display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-three-quarters);
-  font-family: var(--mono); font-size: var(--type-micro); letter-spacing: 0.08em; color: var(--whisper); margin: var(--space-whole) 0 var(--space-half);
+  font-family: var(--body); font-size: var(--type-micro); letter-spacing: 0.08em; color: var(--whisper); margin: var(--space-whole) 0 var(--space-half);
 }
 .tutor-label .quiet-button { letter-spacing: 0.08em; }
 .terminal {
@@ -547,8 +558,8 @@ legend.choice-label { padding: 0; }
 
 .act { margin-top: var(--space-whole); display: flex; align-items: center; gap: var(--space-three-quarters); flex-wrap: wrap; }
 .run {
-  font-family: var(--display); font-weight: 700; font-size: var(--type-emphasis);
-  background: var(--coral); color: var(--ink-reversed);
+  font-family: var(--display); font-weight: var(--weight-loud); font-size: var(--type-emphasis);
+  background: var(--coral); color: var(--ink-on-coral);
   border: none; border-radius: var(--radius-hold);
   padding: var(--space-half) var(--space-double);
   box-shadow: 0 3px 0 rgba(198, 89, 47, 0.35);
@@ -558,11 +569,11 @@ legend.choice-label { padding: 0; }
 .run[aria-disabled="true"] { background: #EADFD2; color: #B29A82; box-shadow: none; }
 .run[aria-disabled="true"]:hover { filter: none; }
 .quiet-button {
-  font-family: var(--mono); font-size: var(--type-micro); color: var(--whisper);
+  font-family: var(--body); font-size: var(--type-text); font-weight: var(--weight-firm); color: var(--whisper);
   background: none; border: none;
   text-decoration: underline; text-underline-offset: 3px;
 }
-.quiet-button:hover { color: var(--grape); }
+.quiet-button:hover { color: var(--grape-deep); }
 
 /* --------------------------------------------------------- signature ---- */
 
@@ -577,10 +588,10 @@ legend.choice-label { padding: 0; }
   background: var(--panel); border: 1px solid var(--hairline); border-radius: var(--radius-hold);
   padding: var(--space-three-quarters) var(--space-whole); margin: var(--space-three-quarters) 0; font-size: var(--type-text); color: var(--ink-soft);
 }
-.noscript-note a { color: var(--grape); }
+.noscript-note a { color: var(--grape-deep); }
 .makers-mark { font-family: 'IM Fell English', 'Fell Stand-in', serif; font-style: italic; font-size: var(--type-text); color: var(--ink-soft); margin: 0; }
 .makers-mark a { color: var(--ink-soft); text-decoration: underline; text-underline-offset: 3px; }
-.makers-mark a:hover { color: var(--grape); }
+.makers-mark a:hover { color: var(--grape-deep); }
 
 /* ---------------------------------------------------------- dropveil ---- */
 
@@ -594,7 +605,7 @@ legend.choice-label { padding: 0; }
   pointer-events: none; z-index: 50;
 }
 .dropveil span {
-  font-family: var(--mono); font-size: var(--type-text); color: var(--grape);
+  font-family: var(--body); font-size: var(--type-text); color: var(--grape-deep);
   background: var(--panel); border: 1px solid var(--hairline);
   border-radius: var(--radius-hold); padding: var(--space-three-quarters) var(--space-whole);
 }
