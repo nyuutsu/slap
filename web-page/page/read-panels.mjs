@@ -94,12 +94,13 @@ export const heatModel = (regions, summary) => {
   return { domain, bucketCount, bucketSpan, changed };
 };
 
-// Calm sand for untouched stretches; any change at all reads warm, and more reads hotter.
+// Pale for untouched stretches, darker as more of a stretch changes. The stops are the legend's own,
+// so the bar and the scale beneath it cannot drift apart.
 const heatColor = (changedFraction) => {
-  if (changedFraction <= 0) return '#EDE4D6';
+  if (changedFraction <= 0) return '#EFE6F2';
   const eased = 0.3 + 0.7 * Math.sqrt(Math.min(1, changedFraction));
   const blend = (calm, hot) => Math.round(calm + (hot - calm) * eased);
-  return `rgb(${blend(246, 242)}, ${blend(201, 107)}, ${blend(162, 67)})`;
+  return `rgb(${blend(239, 108)}, ${blend(230, 45)}, ${blend(242, 128)})`;
 };
 
 export const heatBarMarkup = (model) => html`
