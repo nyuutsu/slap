@@ -9,7 +9,7 @@ export const groupMarkup = (heading, body, groupId) =>
 // One garment for every aside the context raises, so text that came from what you just chose looks the part.
 const admonitionFaces = { note: 'art/note.webp', warning: 'art/warning.webp' };
 export const admonitionMarkup = (kind, spokenContents) => html`<p class="advisory${kind === 'note' ? ' note' : ''}">
-  <img class="advisory-face" src="${admonitionFaces[kind]}" alt="" width="20" height="20">
+  <img class="advisory-face" src="${admonitionFaces[kind]}" alt="" width="128" height="128">
   <span>${spokenContents}</span></p>`;
 
 // The checkbox is dressed as a chip but kept, hidden and real,

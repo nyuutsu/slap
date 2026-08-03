@@ -2,7 +2,7 @@
   <!-- The sticker, slap's masthead standing alone: the card image, and every install-sized icon.
      Cut with: rsvg-convert -w N*8 -h N*8 slap-card.svg | magick - -filter Lanczos -resize NxN slap-card-N.png
      (rendered eight times over and downsampled, because a border and a wordmark land badly on whole pixels) -->
-  <rect width="1200" height="1200" fill="#FBF4EA"/>
+  <rect width="1200" height="1200" fill="#E7F3EE"/>
   <g transform="rotate(-4 600.0 600.0)">
     <rect x="192.00" y="438.19" width="816.00" height="351.11"
           rx="175.56" fill="#5A3327" opacity="0.12"/>
