@@ -61,26 +61,6 @@ export const embeddedContentsOf = (info) =>
 
 /* ------------------------------------------------------------- explain ---- */
 
-const copyCategory = matcherOver(CopySource, {
-  FromSource: () => 'copy-source',
-  FromTarget: () => 'copy-target',
-  FromPatch:  () => 'copy-patch',
-});
-
-const payloadCategory = matcherOver(Payload, {
-  Write: () => 'write',
-  Fill:  () => 'fill',
-  XOR:   () => 'xor',
-  Meta:  () => 'meta',
-  Copy:  (copySource) => copyCategory(copySource),
-});
-
-const categoryWords = {
-  'copy-source': 'kept from the source', 'copy-target': 'copied from earlier output',
-  'copy-patch': 'copied from the patch', write: 'new bytes', fill: 'a fill',
-  xor: 'an XOR delta', meta: 'structural',
-};
-
 // A region leaves the file as it was only when it copies the source from the very offset it lands on.
 // Everything else — writes, fills, XORs, moved copies — changes what's there.
 const leavesBytesAsTheyWere = (region) =>
@@ -245,21 +225,14 @@ const payloadGlimpse = matcherOver(Payload, {
 
 const walkRow = (region) => html`
   <div class="walk-row">
-    <span class="walk-op"><span class="dot ${payloadCategory(region.regionPayload)}"></span>${region.regionLabel.trim()}</span>
+    <span class="walk-op">${region.regionLabel.trim()}</span>
     <span class="walk-offset">${hexOffset(region.regionOffset)}</span>
     <span class="walk-size">${humanByteSize(region.regionSize)}</span>
     <span class="walk-detail">${annotationPhrase(region.regionAnnotation)}</span>
   </div>
   ${payloadGlimpse(region.regionPayload)}`;
 
-export const walkLegendMarkup = (regions) => {
-  const present = [...new Set(regions.map((region) => payloadCategory(region.regionPayload)))];
-  return html`<div class="legend">${present.map((category) => html`
-    <span class="legend-entry"><span class="dot ${category}"></span>${categoryWords[category]}</span>`)}</div>`;
-};
-
 export const walkMarkup = (regions, rowsShown) => html`
-  ${walkLegendMarkup(regions)}
   <div class="walk">${regions.slice(0, rowsShown).map(walkRow)}</div>
   ${regions.length > rowsShown ? html`<div class="walk-more">
     <button type="button" class="quiet-button" data-action="walk-more">show 2,000 more</button>

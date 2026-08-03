@@ -1,4 +1,5 @@
-/* The room: warm cream, grape identity, coral for the one main action.
+/* The room: warm cream under near-neutral ink, with grape the one hue the interface speaks in.
+   The fellow keeps his own oranges, being a drawing rather than a decision, and is the only thing wearing them.
    Joy lives at the hello and the payoff; the working surfaces stay calm. */
 
 @font-face { font-family: 'Baloo 2';            src: url(fonts/baloo2.woff2) format('woff2');                       font-weight: 400 800; font-display: swap; }
@@ -31,29 +32,20 @@
 :root {
   --room: #FBF4EA;
   --panel: #FFFFFF;
-  --hairline: #ECD9C4;
+  --hairline: #CCBCA7;
   --ink: #3D3A34;
-  --ink-soft: #7A5647;
-  --whisper: #7E6A54;
-  /* A saturated fill names the ink that reads on it, and only ever carries that ink at --weight-loud:
+  --ink-quiet: #6B5A4C;
+  /* Grape is the only fill words ever sit on, and they sit on it at --weight-loud:
      thin strokes on a saturated ground bloom into it, which is the glare, not the hue. */
   --ink-on-grape: #FFFFFF;
-  --ink-on-coral: #4A1F0B;
 
   --grape: #8E44AD;
   --grape-tint: #F5EDF9;
   /* a word in the grape hue on a light ground takes this one, dark enough for tint, room, or panel */
   --grape-deep: #6C2D83;
-  --coral: #F26B43;
-  --coral-deep: #C6592F;
-  --amber: #E8912B;
-  /* the bright coral and amber carry no words in their own hue: anything read in either takes the ink below it */
-  --coral-ink: #A8431E;
-  --amber-ink: #9A5F0D;
 
-  /* a dash marks what is not filled or opened yet, in the family of the words it stands with */
-  --dash-warm: #A9885C;
-  --dash-grape: #A873C2;
+  /* a dash marks what is not filled or opened yet */
+  --dash: #9E8F94;
 
   --ok-ink: #3E5A34;     --ok-room: #F2F7EE;      --ok-line: #CFE3C4;
   --caution-ink: #8A5A2F; --caution-room: #FFF3E6; --caution-line: #E7D2A8;
@@ -68,6 +60,7 @@
      Set when the labels were monospace and 19 columns wide; Nunito at this size is narrower,
      so it still clears the longest label ("omit verification", plus its story asterisk) with room left over. */
   --label-column: calc(var(--type-micro) * 9.5);
+
 
   /* The weights of speech. Anything small, and anything on a saturated fill, takes firm or louder. */
   --weight-plain: 400;     /* prose at reading size */
@@ -212,7 +205,7 @@ button { font: inherit; cursor: pointer; }
 }
 .verb {
   font-family: var(--body); font-size: var(--type-text); font-weight: var(--weight-firm);
-  background: none; border: none; color: var(--whisper);
+  background: none; border: none; color: var(--ink-quiet);
   padding: var(--space-half) var(--space-three-quarters); margin-bottom: -1px;
   border-bottom: 2px solid transparent;
 }
@@ -227,11 +220,11 @@ button { font: inherit; cursor: pointer; }
 .sentence.second { margin-top: calc(-1 * var(--space-half)); }
 .swap-line { margin: calc(-1 * var(--space-quarter)) 0 2px; }
 .slot { background: none; border: none; padding: 0 5px; font: inherit; line-height: 1.45; }
-.slot.empty { color: var(--whisper); border-bottom: 2px dashed var(--dash-warm); }
+.slot.empty { color: var(--ink-quiet); border-bottom: 2px dashed var(--dash); }
 .slot.empty:hover { color: var(--grape-deep); border-bottom-color: var(--grape); }
 .slot.filled { color: var(--ink); border-bottom: 2px solid var(--grape); }
 /* a blank slap knows you still owe it, in the colour the page keeps for things not yet answered */
-.slot.empty.owed { color: var(--grape-deep); border-bottom-color: var(--dash-grape); }
+.slot.empty.owed { color: var(--grape-deep); border-bottom-color: var(--dash); }
 /* a storied slot keeps the seat's dashes: the asterisk already says the fellow will speak */
 .slot.has-story:hover, .slot.has-story:focus-visible { text-decoration: none; }
 .slot.inert { cursor: default; }
@@ -242,7 +235,7 @@ button { font: inherit; cursor: pointer; }
   position: absolute; left: 50%; transform: translateX(-50%); top: 100%;
   margin-top: calc(-1 * var(--space-half)); white-space: nowrap;
   font-family: var(--body); font-size: var(--type-micro); line-height: 1;
-  color: var(--whisper); pointer-events: none;
+  color: var(--ink-quiet); pointer-events: none;
 }
 .format-chip {
   font-family: var(--body); font-size: var(--type-micro); font-weight: var(--weight-firm);
@@ -254,7 +247,7 @@ button { font: inherit; cursor: pointer; }
 /* --------------------------------------------------- cards and groups ---- */
 
 .facts-card, .group {
-  background: var(--panel);
+  background: var(--room);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-hold);
   padding: var(--space-three-quarters) var(--space-whole);
@@ -262,16 +255,16 @@ button { font: inherit; cursor: pointer; }
 }
 .facts-card .file-line { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-half); flex-wrap: wrap; }
 .facts-card .file-name { font-family: var(--body); font-size: var(--type-text); }
-.facts-card .file-size { font-family: var(--mono); font-size: var(--type-micro); color: var(--whisper); }
-.facts-card .hashes { font-family: var(--mono); font-size: var(--type-micro); color: var(--whisper); margin-top: var(--space-half); line-height: 1.9; overflow-wrap: anywhere; }
+.facts-card .file-size { font-family: var(--mono); font-size: var(--type-micro); color: var(--ink-quiet); }
+.facts-card .hashes { font-family: var(--mono); font-size: var(--type-micro); color: var(--ink-quiet); margin-top: var(--space-half); line-height: 1.9; overflow-wrap: anywhere; }
 .facts-card .hashes b { color: var(--ink); font-weight: var(--weight-plain); }
 
 .verdict { display: flex; gap: var(--space-half); align-items: flex-start; margin-top: var(--space-three-quarters); padding-top: var(--space-half); border-top: 1px solid var(--hairline); font-size: var(--type-text); }
 .verdict .mark { font-family: var(--body); font-weight: var(--weight-loud); font-size: var(--type-emphasis); line-height: 1.1; flex: none; }
 .verdict.good     { color: var(--ok-ink); }
 .verdict.puzzled  { color: var(--caution-ink); }
-.verdict.shrug    { color: var(--ink-soft); }
-.verdict.waiting  { color: var(--whisper); }
+.verdict.shrug    { color: var(--ink-quiet); }
+.verdict.waiting  { color: var(--ink-quiet); }
 .verdict code { font-family: var(--mono); font-size: var(--type-micro); background: var(--room); border: 1px solid var(--hairline); border-radius: var(--radius-inside); padding: 1px 5px; }
 .mismatch-line { display: block; margin-top: var(--space-quarter); }
 .rescue-line { margin: var(--space-half) 0 0; }
@@ -279,10 +272,10 @@ button { font: inherit; cursor: pointer; }
 
 .group h3 {
   font-family: var(--body); font-size: var(--type-micro); font-weight: var(--weight-loud);
-  letter-spacing: 0.08em; color: var(--whisper);
+  letter-spacing: 0.08em; color: var(--ink-quiet);
   margin: 0 0 var(--space-half);
 }
-.group .aside { color: var(--whisper); font-size: var(--type-micro); margin: var(--space-half) 0 0; }
+.group .aside { color: var(--ink-quiet); font-size: var(--type-micro); margin: var(--space-half) 0 0; }
 .group > .aside:first-child { margin-top: 0; }
 .group .aside.explainer { margin: 0 0 var(--space-half); }
 
@@ -291,7 +284,7 @@ button { font: inherit; cursor: pointer; }
   font-size: var(--type-micro); border-radius: var(--radius-hold); padding: var(--space-half) var(--space-three-quarters); margin: var(--space-half) 0 0;
   background: var(--caution-room); border: 1px solid var(--caution-line); color: var(--caution-ink);
 }
-.advisory.note { background: var(--room); border-color: var(--hairline); color: var(--ink-soft); }
+.advisory.note { background: var(--room); border-color: var(--hairline); color: var(--ink-quiet); }
 .advisory-face { flex: none; margin-top: 1px; }
 
 .choice-row { display: flex; gap: var(--space-half); flex-wrap: wrap; margin: var(--space-quarter) 0; }
@@ -305,14 +298,14 @@ button { font: inherit; cursor: pointer; }
 }
 .chip:hover { border-color: var(--grape); }
 .chip.on { background: var(--grape); border-color: var(--grape); color: var(--ink-on-grape); font-weight: var(--weight-loud); }
-.choice-label { font-family: var(--body); font-size: var(--type-micro); font-weight: var(--weight-firm); color: var(--whisper); margin: var(--space-three-quarters) 0 var(--space-quarter); }
+.choice-label { font-family: var(--body); font-size: var(--type-micro); font-weight: var(--weight-firm); color: var(--ink-quiet); margin: var(--space-three-quarters) 0 var(--space-quarter); }
 
 .toggle { display: flex; align-items: center; gap: var(--space-half); margin: var(--space-half) 0 2px; }
 .toggle + .toggle { border-top: 1px solid var(--hairline); padding-top: var(--space-half); }
 .toggle-input { position: absolute; opacity: 0; pointer-events: none; }
 .toggle-chip { cursor: pointer; }
 /* the tick's seat is never empty: a hollow ring holds it while off, so the chip reads fillable and never shifts */
-.toggle-chip::before { content: '○'; display: inline-block; width: 1.2em; color: var(--whisper); }
+.toggle-chip::before { content: '○'; display: inline-block; width: 1.2em; color: var(--ink-quiet); }
 .toggle-input:checked + .toggle-chip { background: var(--grape); border-color: var(--grape); color: var(--ink-on-grape); font-weight: var(--weight-loud); }
 .toggle-input:checked + .toggle-chip::before { content: '✓'; color: inherit; }
 .toggle-input:focus-visible + .toggle-chip { outline: 2px solid var(--grape); outline-offset: 2px; }
@@ -323,39 +316,39 @@ button { font: inherit; cursor: pointer; }
 label.chip, label.tile { cursor: pointer; }
 .choice-fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 legend.choice-label { padding: 0; }
-.toggle .why { color: var(--whisper); font-family: var(--body); font-size: var(--type-micro); }
+.toggle .why { color: var(--ink-quiet); font-family: var(--body); font-size: var(--type-micro); }
 
 /* ------------------------------------------------------------ create ---- */
 
 .tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-half); margin: var(--space-quarter) 0 var(--space-half); }
 .tile {
   display: flex; flex-direction: column; gap: var(--space-quarter); text-align: left;
-  background: var(--room); border: 1px solid var(--hairline); border-radius: var(--radius-hold);
+  background: var(--panel); border: 1px solid var(--hairline); border-radius: var(--radius-hold);
   padding: var(--space-three-quarters) var(--space-three-quarters); font: inherit; cursor: pointer;
 }
 .tile:hover { border-color: var(--grape); }
 .tile.on { border-color: var(--grape); background: var(--grape-tint); }
 .tile-name { font-family: var(--display); font-weight: var(--weight-loud); font-size: var(--type-text); color: var(--ink); }
 .tile.on .tile-name { color: var(--grape-deep); }
-.tile-copy { font-size: var(--type-micro); color: var(--ink-soft); line-height: 1.45; }
+.tile-copy { font-size: var(--type-micro); color: var(--ink-quiet); line-height: 1.45; }
 
 /* the dashed border borrows the empty slot's promise of more; the chip shape previews what unfolds */
 .more-chip {
   font-family: var(--body); font-size: var(--type-text); font-weight: var(--weight-firm);
   color: var(--grape-deep); background: none;
-  border: 1px dashed var(--dash-grape); border-radius: var(--radius-pick);
+  border: 1px dashed var(--dash); border-radius: var(--radius-pick);
   padding: var(--space-half) var(--space-three-quarters);
 }
 .more-chip:hover { border-color: var(--grape); background: var(--grape-tint); }
 .more-chip.open { border-style: solid; }
 
 .field { display: flex; align-items: baseline; gap: var(--space-half); margin: var(--space-half) 0; flex-wrap: wrap; }
-.field-label { font-family: var(--body); font-size: var(--type-micro); font-weight: var(--weight-firm); color: var(--whisper); flex: 0 0 var(--label-column); }
+.field-label { font-family: var(--body); font-size: var(--type-micro); font-weight: var(--weight-firm); color: var(--ink-quiet); flex: 0 0 var(--label-column); }
 /* the gloss takes the whole line under the control it speaks for, standing where the control stands */
 .field-gloss { flex: 0 0 100%; margin: 2px 0 0 calc(var(--label-column) + var(--space-half));
-               color: var(--ink-soft); font-size: var(--type-micro); }
-.field .why, .choice-label .why { color: var(--whisper); font-family: var(--body); font-size: var(--type-micro); flex: none; }
-.byte-count { font-family: var(--mono); font-size: var(--type-micro); color: var(--whisper); flex: none; }
+               color: var(--ink-quiet); font-size: var(--type-micro); }
+.field .why, .choice-label .why { color: var(--ink-quiet); font-family: var(--body); font-size: var(--type-micro); flex: none; }
+.byte-count { font-family: var(--mono); font-size: var(--type-micro); color: var(--ink-quiet); flex: none; }
 .byte-count.over-ceiling { color: var(--caution-ink); }
 /* inline-flex, so the chip inside is sized by its padding exactly like its free-standing peers;
    as inline content its padding would paint without counting, leaving a short box the row would center. */
@@ -363,14 +356,14 @@ legend.choice-label { padding: 0; }
 .chip-stack .role-whisper { margin-top: 2px; }
 /* the hanging whisper needs headroom when the row wraps, and below the row either way */
 .choice-row:has(.chip-stack) { row-gap: var(--space-whole); margin-bottom: var(--space-whole); }
-.choice-gloss { color: var(--ink-soft); font-size: var(--type-micro); margin: var(--space-quarter) 0 2px; }
+.choice-gloss { color: var(--ink-quiet); font-size: var(--type-micro); margin: var(--space-quarter) 0 2px; }
 /* The sentence's format blank. Its neighbours are seats that open when pressed; this one is answered in the
    group below, so it wears that group's dress — the quiet-formats chip, in the sentence's own face, since a
    sentence never mixes typefaces — and fills solid once a format is chosen. */
 .format-seat {
   font: inherit; line-height: 1.45; display: inline-block;
   color: var(--grape-deep); background: none;
-  border: 1px dashed var(--dash-grape); border-radius: var(--radius-pick);
+  border: 1px dashed var(--dash); border-radius: var(--radius-pick);
   padding: 1px 10px;
 }
 .format-seat.chosen { border-style: solid; border-color: var(--hairline); background: var(--grape-tint); }
@@ -399,13 +392,13 @@ legend.choice-label { padding: 0; }
 .field-input[type="number"] { flex: 0 0 auto; width: 11ch; appearance: textfield; }
 .field-input[type="number"]::-webkit-outer-spin-button,
 .field-input[type="number"]::-webkit-inner-spin-button { appearance: none; margin: 0; }
-.field-input:invalid { border-color: var(--coral-deep); }
+.field-input:invalid { border-color: var(--caution-ink); }
 .field-textarea { width: 100%; min-height: 64px; resize: vertical; margin-top: var(--space-quarter); }
 .counted-lane .byte-count { display: block; text-align: right; margin-top: 3px; }
 
 /* A way out is the friendliest thing in a blocked answer, so it is dressed as speech and only the mark is faint. */
-.way-out { margin: 2px 0 var(--space-quarter); padding-left: 1em; text-indent: -1em; color: var(--ink-soft); }
-.way-out::before { content: '· '; color: var(--whisper); }
+.way-out { margin: 2px 0 var(--space-quarter); padding-left: 1em; text-indent: -1em; color: var(--ink-quiet); }
+.way-out::before { content: '· '; color: var(--ink-quiet); }
 
 /* ------------------------------------------------------------ answer ---- */
 
@@ -442,27 +435,27 @@ legend.choice-label { padding: 0; }
   padding: var(--space-three-quarters) var(--space-whole);
   box-shadow: 0 6px 16px rgba(90, 51, 39, 0.18);
 }
-.voice .plain-line { margin: 0; color: var(--ink-soft); }
-.voice .story-hint { margin-top: var(--space-quarter); font-size: var(--type-micro); color: var(--whisper); }
+.voice .plain-line { margin: 0; color: var(--ink-quiet); }
+.voice .story-hint { margin-top: var(--space-quarter); font-size: var(--type-micro); color: var(--ink-quiet); }
 .voice .story-hint .story-mark { color: var(--grape-deep); font-weight: var(--weight-loud); }
 /* The pill is showing the reader what a pill looks like, so it must not break across two lines. */
 .voice .story-hint .pill-mark {
-  color: var(--grape-deep); border: 1px dashed var(--dash-grape); border-radius: var(--radius-pick); padding: 0 7px;
+  color: var(--grape-deep); border: 1px dashed var(--dash); border-radius: var(--radius-pick); padding: 0 7px;
   white-space: nowrap;
 }
 .voice .breathing { animation: breathing 1.9s ease-in-out infinite; }
 @keyframes breathing { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-.voice .elapsed { font-family: var(--mono); font-size: var(--type-micro); color: var(--whisper); font-variant-numeric: tabular-nums; }
+.voice .elapsed { font-family: var(--mono); font-size: var(--type-micro); color: var(--ink-quiet); font-variant-numeric: tabular-nums; }
 @media (prefers-reduced-motion: reduce) { .voice .breathing { animation: none; } }
 .voice .headline { font-family: var(--display); font-weight: var(--weight-loud); font-size: var(--type-display); color: var(--grape-deep); margin: 0 0 var(--space-half); line-height: 1.2; }
-.voice .headline .sparkle { color: var(--amber); font-size: var(--type-emphasis); }
+.voice .headline .sparkle { color: var(--grape); font-size: var(--type-emphasis); }
 .voice .said { margin: 0 0 var(--space-quarter); }
 .voice .said code { font-family: var(--mono); font-size: var(--type-micro); background: var(--room); border: 1px solid var(--hairline); border-radius: var(--radius-inside); padding: 1px 5px; }
 /* A refusal is slap saying what a file is, not an alarm — the monospace is the whole of its register.
-   The coral is kept for the one card where something is actually broken: a boot that did not happen. */
+   Caution's ink is kept for the one card where something is actually broken: a boot that did not happen. */
 .voice .refusal { font-family: var(--mono); font-size: var(--type-micro); white-space: pre-wrap; margin: 0 0 var(--space-quarter); color: var(--ink); }
-.voice .boot-detail { color: var(--coral-ink); }
-.voice .boot-stamp { margin: var(--space-half) 0 0; font-size: var(--type-micro); color: var(--whisper); }
+.voice .boot-detail { color: var(--caution-ink); }
+.voice .boot-stamp { margin: var(--space-half) 0 0; font-size: var(--type-micro); color: var(--ink-quiet); }
 .voice .download {
   display: flex; align-items: center; gap: var(--space-half); flex-wrap: wrap;
   margin-top: var(--space-three-quarters); padding-top: var(--space-three-quarters); border-top: 1px solid var(--hairline);
@@ -470,7 +463,7 @@ legend.choice-label { padding: 0; }
 }
 .voice .download .arrow { color: var(--ok-ink); font-weight: var(--weight-loud); }
 .voice .download a { color: var(--ink); }
-.voice .download .aside { color: var(--whisper); }
+.voice .download .aside { color: var(--ink-quiet); }
 .voice .afterward { display: flex; gap: var(--space-half); flex-wrap: wrap; margin-top: var(--space-three-quarters); }
 
 /* ---------------------------------------------------- read verb panels ---- */
@@ -485,31 +478,19 @@ legend.choice-label { padding: 0; }
 .readout { font-family: var(--mono); font-size: var(--type-micro); line-height: 1.6; }
 .readout-row { display: flex; gap: var(--space-three-quarters); padding: 3px 0; }
 /* 17 Sarasa columns: "data segment MD5", the widest label a reader speaks, and one to breathe. */
-.readout-label { color: var(--whisper); flex: 0 0 calc(var(--type-micro) * 8.5); }
+.readout-label { color: var(--ink-quiet); flex: 0 0 calc(var(--type-micro) * 8.5); }
 .readout-value { color: var(--ink); overflow-wrap: anywhere; }
-.readout-heading { font-family: var(--body); font-size: var(--type-micro); letter-spacing: 0.08em; color: var(--whisper); margin: var(--space-three-quarters) 0 var(--space-quarter); }
+.readout-heading { font-family: var(--body); font-size: var(--type-micro); letter-spacing: 0.08em; color: var(--ink-quiet); margin: var(--space-three-quarters) 0 var(--space-quarter); }
 
 .bar-shelf { margin-top: var(--space-three-quarters); }
-.map-label { font-family: var(--body); font-size: var(--type-micro); color: var(--whisper); margin: 0 0 var(--space-half); }
+.map-label { font-family: var(--body); font-size: var(--type-micro); color: var(--ink-quiet); margin: 0 0 var(--space-half); }
 .heat-map { display: flex; height: 32px; border-radius: var(--radius-inside); overflow: hidden; border: 1px solid var(--hairline); }
 .heat-cell { flex: 1; cursor: crosshair; }
-.map-caption { font-family: var(--mono); font-size: var(--type-micro); color: var(--ink-soft); margin: var(--space-half) 0 var(--space-quarter); min-height: 1.3em; }
-.heat-legend { display: flex; align-items: center; gap: var(--space-half); font-size: var(--type-micro); color: var(--whisper); margin: 2px 0 var(--space-three-quarters); }
+.map-caption { font-family: var(--mono); font-size: var(--type-micro); color: var(--ink-quiet); margin: var(--space-half) 0 var(--space-quarter); min-height: 1.3em; }
+.heat-legend { display: flex; align-items: center; gap: var(--space-half); font-size: var(--type-micro); color: var(--ink-quiet); margin: 2px 0 var(--space-three-quarters); }
 .heat-scale { width: 72px; height: 9px; border-radius: var(--radius-inside); border: 1px solid var(--hairline);
-              background: linear-gradient(to right, #EDE4D6, #F6C9A2, #F26B43); }
+              background: linear-gradient(to right, #EFE6F2, #B99AC5, #6C2D83); }
 
-.legend { display: flex; gap: var(--space-three-quarters); flex-wrap: wrap; font-size: var(--type-micro); color: var(--ink-soft); margin: var(--space-quarter) 0 var(--space-half); }
-.legend-entry { display: flex; align-items: center; gap: var(--space-quarter); }
-.dot { width: 9px; height: 9px; border-radius: var(--radius-inside); flex: none; }
-
-/* one color per AnalysisPayload category, nothing invented */
-.dot.copy-source { background: #CDC3B4; }
-.dot.copy-target { background: #5F9A8B; }
-.dot.copy-patch { background: #7D7FB0; }
-.dot.write { background: #CF8A3D; }
-.dot.fill { background: #B6ADA0; }
-.dot.xor { background: #9B7FC0; }
-.dot.meta { background: #B0A18C; }
 
 .walk {
   font-family: var(--mono); font-size: var(--type-micro);
@@ -521,24 +502,24 @@ legend.choice-label { padding: 0; }
 }
 .walk-row { display: flex; gap: var(--space-three-quarters); align-items: baseline; padding: var(--space-quarter) 0; border-bottom: 1px solid var(--room); flex-wrap: wrap; }
 .walk-op { display: flex; align-items: center; gap: var(--space-half); flex: 0 0 var(--walk-operation-column); }
-.walk-offset { color: var(--whisper); flex: 0 0 var(--walk-offset-column); }
+.walk-offset { color: var(--ink-quiet); flex: 0 0 var(--walk-offset-column); }
 .walk-size { flex: 0 0 var(--walk-size-column); }
-.walk-detail { color: var(--whisper); }
-.walk-hex { color: var(--amber-ink); font-size: var(--type-micro); letter-spacing: 0.04em; padding: 1px 0 5px calc(var(--walk-operation-column) + var(--space-three-quarters)); overflow-wrap: anywhere; }
+.walk-detail { color: var(--ink-quiet); }
+.walk-hex { color: var(--ink-quiet); font-size: var(--type-micro); letter-spacing: 0.04em; padding: 1px 0 5px calc(var(--walk-operation-column) + var(--space-three-quarters)); overflow-wrap: anywhere; }
 .walk-more { display: flex; align-items: baseline; gap: var(--space-half); margin-top: var(--space-half); font-size: var(--type-micro); }
 
-.blob { border: 1px solid var(--hairline); border-radius: var(--radius-hold); background: #FDF9F2; margin: var(--space-quarter) 0 var(--space-three-quarters); }
-.blob-header { font-family: var(--body); font-size: var(--type-micro); color: var(--whisper); padding: var(--space-half) var(--space-three-quarters); border-bottom: 1px solid var(--hairline); }
+.blob { border: 1px solid var(--hairline); border-radius: var(--radius-hold); background: var(--room); margin: var(--space-quarter) 0 var(--space-three-quarters); }
+.blob-header { font-family: var(--body); font-size: var(--type-micro); color: var(--ink-quiet); padding: var(--space-half) var(--space-three-quarters); border-bottom: 1px solid var(--hairline); }
 .blob pre { margin: 0; padding: var(--space-half) var(--space-three-quarters); font-family: var(--mono); font-size: var(--type-micro); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; }
 
 .encoding-family { display: flex; gap: var(--space-half); align-items: baseline; margin: var(--space-quarter) 0; }
-.family-label { font-family: var(--body); font-size: var(--type-micro); color: var(--whisper); flex: 0 0 84px; text-align: right; }
+.family-label { font-family: var(--body); font-size: var(--type-micro); color: var(--ink-quiet); flex: 0 0 84px; text-align: right; }
 
 /* ------------------------------------------------------------- tutor ---- */
 
 .tutor-label {
   display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-three-quarters);
-  font-family: var(--body); font-size: var(--type-micro); letter-spacing: 0.08em; color: var(--whisper); margin: var(--space-whole) 0 var(--space-half);
+  font-family: var(--body); font-size: var(--type-micro); letter-spacing: 0.08em; color: var(--ink-quiet); margin: var(--space-whole) 0 var(--space-half);
 }
 .tutor-label .quiet-button { letter-spacing: 0.08em; }
 .terminal {
@@ -559,17 +540,17 @@ legend.choice-label { padding: 0; }
 .act { margin-top: var(--space-whole); display: flex; align-items: center; gap: var(--space-three-quarters); flex-wrap: wrap; }
 .run {
   font-family: var(--display); font-weight: var(--weight-loud); font-size: var(--type-emphasis);
-  background: var(--coral); color: var(--ink-on-coral);
+  background: var(--grape); color: var(--ink-on-grape);
   border: none; border-radius: var(--radius-hold);
   padding: var(--space-half) var(--space-double);
-  box-shadow: 0 3px 0 rgba(198, 89, 47, 0.35);
+  box-shadow: 0 3px 0 rgba(106, 45, 128, 0.35);
 }
 .run:hover { filter: brightness(1.05); }
 /* a run that is not ready stays dim, and answers a pointer by outlining everything it is still waiting on */
-.run[aria-disabled="true"] { background: #EADFD2; color: #B29A82; box-shadow: none; }
+.run[aria-disabled="true"] { background: #E7E2E4; color: #9A9095; box-shadow: none; }
 .run[aria-disabled="true"]:hover { filter: none; }
 .quiet-button {
-  font-family: var(--body); font-size: var(--type-text); font-weight: var(--weight-firm); color: var(--whisper);
+  font-family: var(--body); font-size: var(--type-text); font-weight: var(--weight-firm); color: var(--ink-quiet);
   background: none; border: none;
   text-decoration: underline; text-underline-offset: 3px;
 }
@@ -586,11 +567,11 @@ legend.choice-label { padding: 0; }
 /* the one thing a page whose work is all script can still say for itself */
 .noscript-note {
   background: var(--panel); border: 1px solid var(--hairline); border-radius: var(--radius-hold);
-  padding: var(--space-three-quarters) var(--space-whole); margin: var(--space-three-quarters) 0; font-size: var(--type-text); color: var(--ink-soft);
+  padding: var(--space-three-quarters) var(--space-whole); margin: var(--space-three-quarters) 0; font-size: var(--type-text); color: var(--ink-quiet);
 }
 .noscript-note a { color: var(--grape-deep); }
-.makers-mark { font-family: 'IM Fell English', 'Fell Stand-in', serif; font-style: italic; font-size: var(--type-text); color: var(--ink-soft); margin: 0; }
-.makers-mark a { color: var(--ink-soft); text-decoration: underline; text-underline-offset: 3px; }
+.makers-mark { font-family: 'IM Fell English', 'Fell Stand-in', serif; font-style: italic; font-size: var(--type-text); color: var(--ink-quiet); margin: 0; }
+.makers-mark a { color: var(--ink-quiet); text-decoration: underline; text-underline-offset: 3px; }
 .makers-mark a:hover { color: var(--grape-deep); }
 
 /* ---------------------------------------------------------- dropveil ---- */
