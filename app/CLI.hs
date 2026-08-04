@@ -55,8 +55,7 @@ import Slap.XDelta1.Types (XDelta1FromName(..), XDelta1ToName(..))
 import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor, secondaryCompressorTokens)
 import Slap.VCDIFF.Types (EmissionWindowSize, emissionWindowSizeOfBytes)
 import Slap.Constraint (Constraint(..), constraintFlagName)
-import Slap.Dialect (Dialect(..), dialectFlagName)
-import Slap.PPF1.Types (PPF1Origin(..))
+import Slap.Dialect (Dialect(..), PatchOrigin(..), dialectFlagName)
 import Slap.IPS.Types (SMCShapeRequirement(..))
 import Slap.PPF3.Types (PPF3ImageType)
 import Slap.PlatformType (PlatformType)
@@ -603,15 +602,15 @@ constraintsParser = do
 -- 'dialectFlagName' is the single source of truth for the flag spelling.
 dialectsParser :: Parser RequestedDialects
 dialectsParser = do
-  ppf1Origin <- flag PPF1OriginPC PPF1OriginAmiga
-    ( long (Text.unpack (dialectFlagName PPF1OriginAxis))
-   <> help ("Read PPF1 offsets as big-endian rather than little-endian. PPF1 carries no"
-         ++ " endianness marker, and the reference applier reads offsets in host byte order,"
-         ++ " so PC and Amiga PPF1 patches don't interoperate."
+  patchOrigin <- flag OriginPC OriginAmiga
+    ( long (Text.unpack (dialectFlagName PatchOriginAxis))
+   <> help ("Read a PPF1 or PPF2 patch's offsets as big-endian rather than little-endian. These formats carry no"
+         ++ " endianness marker, and their reference tools read offsets in host byte order,"
+         ++ " so PC-origin and Amiga-origin patches don't interoperate."
          ++ " The default (little-endian) is right for every PC-origin patch")
     )
   pure RequestedDialects
-    { requestedPPF1Origin = ppf1Origin
+    { requestedPatchOrigin = patchOrigin
     }
 
 -- | Parser for @--with INPUT@ plus its sub-flags @--no-verify@, @--add-header@, and @--remove-header@.

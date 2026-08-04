@@ -18,7 +18,7 @@ const atRest = () => ({
   patched: null, patchedFacts: null,
   verdict: null,
   verificationPolicy: 'EnforceVerification',
-  ppf1Origin: 'PPF1OriginPC',
+  patchOrigin: 'OriginPC',
   act: { tag: 'AtRest' },
 });
 
@@ -44,7 +44,7 @@ export const makeUndoVerb = (host) => {
 
   const declaration = () => ({
     declaredUndoVerificationPolicy: undo.verificationPolicy,
-    declaredUndoDialects: { requestedPPF1Origin: undo.ppf1Origin },
+    declaredUndoDialects: { requestedPatchOrigin: undo.patchOrigin },
   });
 
   const undoAnswer = () => undo.patchIdentity?.answered?.spokenIdentityUndo;
@@ -67,7 +67,7 @@ export const makeUndoVerb = (host) => {
 
   const askIdentity = () => {
     if (!undo.patch) return;
-    host.ask('identify', { patch: undo.patch, declaration: identifyDeclaration(undo.ppf1Origin, 'utf-8') })
+    host.ask('identify', { patch: undo.patch, declaration: identifyDeclaration(undo.patchOrigin, 'utf-8') })
       ?.then(host.wheneverStillCurrent((answer) => { undo.patchIdentity = answer; askWeighing(); }))
       .catch(host.askFailed);
   };
@@ -104,7 +104,7 @@ export const makeUndoVerb = (host) => {
       undo.patch = file;
       undo.patchIdentity = null;
       // a stale toggle can't ride onto a patch it might not fit
-      undo.ppf1Origin = 'PPF1OriginPC';
+      undo.patchOrigin = 'OriginPC';
     } else {
       undo.patched = file;
       undo.patchedFacts = null;
@@ -125,7 +125,7 @@ export const makeUndoVerb = (host) => {
     undo.patchIdentity = null;
     undo.patchedFacts = null;
     undo.verdict = null;
-    undo.ppf1Origin = 'PPF1OriginPC';
+    undo.patchOrigin = 'OriginPC';
     askUnanswered();
     host.render();
   };
@@ -223,7 +223,7 @@ export const makeUndoVerb = (host) => {
     ${toggleMarkup({ id: 'skip-verification', setting: 'verification',
                      checked: undo.verificationPolicy === 'SkipVerification',
                      label: 'skip verification', why: 'mismatches become warnings' })}
-    ${dialectTogglesMarkup(undo.patchIdentity?.answered?.spokenIdentityDialects ?? [], undo.ppf1Origin)}`);
+    ${dialectTogglesMarkup(undo.patchIdentity?.answered?.spokenIdentityDialects ?? [], undo.patchOrigin)}`);
 
   const stageMarkup = () => {
     if (actAnswered()) return sentenceMarkup();
@@ -264,10 +264,10 @@ export const makeUndoVerb = (host) => {
   /* ------------------------------------------------------------ tutor ---- */
 
   const commandWords = () => {
-    const ppf1Origin = dialectControls.PPF1OriginAxis;
+    const patchOriginControl = dialectControls.PatchOriginAxis;
     const words = [verbWord('slap'), verbWord('undo')];
     if (undo.verificationPolicy === 'SkipVerification') words.push(flagWord('--no-verify'));
-    if (undo.ppf1Origin === ppf1Origin.chosenOrigin) words.push(flagWord(ppf1Origin.terminalFlag));
+    if (undo.patchOrigin === patchOriginControl.chosenOrigin) words.push(flagWord(patchOriginControl.terminalFlag));
     words.push(namedOr(undo.patch, 'PATCH'), namedOr(undo.patched, 'PATCHED'));
     words.push(undo.patched ? fileWord(revertedName(undo.patched)) : placeholderWord('OUTPUT'));
     return words;
@@ -317,7 +317,7 @@ export const makeUndoVerb = (host) => {
         undo.verificationPolicy = checked ? 'SkipVerification' : 'EnforceVerification';
       }),
       dialect: (checked) => rereadPatch(() => {
-        undo.ppf1Origin = checked ? 'PPF1OriginAmiga' : 'PPF1OriginPC';
+        undo.patchOrigin = checked ? 'OriginAmiga' : 'OriginPC';
       }),
     },
   };

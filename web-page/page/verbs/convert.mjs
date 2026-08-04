@@ -24,7 +24,7 @@ const atRest = () => ({
   source: null, sourceFacts: null, sourceReport: null,
   framing: { tag: 'TakeInputAsIs', console: null },
   verificationPolicy: 'EnforceVerification',
-  ppf1Origin: 'PPF1OriginPC',
+  patchOrigin: 'OriginPC',
   metadataEncoding: 'utf-8',
   moreEncodingsOpen: false,
   blob: { lane: null, text: '', file: null, fileBase64: null },
@@ -130,13 +130,13 @@ export const makeConvertVerb = (host) => {
                                          ...bench.declarationFields() },
     declaredConvertConstraints:        bench.constraintsDeclaration(),
     declaredConvertMetadataEncoding:   convert.metadataEncoding,
-    declaredConvertDialects:           { requestedPPF1Origin: convert.ppf1Origin },
+    declaredConvertDialects:           { requestedPatchOrigin: convert.patchOrigin },
   });
 
   const applyDeclaration = () => ({
     declaredApplyFraming:            framingDeclaration(),
     declaredApplyVerificationPolicy: convert.verificationPolicy,
-    declaredApplyDialects:           { requestedPPF1Origin: convert.ppf1Origin },
+    declaredApplyDialects:           { requestedPatchOrigin: convert.patchOrigin },
   });
 
   /* ------------------------------------------------------------- asks ---- */
@@ -145,7 +145,7 @@ export const makeConvertVerb = (host) => {
 
   const askIdentity = () => {
     if (!convert.patch) return;
-    host.ask('identify', { patch: convert.patch, declaration: identifyDeclaration(convert.ppf1Origin, convert.metadataEncoding) })
+    host.ask('identify', { patch: convert.patch, declaration: identifyDeclaration(convert.patchOrigin, convert.metadataEncoding) })
       ?.then(host.wheneverStillCurrent((answer) => { convert.patchIdentity = answer; }))
       .catch(host.askFailed);
   };
@@ -154,7 +154,7 @@ export const makeConvertVerb = (host) => {
     if (!convert.patch) return;
     host.ask('inspect', { patch: convert.patch, declaration: {
         declaredInspectMetadataEncoding: convert.metadataEncoding,
-        declaredInspectDialects: { requestedPPF1Origin: convert.ppf1Origin } } })
+        declaredInspectDialects: { requestedPatchOrigin: convert.patchOrigin } } })
       ?.then(host.wheneverStillCurrent((answer) => {
         convert.patchReading = answer;
         // the reading is a declaration input, so a check asked before it landed is stale
@@ -211,7 +211,7 @@ export const makeConvertVerb = (host) => {
     convert.patchIdentity = null;
     convert.patchReading = null;
     // the dialect toggle and the carry-or-drop lanes describe a patch no longer here
-    convert.ppf1Origin = 'PPF1OriginPC';
+    convert.patchOrigin = 'OriginPC';
     convert.blob.lane = null;
     convert.diz.lane = null;
     convert.sourceReport = null;
@@ -416,7 +416,7 @@ export const makeConvertVerb = (host) => {
       ...(convert.source ? [toggleMarkup({ id: 'skip-verification', setting: 'verification',
                                            checked: convert.verificationPolicy === 'SkipVerification',
                                            label: 'skip verification', why: 'mismatches become warnings' })] : []),
-      ...dialectTogglesMarkup(convert.patchIdentity?.answered?.spokenIdentityDialects ?? [], convert.ppf1Origin),
+      ...dialectTogglesMarkup(convert.patchIdentity?.answered?.spokenIdentityDialects ?? [], convert.patchOrigin),
     ];
     return rows.length === 0 ? null : groupMarkup('options', html`${rows}`);
   };
@@ -477,7 +477,7 @@ export const makeConvertVerb = (host) => {
 
   // No output word: the CLI's derived name is exactly the one this page downloads.
   const commandWords = () => {
-    const ppf1Origin = dialectControls.PPF1OriginAxis;
+    const patchOriginControl = dialectControls.PatchOriginAxis;
     const words = [verbWord('slap'), verbWord('convert'), namedOr(convert.patch, 'PATCH'), flagWord('--to')];
     words.push(convert.formatToken ? valueWord(convert.formatToken) : placeholderWord('FORMAT'));
     if (convert.source) {
@@ -488,7 +488,7 @@ export const makeConvertVerb = (host) => {
     }
     if (encodingSpeaks() && convert.metadataEncoding !== 'utf-8')
       words.push(flagWord('--metadata-encoding'), valueWord(convert.metadataEncoding));
-    if (convert.ppf1Origin === ppf1Origin.chosenOrigin) words.push(flagWord(ppf1Origin.terminalFlag));
+    if (convert.patchOrigin === patchOriginControl.chosenOrigin) words.push(flagWord(patchOriginControl.terminalFlag));
     words.push(...bench.commandWords(fileFieldWords));
     return words;
   };
@@ -566,7 +566,7 @@ export const makeConvertVerb = (host) => {
         host.render();
       },
       dialect: (checked) => rereadPatch(() => {
-        convert.ppf1Origin = checked ? 'PPF1OriginAmiga' : 'PPF1OriginPC';
+        convert.patchOrigin = checked ? 'OriginAmiga' : 'OriginPC';
       }),
     },
     typings: {

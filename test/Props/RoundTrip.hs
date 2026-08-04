@@ -87,7 +87,7 @@ import qualified Slap.PPF1.Apply as PPF1
 import qualified Slap.PPF1.Create as PPF1
 import qualified Slap.PPF1.Parse as PPF1
 import qualified Slap.PPF1.Types as PPF1
-import Slap.PPF1.Types (PPF1Origin(..))
+import Slap.Dialect (PatchOrigin(..))
 import qualified Slap.PPF2.Apply as PPF2
 import qualified Slap.PPF2.Create as PPF2
 import qualified Slap.PPF2.Parse as PPF2
@@ -2359,8 +2359,8 @@ prop_ebp = forAll genPairNoShrink $ \(source, target) ->
 -- same origin used on both sides of the round-trip.
 prop_ppf1 :: Property
 prop_ppf1 = forAll genSameSizePair $ \(source, target) ->
-  forAll (elements [PPF1OriginPC, PPF1OriginAmiga]) $ \origin ->
-    let dialects = noDialectsRequested { requestedPPF1Origin = origin }
+  forAll (elements [OriginPC, OriginAmiga]) $ \origin ->
+    let dialects = noDialectsRequested { requestedPatchOrigin = origin }
     in case createPatch (CreateDirect CreatePPF1) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested dialects of
          Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
          Right (CreateResult patch _) -> case PPF1.parsePPF1 origin SlapText.EncodingUtf8 patch of
@@ -2374,7 +2374,7 @@ prop_ppf2 :: Property
 prop_ppf2 = forAll genPPF2SizedPair $ \(source, target) ->
   case createPatch (CreateDirect CreatePPF2) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
-    Right (CreateResult patch _) -> case PPF2.parsePPF2 SlapText.EncodingUtf8 patch of
+    Right (CreateResult patch _) -> case PPF2.parsePPF2 OriginPC SlapText.EncodingUtf8 patch of
        Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
        Right (Parsed parsed _parseWarnings) -> PPF2.applyPPF2 parsed (InputFileContents source) === Right (noAdvisories (OutputFileContents target))
   where
@@ -2399,7 +2399,7 @@ ppf2GrowthRoundTrip :: Assertion
 ppf2GrowthRoundTrip =
   case createPatch (CreateDirect CreatePPF2) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left slapError -> assertFailure ("create: " ++ Text.unpack (renderSlapError slapError))
-    Right (CreateResult patch _) -> case PPF2.parsePPF2 SlapText.EncodingUtf8 patch of
+    Right (CreateResult patch _) -> case PPF2.parsePPF2 OriginPC SlapText.EncodingUtf8 patch of
       Left slapError -> assertFailure ("parse: " ++ Text.unpack (renderSlapError slapError))
       Right (Parsed parsed _parseWarnings) -> case PPF2.applyPPF2 parsed (InputFileContents source) of
         Left slapError -> assertFailure ("apply: " ++ Text.unpack (renderSlapError slapError))
@@ -2430,7 +2430,7 @@ ppf2ExactFitValidationSourceRoundTrips =
                       noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
        Left slapError ->
          assertFailureT ("create: " <> renderSlapError slapError)
-       Right (CreateResult patch _) -> case PPF2.parsePPF2 SlapText.EncodingUtf8 patch of
+       Right (CreateResult patch _) -> case PPF2.parsePPF2 OriginPC SlapText.EncodingUtf8 patch of
          Left slapError ->
            assertFailureT ("parse: " <> renderSlapError slapError)
          Right (Parsed parsed _parseWarnings) ->
@@ -3129,18 +3129,18 @@ assertPPFDescriptionTruncationWarning expectedLabel advisories =
 ppf1DescriptionUtf8RoundTrip :: Assertion
 ppf1DescriptionUtf8RoundTrip =
   let descriptionTyped = SlapText.EncodedText SlapText.EncodingUtf8 ppfNonAsciiDescriptionText
-      patchResult      = PPF1.encodePPF1 PPF1OriginPC [] descriptionTyped
+      patchResult      = PPF1.encodePPF1 OriginPC [] descriptionTyped
   in ppfDescriptionRoundTripsByteFaithfully patchResult
-       (PPF1.parsePPF1 PPF1OriginPC SlapText.EncodingUtf8)
+       (PPF1.parsePPF1 OriginPC SlapText.EncodingUtf8)
        PPF1.ppf1Description
-       (PPF1.encodePPF1 PPF1OriginPC [])
+       (PPF1.encodePPF1 OriginPC [])
        "PPF1"
 
 ppf1DescriptionCodepointAwareTruncation :: Assertion
 ppf1DescriptionCodepointAwareTruncation =
   let descriptionTyped = SlapText.EncodedText SlapText.EncodingUtf8 ppfTruncationProbeText
       CreateResult _ advisories =
-        PPF1.encodePPF1 PPF1OriginPC [] descriptionTyped
+        PPF1.encodePPF1 OriginPC [] descriptionTyped
   in assertPPFDescriptionTruncationWarning LabelPPF1 advisories
 
 ppf2DescriptionUtf8RoundTrip :: Assertion
@@ -3153,7 +3153,7 @@ ppf2DescriptionUtf8RoundTrip =
       patchResult      = PPF2.encodePPF2 [] descriptionTyped sourceSize validation
       reEncodePPF2 d   = PPF2.encodePPF2 [] d sourceSize validation
   in ppfDescriptionRoundTripsByteFaithfully patchResult
-       (PPF2.parsePPF2 SlapText.EncodingUtf8)
+       (PPF2.parsePPF2 OriginPC SlapText.EncodingUtf8)
        PPF2.ppf2Description
        reEncodePPF2
        "PPF2"
@@ -3230,7 +3230,7 @@ ppf2FileIdDizRoundTrip =
         PPF2.encodePPF2 [] descriptionTyped sourceSize validation
       (trailerBytes, _trailerAdv) = PPF2.encodeFileIdDiz fileId
       stitched = PatchFileContents (unPatchFileContents patchBytes <> trailerBytes)
-  in case PPF2.parsePPF2 SlapText.EncodingUtf8 stitched of
+  in case PPF2.parsePPF2 OriginPC SlapText.EncodingUtf8 stitched of
        Left slapError -> assertFailureT ("PPF2 parse: " <> renderSlapError slapError)
        Right (Parsed parsed _) -> case PPF2.ppf2FileId parsed of
          Nothing  -> assertFailure "PPF2 parsed file_id.diz was Nothing; expected trailer"
@@ -3282,7 +3282,7 @@ ppf2FileIdDizBytesSurviveSubstitution =
         [ "@BEGIN_FILE_ID.DIZ", dizContentBytes, "@END_FILE_ID.DIZ"
         , ByteString.pack [fromIntegral (ByteString.length dizContentBytes), 0, 0, 0] ]
       stitched = PatchFileContents (unPatchFileContents patchBytes <> trailer)
-  in case PPF2.parsePPF2 SlapText.EncodingUtf8 stitched of
+  in case PPF2.parsePPF2 OriginPC SlapText.EncodingUtf8 stitched of
        Left slapError -> assertFailureT ("PPF2 parse: " <> renderSlapError slapError)
        Right (Parsed parsed _) -> case PPF2.ppf2FileId parsed of
          Nothing  -> assertFailure "PPF2 parsed file_id.diz was Nothing; expected trailer"
@@ -3368,7 +3368,7 @@ ppf2FileIdDizOverCapStillParses =
         [ "@BEGIN_FILE_ID.DIZ", dizContentBytes, "@END_FILE_ID.DIZ"
         , ByteString.pack [fromIntegral (dizLength `mod` 256), fromIntegral (dizLength `div` 256), 0, 0] ]
       stitched = PatchFileContents (unPatchFileContents patchBytes <> trailer)
-  in case PPF2.parsePPF2 SlapText.EncodingUtf8 stitched of
+  in case PPF2.parsePPF2 OriginPC SlapText.EncodingUtf8 stitched of
        Left slapError -> assertFailureT ("PPF2 parse: " <> renderSlapError slapError)
        Right (Parsed parsed parseAdvisories) -> case PPF2.ppf2FileId parsed of
          Nothing            -> assertFailure "expected the over-cap trailer to be read as a FILE_ID.DIZ"
@@ -3412,7 +3412,7 @@ ppf2FileIdTrailerWithoutBeginMarkerIsRecordBytes =
         [ ByteString.replicate 4 0, ByteString.singleton 20
         , "@END_FILE_ID.DIZ", ByteString.pack [5, 0, 0, 0] ]
       stitched = PatchFileContents (unPatchFileContents patchBytes <> recordBytes)
-  in case PPF2.parsePPF2 SlapText.EncodingUtf8 stitched of
+  in case PPF2.parsePPF2 OriginPC SlapText.EncodingUtf8 stitched of
        Left slapError -> assertFailureT ("PPF2 parse: " <> renderSlapError slapError)
        Right (Parsed parsed _) -> do
          assertEqual "no FILE_ID.DIZ was read" Nothing (PPF2.ppf2FileId parsed)
@@ -3462,7 +3462,7 @@ ppf2FileIdTrailerReachingIntoHeaderIsRecordBytes =
                         <> ByteString.pack [fromIntegral (declaredLength `mod` 256), fromIntegral (declaredLength `div` 256), 0, 0]
       recordBytes     = ByteString.concat [ByteString.replicate 4 0, ByteString.singleton 20, payload]
       stitched        = PatchFileContents (headerBytes <> recordBytes)
-  in case PPF2.parsePPF2 SlapText.EncodingUtf8 stitched of
+  in case PPF2.parsePPF2 OriginPC SlapText.EncodingUtf8 stitched of
        Left slapError -> assertFailureT ("PPF2 parse: " <> renderSlapError slapError)
        Right (Parsed parsed _) -> do
          assertEqual "the crafted tail is one whole record" recordByteCount (ByteString.length recordBytes)

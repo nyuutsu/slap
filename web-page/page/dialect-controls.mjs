@@ -6,12 +6,12 @@
 import { toggleMarkup } from './controls.mjs';
 
 export const dialectControls = {
-  PPF1OriginAxis: {
+  PatchOriginAxis: {
     controlLabel: 'Amiga byte order',
-    controlWhy: 'this PPF1 reads its offsets big-endian',
+    controlWhy: 'this patch reads its offsets big-endian',
     terminalFlag: '--is-amiga-patch',
-    chosenOrigin: 'PPF1OriginAmiga',
-    restingOrigin: 'PPF1OriginPC',
+    chosenOrigin: 'OriginAmiga',
+    restingOrigin: 'OriginPC',
   },
 };
 

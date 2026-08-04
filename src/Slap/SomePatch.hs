@@ -231,8 +231,8 @@ parseSomeUnwrapped dialects metadataEncoding patchContents = case recognizePatch
 
 parseSomeWireFormat :: RequestedDialects -> EncodingName -> PatchFormat -> PatchFileContents -> Either SlapError SomePatch
 parseSomeWireFormat dialects metadataEncoding wireFormat patchContents = case wireFormat of
-  PatchDirect       FormatPPF1          -> PPF1.parsePPF1 (requestedPPF1Origin dialects) metadataEncoding patchContents >>= parseSomePatchFromPPF1
-  PatchDirect       FormatPPF2          -> PPF2.parsePPF2 metadataEncoding patchContents >>= parseSomePatchFromPPF2
+  PatchDirect       FormatPPF1          -> PPF1.parsePPF1 (requestedPatchOrigin dialects) metadataEncoding patchContents >>= parseSomePatchFromPPF1
+  PatchDirect       FormatPPF2          -> PPF2.parsePPF2 (requestedPatchOrigin dialects) metadataEncoding patchContents >>= parseSomePatchFromPPF2
   PatchDirect       FormatPPF3          -> PPF3.parsePPF3 metadataEncoding patchContents >>= parseSomePatchFromPPF3
   PatchDirect       FormatPPF4          -> parseSomePatchFromPPF4 metadataEncoding patchContents
   PatchDirect       (FormatIPS variant) -> parseSomePatchFromIPS variant patchContents
@@ -253,7 +253,7 @@ parseSomeWireFormat dialects metadataEncoding wireFormat patchContents = case wi
 data PatchIdentity = PatchIdentity
   { identifiedFormat   :: !FormatLabel
   , applicableDialects :: !(Set.Set Dialect)
-    -- ^ 'acceptedDialects' of the format — the read-side pruning: a PPF1 origin toggle belongs on screen only when a PPF1 is in hand.
+    -- ^ 'acceptedDialects' of the format — the read-side pruning: the patch-origin toggle belongs on screen only when a PPF1 or PPF2 is in hand.
   , identifiedUndo     :: !UndoAnswer
   , identifiedImpediment :: !(Maybe SlapError)
     -- ^ Carried beside the undo answer so a frontend can darken every act before one is asked for.

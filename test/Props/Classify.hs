@@ -145,7 +145,7 @@ genClassificationCandidate = frequency
 test_ppf1IdentityOffersOriginAxis :: IO ()
 test_ppf1IdentityOffersOriginAxis = do
   parsed <- createAndParse (CreateDirect CreatePPF1) standardFixture noMetadataRequested
-  assertEqual "dialects" (Set.singleton PPF1OriginAxis) (applicableDialects (patchIdentity parsed))
+  assertEqual "dialects" (Set.singleton PatchOriginAxis) (applicableDialects (patchIdentity parsed))
 
 test_ppf3WithoutUndoAnswersAuthorOmitted :: IO ()
 test_ppf3WithoutUndoAnswersAuthorOmitted = do

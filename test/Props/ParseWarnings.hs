@@ -22,7 +22,7 @@ import Slap.BSDiff.Types (bsdiffMagicBytes)
 import Slap.Compression.Stream (bzip2Compress)
 import qualified Slap.IPS.Parse as IPS
 import qualified Slap.PPF1.Parse as PPF1
-import Slap.PPF1.Types (PPF1Origin(..))
+import Slap.Dialect (PatchOrigin(..))
 import Slap.Text (EncodingName(EncodingUtf8))
 import Slap.FieldName (FieldName(..))
 import Slap.Status (Parsed(..), SlapAdvisory(..), OverlapCount(..),
@@ -352,7 +352,7 @@ ppf1PatchWithInvalidDescriptionByte =
 -- UTF-8 continuation byte and always substitutes.
 ppf1DescriptionDecodeSubstitutionEmitsAdvisory :: Assertion
 ppf1DescriptionDecodeSubstitutionEmitsAdvisory =
-  case PPF1.parsePPF1 PPF1OriginPC EncodingUtf8
+  case PPF1.parsePPF1 OriginPC EncodingUtf8
          (PatchFileContents ppf1PatchWithInvalidDescriptionByte) of
     Left slapError -> assertFailureT ("parse failed: " <> renderSlapError slapError)
     Right (Parsed _ advisories) ->

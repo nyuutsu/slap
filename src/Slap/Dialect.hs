@@ -15,39 +15,36 @@
 -- 'Slap.Convert.acceptedDialects' decides which formats admit each.
 module Slap.Dialect
   ( Dialect(..)
+  , PatchOrigin(..)
   , dialectName
   , dialectFlagName
   ) where
 
-import Data.Aeson (ToJSON)
+import Data.Aeson (FromJSON, ToJSON)
 import Data.Text (Text)
-import GHC.Generics (Generic)
+import GHC.Generics (Generic, Generically(..))
 
 import Slap.JSON.Nullary (AsConstructorName(..))
 
 data Dialect
-  = PPF1OriginAxis
-    -- ^ PPF1's offset-field endianness.
-    -- PPF1's reference applier ('sources/applyppf.c' in docs/ppf/upstream/pdx-ppf1.zip) reads offsets with @fread(&Offset, sizeof(long), ...)@ —
-    -- native-endian, no byte-swap — so a patch produced on a PC writes offsets LE on disk
-    -- and a patch produced on an Amiga writes them BE on disk.
-    -- The two are mutually incompatible cross-platform.
-    -- Default is PC-origin (LE); the @--is-amiga-patch@ flag selects BE.
-    --
-    -- This axis is read-only: it selects how slap /decodes/ a PPF1 patch's offsets (apply, undo, info, explain, and convert from a PPF1 source).
-    -- It never affects writing — create and convert to PPF1 always emit PC/LE.
-    -- The general dialect plumbing can still carry a write-affecting axis; this particular one just doesn't.
-    --
-    -- Per @docs/ppf/spec.md@ §"Offset size and endianness".
+  = PatchOriginAxis
+    -- ^ The byte-order dialect: read-only, it selects how slap decodes a patch's integers, never how it writes them.
+    -- 'Slap.Convert.acceptedDialects' admits it for PPF1 and PPF2; @docs/ppf/spec.md@ §"Endianness and the Amiga question" is the why.
   deriving (Show, Eq, Ord, Generic)
   deriving (ToJSON) via AsConstructorName Dialect
 
+-- | 'OriginPC' decodes a patch's integers little-endian, 'OriginAmiga' big-endian.
+-- The default is 'OriginPC'; the @--is-amiga-patch@ flag selects 'OriginAmiga'.
+data PatchOrigin = OriginPC | OriginAmiga
+  deriving (Show, Eq, Generic)
+  deriving (FromJSON) via Generically PatchOrigin
+
 -- | Display name for prose contexts in error and help messages.
 dialectName :: Dialect -> Text
-dialectName PPF1OriginAxis = "PPF1 offset endianness"
+dialectName PatchOriginAxis = "patch byte order"
 
 -- | The CLI flag spelling for a 'Dialect' axis, without the leading
 -- @--@. Single source of truth shared by 'Slap.Status' renderers and
 -- the parser declaration in @app\/CLI.hs@.
 dialectFlagName :: Dialect -> Text
-dialectFlagName PPF1OriginAxis = "is-amiga-patch"
+dialectFlagName PatchOriginAxis = "is-amiga-patch"

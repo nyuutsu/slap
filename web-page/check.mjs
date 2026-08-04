@@ -34,16 +34,16 @@ const declarationPathFor = (verb, declaration) => {
 };
 const declarationPaths = {
   inspect: declarationPathFor('inspect', { declaredInspectMetadataEncoding: 'utf-8',
-                                           declaredInspectDialects: { requestedPPF1Origin: 'PPF1OriginPC' } }),
+                                           declaredInspectDialects: { requestedPatchOrigin: 'OriginPC' } }),
   analyze: declarationPathFor('analyze', { declaredAnalyzeMetadataEncoding: 'utf-8',
-                                           declaredAnalyzeDialects: { requestedPPF1Origin: 'PPF1OriginPC' } }),
-  identify: declarationPathFor('identify', { declaredIdentifyDialects: { requestedPPF1Origin: 'PPF1OriginPC' },
+                                           declaredAnalyzeDialects: { requestedPatchOrigin: 'OriginPC' } }),
+  identify: declarationPathFor('identify', { declaredIdentifyDialects: { requestedPatchOrigin: 'OriginPC' },
                                              declaredIdentifyMetadataEncoding: 'utf-8' }),
   apply: declarationPathFor('apply', { declaredApplyFraming: { tag: 'TakeInputAsIs' },
                                        declaredApplyVerificationPolicy: 'EnforceVerification',
-                                       declaredApplyDialects: { requestedPPF1Origin: 'PPF1OriginPC' } }),
+                                       declaredApplyDialects: { requestedPatchOrigin: 'OriginPC' } }),
   undo: declarationPathFor('undo', { declaredUndoVerificationPolicy: 'EnforceVerification',
-                                     declaredUndoDialects: { requestedPPF1Origin: 'PPF1OriginPC' } }),
+                                     declaredUndoDialects: { requestedPatchOrigin: 'OriginPC' } }),
 };
 const plainCreateDeclaration = (formatTag, formatConstructor) => ({
   declaredCreateTargetFormat: { tag: formatTag, contents: formatConstructor },
@@ -204,7 +204,7 @@ const plainConvertDeclaration = (formatTag, formatConstructor, sourceFraming) =>
                              requestedEmbeddedBlob: { tag: 'InheritEmbeddedBlob' } },
   declaredConvertConstraints: { requestedSMCShape: 'AllowAnyTruncationShape' },
   declaredConvertMetadataEncoding: 'utf-8',
-  declaredConvertDialects: { requestedPPF1Origin: 'PPF1OriginPC' },
+  declaredConvertDialects: { requestedPatchOrigin: 'OriginPC' },
 });
 
 const mintedBpsPath = join(declarationDir, 'minted.bps');

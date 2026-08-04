@@ -14,7 +14,8 @@ module Slap.PPF1.Create
   ( encodePPF1
   ) where
 
-import Slap.PPF1.Types (PPF1Origin(..), ppf1DescriptionLength)
+import Slap.PPF1.Types (ppf1DescriptionLength)
+import Slap.Dialect (PatchOrigin(..))
 import Slap.Binary (replicateLength)
 import Slap.Measure (Offset(..), byteLength, minLength, subtractLength)
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
@@ -38,11 +39,11 @@ import Data.Word (Word32)
 -- — the convert-layer pipeline runs @splitHunks ppf1MaxRecordPayload@
 -- and @narrowHunks ppf1Limits@ before reaching this encoder, so the
 -- @fromIntegral@ casts at the offset and length sites cannot truncate.
-encodePPF1 :: PPF1Origin -> [EncodedHunk] -> EncodedText -> CreateResult
+encodePPF1 :: PatchOrigin -> [EncodedHunk] -> EncodedText -> CreateResult
 encodePPF1 origin records description =
   let writeOffsetWord = case origin of
-        PPF1OriginPC    -> word32LE
-        PPF1OriginAmiga -> word32BE
+        OriginPC    -> word32LE
+        OriginAmiga -> word32BE
       (descriptionBytes, descriptionAdvisories) = padDescription description
       header = buildHeader descriptionBytes
       body   = foldMap (encodeRecord writeOffsetWord) records

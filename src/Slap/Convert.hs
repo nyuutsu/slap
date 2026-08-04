@@ -67,7 +67,7 @@ module Slap.Convert
   ) where
 
 import qualified Slap.PPF1.Create as PPF1
-import Slap.PPF1.Types (PPF1Origin(..), ppf1DescriptionLength, ppf1Limits, ppf1MaxRecordPayload,
+import Slap.PPF1.Types (ppf1DescriptionLength, ppf1Limits, ppf1MaxRecordPayload,
                         ppf1RejectIncompatibleSizeChange)
 import qualified Slap.PPF2.Create as PPF2
 import Slap.PPF2.Types (PPF2ValidationBlock(..),
@@ -136,7 +136,7 @@ import Slap.Measure (FileSize(..), Length(..), Offset(..), Hunk(..),
 import Slap.Narrow (EncodedHunk, EncodingLimits(..),
                     narrowHunks, narrowUndoHunks)
 import Slap.Constraint (Constraint(..))
-import Slap.Dialect (Dialect(..))
+import Slap.Dialect (Dialect(..), PatchOrigin(..))
 import Slap.Status (SlapError(..), SlapAdvisory(..), UndoRecordCount(..), DroppedValue(..),
                     DroppedDescriptionText(..), CreateResult(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -791,25 +791,25 @@ acceptsAnySizeChange _sourceSize _targetSize = Right ()
 
 -- | The dialect bag the user assembled from CLI flags, parallel to 'RequestedConstraints'
 -- but for parser/encoder wire-format configuration rather than refuse-gates.
--- 'requestedPPF1Origin' is the only field today; future dialect axes land here. Like 'RequestedConstraints', dialects are entirely CLI-set:
+-- 'requestedPatchOrigin' is the only field today; future dialect axes land here. Like 'RequestedConstraints', dialects are entirely CLI-set:
 -- a source patch can't tell us how to decode itself; if it could, the dialect axis wouldn't exist.
 data RequestedDialects = RequestedDialects
-  { requestedPPF1Origin :: PPF1Origin
+  { requestedPatchOrigin :: PatchOrigin
   }
   deriving (Show, Eq, Generic)
   deriving (FromJSON) via Generically RequestedDialects
 
 noDialectsRequested :: RequestedDialects
 noDialectsRequested = RequestedDialects
-  { requestedPPF1Origin = PPF1OriginPC
+  { requestedPatchOrigin = OriginPC
   }
 
 -- | The 'Dialect' axes the user explicitly toggled away from default.
--- 'PPF1OriginPC' is the not-specified state, mirroring how
+-- 'OriginPC' is the not-specified state, mirroring how
 -- 'RequestedConstraints' treats 'AllowAnyTruncationShape'.
 requestedDialects :: RequestedDialects -> Set.Set Dialect
 requestedDialects dialects = Set.fromList $ concat
-  [ [PPF1OriginAxis | requestedPPF1Origin dialects /= PPF1OriginPC]
+  [ [PatchOriginAxis | requestedPatchOrigin dialects /= OriginPC]
   ]
 
 -- | The 'Dialect' axes a 'FormatLabel' admits. Unlike the
@@ -821,13 +821,13 @@ requestedDialects dialects = Set.fromList $ concat
 -- constructors so adding a label or a dialect axis fires
 -- '-Wincomplete-patterns' on every case that needs a decision.
 acceptedDialects :: FormatLabel -> Set.Set Dialect
-acceptedDialects LabelPPF1    = Set.singleton PPF1OriginAxis
+acceptedDialects LabelPPF1    = Set.singleton PatchOriginAxis
 acceptedDialects LabelIPS     = Set.empty
 acceptedDialects LabelIPS32   = Set.empty
 acceptedDialects LabelEBP     = Set.empty
 acceptedDialects LabelBPS     = Set.empty
 acceptedDialects LabelUPS     = Set.empty
-acceptedDialects LabelPPF2    = Set.empty
+acceptedDialects LabelPPF2    = Set.singleton PatchOriginAxis
 acceptedDialects LabelPPF3    = Set.empty
 acceptedDialects LabelPPF4    = Set.empty
 acceptedDialects LabelVCDIFF  = Set.empty
@@ -1168,7 +1168,7 @@ encodeDirect contents source target meta limits constraints dialects = case targ
             [])
   CreatePPF1 -> do
     records <- narrow (splitHunks ppf1MaxRecordPayload (contentsRecords contents))
-    Right (PPF1.encodePPF1 (requestedPPF1Origin dialects) records descriptionTyped)
+    Right (PPF1.encodePPF1 (requestedPatchOrigin dialects) records descriptionTyped)
   CreatePPF2 -> do
     -- The validation block lives on 'contentsValidation' regardless
     -- of source: 'buildContents' extracts it from source bytes for the

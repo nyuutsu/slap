@@ -14,7 +14,7 @@ import Slap.Convert (CreateFormat(..), DifferentialCreate(..), DirectCreate(..),
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.Constraint (Constraint(..))
 import qualified Slap.Create as Create
-import Slap.Dialect (Dialect(..))
+import Slap.Dialect (Dialect(..), PatchOrigin(OriginAmiga))
 import Slap.Display.Analysis (PatchAnalysis(..), renderAnalysisFull)
 import Slap.Display.Common (InfoLine(..), Tally(..))
 import Slap.Display.Info (InputSideVerdict(..), OutputSideVerdict(..), infoLines, infoTally, infoUndeclaredTextFields)
@@ -27,7 +27,6 @@ import qualified Slap.NINJA1.Types as NINJA1
 import qualified Slap.NINJA2.Types as NINJA2
 import Slap.Platform (platformToNINJA1, platformToNINJA2)
 import Slap.PlatformType (PlatformType(PlatformRaw))
-import Slap.PPF1.Types (PPF1Origin(PPF1OriginAmiga))
 import Slap.SomePatch (parseSome, patchAdvisories, patchAnalysis, patchContentsOf, patchInfo)
 import Slap.Status (CarriedFileCount(..), CreateResult(..), Outcome(..), SlapAdvisory(..), SlapError(..),
                     SourceRequiredCause(..), UnencodeabilityReason(..),
@@ -332,7 +331,7 @@ test_applyDialectAgreement :: Assertion
 test_applyDialectAgreement = do
   bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
   let request = (plainApplyRequest bpsPatch fixtureSourceBytes)
-        { applyDialects = RequestedDialects { requestedPPF1Origin = PPF1OriginAmiga } }
+        { applyDialects = RequestedDialects { requestedPatchOrigin = OriginAmiga } }
   Outcome applied _advisories <- applyPatch request
   case (checkApply request, applied) of
     (Left checkRefusal, Left actRefusal) -> actRefusal @?= checkRefusal
@@ -544,11 +543,11 @@ test_checkConvertStaleAmigaToggle = do
   bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
   let request = (plainConvertRequest bpsPatch (CreateDifferential CreateBPS))
         { convertSourceRom = Just (MatchedRom (InputFileContents fixtureSourceBytes) TakeInputAsIs)
-        , convertDialects  = RequestedDialects { requestedPPF1Origin = PPF1OriginAmiga }
+        , convertDialects  = RequestedDialects { requestedPatchOrigin = OriginAmiga }
         }
   checkConvert request
-    @?= Right (Blocked (Gap (DialectNotSupported (PPF1OriginAxis :| []) LabelBPS)
-                            (DropDialect PPF1OriginAxis :| []) :| []))
+    @?= Right (Blocked (Gap (DialectNotSupported (PatchOriginAxis :| []) LabelBPS)
+                            (DropDialect PatchOriginAxis :| []) :| []))
 
 test_checkConvertUnrecognized :: Assertion
 test_checkConvertUnrecognized =
@@ -770,8 +769,8 @@ test_readsRefuseUnrecognized = do
 test_readsRefuseStaleDialect :: Assertion
 test_readsRefuseStaleDialect = do
   bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
-  let staleDialects = RequestedDialects { requestedPPF1Origin = PPF1OriginAmiga }
-      staleRefusal   = DialectNotSupported (PPF1OriginAxis :| []) LabelBPS
+  let staleDialects = RequestedDialects { requestedPatchOrigin = OriginAmiga }
+      staleRefusal   = DialectNotSupported (PatchOriginAxis :| []) LabelBPS
   outcomeValue (inspectPatch (plainInspectRequest bpsPatch) { inspectDialects = staleDialects })
     @?= Left staleRefusal
   case outcomeValue (analyzePatch (plainAnalyzeRequest bpsPatch) { analyzeDialects = staleDialects }) of
@@ -894,7 +893,7 @@ test_envelopeCarriesExplanation = do
 test_envelopeNamesLoneConstructor :: Assertion
 test_envelopeNamesLoneConstructor = do
   Aeson.toJSON SMCShapeConstraint          @?= Aeson.String "SMCShapeConstraint"
-  Aeson.toJSON PPF1OriginAxis              @?= Aeson.String "PPF1OriginAxis"
+  Aeson.toJSON PatchOriginAxis              @?= Aeson.String "PatchOriginAxis"
   Aeson.toJSON VCDIFFNestedCustomCodeTable @?= Aeson.String "VCDIFFNestedCustomCodeTable"
 
 test_envelopeCarriesIdentity :: Assertion
@@ -919,7 +918,7 @@ test_declarationDrivesCheckApply :: Assertion
 test_declarationDrivesCheckApply = do
   bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
   declared <- decodedFromJSON "{\"declaredApplyFraming\":{\"tag\":\"TakeInputAsIs\"},\"declaredApplyVerificationPolicy\":\"EnforceVerification\",\
-                              \\"declaredApplyDialects\":{\"requestedPPF1Origin\":\"PPF1OriginPC\"}}"
+                              \\"declaredApplyDialects\":{\"requestedPatchOrigin\":\"OriginPC\"}}"
   checkApply (applyRequestOf declared bpsPatch (InputFileContents fixtureSourceBytes))
     @?= checkApply (plainApplyRequest bpsPatch fixtureSourceBytes)
 
@@ -951,7 +950,7 @@ test_declarationBlobBase64 = do
 test_declarationDrivesIdentify :: Assertion
 test_declarationDrivesIdentify = do
   bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
-  declared <- decodedFromJSON "{\"declaredIdentifyDialects\":{\"requestedPPF1Origin\":\"PPF1OriginPC\"},\
+  declared <- decodedFromJSON "{\"declaredIdentifyDialects\":{\"requestedPatchOrigin\":\"OriginPC\"},\
                               \\"declaredIdentifyMetadataEncoding\":\"utf-8\"}"
   identifyPatch (declaredIdentifyDialects declared) (declaredIdentifyMetadataEncoding declared) bpsPatch
     @?= identifyPatch noDialectsRequested EncodingUtf8 bpsPatch
@@ -962,9 +961,9 @@ test_declarationDrivesReads :: Assertion
 test_declarationDrivesReads = do
   bpsPatch <- createdFixturePatch (CreateDifferential CreateBPS) noMetadataRequested
   declaredInspect <- decodedFromJSON "{\"declaredInspectMetadataEncoding\":\"utf-8\",\
-                                     \\"declaredInspectDialects\":{\"requestedPPF1Origin\":\"PPF1OriginPC\"}}"
+                                     \\"declaredInspectDialects\":{\"requestedPatchOrigin\":\"OriginPC\"}}"
   declaredAnalyze <- decodedFromJSON "{\"declaredAnalyzeMetadataEncoding\":\"utf-8\",\
-                                     \\"declaredAnalyzeDialects\":{\"requestedPPF1Origin\":\"PPF1OriginPC\"}}"
+                                     \\"declaredAnalyzeDialects\":{\"requestedPatchOrigin\":\"OriginPC\"}}"
   encodeEnvelope (inspectPatch (inspectRequestOf declaredInspect bpsPatch))
     @?= encodeEnvelope (inspectPatch (plainInspectRequest bpsPatch))
   encodeEnvelope (analyzePatch (analyzeRequestOf declaredAnalyze bpsPatch))

@@ -12,13 +12,14 @@ import Slap.PPF2.Types (PPF2Patch(..), PPF2Record(..),
                         ppf2ValidationSize,
                         ppf2FileIdLengthFieldWidth, ppf2FileIdMaxContentLength,
                         ppf2FileIdMarkerLength, ppf2FileIdFooterLength)
-import Slap.Binary (getInt32LE, dropLength, dropLengthFromEnd, splitSuffixOfLength)
+import Slap.Binary (getInt32LE, getInt32BE, dropLength, dropLengthFromEnd, splitSuffixOfLength)
+import Slap.Dialect (PatchOrigin(..))
 import Slap.Status (SlapError(..), SlapAdvisory(..), Parsed(..), ByteParserError(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runFormatParser, throwByteParserError,
-                        getByte, getBytes, remaining, skip, word32LE, int32LE)
+                        getByte, getBytes, remaining, skip, word32LE, word32BE, int32LE, int32BE)
 import Slap.Measure (offsetFromParsed, Length(..),
                      EncodingMethodByte(..),
                      ActionIndex,
@@ -42,17 +43,21 @@ data PPF2ParsedHeader = PPF2ParsedHeader
   , ppf2HeaderValidationBlock       :: !PPF2ValidationBlock
   }
 
-parsePPF2 :: EncodingName -> PatchFileContents -> Either SlapError (Parsed PPF2Patch)
-parsePPF2 metadataEncoding (PatchFileContents input)
+chooseByOrigin :: PatchOrigin -> a -> a -> a
+chooseByOrigin OriginPC    littleEndian _         = littleEndian
+chooseByOrigin OriginAmiga _            bigEndian = bigEndian
+
+parsePPF2 :: PatchOrigin -> EncodingName -> PatchFileContents -> Either SlapError (Parsed PPF2Patch)
+parsePPF2 origin metadataEncoding (PatchFileContents input)
   | byteLength input < minimumPPF2ParseLength =
       Left (InputTooShort LabelPPF2
               (RequiredLength minimumPPF2ParseLength)
               (ActualLength (byteLength input)))
   | otherwise = do
       () <- checkEncodingByte input
-      let fileIdSplit = splitFileIdTrailer metadataEncoding (dropLength ppf2HeaderLength input)
+      let fileIdSplit = splitFileIdTrailer origin metadataEncoding (dropLength ppf2HeaderLength input)
       header <- runFormatParser LabelPPF2 parsePPF2Header input
-      records <- runFormatParser LabelPPF2 (parsePPF2Records firstAction) (ppf2SplitRecordBody fileIdSplit)
+      records <- runFormatParser LabelPPF2 (parsePPF2Records origin firstAction) (ppf2SplitRecordBody fileIdSplit)
       pure (Parsed
         PPF2Patch
           { ppf2Description     = ppf2HeaderDescription header
@@ -69,7 +74,7 @@ parsePPF2 metadataEncoding (PatchFileContents input)
       descriptionBytes <- getBytes ppf2DescriptionLength
       let (descriptionText, descriptionAdvisories) =
             decodeFixedWidthTextField metadataEncoding LabelPPF2 FieldDescription descriptionBytes
-      fileSize <- ppf2SourceSizeFromParsed <$> word32LE
+      fileSize <- ppf2SourceSizeFromParsed <$> sourceSizeWord
       validationBlock <- PPF2ValidationBlock <$> getBytes ppf2ValidationSize
       pure PPF2ParsedHeader
         { ppf2HeaderDescription           = descriptionText
@@ -77,6 +82,8 @@ parsePPF2 metadataEncoding (PatchFileContents input)
         , ppf2HeaderSourceFileSize        = fileSize
         , ppf2HeaderValidationBlock       = validationBlock
         }
+
+    sourceSizeWord = chooseByOrigin origin word32LE word32BE
 
 -- | Six bytes is enough to read magic + encoding byte; the deeper
 -- header parser expects the full 1084 bytes when called.
@@ -93,22 +100,25 @@ checkEncodingByte input
 ppf2RecordHeaderLength :: Int
 ppf2RecordHeaderLength = 5
 
-parsePPF2Records :: ActionIndex -> ByteParser [PPF2Record]
-parsePPF2Records recordIndex = do
-  remainingBytes <- remaining
-  if unLength remainingBytes < fromIntegral ppf2RecordHeaderLength then pure []
-  else do
-    recordOffset  <- offsetFromParsed <$> int32LE
-    payloadLength <- fromIntegral <$> getByte
-    let totalNeeded = ppf2RecordHeaderLength + payloadLength
-    if fromIntegral totalNeeded > unLength remainingBytes
-      then throwByteParserError (ByteParserTruncatedRecord recordIndex
-             (RequiredLength (Length (fromIntegral totalNeeded)))
-             (RemainingLength remainingBytes))
+parsePPF2Records :: PatchOrigin -> ActionIndex -> ByteParser [PPF2Record]
+parsePPF2Records origin = parseRemainingRecords
+  where
+    readOffsetWord = chooseByOrigin origin int32LE int32BE
+    parseRemainingRecords recordIndex = do
+      remainingBytes <- remaining
+      if unLength remainingBytes < fromIntegral ppf2RecordHeaderLength then pure []
       else do
-        payload <- getBytes (Length (fromIntegral payloadLength))
-        rest    <- parsePPF2Records (nextAction recordIndex)
-        pure (PPF2Record recordOffset payload : rest)
+        recordOffset  <- offsetFromParsed <$> readOffsetWord
+        payloadLength <- fromIntegral <$> getByte
+        let totalNeeded = ppf2RecordHeaderLength + payloadLength
+        if fromIntegral totalNeeded > unLength remainingBytes
+          then throwByteParserError (ByteParserTruncatedRecord recordIndex
+                 (RequiredLength (Length (fromIntegral totalNeeded)))
+                 (RemainingLength remainingBytes))
+          else do
+            payload <- getBytes (Length (fromIntegral payloadLength))
+            rest    <- parseRemainingRecords (nextAction recordIndex)
+            pure (PPF2Record recordOffset payload : rest)
 
 
 ----------------------------------------------------------------------------
@@ -133,8 +143,8 @@ data PPF2FileIdSplit = PPF2FileIdSplit
 -- whose length suffix lets us walk back to the content start.
 -- A trailer is recognized only whole — both markers where the length says they belong —
 -- and anything less leaves the body untouched, for the record parser to answer.
-splitFileIdTrailer :: EncodingName -> ByteString -> PPF2FileIdSplit
-splitFileIdTrailer metadataEncoding recordBody
+splitFileIdTrailer :: PatchOrigin -> EncodingName -> ByteString -> PPF2FileIdSplit
+splitFileIdTrailer origin metadataEncoding recordBody
   | byteLength recordBody < ppf2FileIdFooterLength <> ppf2FileIdLengthFieldWidth = withoutTrailer
   | footerCandidate /= "@END_FILE_ID.DIZ"                                        = withoutTrailer
   | unLength dizContentLength < 0                                                = withoutTrailer
@@ -155,7 +165,8 @@ splitFileIdTrailer metadataEncoding recordBody
     (bytesBeforeFooter, footerCandidate)       = splitSuffixOfLength ppf2FileIdFooterLength bytesBeforeLengthField
     (bytesBeforeContent, dizContentBytes)      = splitSuffixOfLength dizContentLength bytesBeforeFooter
     (_, markerCandidate)                       = splitSuffixOfLength ppf2FileIdMarkerLength bytesBeforeContent
-    dizContentLength      = Length (getInt32LE 0 lengthFieldBytes)
+    dizContentLength      = Length (readDizLength 0 lengthFieldBytes)
+    readDizLength = chooseByOrigin origin getInt32LE getInt32BE
     (dizText, dizNotices) = decodeTextLenient metadataEncoding dizContentBytes
     trailerSize = ppf2FileIdMarkerLength <> dizContentLength
                <> ppf2FileIdFooterLength <> ppf2FileIdLengthFieldWidth

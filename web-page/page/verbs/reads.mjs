@@ -18,7 +18,7 @@ const walkRowsAtFirst = 500;
 const atRest = () => ({
   patch: null, identity: null,
   metadataEncoding: 'utf-8',
-  ppf1Origin: 'PPF1OriginPC',
+  patchOrigin: 'OriginPC',
   reading: null,
   everyRecord: false,
   walkRowsShown: walkRowsAtFirst,
@@ -35,7 +35,7 @@ const makeReadCore = (host, { verbName, wireVerb, declaration, restingLine, read
 
   const askIdentity = () => {
     if (!read.patch) return;
-    host.ask('identify', { patch: read.patch, declaration: identifyDeclaration(read.ppf1Origin, read.metadataEncoding) })
+    host.ask('identify', { patch: read.patch, declaration: identifyDeclaration(read.patchOrigin, read.metadataEncoding) })
       ?.then(host.wheneverStillCurrent((answer) => { read.identity = answer; }))
       .catch(host.askFailed);
   };
@@ -55,7 +55,7 @@ const makeReadCore = (host, { verbName, wireVerb, declaration, restingLine, read
     read.patch = file;
     read.identity = null;
     read.reading = null;
-    read.ppf1Origin = 'PPF1OriginPC';
+    read.patchOrigin = 'OriginPC';
     read.walkRowsShown = walkRowsAtFirst;
     host.fellow.nod();
     askIdentity();
@@ -90,23 +90,23 @@ const makeReadCore = (host, { verbName, wireVerb, declaration, restingLine, read
   };
 
   const commandWords = () => {
-    const ppf1Origin = dialectControls.PPF1OriginAxis;
+    const patchOriginControl = dialectControls.PatchOriginAxis;
     const words = [verbWord('slap'), verbWord(verbName), namedOr(read.patch, 'PATCH')];
     if (read.everyRecord) words.push(flagWord('--records'));
     if (encodingSpeaks() && read.metadataEncoding !== 'utf-8')
       words.push(flagWord('--metadata-encoding'), valueWord(read.metadataEncoding));
-    if (read.ppf1Origin === ppf1Origin.chosenOrigin) words.push(flagWord(ppf1Origin.terminalFlag));
+    if (read.patchOrigin === patchOriginControl.chosenOrigin) words.push(flagWord(patchOriginControl.terminalFlag));
     return words;
   };
 
   const dialectGroupMarkup = () => {
-    const toggles = dialectTogglesMarkup(applicableDialects(), read.ppf1Origin);
+    const toggles = dialectTogglesMarkup(applicableDialects(), read.patchOrigin);
     return toggles.length === 0 ? null : groupMarkup('options', html`${toggles}`);
   };
 
   const settings = {
     dialect: (checked) => rereadPatch(() => {
-      read.ppf1Origin = checked ? 'PPF1OriginAmiga' : 'PPF1OriginPC';
+      read.patchOrigin = checked ? 'OriginAmiga' : 'OriginPC';
       read.identity = null;
     }),
   };
@@ -132,7 +132,7 @@ export const makeInfoVerb = (host) => {
     wireVerb: 'inspect',
     declaration: (read) => ({
       declaredInspectMetadataEncoding: read.metadataEncoding,
-      declaredInspectDialects: { requestedPPF1Origin: read.ppf1Origin },
+      declaredInspectDialects: { requestedPatchOrigin: read.patchOrigin },
     }),
     undeclaredTextFieldsOf: (answered) => answered.infoUndeclaredTextFields,
     restingLine: voiceLines.infoResting,
@@ -200,7 +200,7 @@ export const makeExplainVerb = (host) => {
     wireVerb: 'analyze',
     declaration: (read) => ({
       declaredAnalyzeMetadataEncoding: read.metadataEncoding,
-      declaredAnalyzeDialects: { requestedPPF1Origin: read.ppf1Origin },
+      declaredAnalyzeDialects: { requestedPatchOrigin: read.patchOrigin },
     }),
     undeclaredTextFieldsOf: (answered) => answered.explanationInfo.infoUndeclaredTextFields,
     restingLine: voiceLines.explainResting,
@@ -228,7 +228,7 @@ export const makeExplainVerb = (host) => {
   const optionsMarkup = () => {
     const read = core.state();
     return groupMarkup('options', html`
-      ${dialectTogglesMarkup(core.applicableDialects(), read.ppf1Origin)}
+      ${dialectTogglesMarkup(core.applicableDialects(), read.patchOrigin)}
       ${toggleMarkup({ id: 'every-record', setting: 'records', checked: read.everyRecord,
                        label: 'show every record', why: 'the full walk, not just the shape' })}`);
   };

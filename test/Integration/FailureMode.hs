@@ -81,9 +81,8 @@ import Slap.Convert
   , convertDirect
   )
 import Slap.Constraint (Constraint(..))
-import Slap.Dialect (Dialect(..))
+import Slap.Dialect (Dialect(..), PatchOrigin(..))
 import Slap.IPS.Types (SMCShapeRequirement(..))
-import Slap.PPF1.Types (PPF1Origin(..))
 import Slap.NINJA2.Types (NINJA2CreateMetadata(..), TextMode(..))
 import Slap.Create (createPatch, createNINJA2)
 import qualified Data.Set as Set
@@ -1092,7 +1091,7 @@ dialectAxisRejectionTests =
       -- PPF1-origin axis. Exercise the check directly.
       case rejectIncompatibleDialects
              (acceptedDialects LabelBPS) LabelBPS amigaDialects of
-        Left (DialectNotSupported (PPF1OriginAxis :| []) LabelBPS) -> pure ()
+        Left (DialectNotSupported (PatchOriginAxis :| []) LabelBPS) -> pure ()
         Left other -> assertFailure
           ("expected DialectNotSupported, got: " ++ Text.unpack (renderSlapError other))
         Right () -> assertFailure
@@ -1106,7 +1105,7 @@ dialectAxisRejectionTests =
              (acceptedDialects (createFormatLabel (CreateDifferential CreateBPS)))
              (createFormatLabel (CreateDifferential CreateBPS))
              amigaDialects of
-        Left (DialectNotSupported (PPF1OriginAxis :| []) LabelBPS) -> pure ()
+        Left (DialectNotSupported (PatchOriginAxis :| []) LabelBPS) -> pure ()
         Left other -> assertFailure
           ("expected DialectNotSupported, got: " ++ Text.unpack (renderSlapError other))
         Right () -> assertFailure
@@ -1114,9 +1113,9 @@ dialectAxisRejectionTests =
 
   , testCase "dialects/convert PPF1->BPS honors --is-amiga-patch on input" $ do
       -- Convert-side union check: with PPF1 on the input and BPS on
-      -- the output, the chain admits PPF1OriginAxis (PPF1 admits it,
+      -- the output, the chain admits PatchOriginAxis (PPF1 admits it,
       -- BPS doesn't, but the union covers it). Build an Amiga-origin
-      -- PPF1 patch by encoding with PPF1OriginAmiga, then re-parse
+      -- PPF1 patch by encoding with OriginAmiga, then re-parse
       -- with the same origin and round-trip via apply.
       let source = ByteString.replicate 64 0x11
           target = ByteString.pack [if i == 10 then 0xAA else 0x11 | i <- [0..63 :: Int]]
@@ -1145,4 +1144,4 @@ dialectAxisRejectionTests =
   ]
   where
     amigaDialects = noDialectsRequested
-      { requestedPPF1Origin = PPF1OriginAmiga }
+      { requestedPatchOrigin = OriginAmiga }

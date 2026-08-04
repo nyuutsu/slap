@@ -21,7 +21,7 @@ const atRest = () => ({
   sourceReport: null,
   framing: { tag: 'TakeInputAsIs', console: null },
   verificationPolicy: 'EnforceVerification',
-  ppf1Origin: 'PPF1OriginPC',
+  patchOrigin: 'OriginPC',
   act: { tag: 'AtRest' },
 });
 
@@ -51,7 +51,7 @@ export const makeApplyVerb = (host) => {
       ? { tag: 'TakeInputAsIs' }
       : { tag: apply.framing.tag, contents: apply.framing.console.describedConsoleHeader },
     declaredApplyVerificationPolicy: apply.verificationPolicy,
-    declaredApplyDialects: { requestedPPF1Origin: apply.ppf1Origin },
+    declaredApplyDialects: { requestedPatchOrigin: apply.patchOrigin },
   });
 
   /* ------------------------------------------------------------- asks ---- */
@@ -67,7 +67,7 @@ export const makeApplyVerb = (host) => {
 
   const askIdentity = () => {
     if (!apply.patch) return;
-    host.ask('identify', { patch: apply.patch, declaration: identifyDeclaration(apply.ppf1Origin, 'utf-8') })
+    host.ask('identify', { patch: apply.patch, declaration: identifyDeclaration(apply.patchOrigin, 'utf-8') })
       ?.then(host.wheneverStillCurrent((answer) => { apply.patchIdentity = answer; }))
       .catch(host.askFailed);
   };
@@ -104,7 +104,7 @@ export const makeApplyVerb = (host) => {
       apply.patch = file;
       apply.patchIdentity = null;
       // a stale toggle can't ride onto a patch it might not fit
-      apply.ppf1Origin = 'PPF1OriginPC';
+      apply.patchOrigin = 'OriginPC';
     } else {
       apply.rom = file;
       apply.romFacts = null;
@@ -125,7 +125,7 @@ export const makeApplyVerb = (host) => {
     apply.patchIdentity = null;
     apply.romFacts = null;
     apply.sourceReport = null;
-    apply.ppf1Origin = 'PPF1OriginPC';
+    apply.patchOrigin = 'OriginPC';
     askUnanswered();
     host.render();
   };
@@ -240,7 +240,7 @@ export const makeApplyVerb = (host) => {
     ${toggleMarkup({ id: 'skip-verification', setting: 'verification',
                      checked: apply.verificationPolicy === 'SkipVerification',
                      label: 'skip verification', why: 'mismatches become warnings' })}
-    ${dialectTogglesMarkup(apply.patchIdentity?.answered?.spokenIdentityDialects ?? [], apply.ppf1Origin)}`);
+    ${dialectTogglesMarkup(apply.patchIdentity?.answered?.spokenIdentityDialects ?? [], apply.patchOrigin)}`);
 
   const stageMarkup = () => {
     if (actAnswered()) return sentenceMarkup();
@@ -287,12 +287,12 @@ export const makeApplyVerb = (host) => {
   /* ------------------------------------------------------------ tutor ---- */
 
   const commandWords = () => {
-    const ppf1Origin = dialectControls.PPF1OriginAxis;
+    const patchOriginControl = dialectControls.PatchOriginAxis;
     const words = [verbWord('slap'), verbWord('apply')];
     if (apply.verificationPolicy === 'SkipVerification') words.push(flagWord('--no-verify'));
     if (apply.framing.tag === 'RemoveHeader') words.push(flagWord('--remove-header'), valueWord(apply.framing.console.consoleToken));
     if (apply.framing.tag === 'AddHeader') words.push(flagWord('--add-header'), valueWord(apply.framing.console.consoleToken));
-    if (apply.ppf1Origin === ppf1Origin.chosenOrigin) words.push(flagWord(ppf1Origin.terminalFlag));
+    if (apply.patchOrigin === patchOriginControl.chosenOrigin) words.push(flagWord(patchOriginControl.terminalFlag));
     words.push(namedOr(apply.patch, 'PATCH'), namedOr(apply.rom, 'ROM'));
     words.push(apply.rom ? fileWord(patchedName(apply.rom)) : placeholderWord('OUTPUT'));
     return words;
@@ -342,7 +342,7 @@ export const makeApplyVerb = (host) => {
         apply.verificationPolicy = checked ? 'SkipVerification' : 'EnforceVerification';
       }),
       dialect: (checked) => rereadPatch(() => {
-        apply.ppf1Origin = checked ? 'PPF1OriginAmiga' : 'PPF1OriginPC';
+        apply.patchOrigin = checked ? 'OriginAmiga' : 'OriginPC';
       }),
       framing: (framingTag) => reweighSource(() => {
         apply.framing = framingTag === 'TakeInputAsIs'

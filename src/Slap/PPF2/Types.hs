@@ -4,8 +4,9 @@
 -- block-validation fields in the header (so an applier can refuse
 -- to patch the wrong source ROM) and an optional FILE_ID.DIZ
 -- trailer for free-form patch metadata. The record stream wire
--- format is the same as PPF1 (4-byte LE offset, 1-byte count,
--- payload). Specified in @docs/ppf/upstream/pdx-ppf2/ppftools/ppfdev/PPF2.txt@.
+-- format is the same as PPF1 (4-byte offset, 1-byte count, payload).
+-- Specified in
+-- @docs/ppf/upstream/pdx-ppf2/ppftools/ppfdev/PPF2.txt@.
 module Slap.PPF2.Types
   ( PPF2Patch(..)
   , PPF2Record(..)
@@ -82,7 +83,7 @@ narrowPPF2FileId description
     (encoded, _notices) = encodeTextLenient EncodingUtf8 (encodedTextContent description)
     contentLength       = byteLength encoded
 
--- | PPF2's 4-byte LE source-ROM-size header field, narrowed from a runtime 'FileSize'.
+-- | PPF2's 4-byte source-ROM-size header field, narrowed from a runtime 'FileSize'.
 -- The third of the format's four-byte numbers, and signed for the same reason as the other two:
 -- the tools that read it hold a 32-bit number in a Turbo Pascal @Longint@ and have no wider one to reach for.
 -- Constructor private; values come from 'narrowPPF2SourceSize' (runtime check)
@@ -109,7 +110,7 @@ data PPF2Patch = PPF2Patch
     -- silent on the description's encoding, so slap interprets the
     -- bytes under the user's @--metadata-encoding@ (default UTF-8) and
     -- writes them back as UTF-8.
-  , ppf2SourceFileSize  :: !PPF2SourceSize   -- ^ 4-byte LE field at header offset 56; declares the source ROM's expected size
+  , ppf2SourceFileSize  :: !PPF2SourceSize   -- ^ 4-byte field at header offset 56; declares the source ROM's expected size
   , ppf2ValidationBlock :: !PPF2ValidationBlock
   , ppf2Records         :: ![PPF2Record]
   , ppf2FileId          :: !(Maybe PPF2CarriedFileId)

@@ -6,8 +6,9 @@
 -- @docs/ppf/upstream/pdx-ppf1/sources/applyppf.c@.
 module Slap.PPF1.Parse (parsePPF1, parsePPF1Records) where
 
-import Slap.PPF1.Types (PPF1Patch(..), PPF1Record(..), PPF1Origin(..),
+import Slap.PPF1.Types (PPF1Patch(..), PPF1Record(..),
                         ppf1DescriptionLength)
+import Slap.Dialect (PatchOrigin(..))
 import Slap.Status (SlapError(..), SlapAdvisory, Parsed(..), ByteParserError(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
@@ -31,7 +32,7 @@ data PPF1ParsedBody = PPF1ParsedBody
   , ppf1BodyRecords               :: ![PPF1Record]
   }
 
-parsePPF1 :: PPF1Origin -> EncodingName -> PatchFileContents -> Either SlapError (Parsed PPF1Patch)
+parsePPF1 :: PatchOrigin -> EncodingName -> PatchFileContents -> Either SlapError (Parsed PPF1Patch)
 parsePPF1 origin metadataEncoding (PatchFileContents input)
   | byteLength input < minimumPPF1ParseLength =
       Left (InputTooShort LabelPPF1
@@ -84,12 +85,12 @@ checkEncodingByte input
 -- The reference applier (@applyppf.c@, fillout-mode branch)
 -- implements this; the reference creator (@makeppf.c@) never emits
 -- it. Other PPF1 producers can.
-parsePPF1Records :: PPF1Origin -> ActionIndex -> ByteParser [PPF1Record]
+parsePPF1Records :: PatchOrigin -> ActionIndex -> ByteParser [PPF1Record]
 parsePPF1Records origin = parseRemainingRecords
   where
     readOffsetWord = case origin of
-      PPF1OriginPC    -> int32LE
-      PPF1OriginAmiga -> int32BE
+      OriginPC    -> int32LE
+      OriginAmiga -> int32BE
     parseRemainingRecords recordIndex = do
       remainingBytes <- remaining
       if unLength remainingBytes < 5 then pure []
