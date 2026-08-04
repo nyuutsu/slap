@@ -251,8 +251,8 @@ renderSlapError (UnsupportedEncodingMethod label (EncodingMethodByte methodByte)
 
 renderSlapError (NINJA2UnrecognizedTextMode byte) =
   formatLabelName LabelNINJA2
-    <> ": the patch doesn't say how its text is encoded: its PATCH_ENC byte is 0x" <> padHex 2 byte
-    <> ", and the spec defines only 0 (undeclared) and 1 (UTF-8); slap won't guess at an undefined encoding"
+    <> ": the byte that says how the patch's text is encoded (PATCH_ENC) is 0x" <> padHex 2 byte
+    <> ", and the spec defines only 0 (undeclared) and 1 (UTF-8), so none of the patch's text can be decoded"
 
 renderSlapError (MalformedNINJA1Content malformation) =
   formatLabelName LabelNINJA1 <> ": " <> case malformation of

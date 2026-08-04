@@ -51,8 +51,9 @@ data ApplyError
   -- (No corresponding @ApplyTargetOverfilled@: 'ApplyWritesPastTarget' catches over-writes per-action before they can happen.)
   | ApplyTargetUnderfilled WritePosition ExpectedSize
 
-  -- | A record's offset is negative. Possible only where the offset encoding admits one:
-  -- PPF3's signed 64-bit field, and NINJA2's packed integers, which decode into a signed 'Int'.
+  -- | A record's offset decodes below zero — a position before the start of the file.
+  -- It fires wherever the offset reads through a signed integer and the wire sets its sign bit:
+  -- a value past 2 GB, or a byte order read the wrong way round.
   | ApplyNegativeRecordOffset ActionIndex Offset
 
   -- | A record's write end — offset plus payload length — exceeds 'maxBound' :: 'Int', the ceiling of slap's position carrier.
@@ -126,7 +127,8 @@ renderApplyError (ApplyTargetUnderfilled (WritePosition cursor) (ExpectedSize ex
 
 renderApplyError (ApplyNegativeRecordOffset actionIndex offset) =
   "record " <> renderAsText (unActionIndex actionIndex)
-  <> " writes at offset " <> renderAsText (unOffset offset)
+  <> " writes before the start of the file (its offset decodes to "
+  <> renderAsText (unOffset offset) <> ")"
 
 renderApplyError (ApplyOutputExceedsAddressableRange actionIndex offset payloadLength) =
   "record " <> renderAsText (unActionIndex actionIndex)

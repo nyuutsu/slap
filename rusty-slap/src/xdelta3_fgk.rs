@@ -140,7 +140,7 @@ impl std::fmt::Display for FgkFault {
 /// significant first, but that is the reader's caller's doing — this
 /// only hands out one bit at a time. Consumption is counted in whole
 /// bytes: a byte is consumed the moment its first bit is read, which is
-/// where xd3's input pointer moves too. A separate honest copy of the
+/// where xd3's input pointer moves too. A separate copy of the
 /// DJW reader rather than a shared one — FGK needs only `read_bit`, and
 /// the coupling would buy nothing.
 struct BitReader<'section> {

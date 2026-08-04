@@ -101,8 +101,8 @@ data UnwrapError
   | -- | The archive opened, but every entry was filtered as chaff
     -- (readme, image, and so on), leaving nothing to treat as the patch.
     ArchiveHasNoCandidate SeenEntryCount
-  | -- | Several entries are plausible patches; slap will not guess, so
-    -- the user must extract the one they want.
+  | -- | Several entries are plausible patches and nothing in the archive says which one is meant;
+    -- the message lists them so the user can extract the one they want.
     ArchiveHasManyCandidates [EntryName]
   | -- | A tool reported a successful extraction, but the named file wasn't in the temporary directory afterwards.
     ExtractedEntryMissing EntryName
