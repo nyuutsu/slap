@@ -100,6 +100,7 @@ library slap-internal
     , Slap.IPS.Create
     , Slap.IPS.Describe
     , Slap.IPS.EBPMetadata
+    , Slap.IPS.FFI
     , Slap.IPS.Optimize
     , Slap.IPS.Parse
     , Slap.IPS.Types
@@ -133,6 +134,7 @@ library slap-internal
     , Slap.UPS.Apply
     , Slap.UPS.Create
     , Slap.UPS.Describe
+    , Slap.UPS.FFI
     , Slap.UPS.Parse
     , Slap.UPS.Types
     , Slap.VCDIFF.AddressCache

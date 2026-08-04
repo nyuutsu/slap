@@ -24,8 +24,9 @@ module Slap.IPS.Optimize
   ( optimalIPSRecords
   ) where
 
-import Slap.Binary (byteAtOffset, viewBytesInRange)
+import Slap.Binary (viewBytesInRange)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
+import Slap.IPS.FFI (nextDifference, nextAgreement)
 import Slap.IPS.Types
   ( OffsetWidth
   , offsetWidthMaxAddressableOffset
@@ -151,29 +152,18 @@ scanDiffRegions (InputFileContents source) (OutputFileContents target) =
       | otherwise = []
 
     scanFromPosition :: Offset -> [Hunk]
-    scanFromPosition !position
+    scanFromPosition position
       | position >= overlapEnd = []
-      | byteAtOffset position source == byteAtOffset position target =
-          scanFromPosition (advance position (Length 1))
-      | otherwise =
-          let regionEnd     = findRegionEnd (advance position (Length 1))
-              regionLength  = distance position regionEnd
-              regionPayload = viewBytesInRange position regionLength target
-              region = Hunk
-                { hunkOffset  = position
-                , hunkPayload = regionPayload
-                }
-          in region : scanFromPosition regionEnd
-
-    -- | Walk forward while bytes still differ; return the first
-    -- position at which they re-converge (or @overlapEnd@ if
-    -- they never do within the shared range).
-    findRegionEnd :: Offset -> Offset
-    findRegionEnd !position
-      | position >= overlapEnd = overlapEnd
-      | byteAtOffset position source /= byteAtOffset position target =
-          findRegionEnd (advance position (Length 1))
-      | otherwise = position
+      | regionStart >= overlapEnd = []
+      | otherwise = region : scanFromPosition regionEnd
+      where
+        regionStart  = nextDifference source target position
+        regionEnd    = nextAgreement source target regionStart
+        regionLength = distance regionStart regionEnd
+        region = Hunk
+          { hunkOffset  = regionStart
+          , hunkPayload = viewBytesInRange regionStart regionLength target
+          }
 
 ----------------------------------------------------------------------------
 -- Step 2: merge gaps narrower than the cost-of-separating threshold

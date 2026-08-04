@@ -13,6 +13,8 @@ mod compress;
 mod crc32;
 mod gdiff_diff;
 mod gdiff_hash_chain;
+mod ips_scan;
+mod ups_scan;
 mod vcdiff_diff;
 mod vcdiff_hash_chain;
 mod xdelta1_diff;
@@ -130,6 +132,89 @@ pub unsafe extern "C" fn rusty_crc32(input_address: *const u8, input_length: usi
 pub unsafe extern "C" fn rusty_adler32(input_address: *const u8, input_length: usize) -> u32 {
     let input = unsafe { view_caller_buffer(input_address, input_length) };
     simd_adler32::adler32(&input)
+}
+
+
+// ── IPS region-finder FFI ─────────────────────────────────────────────
+
+/// The first position at or after `from`, within the shared prefix, where
+/// source and target disagree — the start of an IPS diff region. Bounds
+/// and the end sentinel are [`ips_scan`]'s.
+///
+/// # Safety
+/// Each address must point to its length in readable bytes (or may be
+/// null when that length is 0), and `from` must not exceed the shorter
+/// buffer's length.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rusty_ips_next_difference(
+    source_address: *const u8,
+    source_length:  usize,
+    target_address: *const u8,
+    target_length:  usize,
+    from:           usize,
+) -> usize {
+    let source = unsafe { view_caller_buffer(source_address, source_length) };
+    let target = unsafe { view_caller_buffer(target_address, target_length) };
+    ips_scan::next_difference(source, target, from)
+}
+
+/// The first position at or after `from`, within the shared prefix, where
+/// source and target agree — the end of an IPS diff region.
+///
+/// # Safety
+/// As for [`rusty_ips_next_difference`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rusty_ips_next_agreement(
+    source_address: *const u8,
+    source_length:  usize,
+    target_address: *const u8,
+    target_length:  usize,
+    from:           usize,
+) -> usize {
+    let source = unsafe { view_caller_buffer(source_address, source_length) };
+    let target = unsafe { view_caller_buffer(target_address, target_length) };
+    ips_scan::next_agreement(source, target, from)
+}
+
+// ── UPS run-finder FFI ────────────────────────────────────────────────
+
+/// The first position at or after `from`, over the target, where source
+/// and target disagree — the start of a UPS XOR run. Zero-padding and
+/// the end sentinel are [`ups_scan`]'s.
+///
+/// # Safety
+/// Each address must point to its length in readable bytes (or may be
+/// null when that length is 0), and `from` must not exceed the target
+/// length.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rusty_ups_next_difference(
+    source_address: *const u8,
+    source_length:  usize,
+    target_address: *const u8,
+    target_length:  usize,
+    from:           usize,
+) -> usize {
+    let source = unsafe { view_caller_buffer(source_address, source_length) };
+    let target = unsafe { view_caller_buffer(target_address, target_length) };
+    ups_scan::next_difference(source, target, from)
+}
+
+/// The first position at or after `from`, over the target, where source
+/// and target agree — the end of a UPS XOR run.
+///
+/// # Safety
+/// As for [`rusty_ups_next_difference`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rusty_ups_next_agreement(
+    source_address: *const u8,
+    source_length:  usize,
+    target_address: *const u8,
+    target_length:  usize,
+    from:           usize,
+) -> usize {
+    let source = unsafe { view_caller_buffer(source_address, source_length) };
+    let target = unsafe { view_caller_buffer(target_address, target_length) };
+    ups_scan::next_agreement(source, target, from)
 }
 
 // ── BPS diff FFI ──────────────────────────────────────────────────────
