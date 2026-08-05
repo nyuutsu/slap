@@ -316,7 +316,7 @@ slap convert patch.rup --metadata-encoding shift-jis --to ebp
 
 Declare something about how to interpret the patch. This is about information needed to read the patch, but that isn't declared by the patch.
 
-`--is-amiga-patch`: Correctly *interpret* a `PPF1` patch made on an Amiga computer.
+`--is-amiga-patch`: Correctly *interpret* a `PPF1` or `PPF2` patch made on an Amiga computer.
 
 This also works with `info`, `explain`, and `convert`. Regarding `convert`: our *outputs* are always little-endian.
 
