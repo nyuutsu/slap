@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>slap bench — the web lane</title>
+<style>
+  :root {
+    --paper: #FBFBF9; --panel: #FFFFFF; --hairline: #C9CFCA; --ink: #1A211C;
+    --ok-ink: #2C4A21; --ok-line: #A8D5A0; --ok-room: #D8ECD3;
+    --caution-ink: #6B4715; --caution-line: #EFC98F; --caution-room: #F6E3C4;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--paper); color: var(--ink); font-family: system-ui, sans-serif;
+         font-size: 17px; line-height: 1.55; padding: 2.5rem 1.25rem 4rem; }
+  main { max-width: 62rem; margin: 0 auto; display: grid; gap: 1.4rem; }
+  h1 { font-size: 1.9rem; font-weight: 800; }
+  h2 { font-size: 1.25rem; font-weight: 800; margin-bottom: .4rem; }
+  h3 { font-size: 1.02rem; font-weight: 700; margin: 1rem 0 .3rem; }
+  h4 { font-size: 1rem; font-weight: 700; margin: 1rem 0 .3rem; }
+  p  { max-width: 72ch; }
+  .stamp { font-size: .88rem; }
+  .card { background: var(--panel); border: 1px solid var(--hairline); border-radius: 12px; padding: 1.1rem 1.3rem; }
+  table { border-collapse: collapse; width: 100%; background: var(--panel); font-size: .92rem; }
+  th, td { border: 1px solid var(--hairline); padding: .32rem .6rem; text-align: left; vertical-align: top; }
+  th { font-weight: 700; background: #F1F3F0; }
+  td.number { font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.ahead  { background: var(--ok-room); }
+  td.behind { background: var(--caution-room); }
+  td.balked { color: var(--caution-ink); background: var(--caution-room); font-size: .88rem; }
+  td.absent { color: var(--hairline); text-align: center; }
+  .pair .slap-value { display: block; font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+  .pair .rival-value { display: block; font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums;
+                       font-size: .82rem; opacity: .85; }
+  .table-scroll { overflow-x: auto; }
+  details { background: var(--panel); border: 1px solid var(--hairline); border-radius: 12px; padding: .8rem 1.3rem; }
+  summary { cursor: pointer; font-size: 1.02rem; }
+  details table { font-size: .88rem; }
+  .notes { font-size: .92rem; }
+  .notes li { margin-bottom: .35rem; }
+  ul { padding-left: 1.2rem; max-width: 72ch; }
+</style></head><body><main>
+
+<header>
+  <h1>slap bench — the web lane</h1>
+  <p>Web slap against RomPatcher.js on browser-plausible pairs —
+     a 4MiB handheld rom, a 64MiB N64 one, and for ips and ebp an 8MiB pair, their format being unable to address 64MiB.
+     Both sides run warm, the way a visitor meets them: the page is long booted and the files are already in memory,
+     so a timed call is only the patching work.</p>
+  <p class="stamp">measured 2026-08-05 on forge, warm cache</p>
+</header>
+
+<div class="card table-scroll">
+  <h2>The measurements</h2>
+  <p style="font-size:.92rem; margin-bottom:.6rem;">Green marks the side that is ahead, amber the side
+     behind, plain a gap under ten percent — too close to call at this measurement's noise.</p>
+  <h3>Applying the same slap-made patch</h3>
+  <table>
+  <thead><tr><th>format</th><th>web slap · 4MiB</th><th>rpjs · 4MiB</th><th>web slap · 8MiB</th><th>rpjs · 8MiB</th><th>web slap · 64MiB</th><th>rpjs · 64MiB</th></tr></thead>
+  <tbody>
+<tr><td>ips</td><td class="number behind">22ms</td><td class="number ahead">4ms</td><td class="number ahead">9ms</td><td class="number behind">14ms</td><td class="absent">·</td><td class="absent">·</td></tr>
+<tr><td>ups</td><td class="number ahead">5ms</td><td class="number behind">12ms</td><td class="absent">·</td><td class="absent">·</td><td class="number ahead">82ms</td><td class="number behind">98ms</td></tr>
+<tr><td>bps</td><td class="number behind">29ms</td><td class="number ahead">10ms</td><td class="absent">·</td><td class="absent">·</td><td class="number behind">68ms</td><td class="number ahead">48ms</td></tr>
+<tr><td>ppf</td><td class="number ahead">3ms</td><td class="number behind">10ms</td><td class="absent">·</td><td class="absent">·</td><td class="number ahead">43ms</td><td class="number behind">59ms</td></tr>
+<tr><td>ebp</td><td class="number behind">22ms</td><td class="number ahead">3ms</td><td class="number ahead">8ms</td><td class="number behind">19ms</td><td class="absent">·</td><td class="absent">·</td></tr>
+<tr><td>aps</td><td class="number behind">24ms</td><td class="number ahead">11ms</td><td class="absent">·</td><td class="absent">·</td><td class="number ahead">37ms</td><td class="number behind">66ms</td></tr>
+<tr><td>rup</td><td class="number ahead">12ms</td><td class="number behind">17ms</td><td class="absent">·</td><td class="absent">·</td><td class="number ahead">176ms</td><td class="number behind">198ms</td></tr>
+  </tbody>
+</table>
+  <h3>Creating a patch from the pair</h3>
+  <table>
+  <thead><tr><th>format</th><th>web slap · 4MiB</th><th>rpjs · 4MiB</th><th>web slap · 8MiB</th><th>rpjs · 8MiB</th><th>web slap · 64MiB</th><th>rpjs · 64MiB</th></tr></thead>
+  <tbody>
+<tr><td>ips</td><td class="number behind">45ms</td><td class="number ahead">36ms</td><td class="number ahead">17ms</td><td class="number behind">219ms</td><td class="absent">·</td><td class="absent">·</td></tr>
+<tr><td>ups</td><td class="number ahead">6ms</td><td class="number behind">43ms</td><td class="absent">·</td><td class="absent">·</td><td class="number ahead">75ms</td><td class="number behind">620ms</td></tr>
+<tr><td>bps</td><td class="number ahead">60ms</td><td class="number behind">251.1s</td><td class="absent">·</td><td class="absent">·</td><td class="number behind">2.0s</td><td class="number ahead">560ms</td></tr>
+<tr><td>ppf</td><td class="number ahead">5ms</td><td class="number behind">31ms</td><td class="absent">·</td><td class="absent">·</td><td class="number ahead">72ms</td><td class="number behind">421ms</td></tr>
+<tr><td>ebp</td><td class="number behind">45ms</td><td class="number ahead">37ms</td><td class="number ahead">17ms</td><td class="number behind">220ms</td><td class="absent">·</td><td class="absent">·</td></tr>
+<tr><td>aps</td><td class="number ahead">6ms</td><td class="number behind">33ms</td><td class="absent">·</td><td class="absent">·</td><td class="number ahead">74ms</td><td class="number behind">412ms</td></tr>
+<tr><td>rup</td><td class="number ahead">14ms</td><td class="number behind">61ms</td><td class="absent">·</td><td class="absent">·</td><td class="number ahead">214ms</td><td class="number behind">789ms</td></tr>
+  </tbody>
+</table>
+  <h3>The patch each create wrote — judged by rebuilding the pair</h3>
+  <table>
+  <thead><tr><th>format</th><th>web slap · 4MiB</th><th>rpjs · 4MiB</th><th>web slap · 8MiB</th><th>rpjs · 8MiB</th><th>web slap · 64MiB</th><th>rpjs · 64MiB</th></tr></thead>
+  <tbody>
+<tr><td>ips</td><td class="number ahead">655KiB</td><td class="number behind">886KiB</td><td class="number ">554KiB</td><td class="number ">556KiB</td><td class="absent">·</td><td class="absent">·</td></tr>
+<tr><td>ups</td><td class="number ">888KiB</td><td class="number ">888KiB</td><td class="absent">·</td><td class="absent">·</td><td class="number ">4.5MiB</td><td class="number ">4.5MiB</td></tr>
+<tr><td>bps</td><td class="number ahead">276KiB</td><td class="number behind">308KiB</td><td class="absent">·</td><td class="absent">·</td><td class="number ahead">1.9MiB</td><td class="number behind">4.4MiB</td></tr>
+<tr><td>ppf</td><td class="number ">922KiB</td><td class="number ">936KiB</td><td class="absent">·</td><td class="absent">·</td><td class="number ">4.6MiB</td><td class="number ">4.9MiB</td></tr>
+<tr><td>ebp</td><td class="number ahead">655KiB</td><td class="number behind">886KiB</td><td class="number ">554KiB</td><td class="number ">556KiB</td><td class="absent">·</td><td class="absent">·</td></tr>
+<tr><td>aps</td><td class="number ">905KiB</td><td class="number ">908KiB</td><td class="absent">·</td><td class="absent">·</td><td class="number ">4.5MiB</td><td class="number ">4.6MiB</td></tr>
+<tr><td>rup</td><td class="number ">891KiB</td><td class="number ">903KiB</td><td class="absent">·</td><td class="absent">·</td><td class="number ">4.4MiB</td><td class="number ">4.7MiB</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="card">
+  <h2>Reading notes</h2>
+  <ul class="notes">
+    <li>Each cell runs warm in its own child process — booted once, only the calls timed — and the
+        driver kills any cell still working at 300s, which then says so in its cell.</li>
+    <li>Settings are matched: ppf is created without undo data on both sides, and aps as APS-N64
+        on both, that being what rpjs's aps token writes.</li>
+    <li>rpjs's bps create searches (its delta mode) only for files of 4MiB and under — a 4194304-byte
+        threshold in its source. Larger files take its linear pass: far quicker, and the patch grows
+        accordingly, which is the whole 64MiB bps row.</li>
+    <li>rup is NINJA2, and needed no matching — undo lives in the XOR itself, so both tools
+        write the same shape.</li>
+    <li>ips and ebp track each other because ebp is IPS with metadata; the encoders are shared on both sides.</li>
+    <li>A dot means that pairing was not benched at that size — ips and ebp take the fe6 pair
+        instead of the 64MiB one, which their format cannot address.</li>
+    <li>The CLI lanes, with reference tools per format and tiers up to 520MiB, live in summary.html
+        beside this page.</li>
+  </ul>
+</div>
+</main></body></html>

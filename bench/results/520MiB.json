@@ -1,0 +1,370 @@
+[
+  {
+    "format": "ips32",
+    "creator": "slap",
+    "creation": {
+      "tag": "Timed",
+      "seconds": 0.1499728668
+    },
+    "appliers": {
+      "slap": {
+        "tag": "Timed",
+        "seconds": 0.8354830899800001
+      },
+      "atmosphereIps": {
+        "tag": "Timed",
+        "seconds": 0.7755678720800001
+      }
+    },
+    "patchBytes": 397591
+  },
+  {
+    "format": "ips32",
+    "creator": "sips",
+    "creation": {
+      "tag": "Timed",
+      "seconds": 0.41343619568
+    },
+    "appliers": {
+      "slap": {
+        "tag": "Timed",
+        "seconds": 0.8520626307000001
+      },
+      "atmosphereIps": {
+        "tag": "Timed",
+        "seconds": 0.8128739194
+      }
+    },
+    "patchBytes": 627998
+  },
+  {
+    "format": "ups",
+    "creator": "slap",
+    "creation": {
+      "tag": "Timed",
+      "seconds": 0.19785065570000004
+    },
+    "appliers": {
+      "slap": {
+        "tag": "Timed",
+        "seconds": 0.90245953498
+      },
+      "flips": {
+        "tag": "Timed",
+        "seconds": 4.15472871094
+      },
+      "goUps": {
+        "tag": "Timed",
+        "seconds": 0.9184459465000001
+      }
+    },
+    "patchBytes": 478499
+  },
+  {
+    "format": "ups",
+    "creator": "goUps",
+    "creation": {
+      "tag": "Timed",
+      "seconds": 0.5882147676
+    },
+    "appliers": {
+      "slap": {
+        "tag": "Timed",
+        "seconds": 0.9201545315
+      },
+      "flips": {
+        "tag": "Timed",
+        "seconds": 4.167388623960001
+      },
+      "goUps": {
+        "tag": "Timed",
+        "seconds": 0.9058252340200001
+      }
+    },
+    "patchBytes": 478499
+  },
+  {
+    "format": "bps",
+    "creator": "slap",
+    "creation": {
+      "tag": "Timed",
+      "seconds": 1.8765480941800001
+    },
+    "appliers": {
+      "slap": {
+        "tag": "Timed",
+        "seconds": 0.8959203757800001
+      },
+      "flips": {
+        "tag": "Timed",
+        "seconds": 4.19718399772
+      }
+    },
+    "patchBytes": 286351
+  },
+  {
+    "format": "bps",
+    "creator": "flips",
+    "creation": {
+      "tag": "Balked",
+      "words": "gave up after 60s"
+    },
+    "appliers": {}
+  },
+  {
+    "format": "ppf3",
+    "creator": "slap",
+    "creation": {
+      "tag": "Timed",
+      "seconds": 0.5000718946
+    },
+    "appliers": {
+      "slap": {
+        "tag": "Timed",
+        "seconds": 0.8325574927000001
+      },
+      "applyppf3": {
+        "tag": "Timed",
+        "seconds": 0.17521606226000003
+      }
+    },
+    "patchBytes": 941603
+  },
+  {
+    "format": "ppf3",
+    "creator": "slap-no-undo",
+    "creation": {
+      "tag": "Timed",
+      "seconds": 0.48686193732000005
+    },
+    "appliers": {
+      "slap": {
+        "tag": "Timed",
+        "seconds": 0.83729597816
+      },
+      "applyppf3": {
+        "tag": "Timed",
+        "seconds": 0.10857455872000002
+      }
+    },
+    "patchBytes": 492975
+  },
+  {
+    "format": "ppf3",
+    "creator": "makeppf3",
+    "creation": {
+      "tag": "Timed",
+      "seconds": 0.33301907176
+    },
+    "appliers": {
+      "slap": {
+        "tag": "Timed",
+        "seconds": 0.8713206288600001
+      },
+      "applyppf3": {
+        "tag": "Timed",
+        "seconds": 0.17072412536
+      }
+    },
+    "patchBytes": 745050
+  },
+  {
+    "format": "ninja2",
+    "creator": "slap",
+    "creation": {
+      "tag": "Timed",
+      "seconds": 1.46786676098
+    },
+    "appliers": {
+      "slap": {
+        "tag": "Timed",
+        "seconds": 1.8184343031
+      },
+      "ninja2Php": {
+        "tag": "Timed",
+        "seconds": 1.47980461006
+      }
+    },
+    "patchBytes": 478170
+  },
+  {
+    "format": "ninja2",
+    "creator": "ninja2Php",
+    "creation": {
+      "tag": "Timed",
+      "seconds": 1.59090106928
+    },
+    "appliers": {
+      "slap": {
+        "tag": "Timed",
+        "seconds": 1.80571183066
+      },
+      "ninja2Php": {
+        "tag": "Timed",
+        "seconds": 1.39545098804
+      }
+    },
+    "patchBytes": 695753
+  },
+  {
+    "format": "gdiff",
+    "creator": "slap",
+    "creation": {
+      "tag": "Timed",
+      "seconds": 0.73347237586
+    },
+    "appliers": {
+      "slap": {
+        "tag": "Timed",
+        "seconds": 0.8301060545800001
+      },
+      "javaxdelta": {
+        "tag": "Timed",
+        "seconds": 1.01258869126
+      }
+    },
+    "patchBytes": 375353
+  },
+  {
+    "format": "gdiff",
+    "creator": "javaxdelta",
+    "creation": {
+      "tag": "Timed",
+      "seconds": 10.76045905394
+    },
+    "appliers": {
+      "slap": {
+        "tag": "Timed",
+        "seconds": 0.8690358449200001
+      },
+      "javaxdelta": {
+        "tag": "Timed",
+        "seconds": 1.01981869448
+      }
+    },
+    "patchBytes": 435072
+  },
+  {
+    "format": "bsdiff",
+    "creator": "slap",
+    "creation": {
+      "tag": "Timed",
+      "seconds": 3.57141876046
+    },
+    "appliers": {
+      "slap": {
+        "tag": "Timed",
+        "seconds": 3.4054671335399997
+      },
+      "bsdiff": {
+        "tag": "Timed",
+        "seconds": 1.7224545020800002
+      }
+    },
+    "patchBytes": 293525
+  },
+  {
+    "format": "bsdiff",
+    "creator": "bsdiff",
+    "creation": {
+      "tag": "Balked",
+      "words": "gave up after 60s"
+    },
+    "appliers": {}
+  },
+  {
+    "format": "xdelta1",
+    "creator": "slap",
+    "creation": {
+      "tag": "Timed",
+      "seconds": 1.6196196998799999
+    },
+    "appliers": {
+      "slap": {
+        "tag": "Timed",
+        "seconds": 1.84165480484
+      },
+      "xdelta1": {
+        "tag": "Timed",
+        "seconds": 1.18097458602
+      }
+    },
+    "patchBytes": 281625
+  },
+  {
+    "format": "xdelta1",
+    "creator": "xdelta1",
+    "creation": {
+      "tag": "Timed",
+      "seconds": 1.33391624056
+    },
+    "appliers": {
+      "slap": {
+        "tag": "Timed",
+        "seconds": 1.83935166138
+      },
+      "xdelta1": {
+        "tag": "Timed",
+        "seconds": 1.17233735806
+      }
+    },
+    "patchBytes": 285502
+  },
+  {
+    "format": "xdelta3",
+    "creator": "slap",
+    "creation": {
+      "tag": "Timed",
+      "seconds": 0.5962418655999999
+    },
+    "appliers": {
+      "slap": {
+        "tag": "Timed",
+        "seconds": 0.8482099930400001
+      },
+      "xdelta3": {
+        "tag": "Timed",
+        "seconds": 0.8428936058200001
+      }
+    },
+    "patchBytes": 269159
+  },
+  {
+    "format": "xdelta3",
+    "creator": "xdelta3",
+    "creation": {
+      "tag": "Timed",
+      "seconds": 0.32604233118000003
+    },
+    "appliers": {
+      "slap": {
+        "tag": "Timed",
+        "seconds": 0.8600746804600001
+      },
+      "xdelta3": {
+        "tag": "Timed",
+        "seconds": 0.8148396115800001
+      }
+    },
+    "patchBytes": 278711
+  },
+  {
+    "format": "rfc-vcdiff",
+    "creator": "slap",
+    "creation": {
+      "tag": "Timed",
+      "seconds": 0.7889706876000001
+    },
+    "appliers": {
+      "slap": {
+        "tag": "Timed",
+        "seconds": 0.8399819097200001
+      },
+      "xdelta3": {
+        "tag": "Balked",
+        "words": "xdelta3: VCD_CODETABLE support was removed: XD3_UNIMPLEMENTED"
+      }
+    },
+    "patchBytes": 307366
+  }
+]

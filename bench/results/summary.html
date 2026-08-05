@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>slap bench — the CLI lanes</title>
+<style>
+  :root {
+    --paper: #FBFBF9; --panel: #FFFFFF; --hairline: #C9CFCA; --ink: #1A211C;
+    --ok-ink: #2C4A21; --ok-line: #A8D5A0; --ok-room: #D8ECD3;
+    --caution-ink: #6B4715; --caution-line: #EFC98F; --caution-room: #F6E3C4;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--paper); color: var(--ink); font-family: system-ui, sans-serif;
+         font-size: 17px; line-height: 1.55; padding: 2.5rem 1.25rem 4rem; }
+  main { max-width: 62rem; margin: 0 auto; display: grid; gap: 1.4rem; }
+  h1 { font-size: 1.9rem; font-weight: 800; }
+  h2 { font-size: 1.25rem; font-weight: 800; margin-bottom: .4rem; }
+  h3 { font-size: 1.02rem; font-weight: 700; margin: 1rem 0 .3rem; }
+  h4 { font-size: 1rem; font-weight: 700; margin: 1rem 0 .3rem; }
+  p  { max-width: 72ch; }
+  .stamp { font-size: .88rem; }
+  .card { background: var(--panel); border: 1px solid var(--hairline); border-radius: 12px; padding: 1.1rem 1.3rem; }
+  table { border-collapse: collapse; width: 100%; background: var(--panel); font-size: .92rem; }
+  th, td { border: 1px solid var(--hairline); padding: .32rem .6rem; text-align: left; vertical-align: top; }
+  th { font-weight: 700; background: #F1F3F0; }
+  td.number { font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.ahead  { background: var(--ok-room); }
+  td.behind { background: var(--caution-room); }
+  td.balked { color: var(--caution-ink); background: var(--caution-room); font-size: .88rem; }
+  td.absent { color: var(--hairline); text-align: center; }
+  .pair .slap-value { display: block; font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+  .pair .rival-value { display: block; font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums;
+                       font-size: .82rem; opacity: .85; }
+  .table-scroll { overflow-x: auto; }
+  details { background: var(--panel); border: 1px solid var(--hairline); border-radius: 12px; padding: .8rem 1.3rem; }
+  summary { cursor: pointer; font-size: 1.02rem; }
+  details table { font-size: .88rem; }
+  .notes { font-size: .92rem; }
+  .notes li { margin-bottom: .35rem; }
+  ul { padding-left: 1.2rem; max-width: 72ch; }
+</style></head><body><main>
+
+<header>
+  <h1>slap bench — the CLI lanes</h1>
+  <p>Four before/after pairs, 4MiB to 520MiB. Every format slap writes is bottled and applied by slap
+     and by each format's reference tool where one can be driven from a shell; every output is checked
+     byte-for-byte against the pair before its time counts.</p>
+  <p class="stamp">measured 2026-08-05 on forge, warm cache</p>
+</header>
+
+<div class="card table-scroll">
+  <h2>Across the sizes</h2>
+  <p style="font-size:.94rem;">Each cell holds both measurements, slap's on top. Green means slap ahead,
+     amber behind, plain a gap under ten percent — which these medians cannot tell from noise.
+     A dot means that pairing was not benched at that size.</p>
+  <h3>Create time</h3>
+  <table>
+<thead><tr><th>format · reference</th><th>4MiB</th><th>16MiB</th><th>64MiB</th><th>520MiB</th></tr></thead>
+<tbody><tr><td>ips · flips</td><td class="pair behind"><span class="slap-value">18ms</span><span class="rival-value">12ms</span></td><td class="pair ahead"><span class="slap-value">9ms</span><span class="rival-value">21ms</span></td><td class="absent">·</td><td class="absent">·</td></tr>
+<tr><td>ips32 · sips</td><td class="pair behind"><span class="slap-value">15ms</span><span class="rival-value">8ms</span></td><td class="pair ahead"><span class="slap-value">11ms</span><span class="rival-value">17ms</span></td><td class="pair ahead"><span class="slap-value">38ms</span><span class="rival-value">68ms</span></td><td class="pair ahead"><span class="slap-value">150ms</span><span class="rival-value">413ms</span></td></tr>
+<tr><td>ups · goUps</td><td class="pair ahead"><span class="slap-value">9ms</span><span class="rival-value">12ms</span></td><td class="pair ahead"><span class="slap-value">11ms</span><span class="rival-value">24ms</span></td><td class="pair ahead"><span class="slap-value">44ms</span><span class="rival-value">99ms</span></td><td class="pair ahead"><span class="slap-value">198ms</span><span class="rival-value">588ms</span></td></tr>
+<tr><td>bps · flips</td><td class="pair ahead"><span class="slap-value">57ms</span><span class="rival-value">327ms</span></td><td class="pair ahead"><span class="slap-value">103ms</span><span class="rival-value">1.29s</span></td><td class="pair ahead"><span class="slap-value">1.55s</span><span class="rival-value">11.94s</span></td><td class="pair ahead"><span class="slap-value">1.88s</span><span class="rival-value">gave up after 60s</span></td></tr>
+<tr><td>ppf3 · makeppf3</td><td class="pair "><span class="slap-value">11ms</span><span class="rival-value">10ms</span></td><td class="pair behind"><span class="slap-value">19ms</span><span class="rival-value">14ms</span></td><td class="pair behind"><span class="slap-value">74ms</span><span class="rival-value">57ms</span></td><td class="pair behind"><span class="slap-value">487ms</span><span class="rival-value">333ms</span></td></tr>
+<tr><td>ninja1 · ninjaPhp</td><td class="pair ahead"><span class="slap-value">17ms</span><span class="rival-value">41ms</span></td><td class="pair ahead"><span class="slap-value">45ms</span><span class="rival-value">53ms</span></td><td class="pair ahead"><span class="slap-value">130ms</span><span class="rival-value">241ms</span></td><td class="absent">·</td></tr>
+<tr><td>ninja2 · ninja2Php</td><td class="pair ahead"><span class="slap-value">19ms</span><span class="rival-value">145ms</span></td><td class="pair ahead"><span class="slap-value">50ms</span><span class="rival-value">103ms</span></td><td class="pair ahead"><span class="slap-value">204ms</span><span class="rival-value">685ms</span></td><td class="pair "><span class="slap-value">1.47s</span><span class="rival-value">1.59s</span></td></tr>
+<tr><td>gdiff · javaxdelta</td><td class="pair ahead"><span class="slap-value">18ms</span><span class="rival-value">136ms</span></td><td class="pair ahead"><span class="slap-value">12ms</span><span class="rival-value">249ms</span></td><td class="pair ahead"><span class="slap-value">239ms</span><span class="rival-value">1.27s</span></td><td class="pair ahead"><span class="slap-value">733ms</span><span class="rival-value">10.76s</span></td></tr>
+<tr><td>bsdiff · bsdiff</td><td class="pair ahead"><span class="slap-value">74ms</span><span class="rival-value">560ms</span></td><td class="pair ahead"><span class="slap-value">110ms</span><span class="rival-value">2.65s</span></td><td class="pair ahead"><span class="slap-value">682ms</span><span class="rival-value">14.79s</span></td><td class="pair ahead"><span class="slap-value">3.57s</span><span class="rival-value">gave up after 60s</span></td></tr>
+<tr><td>xdelta1 · xdelta1</td><td class="pair "><span class="slap-value">44ms</span><span class="rival-value">41ms</span></td><td class="pair "><span class="slap-value">45ms</span><span class="rival-value">49ms</span></td><td class="pair behind"><span class="slap-value">386ms</span><span class="rival-value">270ms</span></td><td class="pair behind"><span class="slap-value">1.62s</span><span class="rival-value">1.33s</span></td></tr>
+<tr><td>xdelta3 · xdelta3</td><td class="pair behind"><span class="slap-value">76ms</span><span class="rival-value">47ms</span></td><td class="pair ahead"><span class="slap-value">21ms</span><span class="rival-value">34ms</span></td><td class="pair "><span class="slap-value">398ms</span><span class="rival-value">383ms</span></td><td class="pair behind"><span class="slap-value">596ms</span><span class="rival-value">326ms</span></td></tr></tbody></table>
+  <h3>Patch size</h3>
+  <table>
+<thead><tr><th>format · reference</th><th>4MiB</th><th>16MiB</th><th>64MiB</th><th>520MiB</th></tr></thead>
+<tbody><tr><td>ips · flips</td><td class="pair "><span class="slap-value">655KiB</span><span class="rival-value">654KiB</span></td><td class="pair "><span class="slap-value">16KiB</span><span class="rival-value">16KiB</span></td><td class="absent">·</td><td class="absent">·</td></tr>
+<tr><td>ips32 · sips</td><td class="pair ahead"><span class="slap-value">672KiB</span><span class="rival-value">899KiB</span></td><td class="pair ahead"><span class="slap-value">18KiB</span><span class="rival-value">23KiB</span></td><td class="pair "><span class="slap-value">4.4MiB</span><span class="rival-value">4.7MiB</span></td><td class="pair ahead"><span class="slap-value">388KiB</span><span class="rival-value">613KiB</span></td></tr>
+<tr><td>ups · goUps</td><td class="pair "><span class="slap-value">888KiB</span><span class="rival-value">888KiB</span></td><td class="pair "><span class="slap-value">11KiB</span><span class="rival-value">11KiB</span></td><td class="pair "><span class="slap-value">4.5MiB</span><span class="rival-value">4.5MiB</span></td><td class="pair "><span class="slap-value">467KiB</span><span class="rival-value">467KiB</span></td></tr>
+<tr><td>bps · flips</td><td class="pair "><span class="slap-value">276KiB</span><span class="rival-value">272KiB</span></td><td class="pair ahead"><span class="slap-value">10KiB</span><span class="rival-value">12KiB</span></td><td class="pair "><span class="slap-value">1.9MiB</span><span class="rival-value">1.8MiB</span></td><td class="absent">·</td></tr>
+<tr><td>ppf3 · makeppf3</td><td class="pair "><span class="slap-value">922KiB</span><span class="rival-value">937KiB</span></td><td class="pair ahead"><span class="slap-value">24KiB</span><span class="rival-value">33KiB</span></td><td class="pair "><span class="slap-value">4.6MiB</span><span class="rival-value">4.9MiB</span></td><td class="pair ahead"><span class="slap-value">481KiB</span><span class="rival-value">728KiB</span></td></tr>
+<tr><td>ninja1 · ninjaPhp</td><td class="pair "><span class="slap-value">888KiB</span><span class="rival-value">899KiB</span></td><td class="pair ahead"><span class="slap-value">18KiB</span><span class="rival-value">23KiB</span></td><td class="pair "><span class="slap-value">4.4MiB</span><span class="rival-value">4.7MiB</span></td><td class="absent">·</td></tr>
+<tr><td>ninja2 · ninja2Php</td><td class="pair "><span class="slap-value">891KiB</span><span class="rival-value">903KiB</span></td><td class="pair ahead"><span class="slap-value">22KiB</span><span class="rival-value">28KiB</span></td><td class="pair "><span class="slap-value">4.4MiB</span><span class="rival-value">4.7MiB</span></td><td class="pair ahead"><span class="slap-value">467KiB</span><span class="rival-value">679KiB</span></td></tr>
+<tr><td>gdiff · javaxdelta</td><td class="pair ahead"><span class="slap-value">600KiB</span><span class="rival-value">747KiB</span></td><td class="pair ahead"><span class="slap-value">21KiB</span><span class="rival-value">33KiB</span></td><td class="pair "><span class="slap-value">1.9MiB</span><span class="rival-value">1.9MiB</span></td><td class="pair ahead"><span class="slap-value">367KiB</span><span class="rival-value">425KiB</span></td></tr>
+<tr><td>bsdiff · bsdiff</td><td class="pair "><span class="slap-value">204KiB</span><span class="rival-value">215KiB</span></td><td class="pair "><span class="slap-value">8KiB</span><span class="rival-value">8KiB</span></td><td class="pair "><span class="slap-value">1.9MiB</span><span class="rival-value">1.8MiB</span></td><td class="absent">·</td></tr>
+<tr><td>xdelta1 · xdelta1</td><td class="pair "><span class="slap-value">239KiB</span><span class="rival-value">239KiB</span></td><td class="pair ahead"><span class="slap-value">13KiB</span><span class="rival-value">17KiB</span></td><td class="pair "><span class="slap-value">1.7MiB</span><span class="rival-value">1.8MiB</span></td><td class="pair "><span class="slap-value">275KiB</span><span class="rival-value">279KiB</span></td></tr>
+<tr><td>xdelta3 · xdelta3</td><td class="pair "><span class="slap-value">218KiB</span><span class="rival-value">236KiB</span></td><td class="pair ahead"><span class="slap-value">10KiB</span><span class="rival-value">13KiB</span></td><td class="pair "><span class="slap-value">1.7MiB</span><span class="rival-value">1.7MiB</span></td><td class="pair "><span class="slap-value">263KiB</span><span class="rival-value">272KiB</span></td></tr></tbody></table>
+  <h3>Apply time, slap's patch, fastest rival applier</h3>
+  <table>
+<thead><tr><th>format · reference</th><th>4MiB</th><th>16MiB</th><th>64MiB</th><th>520MiB</th></tr></thead>
+<tbody><tr><td>ips · flips</td><td class="pair behind"><span class="slap-value">20ms</span><span class="rival-value">atmosphereIps 10ms</span></td><td class="pair behind"><span class="slap-value">33ms</span><span class="rival-value">atmosphereIps 27ms</span></td><td class="absent">·</td><td class="absent">·</td></tr>
+<tr><td>ips32 · sips</td><td class="pair behind"><span class="slap-value">21ms</span><span class="rival-value">atmosphereIps 9ms</span></td><td class="pair behind"><span class="slap-value">32ms</span><span class="rival-value">atmosphereIps 27ms</span></td><td class="pair "><span class="slap-value">103ms</span><span class="rival-value">atmosphereIps 103ms</span></td><td class="pair "><span class="slap-value">835ms</span><span class="rival-value">atmosphereIps 776ms</span></td></tr>
+<tr><td>ups · goUps</td><td class="pair behind"><span class="slap-value">15ms</span><span class="rival-value">goUps 12ms</span></td><td class="pair behind"><span class="slap-value">35ms</span><span class="rival-value">goUps 30ms</span></td><td class="pair "><span class="slap-value">126ms</span><span class="rival-value">goUps 123ms</span></td><td class="pair "><span class="slap-value">902ms</span><span class="rival-value">goUps 918ms</span></td></tr>
+<tr><td>bps · flips</td><td class="pair ahead"><span class="slap-value">34ms</span><span class="rival-value">flips 38ms</span></td><td class="pair ahead"><span class="slap-value">35ms</span><span class="rival-value">flips 136ms</span></td><td class="pair ahead"><span class="slap-value">122ms</span><span class="rival-value">flips 532ms</span></td><td class="pair ahead"><span class="slap-value">896ms</span><span class="rival-value">flips 4.20s</span></td></tr>
+<tr><td>ppf3 · makeppf3</td><td class="pair ahead"><span class="slap-value">16ms</span><span class="rival-value">applyppf3 30ms</span></td><td class="pair behind"><span class="slap-value">31ms</span><span class="rival-value">applyppf3 19ms</span></td><td class="pair "><span class="slap-value">112ms</span><span class="rival-value">applyppf3 109ms</span></td><td class="pair behind"><span class="slap-value">837ms</span><span class="rival-value">applyppf3 109ms</span></td></tr>
+<tr><td>ninja1 · ninjaPhp</td><td class="absent">·</td><td class="absent">·</td><td class="absent">·</td><td class="absent">·</td></tr>
+<tr><td>ninja2 · ninja2Php</td><td class="pair ahead"><span class="slap-value">23ms</span><span class="rival-value">ninja2Php 65ms</span></td><td class="pair behind"><span class="slap-value">64ms</span><span class="rival-value">ninja2Php 51ms</span></td><td class="pair "><span class="slap-value">232ms</span><span class="rival-value">ninja2Php 232ms</span></td><td class="pair behind"><span class="slap-value">1.82s</span><span class="rival-value">ninja2Php 1.48s</span></td></tr>
+<tr><td>gdiff · javaxdelta</td><td class="pair ahead"><span class="slap-value">18ms</span><span class="rival-value">javaxdelta 48ms</span></td><td class="pair ahead"><span class="slap-value">33ms</span><span class="rival-value">javaxdelta 55ms</span></td><td class="pair ahead"><span class="slap-value">110ms</span><span class="rival-value">javaxdelta 165ms</span></td><td class="pair ahead"><span class="slap-value">830ms</span><span class="rival-value">javaxdelta 1.01s</span></td></tr>
+<tr><td>bsdiff · bsdiff</td><td class="pair behind"><span class="slap-value">44ms</span><span class="rival-value">bsdiff 27ms</span></td><td class="pair behind"><span class="slap-value">112ms</span><span class="rival-value">bsdiff 59ms</span></td><td class="pair behind"><span class="slap-value">471ms</span><span class="rival-value">bsdiff 279ms</span></td><td class="pair behind"><span class="slap-value">3.41s</span><span class="rival-value">bsdiff 1.72s</span></td></tr>
+<tr><td>xdelta1 · xdelta1</td><td class="pair behind"><span class="slap-value">30ms</span><span class="rival-value">xdelta1 19ms</span></td><td class="pair behind"><span class="slap-value">65ms</span><span class="rival-value">xdelta1 46ms</span></td><td class="pair behind"><span class="slap-value">238ms</span><span class="rival-value">xdelta1 174ms</span></td><td class="pair behind"><span class="slap-value">1.84s</span><span class="rival-value">xdelta1 1.18s</span></td></tr>
+<tr><td>xdelta3 · xdelta3</td><td class="pair behind"><span class="slap-value">35ms</span><span class="rival-value">xdelta3 16ms</span></td><td class="pair "><span class="slap-value">35ms</span><span class="rival-value">xdelta3 32ms</span></td><td class="pair behind"><span class="slap-value">152ms</span><span class="rival-value">xdelta3 134ms</span></td><td class="pair "><span class="slap-value">848ms</span><span class="rival-value">xdelta3 843ms</span></td></tr></tbody></table>
+</div>
+
+<div class="card">
+  <h2>Reading notes</h2>
+  <ul class="notes">
+    <li>Every timed command's output was checked byte-for-byte against the pair first;
+        an unfaithful answer gets its words in the cell instead of a number.</li>
+    <li>ninja1's reference applier does not finish at any size, and its 64MiB creation does not rebuild the pair.</li>
+    <li>In-place appliers (applyppf3, the ninjas) patch a copy made off the clock.</li>
+    <li>javaxdelta's timings include JVM startup — a fixed cost that matters at 4MiB and not at 520MiB.</li>
+    <li>PPF1 and PPF2's reference tools are DOS programs; timing them would time an emulator,
+        so those formats appear only in the tier tables.</li>
+    <li>ebp, ppf1, ppf2, aps-n64, aps-gba, and dps have no scriptable reference tool at all;
+        their numbers stand alone in the tables below.</li>
+    <li>ppf3 is compared in the reference's own mode (undo data omitted on both sides).</li>
+  </ul>
+</div>
+<section>
+  <h2 style="margin-bottom:.6rem;">The full tables</h2>
+  <details><summary><strong>4MiB</strong> — test/data/dm4y/base.gbc + dm4-yugi.bps
+  (medians of 5)</summary>
+<h4>ips</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: flips</th><th>apply: atmosphereIps</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">18ms</td><td class="number">655KiB</td><td class="number">20ms</td><td class="number">10ms</td><td class="number">10ms</td></tr>
+<tr><td>flips</td><td class="number">12ms</td><td class="number">654KiB</td><td class="number">21ms</td><td class="number">10ms</td><td class="number">9ms</td></tr></tbody></table>
+<h4>ips32</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: atmosphereIps</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">15ms</td><td class="number">672KiB</td><td class="number">21ms</td><td class="number">9ms</td></tr>
+<tr><td>sips</td><td class="number">8ms</td><td class="number">899KiB</td><td class="number">15ms</td><td class="number">9ms</td></tr></tbody></table>
+<h4>ebp</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">16ms</td><td class="number">655KiB</td><td class="number">22ms</td></tr></tbody></table>
+<h4>ups</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: flips</th><th>apply: goUps</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">9ms</td><td class="number">888KiB</td><td class="number">15ms</td><td class="number">39ms</td><td class="number">12ms</td></tr>
+<tr><td>goUps</td><td class="number">12ms</td><td class="number">888KiB</td><td class="number">16ms</td><td class="number">39ms</td><td class="number">12ms</td></tr></tbody></table>
+<h4>aps-gba</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">24ms</td><td class="number">1.8MiB</td><td class="number">29ms</td></tr></tbody></table>
+<h4>bps</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: flips</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">57ms</td><td class="number">276KiB</td><td class="number">34ms</td><td class="number">38ms</td></tr>
+<tr><td>flips</td><td class="number">327ms</td><td class="number">272KiB</td><td class="number">28ms</td><td class="number">38ms</td></tr></tbody></table>
+<h4>ppf1</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">10ms</td><td class="number">905KiB</td><td class="number">15ms</td></tr></tbody></table>
+<h4>ppf2</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">10ms</td><td class="number">906KiB</td><td class="number">15ms</td></tr></tbody></table>
+<h4>ppf3</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: applyppf3</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">12ms</td><td class="number">1.8MiB</td><td class="number">15ms</td><td class="number">31ms</td></tr>
+<tr><td>slap-no-undo</td><td class="number">11ms</td><td class="number">922KiB</td><td class="number">16ms</td><td class="number">30ms</td></tr>
+<tr><td>makeppf3</td><td class="number">10ms</td><td class="number">937KiB</td><td class="number">16ms</td><td class="number">38ms</td></tr></tbody></table>
+<h4>ninja1</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: ninjaPhp</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">17ms</td><td class="number">888KiB</td><td class="number">21ms</td><td class="balked">✗ gave up after 15s</td></tr>
+<tr><td>ninjaPhp</td><td class="number">41ms</td><td class="number">899KiB</td><td class="number">22ms</td><td class="balked">✗ gave up after 15s</td></tr></tbody></table>
+<h4>ninja2</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: ninja2Php</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">19ms</td><td class="number">891KiB</td><td class="number">23ms</td><td class="number">65ms</td></tr>
+<tr><td>ninja2Php</td><td class="number">145ms</td><td class="number">903KiB</td><td class="number">25ms</td><td class="number">65ms</td></tr></tbody></table>
+<h4>dps</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">11ms</td><td class="number">898KiB</td><td class="number">14ms</td></tr></tbody></table>
+<h4>gdiff</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: javaxdelta</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">18ms</td><td class="number">600KiB</td><td class="number">18ms</td><td class="number">48ms</td></tr>
+<tr><td>javaxdelta</td><td class="number">136ms</td><td class="number">747KiB</td><td class="number">22ms</td><td class="number">61ms</td></tr></tbody></table>
+<h4>bsdiff</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: bsdiff</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">74ms</td><td class="number">204KiB</td><td class="number">44ms</td><td class="number">27ms</td></tr>
+<tr><td>bsdiff</td><td class="number">560ms</td><td class="number">215KiB</td><td class="number">44ms</td><td class="number">29ms</td></tr></tbody></table>
+<h4>xdelta1</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: xdelta1</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">44ms</td><td class="number">239KiB</td><td class="number">30ms</td><td class="number">19ms</td></tr>
+<tr><td>xdelta1</td><td class="number">41ms</td><td class="number">239KiB</td><td class="number">31ms</td><td class="number">19ms</td></tr></tbody></table>
+<h4>xdelta3</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: xdelta3</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">76ms</td><td class="number">218KiB</td><td class="number">35ms</td><td class="number">16ms</td></tr>
+<tr><td>xdelta3</td><td class="number">47ms</td><td class="number">236KiB</td><td class="number">43ms</td><td class="number">16ms</td></tr></tbody></table>
+<h4>rfc-vcdiff</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: xdelta3</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">161ms</td><td class="number">318KiB</td><td class="number">25ms</td><td class="balked">✗ xdelta3: VCD_CODETABLE support was removed: XD3_UNIMPLEMENTED</td></tr></tbody></table>
+</details>
+<details><summary><strong>16MiB</strong> — test/data/ffta/base.gba + test/data/ffta/ffta-x.aps
+  (medians of 5)</summary>
+<h4>ips</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: flips</th><th>apply: atmosphereIps</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">9ms</td><td class="number">16KiB</td><td class="number">33ms</td><td class="number">30ms</td><td class="number">27ms</td></tr>
+<tr><td>flips</td><td class="number">21ms</td><td class="number">16KiB</td><td class="number">32ms</td><td class="number">31ms</td><td class="number">27ms</td></tr></tbody></table>
+<h4>ips32</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: atmosphereIps</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">11ms</td><td class="number">18KiB</td><td class="number">32ms</td><td class="number">27ms</td></tr>
+<tr><td>sips</td><td class="number">17ms</td><td class="number">23KiB</td><td class="number">34ms</td><td class="number">27ms</td></tr></tbody></table>
+<h4>ebp</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">11ms</td><td class="number">17KiB</td><td class="number">34ms</td></tr></tbody></table>
+<h4>ups</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: flips</th><th>apply: goUps</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">11ms</td><td class="number">11KiB</td><td class="number">35ms</td><td class="number">137ms</td><td class="number">30ms</td></tr>
+<tr><td>goUps</td><td class="number">24ms</td><td class="number">11KiB</td><td class="number">33ms</td><td class="number">138ms</td><td class="number">30ms</td></tr></tbody></table>
+<h4>aps-gba</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">13ms</td><td class="number">768KiB</td><td class="number">38ms</td></tr></tbody></table>
+<h4>bps</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: flips</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">103ms</td><td class="number">10KiB</td><td class="number">35ms</td><td class="number">136ms</td></tr>
+<tr><td>flips</td><td class="number">1.29s</td><td class="number">12KiB</td><td class="number">35ms</td><td class="number">136ms</td></tr></tbody></table>
+<h4>ppf1</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">19ms</td><td class="number">17KiB</td><td class="number">32ms</td></tr></tbody></table>
+<h4>ppf2</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">19ms</td><td class="number">18KiB</td><td class="number">32ms</td></tr></tbody></table>
+<h4>ppf3</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: applyppf3</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">19ms</td><td class="number">32KiB</td><td class="number">32ms</td><td class="number">37ms</td></tr>
+<tr><td>slap-no-undo</td><td class="number">19ms</td><td class="number">24KiB</td><td class="number">31ms</td><td class="number">19ms</td></tr>
+<tr><td>makeppf3</td><td class="number">14ms</td><td class="number">33KiB</td><td class="number">33ms</td><td class="number">20ms</td></tr></tbody></table>
+<h4>ninja1</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: ninjaPhp</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">45ms</td><td class="number">18KiB</td><td class="number">60ms</td><td class="balked">✗ gave up after 15s</td></tr>
+<tr><td>ninjaPhp</td><td class="number">53ms</td><td class="number">23KiB</td><td class="number">60ms</td><td class="balked">✗ gave up after 15s</td></tr></tbody></table>
+<h4>ninja2</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: ninja2Php</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">50ms</td><td class="number">22KiB</td><td class="number">64ms</td><td class="number">51ms</td></tr>
+<tr><td>ninja2Php</td><td class="number">103ms</td><td class="number">28KiB</td><td class="number">64ms</td><td class="number">52ms</td></tr></tbody></table>
+<h4>dps</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">20ms</td><td class="number">46KiB</td><td class="number">32ms</td></tr></tbody></table>
+<h4>gdiff</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: javaxdelta</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">12ms</td><td class="number">21KiB</td><td class="number">33ms</td><td class="number">55ms</td></tr>
+<tr><td>javaxdelta</td><td class="number">249ms</td><td class="number">33KiB</td><td class="number">31ms</td><td class="number">54ms</td></tr></tbody></table>
+<h4>bsdiff</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: bsdiff</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">110ms</td><td class="number">8KiB</td><td class="number">112ms</td><td class="number">59ms</td></tr>
+<tr><td>bsdiff</td><td class="number">2.65s</td><td class="number">8KiB</td><td class="number">111ms</td><td class="number">58ms</td></tr></tbody></table>
+<h4>xdelta1</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: xdelta1</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">45ms</td><td class="number">13KiB</td><td class="number">65ms</td><td class="number">46ms</td></tr>
+<tr><td>xdelta1</td><td class="number">49ms</td><td class="number">17KiB</td><td class="number">64ms</td><td class="number">47ms</td></tr></tbody></table>
+<h4>xdelta3</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: xdelta3</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">21ms</td><td class="number">10KiB</td><td class="number">35ms</td><td class="number">32ms</td></tr>
+<tr><td>xdelta3</td><td class="number">34ms</td><td class="number">13KiB</td><td class="number">35ms</td><td class="number">32ms</td></tr></tbody></table>
+<h4>rfc-vcdiff</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: xdelta3</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">27ms</td><td class="number">14KiB</td><td class="number">35ms</td><td class="balked">✗ xdelta3: VCD_CODETABLE support was removed: XD3_UNIMPLEMENTED</td></tr></tbody></table>
+</details>
+<details><summary><strong>64MiB</strong> — test/data/stadium2/base.z64 + test/data/stadium2/fair-heavy/patch.bps
+  (medians of 3)</summary>
+<h4>ips32</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: atmosphereIps</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">38ms</td><td class="number">4.4MiB</td><td class="number">103ms</td><td class="number">103ms</td></tr>
+<tr><td>sips</td><td class="number">68ms</td><td class="number">4.7MiB</td><td class="number">127ms</td><td class="number">103ms</td></tr></tbody></table>
+<h4>ups</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: flips</th><th>apply: goUps</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">44ms</td><td class="number">4.5MiB</td><td class="number">126ms</td><td class="number">549ms</td><td class="number">123ms</td></tr>
+<tr><td>goUps</td><td class="number">99ms</td><td class="number">4.5MiB</td><td class="number">127ms</td><td class="number">548ms</td><td class="number">128ms</td></tr></tbody></table>
+<h4>aps-n64</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">73ms</td><td class="number">4.5MiB</td><td class="number">109ms</td></tr></tbody></table>
+<h4>bps</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: flips</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">1.55s</td><td class="number">1.9MiB</td><td class="number">122ms</td><td class="number">532ms</td></tr>
+<tr><td>flips</td><td class="number">11.94s</td><td class="number">1.8MiB</td><td class="number">121ms</td><td class="number">540ms</td></tr></tbody></table>
+<h4>ppf1</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">71ms</td><td class="number">4.5MiB</td><td class="number">112ms</td></tr></tbody></table>
+<h4>ppf2</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">72ms</td><td class="number">4.5MiB</td><td class="number">111ms</td></tr></tbody></table>
+<h4>ppf3</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: applyppf3</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">80ms</td><td class="number">9.0MiB</td><td class="number">112ms</td><td class="number">207ms</td></tr>
+<tr><td>slap-no-undo</td><td class="number">74ms</td><td class="number">4.6MiB</td><td class="number">112ms</td><td class="number">109ms</td></tr>
+<tr><td>makeppf3</td><td class="number">57ms</td><td class="number">4.9MiB</td><td class="number">125ms</td><td class="number">208ms</td></tr></tbody></table>
+<h4>ninja1</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: ninjaPhp</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">130ms</td><td class="number">4.4MiB</td><td class="number">163ms</td><td class="balked">✗ gave up after 15s</td></tr>
+<tr><td>ninjaPhp</td><td class="number">241ms</td><td class="number">4.7MiB</td><td class="balked">✗ output differs from the pair</td><td class="balked">✗ gave up after 15s</td></tr></tbody></table>
+<h4>ninja2</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: ninja2Php</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">204ms</td><td class="number">4.4MiB</td><td class="number">232ms</td><td class="number">232ms</td></tr>
+<tr><td>ninja2Php</td><td class="number">685ms</td><td class="number">4.7MiB</td><td class="number">251ms</td><td class="number">275ms</td></tr></tbody></table>
+<h4>gdiff</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: javaxdelta</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">239ms</td><td class="number">1.9MiB</td><td class="number">110ms</td><td class="number">165ms</td></tr>
+<tr><td>javaxdelta</td><td class="number">1.27s</td><td class="number">1.9MiB</td><td class="number">106ms</td><td class="number">152ms</td></tr></tbody></table>
+<h4>bsdiff</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: bsdiff</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">682ms</td><td class="number">1.9MiB</td><td class="number">471ms</td><td class="number">279ms</td></tr>
+<tr><td>bsdiff</td><td class="number">14.79s</td><td class="number">1.8MiB</td><td class="number">470ms</td><td class="number">278ms</td></tr></tbody></table>
+<h4>xdelta1</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: xdelta1</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">386ms</td><td class="number">1.7MiB</td><td class="number">238ms</td><td class="number">174ms</td></tr>
+<tr><td>xdelta1</td><td class="number">270ms</td><td class="number">1.8MiB</td><td class="number">239ms</td><td class="number">174ms</td></tr></tbody></table>
+<h4>xdelta3</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: xdelta3</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">398ms</td><td class="number">1.7MiB</td><td class="number">152ms</td><td class="number">134ms</td></tr>
+<tr><td>xdelta3</td><td class="number">383ms</td><td class="number">1.7MiB</td><td class="number">163ms</td><td class="number">135ms</td></tr></tbody></table>
+<h4>rfc-vcdiff</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: xdelta3</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">359ms</td><td class="number">1.9MiB</td><td class="number">109ms</td><td class="balked">✗ xdelta3: VCD_CODETABLE support was removed: XD3_UNIMPLEMENTED</td></tr></tbody></table>
+</details>
+<details><summary><strong>520MiB</strong> — test/data/sotn/base-track1.bin + test/data/sotn/eng-translation.ppf
+  (medians of 2)</summary>
+<h4>ips32</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: atmosphereIps</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">150ms</td><td class="number">388KiB</td><td class="number">835ms</td><td class="number">776ms</td></tr>
+<tr><td>sips</td><td class="number">413ms</td><td class="number">613KiB</td><td class="number">852ms</td><td class="number">813ms</td></tr></tbody></table>
+<h4>ups</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: flips</th><th>apply: goUps</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">198ms</td><td class="number">467KiB</td><td class="number">902ms</td><td class="number">4.15s</td><td class="number">918ms</td></tr>
+<tr><td>goUps</td><td class="number">588ms</td><td class="number">467KiB</td><td class="number">920ms</td><td class="number">4.17s</td><td class="number">906ms</td></tr></tbody></table>
+<h4>bps</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: flips</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">1.88s</td><td class="number">280KiB</td><td class="number">896ms</td><td class="number">4.20s</td></tr>
+<tr><td>flips</td><td class="balked">✗ gave up after 60s</td><td></td><td></td><td></td></tr></tbody></table>
+<h4>ppf3</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: applyppf3</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">500ms</td><td class="number">920KiB</td><td class="number">833ms</td><td class="number">175ms</td></tr>
+<tr><td>slap-no-undo</td><td class="number">487ms</td><td class="number">481KiB</td><td class="number">837ms</td><td class="number">109ms</td></tr>
+<tr><td>makeppf3</td><td class="number">333ms</td><td class="number">728KiB</td><td class="number">871ms</td><td class="number">171ms</td></tr></tbody></table>
+<h4>ninja2</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: ninja2Php</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">1.47s</td><td class="number">467KiB</td><td class="number">1.82s</td><td class="number">1.48s</td></tr>
+<tr><td>ninja2Php</td><td class="number">1.59s</td><td class="number">679KiB</td><td class="number">1.81s</td><td class="number">1.40s</td></tr></tbody></table>
+<h4>gdiff</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: javaxdelta</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">733ms</td><td class="number">367KiB</td><td class="number">830ms</td><td class="number">1.01s</td></tr>
+<tr><td>javaxdelta</td><td class="number">10.76s</td><td class="number">425KiB</td><td class="number">869ms</td><td class="number">1.02s</td></tr></tbody></table>
+<h4>bsdiff</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: bsdiff</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">3.57s</td><td class="number">287KiB</td><td class="number">3.41s</td><td class="number">1.72s</td></tr>
+<tr><td>bsdiff</td><td class="balked">✗ gave up after 60s</td><td></td><td></td><td></td></tr></tbody></table>
+<h4>xdelta1</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: xdelta1</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">1.62s</td><td class="number">275KiB</td><td class="number">1.84s</td><td class="number">1.18s</td></tr>
+<tr><td>xdelta1</td><td class="number">1.33s</td><td class="number">279KiB</td><td class="number">1.84s</td><td class="number">1.17s</td></tr></tbody></table>
+<h4>xdelta3</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: xdelta3</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">596ms</td><td class="number">263KiB</td><td class="number">848ms</td><td class="number">843ms</td></tr>
+<tr><td>xdelta3</td><td class="number">326ms</td><td class="number">272KiB</td><td class="number">860ms</td><td class="number">815ms</td></tr></tbody></table>
+<h4>rfc-vcdiff</h4>
+<table><thead><tr><th>creator</th><th>create</th><th>patch</th><th>apply: slap</th><th>apply: xdelta3</th></tr></thead>
+<tbody><tr><td>slap</td><td class="number">789ms</td><td class="number">300KiB</td><td class="number">840ms</td><td class="balked">✗ xdelta3: VCD_CODETABLE support was removed: XD3_UNIMPLEMENTED</td></tr></tbody></table>
+</details>
+</section>
+</main></body></html>

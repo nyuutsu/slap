@@ -1,0 +1,313 @@
+{
+  "patienceSeconds": 300,
+  "rows": [
+    {
+      "tier": "4MiB",
+      "lane": "ips",
+      "webSlapApply": {
+        "tag": "Timed",
+        "ms": 21.915598999999986
+      },
+      "rpjsApply": {
+        "tag": "Timed",
+        "ms": 4.056694
+      },
+      "webSlapCreate": {
+        "tag": "Timed",
+        "ms": 45.11030400000001,
+        "patchBytes": 670319
+      },
+      "rpjsCreate": {
+        "tag": "Timed",
+        "ms": 35.932101,
+        "patchBytes": 907551
+      }
+    },
+    {
+      "tier": "4MiB",
+      "lane": "ups",
+      "webSlapApply": {
+        "tag": "Timed",
+        "ms": 5.35363199999999
+      },
+      "rpjsApply": {
+        "tag": "Timed",
+        "ms": 12.232900999999998
+      },
+      "webSlapCreate": {
+        "tag": "Timed",
+        "ms": 5.755523999999994,
+        "patchBytes": 908949
+      },
+      "rpjsCreate": {
+        "tag": "Timed",
+        "ms": 43.464395999999994,
+        "patchBytes": 908949
+      }
+    },
+    {
+      "tier": "4MiB",
+      "lane": "bps",
+      "webSlapApply": {
+        "tag": "Timed",
+        "ms": 28.991800000000012
+      },
+      "rpjsApply": {
+        "tag": "Timed",
+        "ms": 10.025119000000004
+      },
+      "webSlapCreate": {
+        "tag": "Timed",
+        "ms": 60.26288500000001,
+        "patchBytes": 282707
+      },
+      "rpjsCreate": {
+        "tag": "Timed",
+        "ms": 251124.61527500002,
+        "patchBytes": 315136
+      }
+    },
+    {
+      "tier": "4MiB",
+      "lane": "ppf",
+      "webSlapApply": {
+        "tag": "Timed",
+        "ms": 3.1291980000000024
+      },
+      "rpjsApply": {
+        "tag": "Timed",
+        "ms": 9.971678999999995
+      },
+      "webSlapCreate": {
+        "tag": "Timed",
+        "ms": 5.294450999999995,
+        "patchBytes": 943775
+      },
+      "rpjsCreate": {
+        "tag": "Timed",
+        "ms": 31.262452999999994,
+        "patchBytes": 958962
+      }
+    },
+    {
+      "tier": "4MiB",
+      "lane": "ebp",
+      "webSlapApply": {
+        "tag": "Timed",
+        "ms": 21.818887999999987
+      },
+      "rpjsApply": {
+        "tag": "Timed",
+        "ms": 3.4635099999999994
+      },
+      "webSlapCreate": {
+        "tag": "Timed",
+        "ms": 44.95396400000004,
+        "patchBytes": 670382
+      },
+      "rpjsCreate": {
+        "tag": "Timed",
+        "ms": 37.190968999999996,
+        "patchBytes": 907551
+      }
+    },
+    {
+      "tier": "4MiB",
+      "lane": "aps",
+      "webSlapApply": {
+        "tag": "Timed",
+        "ms": 24.15148099999999
+      },
+      "rpjsApply": {
+        "tag": "Timed",
+        "ms": 10.976315
+      },
+      "webSlapCreate": {
+        "tag": "Timed",
+        "ms": 5.797573999999997,
+        "patchBytes": 926404
+      },
+      "rpjsCreate": {
+        "tag": "Timed",
+        "ms": 32.56938099999999,
+        "patchBytes": 929662
+      }
+    },
+    {
+      "tier": "4MiB",
+      "lane": "rup",
+      "webSlapApply": {
+        "tag": "Timed",
+        "ms": 11.726587999999992
+      },
+      "rpjsApply": {
+        "tag": "Timed",
+        "ms": 17.359582999999986
+      },
+      "webSlapCreate": {
+        "tag": "Timed",
+        "ms": 14.146053000000009,
+        "patchBytes": 912348
+      },
+      "rpjsCreate": {
+        "tag": "Timed",
+        "ms": 61.24866099999997,
+        "patchBytes": 925157
+      }
+    },
+    {
+      "tier": "8MiB",
+      "lane": "ips",
+      "webSlapApply": {
+        "tag": "Timed",
+        "ms": 8.905592999999996
+      },
+      "rpjsApply": {
+        "tag": "Timed",
+        "ms": 13.546348999999992
+      },
+      "webSlapCreate": {
+        "tag": "Timed",
+        "ms": 16.863719000000003,
+        "patchBytes": 567064
+      },
+      "rpjsCreate": {
+        "tag": "Timed",
+        "ms": 218.922103,
+        "patchBytes": 568963
+      }
+    },
+    {
+      "tier": "8MiB",
+      "lane": "ebp",
+      "webSlapApply": {
+        "tag": "Timed",
+        "ms": 8.359959000000003
+      },
+      "rpjsApply": {
+        "tag": "Timed",
+        "ms": 19.14101199999999
+      },
+      "webSlapCreate": {
+        "tag": "Timed",
+        "ms": 17.181581000000023,
+        "patchBytes": 567127
+      },
+      "rpjsCreate": {
+        "tag": "Timed",
+        "ms": 220.07146099999997,
+        "patchBytes": 568963
+      }
+    },
+    {
+      "tier": "64MiB",
+      "lane": "ups",
+      "webSlapApply": {
+        "tag": "Timed",
+        "ms": 82.47163599999999
+      },
+      "rpjsApply": {
+        "tag": "Timed",
+        "ms": 98.49529000000001
+      },
+      "webSlapCreate": {
+        "tag": "Timed",
+        "ms": 75.442183,
+        "patchBytes": 4682172
+      },
+      "rpjsCreate": {
+        "tag": "Timed",
+        "ms": 619.7150750000001,
+        "patchBytes": 4682172
+      }
+    },
+    {
+      "tier": "64MiB",
+      "lane": "bps",
+      "webSlapApply": {
+        "tag": "Timed",
+        "ms": 67.77055899999999
+      },
+      "rpjsApply": {
+        "tag": "Timed",
+        "ms": 47.541920000000005
+      },
+      "webSlapCreate": {
+        "tag": "Timed",
+        "ms": 2035.553203,
+        "patchBytes": 1943264
+      },
+      "rpjsCreate": {
+        "tag": "Timed",
+        "ms": 560.076004,
+        "patchBytes": 4572864
+      }
+    },
+    {
+      "tier": "64MiB",
+      "lane": "ppf",
+      "webSlapApply": {
+        "tag": "Timed",
+        "ms": 42.816621999999995
+      },
+      "rpjsApply": {
+        "tag": "Timed",
+        "ms": 58.537315000000035
+      },
+      "webSlapCreate": {
+        "tag": "Timed",
+        "ms": 71.86843300000004,
+        "patchBytes": 4808045
+      },
+      "rpjsCreate": {
+        "tag": "Timed",
+        "ms": 421.00501599999996,
+        "patchBytes": 5101868
+      }
+    },
+    {
+      "tier": "64MiB",
+      "lane": "aps",
+      "webSlapApply": {
+        "tag": "Timed",
+        "ms": 37.29763
+      },
+      "rpjsApply": {
+        "tag": "Timed",
+        "ms": 66.029598
+      },
+      "webSlapCreate": {
+        "tag": "Timed",
+        "ms": 73.91037499999999,
+        "patchBytes": 4729474
+      },
+      "rpjsCreate": {
+        "tag": "Timed",
+        "ms": 411.718571,
+        "patchBytes": 4839662
+      }
+    },
+    {
+      "tier": "64MiB",
+      "lane": "rup",
+      "webSlapApply": {
+        "tag": "Timed",
+        "ms": 175.6398039999999
+      },
+      "rpjsApply": {
+        "tag": "Timed",
+        "ms": 198.48926799999998
+      },
+      "webSlapCreate": {
+        "tag": "Timed",
+        "ms": 214.05833899999993,
+        "patchBytes": 4647208
+      },
+      "rpjsCreate": {
+        "tag": "Timed",
+        "ms": 788.6426490000003,
+        "patchBytes": 4964160
+      }
+    }
+  ]
+}
