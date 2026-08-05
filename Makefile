@@ -43,7 +43,7 @@ install: optimized
 	@echo "installed slap to $(DESTDIR)$(PREFIX)/bin/slap"
 	@if command -v help2man >/dev/null 2>&1; then \
 	  mkdir -p "$(DESTDIR)$(PREFIX)/share/man/man1"; \
-	  help2man --no-info --name 'multi-format ROM patching tool' --output="$(DESTDIR)$(PREFIX)/share/man/man1/slap.1" "$$(cabal -v0 list-bin -O2 slap)"; \
+	  .github/generate-man.sh "$$(cabal -v0 list-bin -O2 slap)" "$(DESTDIR)$(PREFIX)/share/man/man1/slap.1"; \
 	  echo "installed man page to $(DESTDIR)$(PREFIX)/share/man/man1/slap.1"; \
 	else \
 	  echo "help2man not found; skipping man page (emerge dev-util/help2man to include it)"; \
@@ -63,7 +63,7 @@ install: optimized
 # Generate slap.1 from the built binary's --help/--version (help2man, so it never drifts). View with: man ./slap.1
 man: build
 	@command -v help2man >/dev/null 2>&1 || { echo "make man needs help2man (emerge dev-util/help2man)"; exit 1; }
-	help2man --no-info --name 'multi-format ROM patching tool' --output=slap.1 "$$(cabal -v0 list-bin slap)"
+	.github/generate-man.sh "$$(cabal -v0 list-bin slap)" slap.1
 	@echo "wrote slap.1  (view with: man ./slap.1)"
 
 SLAP_TEST_RESULTS ?= test-results

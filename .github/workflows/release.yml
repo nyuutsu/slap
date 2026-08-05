@@ -1,0 +1,223 @@
+# The release rig. The Makefile builds slap for the machine it runs on;
+# this workflow builds it for machines nobody has seen: baseline CPUs, any libc, a MinGW-linked Windows.
+# A v* tag lands one archive per platform on a draft release, whose notes are written by hand before publishing.
+# workflow_dispatch builds the same artifacts with no release, for rehearsals.
+
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  GHC_VERSION: '9.12.2'
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  linux:
+    name: linux ${{ matrix.platform }}, static musl
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write      # attestations are signed with the workflow's own identity
+      attestations: write
+    strategy:
+      fail-fast: false   # each platform's archive stands alone; one lane's trouble must not cancel another's
+      matrix:
+        include:
+          - { runner: ubuntu-latest, platform: x86_64-linux }
+          - { runner: ubuntu-24.04-arm, platform: aarch64-linux }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true   # the test fixtures live in test/data
+      # the dependency stores are cached between runs; dist-newstyle never is, so slap itself always builds fresh
+      - uses: actions/cache@v4
+        with:
+          path: .release-caches
+          key: release-dependencies-${{ matrix.platform }}-ghc${{ env.GHC_VERSION }}-${{ hashFiles('slap.cabal', 'cabal.project', 'cabal.project.release', 'rusty-slap/Cargo.lock') }}
+          restore-keys: release-dependencies-${{ matrix.platform }}-ghc${{ env.GHC_VERSION }}-
+      # build-linux.sh holds the whole alpine recipe; the container is an explicit docker run
+      # because GitHub's runner cannot host JS actions inside an arm alpine container
+      - name: build inside alpine
+        run: |
+          mkdir -p .release-caches/cabal-legacy .release-caches/cabal-state .release-caches/cabal-packages .release-caches/cargo-registry
+          docker run --rm -v "$PWD:/src" -w /src \
+            -v "$PWD/.release-caches/cabal-legacy:/root/.cabal" \
+            -v "$PWD/.release-caches/cabal-state:/root/.local/state/cabal" \
+            -v "$PWD/.release-caches/cabal-packages:/root/.cache/cabal/packages" \
+            -v "$PWD/.release-caches/cargo-registry:/root/.cargo/registry" \
+            -e GHC_VERSION \
+            alpine:3.21 sh .github/build-linux.sh ${{ matrix.platform }}
+          sudo chown -R "$(id -u):$(id -g)" .release-caches slap-*.tar.gz
+      - uses: actions/attest-build-provenance@v2
+        with: { subject-path: 'slap-*.tar.gz' }
+      - uses: actions/upload-artifact@v4
+        with: { name: '${{ matrix.platform }}', path: 'slap-*.tar.gz' }
+
+  macos:
+    name: macos aarch64
+    runs-on: macos-14
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      # the floor a downloaded slap runs on: any macOS from Big Sur up, not just the runner's own
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+      # true once the Apple secrets exist; the secrets themselves reach only the sign step,
+      # so the third-party setup actions never run with them readable
+      APPLE_SIGNING_ARMED: ${{ secrets.APPLE_P12 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true   # the test fixtures live in test/data
+      - uses: haskell-actions/setup@v2
+        id: haskell
+        with:
+          ghc-version: ${{ env.GHC_VERSION }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ${{ steps.haskell.outputs.cabal-store }}
+            ~/.cargo/registry
+          key: release-dependencies-${{ runner.os }}-ghc${{ env.GHC_VERSION }}-${{ hashFiles('slap.cabal', 'cabal.project', 'cabal.project.release', 'rusty-slap/Cargo.lock') }}
+          restore-keys: release-dependencies-${{ runner.os }}-ghc${{ env.GHC_VERSION }}-
+      - name: help2man, for the man page
+        run: brew install help2man
+      - name: rusty-slap
+        env: { RUSTFLAGS: '' }
+        run: cargo build --release --locked --manifest-path rusty-slap/Cargo.toml
+      - name: slap, release
+        run: |
+          printf 'extra-lib-dirs: %s/rusty-slap/target/release\n' "$PWD" > cabal.project.release.local
+          cabal update
+          cabal build exe:slap --project-file=cabal.project.release
+      - name: props
+        run: cabal test props --project-file=cabal.project.release --test-show-details=direct
+      - name: sign and notarize
+        if: env.APPLE_SIGNING_ARMED == 'true'
+        env:
+          APPLE_P12: ${{ secrets.APPLE_P12 }}
+          APPLE_P12_PASSWORD: ${{ secrets.APPLE_P12_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          releaseKeychain="$RUNNER_TEMP/release.keychain-db"
+          security create-keychain -p ci "$releaseKeychain"
+          security unlock-keychain -p ci "$releaseKeychain"
+          security list-keychains -d user -s "$releaseKeychain"
+          printf %s "$APPLE_P12" | base64 -d > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$releaseKeychain" -P "$APPLE_P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S 'apple-tool:,apple:' -s -k ci "$releaseKeychain"
+          slapBinary="$(cabal -v0 list-bin exe:slap --project-file=cabal.project.release)"
+          codesign --sign "$APPLE_SIGNING_IDENTITY" --options runtime --timestamp "$slapBinary"
+          # a bare executable cannot be stapled, so Gatekeeper verifies this notarization online on first run
+          printf %s "$APPLE_API_KEY" > "$RUNNER_TEMP/notary-key.p8"
+          ditto -c -k "$slapBinary" "$RUNNER_TEMP/notarize-me.zip"
+          # the wait is hand-rolled rather than notarytool's own: the runner's network drops for moments mid-poll,
+          # and only Apple's verdict — not a missed phone call — should end the conversation
+          notaryKey=(--key "$RUNNER_TEMP/notary-key.p8" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER")
+          submissionId=$(xcrun notarytool submit "$RUNNER_TEMP/notarize-me.zip" "${notaryKey[@]}" --output-format json | jq -r .id)
+          echo "submission $submissionId"
+          verdict=unheard
+          for poll in $(seq 1 180); do
+            verdict=$(xcrun notarytool info "$submissionId" "${notaryKey[@]}" --output-format json 2>/dev/null | jq -r .status) || verdict=unheard
+            case "$verdict" in
+              Accepted) break ;;
+              Invalid|Rejected) break ;;
+            esac
+            sleep 20
+          done
+          echo "notary verdict: $verdict"
+          if [ "$verdict" != Accepted ]; then
+            xcrun notarytool log "$submissionId" "${notaryKey[@]}" || true
+            exit 1
+          fi
+      - name: assemble the archive
+        run: .github/assemble-release.sh aarch64-macos
+      - uses: actions/attest-build-provenance@v2
+        with: { subject-path: 'slap-*.tar.gz' }
+      - uses: actions/upload-artifact@v4
+        with: { name: aarch64-macos, path: 'slap-*.tar.gz' }
+
+  windows:
+    name: windows x86_64
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true   # the test fixtures live in test/data
+      - uses: haskell-actions/setup@v2
+        id: haskell
+        with:
+          ghc-version: ${{ env.GHC_VERSION }}
+      # windows-gnu, not msvc: GHC links with its bundled MinGW, which cannot use an msvc .lib
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ${{ steps.haskell.outputs.cabal-store }}
+            ~/.cargo/registry
+          key: release-dependencies-${{ runner.os }}-ghc${{ env.GHC_VERSION }}-${{ hashFiles('slap.cabal', 'cabal.project', 'cabal.project.release', 'rusty-slap/Cargo.lock') }}
+          restore-keys: release-dependencies-${{ runner.os }}-ghc${{ env.GHC_VERSION }}-
+      - name: rusty-slap
+        env: { RUSTFLAGS: '' }
+        run: |
+          cargo build --release --locked --target x86_64-pc-windows-gnu --manifest-path rusty-slap/Cargo.toml
+          # rust embeds -exclude-symbols link directives that GHC's lld refuses; they only govern
+          # DLL exports, and slap.exe exports nothing, so the directive section is removed
+          "$(cygpath -u "$(ghc --print-libdir)")/../mingw/bin/llvm-objcopy" --remove-section .drectve \
+            rusty-slap/target/x86_64-pc-windows-gnu/release/librusty_slap.a
+      - name: slap, release
+        run: |
+          printf 'extra-lib-dirs: %s\n' "$(cygpath -m "$PWD/rusty-slap/target/x86_64-pc-windows-gnu/release")" > cabal.project.release.local
+          cabal update
+          cabal build exe:slap --project-file=cabal.project.release
+      # GHC's clang toolchain links exes against its private libunwind.dll: the runner finds it via PATH,
+      # and the archive ships it beside slap.exe
+      - name: put the toolchain's dlls on PATH
+        run: cygpath -w "$(cygpath -u "$(ghc --print-libdir)")/../mingw/bin" >> "$GITHUB_PATH"
+      - name: smoke the exe
+        run: |
+          slapBinary="$(cygpath -u "$(cabal -v0 list-bin exe:slap --project-file=cabal.project.release)")"
+          ldd "$slapBinary" || true
+          "$slapBinary" --version
+      - name: props
+        run: |
+          chcp.com 65001   # the default console code page cannot spell the suite's output
+          cabal test props --project-file=cabal.project.release --test-show-details=direct
+      - name: assemble the archive
+        run: .github/assemble-release.sh x86_64-windows
+      - uses: actions/attest-build-provenance@v2
+        with: { subject-path: 'slap-*.zip' }
+      - uses: actions/upload-artifact@v4
+        with: { name: x86_64-windows, path: 'slap-*.zip' }
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [linux, macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true   # one folder holding every archive, not one folder per job
+      - run: sha256sum slap-* > SHA256SUMS
+      - name: draft the release
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --title "slap $GITHUB_REF_NAME" slap-* SHA256SUMS
