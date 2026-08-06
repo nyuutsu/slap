@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Main (main) where
@@ -84,6 +85,11 @@ import Archive (unwrapArchive)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Control.Exception (try, bracketOnError)
+#if defined(mingw32_HOST_OS)
+import Control.Exception (bracket)
+import Data.Word (Word32)
+import Foreign.C.Types (CInt(CInt))
+#endif
 import Control.Monad (when)
 import System.Directory (doesFileExist, renameFile, removeFile, copyPermissions)
 import System.FilePath (dropExtension, replaceExtension, takeBaseName, takeExtension, takeDirectory, takeFileName)
@@ -100,7 +106,7 @@ import Control.Exception.Backtrace (setBacktraceMechanismState, BacktraceMechani
 ----------------------------------------------------------------------------
 
 main :: IO ()
-main = do
+main = withConsoleListeningInUtf8 $ do
   -- Source-located backtraces on an uncaught exception; the info-table map they resolve against is turned on in cabal.project.
   setBacktraceMechanismState IPEBacktrace True
   -- Slap is a UTF-8 program on both sides:
@@ -119,6 +125,28 @@ main = do
     Convert subcommand -> doConvert subcommand
     Info    subcommand -> doInfo    subcommand
     Explain subcommand -> doExplain subcommand
+
+-- The Windows console renders program output through its own code page, a CP437-era default that garbles UTF-8,
+-- so slap asks it to listen in UTF-8 for the run and puts its choice back on the way out.
+-- Elsewhere there is no console code page to ask.
+#if defined(mingw32_HOST_OS)
+foreign import ccall unsafe "windows.h GetConsoleOutputCP" getConsoleOutputCodePage :: IO Word32
+foreign import ccall unsafe "windows.h SetConsoleOutputCP" setConsoleOutputCodePage :: Word32 -> IO CInt
+
+withConsoleListeningInUtf8 :: IO a -> IO a
+withConsoleListeningInUtf8 body =
+  bracket rememberAndRetune restore (const body)
+  where
+    utf8CodePage = 65001
+    rememberAndRetune = do
+      originalCodePage <- getConsoleOutputCodePage
+      _ <- setConsoleOutputCodePage utf8CodePage
+      pure originalCodePage
+    restore originalCodePage = () <$ setConsoleOutputCodePage originalCodePage
+#else
+withConsoleListeningInUtf8 :: IO a -> IO a
+withConsoleListeningInUtf8 = id
+#endif
 
 ----------------------------------------------------------------------------
 -- Archive-aware file reading
