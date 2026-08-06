@@ -99,19 +99,19 @@ renderToolAlternatives tools = case map unToolName tools of
 renderSlapError :: SlapError -> Text
 
 renderSlapError (MissingInputFile path) =
-  "cannot read " <> Text.pack path <> ": file not found"
+  "cannot read " <> pathText path <> ": file not found"
 
 renderSlapError (UnreadableInputFile path reason) =
-  "cannot read " <> Text.pack path <> ": " <> Text.pack reason
+  "cannot read " <> pathText path <> ": " <> Text.pack reason
 
 renderSlapError (UnwritableOutputFile path reason) =
-  "cannot write " <> Text.pack path <> ": " <> Text.pack reason
+  "cannot write " <> pathText path <> ": " <> Text.pack reason
 
 renderSlapError (OutputFileExists path) =
   pathText path <> " already exists (use --force to overwrite)"
 
 renderSlapError (NothingToExtract path subject) =
-  "no " <> subjectText <> " to extract to " <> Text.pack path
+  "no " <> subjectText <> " to extract to " <> pathText path
   where subjectText = case subject of
           EmbeddedMetadataSubject -> "embedded metadata"
           FileIdDizSubject        -> "FILE_ID.DIZ"

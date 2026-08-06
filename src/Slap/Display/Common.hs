@@ -212,9 +212,11 @@ renderHexAsText value = Text.pack (showHex value "")
 ----------------------------------------------------------------------------
 
 -- | Lift a 'FilePath' (slap honours it as 'String') into 'Text' for interpolation into a 'Text' diagnostic.
--- The lift is named so the 'FilePath' → 'Text' boundary is visible at every site it crosses.
+-- The lift is named so the 'FilePath' → 'Text' boundary is visible at every site it crosses,
+-- and it escapes what it carries: a path is whatever the user or an archive's entry list named it,
+-- which can hold anything a byte can spell.
 pathText :: FilePath -> Text
-pathText = Text.pack
+pathText = renderEscapingNonPrintable . Text.pack
 
 -- | Join nouns the way a sentence would: "CRC", "CRC and MD5", "CRC, MD5, and SHA1".
 proseList :: [Text] -> Text

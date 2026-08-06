@@ -21,13 +21,12 @@ import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
-import qualified Data.Text as Text
 import GHC.Generics (Generic, Generically(..))
 import Slap.Display.Common (InfoLine(..), renderInfoLine, Tally(..), CountUnit, ByteCount,
                              FormatHeader, renderFormatHeader,
                              renderCountUnit, pluralCountUnit,
                              renderByteCount, renderOffsetRange,
-                             renderAsText, proseList)
+                             renderAsText, proseList, pathText)
 import Slap.Display.EmbeddedContent (EmbeddedContent, EmbeddedDepth(..), renderEmbedded)
 import Slap.Display.Glyph (spacePaddedRightwardsArrow)
 import Slap.Measure (OffsetRange)
@@ -87,7 +86,7 @@ renderActionLine actionVerb info outputPath =
         Nothing    -> ""
         Just bytes -> ", " <> renderByteCount bytes
   in actionVerb <> " " <> countPhrase <> bytesSuffix
-     <> spacePaddedRightwardsArrow <> Text.pack outputPath
+     <> spacePaddedRightwardsArrow <> pathText outputPath
 
 -- | The verdict on the file the user handed in.
 newtype InputSideVerdict = InputSideVerdict VerificationVerdict
