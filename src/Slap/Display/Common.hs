@@ -36,7 +36,7 @@ import qualified Data.Text as Text
 import Data.Word (Word64)
 import GHC.Generics (Generic, Generically(..))
 import Numeric (showHex)
-import Slap.Display.Primitives (padHex)
+import Slap.Display.Primitives (padHex, renderEscapingNonPrintable)
 import Slap.FormatLabel (FormatLabel, formatLabelName)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      OffsetRange(..), rangeLastByte)
@@ -57,9 +57,11 @@ data InfoLine = InfoLine
     deriving (ToJSON) via Generically InfoLine
 
 -- | Render an 'InfoLine' with column-13 alignment.
+-- The value may carry patch-supplied text, so anything unprintable in it is shown escaped here —
+-- one home, which no format's Describe can forget to consult.
 renderInfoLine :: InfoLine -> Text
 renderInfoLine (InfoLine label value) =
-  label <> ":" <> Text.replicate (max 1 (13 - Text.length label - 1)) " " <> value
+  label <> ":" <> Text.replicate (max 1 (13 - Text.length label - 1)) " " <> renderEscapingNonPrintable value
 
 ----------------------------------------------------------------------------
 -- Tally and CountUnit
