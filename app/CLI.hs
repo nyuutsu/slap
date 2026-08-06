@@ -331,15 +331,22 @@ versionInfo = infoOption ("slap " ++ showVersion Paths_slap.version)
  <> help "Show the version and exit" )
 
 options :: ParserInfo Command
-options = info (commandParser <**> encodingsInfo <**> versionInfo <**> helper)
+options = info (commandParser <**> encodingsInfo <**> versionInfo <**> frontPageHelper)
   (fullDesc <> header "slap - multi-format ROM patching tool"
             <> progDesc "Apply, undo, create, convert, and inspect ROM patches. Format is auto-detected"
             <> footerDoc (Just (vcat
                 [ pretty ("Quick start:  slap apply PATCH ROM" :: String)
                 , pretty ("              slap apply patch.bps game.rom -o patched.rom" :: String)
-                , pretty ("" :: String)
-                , pretty ("Run 'slap COMMAND --help' for a command's options" :: String)
                 ])))
+
+-- | The front page's own @-h,--help@ row also says that every command has a help page,
+-- with a real invocation to copy: the one row a lost reader is certain to reach.
+frontPageHelper :: Parser (a -> a)
+frontPageHelper = abortOption (ShowHelpText Nothing)
+  ( long "help"
+ <> short 'h'
+ <> hidden
+ <> help "Show this help text. Each command carries its own: slap apply --help" )
 
 commandParser :: Parser Command
 commandParser = subparser

@@ -8,7 +8,7 @@ slapBinary="$1"
 manOutput="$2"
 
 commandRoster="$("$slapBinary" --help | awk '
-  /Available commands:/ { scanning = 1; next }
+  /Available commands/ { scanning = 1; next }
   /Quick start/         { scanning = 0 }
   scanning && /^ +[a-z-]+($| )/ { print $1 }')"
 [ -n "$commandRoster" ] || { echo "generate-man.sh: found no commands in $slapBinary --help" >&2; exit 1; }
