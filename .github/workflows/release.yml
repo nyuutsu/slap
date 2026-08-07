@@ -51,7 +51,7 @@ jobs:
             -v "$PWD/.release-caches/cabal-state:/root/.local/state/cabal" \
             -v "$PWD/.release-caches/cabal-packages:/root/.cache/cabal/packages" \
             -v "$PWD/.release-caches/cargo-registry:/root/.cargo/registry" \
-            -e GHC_VERSION \
+            -e GHC_VERSION -e GITHUB_REF -e GITHUB_REF_NAME \
             alpine:3.21 sh .github/build-linux.sh ${{ matrix.platform }}
           sudo chown -R "$(id -u):$(id -g)" .release-caches slap-*.tar.gz
       - uses: actions/attest-build-provenance@v2
