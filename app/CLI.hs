@@ -36,7 +36,7 @@ module CLI
   , parseCommandLine
   ) where
 
-import Slap.Convert (CreateFormat(..), DifferentialCreate(CreateBPS),
+import Slap.Convert (CreateFormat(..),
                      advertisedCreateFormats, lookupCreateFormatToken,
                      metadataRequests,
                      RequestedPatchMetadata(..),
@@ -273,11 +273,11 @@ data UndoCommand = UndoCommand
   }
 
 data CreateCommand = CreateCommand
-  { createFormat      :: CreateFormat
+  { createFormat      :: Maybe CreateFormat
   , createFileReading :: FileReadingOptions
   , createOriginal    :: FilePath
   , createModified    :: FilePath
-  , createOutput      :: FilePath
+  , createOutput      :: Maybe FilePath
   , createMetadata    :: CreateMetadataInputs
   , createConstraints :: RequestedConstraints
   , createOverwritePolicy :: OverwritePolicy
@@ -550,7 +550,8 @@ createParser = do
     fileReadingOptions <- fileReadingOptionsParser
     original           <- pathArgument (metavar "ORIGINAL" <> help "Original unmodified file")
     modified           <- pathArgument (metavar "MODIFIED" <> help "Modified file")
-    outputFile         <- pathArgument (metavar "OUTPUT"   <> help "Output patch file")
+    outputFile         <- optional (pathArgument (metavar "OUTPUT"
+                            <> help "Output patch file; its extension picks the format unless --format says otherwise"))
     metadataInputs     <- createMetadataInputsParser
     constraints        <- constraintsParser
     overwritePolicy    <- overwritePolicyFlag
@@ -634,12 +635,12 @@ convertWithSourceParser = ConvertWithSource
 
 -- | The output-format flag for @slap create@.
 -- Defaults to BPS, so the bare @slap create base mod out@ works without spelling out a format.
-createFormatParser :: Parser CreateFormat
-createFormatParser = option (eitherReader parseCreateFormat)
-  (long "format" <> metavar "FMT" <> value (CreateDifferential CreateBPS)
+createFormatParser :: Parser (Maybe CreateFormat)
+createFormatParser = optional (option (eitherReader parseCreateFormat)
+  (long "format" <> metavar "FMT"
     <> completeWith advertisedCreateFormats
     <> help ("Output format: " ++ intercalate ", " advertisedCreateFormats
-              ++ " (default: bps)"))
+              ++ " (default: read from the output's extension, else bps)")))
 
 -- | The target-format flag for @slap convert@.
 -- No default: conversion has to know what it is converting to.

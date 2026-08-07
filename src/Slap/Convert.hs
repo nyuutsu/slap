@@ -50,6 +50,8 @@ module Slap.Convert
   , mergeRequestedMetadata
   , rejectCrossPlatformRomTypeRetag
   , formatExtension
+  , formatsNamedByExtension
+  , resolveCreateFormat
   , formatName
   , createFormatLabel
   , TokenVisibility(..)
@@ -137,7 +139,7 @@ import Slap.Narrow (EncodedHunk, EncodingLimits(..),
                     narrowHunks, narrowUndoHunks)
 import Slap.Constraint (Constraint(..))
 import Slap.Dialect (Dialect(..), PatchOrigin(..))
-import Slap.Status (SlapError(..), SlapAdvisory(..), UndoRecordCount(..), DroppedValue(..),
+import Slap.Status (SlapError(..), OutputExtension(..), FormatToken(..), FormatExtension(..), SlapAdvisory(..), UndoRecordCount(..), DroppedValue(..),
                     DroppedDescriptionText(..), CreateResult(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.MetadataField (MetadataField(..), MetadataRequest(..), DroppableField(..),
@@ -157,8 +159,10 @@ import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Char (toLower)
+import System.FilePath (takeExtension)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
+import Data.List (stripPrefix)
 import Data.Maybe (fromMaybe, isJust, isNothing)
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -1566,6 +1570,8 @@ createFormatTokens =
   , ("ninja1",  CreateDirect       CreateNINJA1, Canonical)
   , ("dps",     CreateDifferential CreateDPS,    Canonical)
   , ("ninja2",  CreateDifferential CreateNINJA2, Canonical)
+    -- NINJA1 and NINJA2 share the .rup extension, and what people have is NINJA2.
+  , ("rup",     CreateDifferential CreateNINJA2, Alias)
   , ("aps-n64", CreateDirect       CreateAPSN64, Canonical)
   , ("apsn64",  CreateDirect       CreateAPSN64, Alias)
   , ("aps-gba", CreateDifferential CreateAPSGBA, Canonical)
@@ -1593,6 +1599,66 @@ lookupCreateFormatToken input =
 formatExtension :: CreateFormat -> String
 formatExtension (CreateDirect format) = directExtension format
 formatExtension (CreateDifferential format) = differentialExtension format
+
+-- | The canonical token for a format: what to tell someone to type.
+createFormatToken :: CreateFormat -> String
+createFormatToken wanted =
+  case [token | (token, format, Canonical) <- createFormatTokens, format == wanted] of
+    token : _ -> token
+    []        -> error ("no canonical token names " ++ Text.unpack (formatName wanted))
+
+-- | Every format slap creates: the canonical rows, which name each exactly once.
+everyCreateFormat :: [CreateFormat]
+everyCreateFormat = [format | (_token, format, Canonical) <- createFormatTokens]
+
+-- | Extensions people write by hand that slap never produces itself.
+-- Both members of each pair are VCDIFF on the wire, so either name tells the truth about either patch.
+extensionsSlapDoesNotWrite :: [(String, [CreateFormat])]
+extensionsSlapDoesNotWrite =
+  [ (".vcdiff", [CreateDifferential CreateRFCVCDIFF, CreateDifferential CreateXDelta3])
+  , (".xdelta", [CreateDifferential CreateXDelta1,   CreateDifferential CreateXDelta3])
+  ]
+
+-- | An output's extension as its name gives it: lowercased, dot and all, and empty where the name carries none.
+outputExtensionOf :: FilePath -> String
+outputExtensionOf = map toLower . takeExtension
+
+-- | The formats an extension tells the truth about. Empty for an extension that says nothing about format.
+formatsNamedByExtension :: String -> [CreateFormat]
+formatsNamedByExtension extension =
+  [format | format <- everyCreateFormat, formatExtension format == extension]
+  ++ concat [formats | (wild, formats) <- extensionsSlapDoesNotWrite, wild == extension]
+
+-- | The one format an extension is understood to mean, where the tokens settle it — @.ppf@ is a PPF3,
+-- @.ips@ an IPS. 'Nothing' where the name alone cannot say, as @.aps@ cannot choose between its two consoles.
+formatMeantByExtension :: String -> Maybe CreateFormat
+formatMeantByExtension extension = stripPrefix "." extension >>= lookupCreateFormatToken
+
+-- | What format to write, from what @--format@ said and what the output is called.
+-- A name that says nothing about format leaves the choice to @--format@, and BPS where that is silent too;
+-- a name that speaks is heeded, and refused only where it disagrees with @--format@ or cannot pick between its own formats.
+resolveCreateFormat :: Maybe CreateFormat -> Maybe FilePath -> Either SlapError CreateFormat
+resolveCreateFormat requestedFormat outputPath =
+  case (requestedFormat, formatsNamedByExtension extension) of
+    (Just wanted, namedFormats)
+      | null namedFormats || wanted `elem` namedFormats -> Right wanted
+      | otherwise -> Left (OutputNameContradictsFormat (OutputExtension (Text.pack extension))
+                                                       (tokenOf wanted)
+                                                       (FormatExtension (Text.pack (formatExtension wanted)))
+                                                       (tokensOf namedFormats))
+    (Nothing, namedFormats) -> case formatMeantByExtension extension of
+      Just meant -> Right meant
+      Nothing | null namedFormats -> Right (CreateDifferential CreateBPS)
+              | otherwise -> Left (OutputNameNamesSeveralFormats (OutputExtension (Text.pack extension))
+                                                                 (tokensOf namedFormats))
+  where
+    extension = maybe "" outputExtensionOf outputPath
+    tokenOf   = FormatToken . Text.pack . createFormatToken
+    -- the reading the name is understood to have leads, so the likeliest answer is the one offered first
+    tokensOf namedFormats = NonEmpty.fromList (map tokenOf (likeliestFirst namedFormats))
+    likeliestFirst namedFormats = case formatMeantByExtension extension of
+      Just meant | meant `elem` namedFormats -> meant : filter (/= meant) namedFormats
+      _                                      -> namedFormats
 
 formatName :: CreateFormat -> Text.Text
 formatName (CreateDirect format) = directName format

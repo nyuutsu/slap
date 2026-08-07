@@ -34,7 +34,7 @@ import Slap.Convert (CreateFormat(..), DifferentialCreate(..),
                      createDefaultAdvisories, convertDirect, createFormatLabel,
                      mergeRequestedMetadata, rejectIncompatibleMetadataRequests,
                      EmbeddedBlobContents(..), EmbeddedBlobRequest(..),
-                     formatExtension, formatName)
+                     formatExtension, formatName, resolveCreateFormat)
 import Slap.XDelta1.Types (ResolvedXDelta1FileNames,
                            resolveXDelta1FileNames,
                            requireXDelta1FileNames,
@@ -83,6 +83,7 @@ import CLI
 import Archive (unwrapArchive)
 
 import Data.ByteString (ByteString)
+import Data.Maybe (fromMaybe)
 import qualified Data.ByteString as ByteString
 import Control.Exception (try, bracketOnError)
 #if defined(mingw32_HOST_OS)
@@ -428,17 +429,20 @@ doUndo parsedCommand = do
 
 doCreate :: CreateCommand -> IO ()
 doCreate parsedCommand = do
-  orBail (rejectIncompatibleMetadataRequests (createFormat parsedCommand) (createMetadataRequests (createMetadata parsedCommand)))
-  createMeta    <- resolveCreateMetadata (createFormatLabel (createFormat parsedCommand)) (createMetadata parsedCommand)
-  orBail (rejectUnencodableSecondaryCompressor (createFormat parsedCommand) createMeta)
-  orBail (rejectIncompatibleConstraints (createFormat parsedCommand) (createConstraints parsedCommand))
-  resolvedXDelta1Names <- orBail (resolveCreateXDelta1Names parsedCommand createMeta)
-  refuseOverwrite (createOverwritePolicy parsedCommand) (createOutput parsedCommand)
+  targetFormat <- orBail (resolveCreateFormat (createFormat parsedCommand) (createOutput parsedCommand))
+  let outputPath = fromMaybe (replaceExtension (createModified parsedCommand) (formatExtension targetFormat))
+                             (createOutput parsedCommand)
+  orBail (rejectIncompatibleMetadataRequests targetFormat (createMetadataRequests (createMetadata parsedCommand)))
+  createMeta    <- resolveCreateMetadata (createFormatLabel targetFormat) (createMetadata parsedCommand)
+  orBail (rejectUnencodableSecondaryCompressor targetFormat createMeta)
+  orBail (rejectIncompatibleConstraints targetFormat (createConstraints parsedCommand))
+  resolvedXDelta1Names <- orBail (resolveCreateXDelta1Names targetFormat parsedCommand createMeta)
+  refuseOverwrite (createOverwritePolicy parsedCommand) outputPath
   originalBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createOriginal parsedCommand)
   modifiedBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createModified parsedCommand)
-  emitAdvisories (createDefaultAdvisories (createFormat parsedCommand) createMeta (InputFileContents originalBytes))
+  emitAdvisories (createDefaultAdvisories targetFormat createMeta (InputFileContents originalBytes))
   result <- orBail (createPatch
-                     (createFormat parsedCommand)
+                     targetFormat
                      resolvedXDelta1Names
                      (InputFileContents originalBytes)
                      (OutputFileContents modifiedBytes)
@@ -447,17 +451,22 @@ doCreate parsedCommand = do
                      (createConstraints parsedCommand)
                      noDialectsRequested)
   emitAdvisories (resultAdvisories result)
-  writeOutputFile (createOutput parsedCommand) (unPatchFileContents (resultBytes result))
-  TextIO.putStrLn ("wrote " <> pathText (createOutput parsedCommand))
+  writeOutputFile outputPath (unPatchFileContents (resultBytes result))
+  TextIO.putStrLn ("wrote " <> pathText outputPath)
+
+explicitConvertOutput :: ConvertOutput -> Maybe FilePath
+explicitConvertOutput (ConvertToExplicitFile path _policy) = Just path
+explicitConvertOutput (ConvertToDerivedFile _policy)       = Nothing
 
 -- | Resolve the xdelta1 file-name pair for @slap create@,
 -- falling back to the basename of the source\/target file paths when the CLI flags are absent.
 -- 'Just' iff the target format is xdelta1; 'Nothing' for every other target.
 resolveCreateXDelta1Names
-  :: CreateCommand
+  :: CreateFormat
+  -> CreateCommand
   -> RequestedPatchMetadata
   -> Either SlapError (Maybe ResolvedXDelta1FileNames)
-resolveCreateXDelta1Names parsedCommand createMeta = case createFormat parsedCommand of
+resolveCreateXDelta1Names targetFormat parsedCommand createMeta = case targetFormat of
   CreateDifferential CreateXDelta1 -> fmap Just $
     resolveXDelta1FileNames
       (fmap unXDelta1FromName (requestedXDelta1FromName createMeta))
@@ -492,6 +501,7 @@ chooseConvertDispatch parsedCommand parsed =
 
 doConvert :: ConvertCommand -> IO ()
 doConvert parsedCommand = do
+  _ <- orBail (resolveCreateFormat (Just (convertTo parsedCommand)) (explicitConvertOutput (convertOutput parsedCommand)))
   orBail (rejectIncompatibleMetadataRequests (convertTo parsedCommand) (convertMetadataRequests (convertMetadata parsedCommand)))
   cliMeta <- resolveConvertMetadata (createFormatLabel (convertTo parsedCommand)) (convertMetadataEncoding parsedCommand) (convertMetadata parsedCommand)
   orBail (rejectUnencodableSecondaryCompressor (convertTo parsedCommand) cliMeta)

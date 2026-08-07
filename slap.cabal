@@ -257,6 +257,7 @@ test-suite props
                   , Props.Classify
                   , Props.ClassifyTargetCopy
                   , Props.Contracts
+                  , Props.CreateFormatFromName
                   , Props.Detection
                   , Props.EBPMetadata
                   , Props.Helpers

@@ -38,7 +38,7 @@ import Slap.Status.Decompression (renderDecompressionFailure,
                                   XDelta1DiffCause(..), BSDiffDifferCause(..), GDIFFDiffCause(..),
                                   SecondaryStreamGranularity(..),
                                   secondaryStreamGranularity, secondaryStreamPossessive)
-import Slap.Status.Error (SlapError(..), UnencodeabilityReason(..), SourceRequiredCause(..))
+import Slap.Status.Error (SlapError(..), OutputExtension(..), FormatToken(..), FormatExtension(..), UnencodeabilityReason(..), SourceRequiredCause(..))
 import Slap.Status.Render.Advisory (renderVerificationMismatch, plural)
 import Slap.Status.VCDIFF (VCDIFFShapeViolation(..), VCDIFFCodeTableMalformation(..),
                            codeTableFieldName, codeTableTemplateKindPhrase, indicatorKindName,
@@ -57,9 +57,20 @@ import Slap.Status.XDelta1 (XDelta1KnownUnsupportedVersion(..), XDelta1ShapeViol
 import Data.Bits (testBit)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as Text
+
+unFormatToken :: FormatToken -> Text
+unFormatToken (FormatToken token) = token
+
+-- | "ips or ips32"; "ppf1, ppf2, ppf3, or ppf4". The formats an extension could name are alternatives, not a set.
+tokenAlternatives :: NonEmpty FormatToken -> Text
+tokenAlternatives tokens = case map unFormatToken (NonEmpty.toList tokens) of
+  [onlyToken]             -> onlyToken
+  [firstToken, lastToken] -> firstToken <> " or " <> lastToken
+  manyTokens              -> Text.intercalate ", " (init manyTokens) <> ", or " <> last manyTokens
 
 renderUnwrapError :: FilePath -> ArchiveFormat -> UnwrapError -> Text
 renderUnwrapError path format NoToolForArchive =
@@ -109,6 +120,15 @@ renderSlapError (UnwritableOutputFile path reason) =
 
 renderSlapError (OutputFileExists path) =
   pathText path <> " already exists (use --force to overwrite)"
+
+renderSlapError (OutputNameContradictsFormat (OutputExtension extension) (FormatToken asked) (FormatExtension askedExtension) namedFormats) =
+  "the output is named " <> extension <> ", which is " <> tokenAlternatives namedFormats
+  <> ", but the patch being written is " <> asked
+  <> " (name it " <> askedExtension <> ", or ask for " <> NonEmpty.head (fmap unFormatToken namedFormats) <> ")"
+
+renderSlapError (OutputNameNamesSeveralFormats (OutputExtension extension) namedFormats) =
+  "the output is named " <> extension <> ", which is " <> tokenAlternatives namedFormats
+  <> "; say which with --format"
 
 renderSlapError (NothingToExtract path subject) =
   "no " <> subjectText <> " to extract to " <> pathText path

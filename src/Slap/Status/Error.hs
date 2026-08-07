@@ -4,6 +4,9 @@
 -- | 'SlapError': everything that halts slap.
 module Slap.Status.Error
   ( SlapError(..)
+  , OutputExtension(..)
+  , FormatToken(..)
+  , FormatExtension(..)
   , UnencodeabilityReason(..)
   , SourceRequiredCause(..)
   , addressableByteCount
@@ -49,8 +52,24 @@ import Data.Aeson (ToJSON)
 import Data.Bifunctor (first)
 import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty)
+import Data.Text (Text)
 import Data.Word (Word8)
 import GHC.Generics (Generic, Generically(..))
+
+-- | An output path's extension, lowercased, dot and all.
+newtype OutputExtension = OutputExtension Text
+  deriving (Show, Eq)
+  deriving newtype (ToJSON)
+
+-- | A token @--format@ accepts.
+newtype FormatToken = FormatToken Text
+  deriving (Show, Eq)
+  deriving newtype (ToJSON)
+
+-- | The extension a format's patches are given.
+newtype FormatExtension = FormatExtension Text
+  deriving (Show, Eq)
+  deriving newtype (ToJSON)
 
 -- | Why a (source, target) pair cannot be encoded in some format. Carried by 'UnencodeablePair'.
 data UnencodeabilityReason
@@ -91,6 +110,12 @@ data SlapError
 
   -- | The destination already exists and the user did not pass @--force@.
   | OutputFileExists FilePath
+
+  -- | The output is named for one format and the patch being written is another.
+  | OutputNameContradictsFormat OutputExtension FormatToken FormatExtension (NonEmpty FormatToken)
+
+  -- | Nothing said which format to write, and the output's name speaks for more than one.
+  | OutputNameNamesSeveralFormats OutputExtension (NonEmpty FormatToken)
 
   -- | @info --extract-metadata@ or @--extract-diz@ found nothing to write.
   | NothingToExtract FilePath ExtractionSubject

@@ -56,6 +56,7 @@ import qualified Props.BPSMetadata as BPSMetadata
 import qualified Props.Classify as Classify
 import qualified Props.ClassifyTargetCopy as ClassifyTargetCopy
 import qualified Props.Contracts as Contracts
+import qualified Props.CreateFormatFromName as CreateFormatFromName
 import qualified Props.Detection as Detection
 import qualified Props.EBPMetadata as EBPMetadata
 import qualified Props.Identity as Identity
@@ -87,6 +88,7 @@ main = defaultMain $ testGroup "Properties"
   , Identity.identityTests
   , Undo.undoTests
   , Contracts.contractTests
+  , CreateFormatFromName.createFormatFromNameTests
   , Text.textTests
   , Detection.detectionTests
   , BPSMetadata.bpsMetadataTests
