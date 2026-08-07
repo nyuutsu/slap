@@ -98,6 +98,8 @@ jobs:
           printf 'extra-lib-dirs: %s/rusty-slap/target/release\n' "$PWD" > cabal.project.release.local
           cabal update
           cabal build exe:slap --project-file=cabal.project.release
+          # stripped before signing: editing a signed binary voids the signature
+          strip "$(cabal -v0 list-bin exe:slap --project-file=cabal.project.release)"
       - name: props
         run: cabal test props --project-file=cabal.project.release --test-show-details=direct
       - name: sign and notarize

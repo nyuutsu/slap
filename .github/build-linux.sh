@@ -28,7 +28,9 @@ RUSTFLAGS='' cargo build --release --locked --manifest-path rusty-slap/Cargo.tom
 printf 'extra-lib-dirs: %s/rusty-slap/target/release\n' "$PWD" > cabal.project.release.local
 cabal update
 cabal build exe:slap --project-file=cabal.project.release --enable-executable-static --ghc-options=-split-sections
-file "$(cabal -v0 list-bin exe:slap --project-file=cabal.project.release)" | grep -q 'statically linked'
+slapBinary="$(cabal -v0 list-bin exe:slap --project-file=cabal.project.release)"
+file "$slapBinary" | grep -q 'statically linked'
+strip "$slapBinary"
 
 # props only: the integration suite reads ROMs that cannot be in CI; it stays make test's job
 cabal test props --project-file=cabal.project.release --enable-executable-static --ghc-options=-split-sections --test-show-details=direct

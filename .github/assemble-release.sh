@@ -1,5 +1,5 @@
 #!/bin/sh
-# Assemble one release archive from the binary cabal just built: slap-VERSION-PLATFORM.tar.gz, or .zip for windows.
+# Assemble one release archive from the binary its lane has already finished: slap-VERSION-PLATFORM.tar.gz, or .zip for windows.
 # The man page and completions are generated from that very binary, so they cannot drift from it.
 #
 #   .github/assemble-release.sh x86_64-linux
