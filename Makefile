@@ -104,13 +104,15 @@ wasm-link-check: wasm
 
 # Native and wasm inspect the same patches and must speak byte-identical envelopes; cmp judges.
 # Sweeps every dm4y fixture (one patch per format) plus a non-patch, so a refusal envelope crosses too.
+# A side that cannot answer fails the run rather than supplying half of a match: two identical failures compare equal.
 wasm-parity-check: build wasm
 	. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal build slap-web-reactor $(WASM_CABAL_FLAGS)
 	@probe="$$(cabal -v0 list-bin slap-web-reactor)"; \
 	 reactor="$$(. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal -v0 list-bin slap-web-reactor $(WASM_CABAL_FLAGS))"; \
 	 workdir="$$(mktemp -d)"; trap 'rm -rf "$$workdir"' EXIT; \
-	 agree() { "$$probe" "$$@" > "$$workdir/native.json"; \
-	           node web-reactor/envelope-host.mjs "$$reactor" "$$@" > "$$workdir/wasm.json"; \
+	 agree() { "$$probe" "$$@" > "$$workdir/native.json" || { echo "the native probe could not answer $$*"; exit 1; }; \
+	           node web-reactor/envelope-host.mjs "$$reactor" "$$@" > "$$workdir/wasm.json" || { echo "the reactor could not answer $$*"; exit 1; }; \
+	           test -s "$$workdir/native.json" || { echo "the native probe answered nothing on $$*"; exit 1; }; \
 	           cmp "$$workdir/native.json" "$$workdir/wasm.json" || { echo "envelope parity FAILED on $$*"; exit 1; }; \
 	           echo "envelope parity holds on $$*"; }; \
 	 printf 'not a patch' > "$$workdir/unrecognized"; \
