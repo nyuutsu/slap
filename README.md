@@ -1,8 +1,8 @@
 # slap
 
-slap is a [rom](https://en.wikipedia.org/wiki/ROM_image) [patching](https://en.wikipedia.org/wiki/Patch_(computing)#Binary_patching) tool. See the [project page](https://nyuu.page/projects/slap/) for details about design decisions, performance, etc.
+slap is a rom patching tool. See the [project page](https://nyuu.page/projects/slap/) for details about design decisions, performance, etc.
 
-There is a web application; it lives [here](https://slap.nyuu.page)[^WEB].
+There is a web application; it lives [here](https://slap.nyuu.page)[^WEB]. There is also a CLI version, which is what this document is about. Precompiled builds can be found over in the [releases](https://github.com/nyuutsu/slap/releases) area. It can also be compiled locally.
 
 ## In a nutshell 🌰
 
@@ -16,19 +16,25 @@ slap understands: `APS-GBA`, `APS-N64`[^APS], `BPS`, `BSDiff`, `DPS`, `EBP`, `GD
 
 If your patch is tucked inside a `zip` or `7z` archive, slap will attempt to find and retrieve it.
 
-Here is a representative sample of everything you are likely to care about doing:
+Here are the two commands that are foundational, and are quite plausibly the only ones you will care about
 
 ```
 slap apply patch.bps rom.gba
-slap create original.gba modified.gba patch.bps
-slap create --format ips original.gba modified.gba patch.ips
+slap create original.gba modified.gba
+```
+
+create can be told *what* to create using `--format`, the output's file extension, or both. If given neither (as in the example above) it'll make a `bps`.
+
+Here are some somewhat deeper cuts
+
+```
+slap create --format ips original.gba modified.gba
+slap create original.gba modified.gba patch.ips
 slap info patch.ppf
 slap explain patch.ips
 ```
 
-(screenshot of explain can go here. maybe also of explain's dump records mode, of info, of an interesting info message?)
-
-Here are some longer or more esoteric things that can be done:
+And here is some esoteric stuff
 
 ```
 slap explain patch.bps --records --with original.gba
@@ -39,7 +45,7 @@ slap convert patch.ppf1 --to ppf3 --is-amiga-patch -o patch.ppf3
 slap create --format ninja2 --description "请输入描述" --title "my cool patch" --author "nyuu" --patch-version "69.420" --genre "😎" --language "unsure" --ninja2-text-mode "utf8" original.gba modified.gba
 ```
 
-The rest of this document is very long since there are a lot of niche options.
+The rest of this document explains the commands and the options available to them.
 
 ## Applying
 
@@ -76,15 +82,15 @@ Some patches exist the presence or absence of a rom header. In cases where the p
 Bottling the difference between an original file and a modified version.
 
 ```console
-slap create original.gba modified.gba patch.bps
+slap create original.gba modified.gba
+slap create original.gba modified.gba patch.ips
+slap create --format ips original.gba modified.gba
 slap create --format ips original.gba modified.gba patch.ips
 ```
 
-Without `--format`, slap makes a `BPS` patch.
-
 `--format`: Specify the patch format to be any of: `aps-gba`, `aps-n64`, `bps`, `bsdiff`, `dps`, `ebp`, `gdiff`, `ips`, `ips32`, `ninja1`, `ninja2`, `pmsr`, `ppf1`, `ppf2`, `ppf3`, `ppf4`, `rfc-vcdiff`, `ups`, `xdelta1`, `xdelta3`.
 
-`--raw`: This suppresses archive detection and unwrapping. This is the cousin of `slap apply`'s `--raw`. Its purpose is "My rom (concerningly!!!) starts with the zip magic bytes. Treat it like the rom it is anyway." You probably do not need this. You could, but shouldn't, use this to produce diffs of zip files.
+`--raw`: This suppresses archive detection and unwrapping. This is the cousin of `slap apply`'s `--raw`. Its purpose is "My rom (concerningly!) starts with the zip magic bytes. Treat it like the rom it is anyway." You probably do not need this. You could, but shouldn't, use this to produce diffs of zip files.
 
 ### Metadata
 
