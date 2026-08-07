@@ -9,11 +9,9 @@ platform="$1"
 # a workflow_dispatch run has no tag to be named after; its archives say dev
 case "${GITHUB_REF:-}" in refs/tags/*) version="${GITHUB_REF_NAME#v}" ;; *) version="dev" ;; esac
 
-slapBinary="$(cabal -v0 list-bin exe:slap --project-file=cabal.project.release)"
+slapBinary="$(cabal -v0 list-bin exe:slap)"
 # on windows, cabal speaks backslashes that this shell cannot follow
 command -v cygpath > /dev/null 2>&1 && slapBinary="$(cygpath -u "$slapBinary")"
-# a strip refusal leaves a heavier, still-correct binary
-strip "$slapBinary" 2>/dev/null || true
 ls -l "$slapBinary"
 
 stageName="slap-$version-$platform"

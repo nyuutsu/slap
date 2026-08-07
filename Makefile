@@ -5,9 +5,7 @@ PREFIX    ?= $(HOME)/.local
 # Match system make.conf: compile Rust for the host CPU. This Makefile builds slap for the machine it runs on.
 export RUSTFLAGS += -C target-cpu=native
 
-# Two flavors, one dist-newstyle. `make` iterates at -O0 with info-table provenance (both declared in cabal.project);
-# `make optimized` asks for -O2, which cabal keeps in its own output directory, so the flavors never disturb each other.
-.PHONY: all build optimized rusty-slap staticlib-wiring install man test haddock wasm wasm-optimized wasm-staticlib-wiring wasm-link-check wasm-parity-check wasm-worker-rig rusty-slap-wasm web web-optimized web-bake-surface web-check web-rig web-deploy clean
+.PHONY: all build rusty-slap staticlib-wiring install man test haddock wasm wasm-staticlib-wiring wasm-link-check wasm-parity-check wasm-worker-rig rusty-slap-wasm web web-bake-surface web-check web-rig web-deploy clean
 
 all: build
 
@@ -29,26 +27,23 @@ staticlib-wiring: rusty-slap
 build: staticlib-wiring
 	cabal build
 
-# The slap binary at -O2, for benchmarking and for `install`.
-optimized: staticlib-wiring
-	cabal build exe:slap -O2
-
-# Copy the optimized binary onto your PATH, with its man page and its shell completions.
+# Copy slap onto your PATH, with its man page and its shell completions.
 # PREFIX defaults to ~/.local; override it (PREFIX=/usr/local may need sudo).
 # The completions come out of the CLI parser itself, so they cannot drift from the flags slap actually takes;
 # all three shells are written whichever shell runs this, because a staged install has no shell of its own to detect.
-install: optimized
+install: build
 	mkdir -p "$(DESTDIR)$(PREFIX)/bin"
-	cp "$$(cabal -v0 list-bin -O2 slap)" "$(DESTDIR)$(PREFIX)/bin/slap"
+	cp "$$(cabal -v0 list-bin slap)" "$(DESTDIR)$(PREFIX)/bin/slap"
+	strip "$(DESTDIR)$(PREFIX)/bin/slap"
 	@echo "installed slap to $(DESTDIR)$(PREFIX)/bin/slap"
 	@if command -v help2man >/dev/null 2>&1; then \
 	  mkdir -p "$(DESTDIR)$(PREFIX)/share/man/man1"; \
-	  .github/generate-man.sh "$$(cabal -v0 list-bin -O2 slap)" "$(DESTDIR)$(PREFIX)/share/man/man1/slap.1"; \
+	  .github/generate-man.sh "$$(cabal -v0 list-bin slap)" "$(DESTDIR)$(PREFIX)/share/man/man1/slap.1"; \
 	  echo "installed man page to $(DESTDIR)$(PREFIX)/share/man/man1/slap.1"; \
 	else \
 	  echo "help2man not found; skipping man page (emerge dev-util/help2man to include it)"; \
 	fi
-	@slapBinary="$$(cabal -v0 list-bin -O2 slap)"; \
+	@slapBinary="$$(cabal -v0 list-bin slap)"; \
 	 mkdir -p "$(DESTDIR)$(PREFIX)/share/bash-completion/completions" \
 	          "$(DESTDIR)$(PREFIX)/share/zsh/site-functions" \
 	          "$(DESTDIR)$(PREFIX)/share/fish/vendor_completions.d"; \
@@ -102,11 +97,6 @@ wasm-staticlib-wiring: rusty-slap-wasm
 wasm: wasm-staticlib-wiring
 	. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal build slap-internal $(WASM_CABAL_FLAGS)
 
-# The browser artifact at -O2, for measuring what visitors would actually run.
-wasm-optimized: wasm-staticlib-wiring
-	. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal build slap-web-reactor -O2 $(WASM_CABAL_FLAGS)
-	@echo "optimized reactor at $$(. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal -v0 list-bin slap-web-reactor -O2 $(WASM_CABAL_FLAGS))"
-
 # Link the reactor over slap-web and prove one value survives the crossing: the JS host checks the CRC-32 of "123456789".
 wasm-link-check: wasm
 	. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal build slap-web-reactor $(WASM_CABAL_FLAGS)
@@ -156,34 +146,24 @@ wasm-worker-rig: wasm
 	@python3 -m http.server --bind 127.0.0.1 8000
 
 # Assemble the page and its reactor into dist-web/ — the tree slap.nyuu.page serves verbatim.
-# `make web` carries the everyday -O0 reactor for quick iteration; the deploy ships the -O2 one,
-# which runs the heavy analyses at full speed and weighs half as much on the wire.
 # The stamp keeps describe to hash and "-dirty": a tag name could carry an apostrophe into the stamp's quoted JS literal.
 # describe's own --dirty counts a submodule's uncommitted work as dirt, which says nothing about the page it stamps,
 # so the suffix is decided separately by a diff-index that ignores it. A moved submodule pointer still counts.
 stampedHash = $$(stamp=$$(git describe --always --exclude='*'); \
                  git diff-index --quiet --ignore-submodules=dirty HEAD || stamp="$$stamp-dirty"; \
                  printf %s "$$stamp")
-define assemble-web
+web: wasm
 	@if [ ! -f vendor/browser_wasi_shim/dist/index.js ]; then git submodule update --init vendor/browser_wasi_shim; fi
+	. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal build slap-web-reactor $(WASM_CABAL_FLAGS)
 	rm -rf dist-web
 	mkdir -p dist-web/reactor dist-web/vendor/browser_wasi_shim
 	cp -r web-page/. dist-web/
 	printf "export const buildStamp = 'this page was built on %s (%s)';\n" "$$(date +%F)" "$(stampedHash)" > dist-web/page/build-stamp.mjs
 	cp web-reactor/reactor-client.mjs web-reactor/envelope-worker.mjs dist-web/reactor/
-	cp "$$(. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal -v0 list-bin slap-web-reactor $(1) $(WASM_CABAL_FLAGS))" dist-web/reactor/slap-web-reactor.wasm
+	cp "$$(. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal -v0 list-bin slap-web-reactor $(WASM_CABAL_FLAGS))" dist-web/reactor/slap-web-reactor.wasm
 	cp -r vendor/browser_wasi_shim/dist dist-web/vendor/browser_wasi_shim/
 	node web-page/bake-service-worker.mjs dist-web "$(stampedHash)"
 	cd dist-web && node boot-check.mjs
-endef
-
-web: wasm
-	. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal build slap-web-reactor $(WASM_CABAL_FLAGS)
-	$(call assemble-web,)
-
-web-optimized: wasm
-	. $(HOME)/.ghc-wasm/env && wasm32-wasi-cabal build slap-web-reactor -O2 $(WASM_CABAL_FLAGS)
-	$(call assemble-web,-O2)
 
 # The stage furniture's rosters, spoken by the engine and baked into a page module; rebake when the census says they drifted.
 web-bake-surface: build
@@ -201,7 +181,7 @@ web-rig: web
 
 # The wasm rides precompressed: Caddy serves the sidecars as-is, so the wire pays brotli's ratio and the droplet no CPU.
 # Compression is cached by content digest — an unchanged reactor never pays for brotli -q 11 twice.
-web-deploy: web-optimized web-check
+web-deploy: web web-check
 	@wasmDigest="$$(sha256sum dist-web/reactor/slap-web-reactor.wasm | cut -d' ' -f1)"; \
 	 compressedCache="dist-newstyle-wasm/precompressed"; mkdir -p "$$compressedCache"; \
 	 if [ ! -f "$$compressedCache/$$wasmDigest.br" ]; then brotli -q 11 -o "$$compressedCache/$$wasmDigest.br" dist-web/reactor/slap-web-reactor.wasm; fi; \

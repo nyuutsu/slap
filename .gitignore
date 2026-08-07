@@ -20,7 +20,6 @@ dist-web/
 # Per-machine cabal overrides; `make`, `make wasm`, and the release rig write the rusty-slap link paths here
 cabal.project.local
 cabal.project.wasm32-wasi.local
-cabal.project.release.local
 
 # Claude Code local config
 .claude/

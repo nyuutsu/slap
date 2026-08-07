@@ -9,8 +9,7 @@ allow-newer:
     tasty-stats:*
   , encoding:containers
 
--- Match cabal.project: iterate at -O0; `make wasm-optimized` asks for -O2.
-optimization: 0
+optimization: 2
 
 -- The extra-lib-dirs pointing at the wasm32-wasip1 rusty-slap lives in cabal.project.wasm32-wasi.local,
 -- written by `make wasm`; ghc-pkg insists the path be absolute, so the committed file cannot carry it.

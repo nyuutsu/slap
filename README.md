@@ -349,7 +349,7 @@ rustup default stable
 Once those prerequisites are in place, building is straightforward:
 
 ```sh
-make optimized
+make
 ```
 
 At which point you could go find your newly-compiled program in `dist-newstyle/`. Or use `cabal run slap --` to run it from the project root, e.g. `cabal run slap -- info path/to/patch.ebp`. Or, and I like this approach more: `make install`; this allows using it without qualifiers, e.g. `slap info path/to/patch.rfc-vcdiff`.

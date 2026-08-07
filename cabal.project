@@ -5,12 +5,12 @@ allow-newer:
     tasty-stats:*
   , encoding:containers
 
--- Everyday builds iterate at -O0; `make optimized` asks for -O2, which cabal keeps in its own output directory.
-optimization: 0
+-- slap's job is crunching bytes, so there is one flavor and it is the fast one.
+optimization: 2
 
--- Info-table provenance, so backtraces name real constructors.
-package slap
-  ghc-options: -finfo-table-map -fdistinct-constructor-tables
+-- Compiled section by section, so the linker can drop whatever nothing reaches; darwin has no use for this and ignores it.
+package *
+  ghc-options: -split-sections
 
 -- One shared job pool for the whole build, sized to the machine's cores, so the big library stops compiling on a single core.
 semaphore: True

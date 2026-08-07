@@ -39,7 +39,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: .release-caches
-          key: release-dependencies-${{ matrix.platform }}-ghc${{ env.GHC_VERSION }}-${{ hashFiles('slap.cabal', 'cabal.project', 'cabal.project.release', 'rusty-slap/Cargo.lock') }}
+          key: release-dependencies-${{ matrix.platform }}-ghc${{ env.GHC_VERSION }}-${{ hashFiles('slap.cabal', 'cabal.project', 'rusty-slap/Cargo.lock') }}
           restore-keys: release-dependencies-${{ matrix.platform }}-ghc${{ env.GHC_VERSION }}-
       # build-linux.sh holds the whole alpine recipe; the container is an explicit docker run
       # because GitHub's runner cannot host JS actions inside an arm alpine container
@@ -86,7 +86,7 @@ jobs:
           path: |
             ${{ steps.haskell.outputs.cabal-store }}
             ~/.cargo/registry
-          key: release-dependencies-${{ runner.os }}-ghc${{ env.GHC_VERSION }}-${{ hashFiles('slap.cabal', 'cabal.project', 'cabal.project.release', 'rusty-slap/Cargo.lock') }}
+          key: release-dependencies-${{ runner.os }}-ghc${{ env.GHC_VERSION }}-${{ hashFiles('slap.cabal', 'cabal.project', 'rusty-slap/Cargo.lock') }}
           restore-keys: release-dependencies-${{ runner.os }}-ghc${{ env.GHC_VERSION }}-
       - name: help2man, for the man page
         run: brew install help2man
@@ -95,13 +95,13 @@ jobs:
         run: cargo build --release --locked --manifest-path rusty-slap/Cargo.toml
       - name: slap, release
         run: |
-          printf 'extra-lib-dirs: %s/rusty-slap/target/release\n' "$PWD" > cabal.project.release.local
+          printf 'extra-lib-dirs: %s/rusty-slap/target/release\n' "$PWD" > cabal.project.local
           cabal update
-          cabal build exe:slap --project-file=cabal.project.release
+          cabal build exe:slap
           # stripped before signing: editing a signed binary voids the signature
-          strip "$(cabal -v0 list-bin exe:slap --project-file=cabal.project.release)"
+          strip "$(cabal -v0 list-bin exe:slap)"
       - name: props
-        run: cabal test props --project-file=cabal.project.release --test-show-details=direct
+        run: cabal test props --test-show-details=direct
       - name: sign and notarize
         if: env.APPLE_SIGNING_ARMED == 'true'
         env:
@@ -119,7 +119,7 @@ jobs:
           printf %s "$APPLE_P12" | base64 -d > "$RUNNER_TEMP/certificate.p12"
           security import "$RUNNER_TEMP/certificate.p12" -k "$releaseKeychain" -P "$APPLE_P12_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S 'apple-tool:,apple:' -s -k ci "$releaseKeychain"
-          slapBinary="$(cabal -v0 list-bin exe:slap --project-file=cabal.project.release)"
+          slapBinary="$(cabal -v0 list-bin exe:slap)"
           codesign --sign "$APPLE_SIGNING_IDENTITY" --options runtime --timestamp "$slapBinary"
           # a bare executable cannot be stapled, so Gatekeeper verifies this notarization online on first run
           printf %s "$APPLE_API_KEY" > "$RUNNER_TEMP/notary-key.p8"
@@ -174,7 +174,7 @@ jobs:
           path: |
             ${{ steps.haskell.outputs.cabal-store }}
             ~/.cargo/registry
-          key: release-dependencies-${{ runner.os }}-ghc${{ env.GHC_VERSION }}-${{ hashFiles('slap.cabal', 'cabal.project', 'cabal.project.release', 'rusty-slap/Cargo.lock') }}
+          key: release-dependencies-${{ runner.os }}-ghc${{ env.GHC_VERSION }}-${{ hashFiles('slap.cabal', 'cabal.project', 'rusty-slap/Cargo.lock') }}
           restore-keys: release-dependencies-${{ runner.os }}-ghc${{ env.GHC_VERSION }}-
       - name: rusty-slap
         env: { RUSTFLAGS: '' }
@@ -186,22 +186,23 @@ jobs:
             rusty-slap/target/x86_64-pc-windows-gnu/release/librusty_slap.a
       - name: slap, release
         run: |
-          printf 'extra-lib-dirs: %s\n' "$(cygpath -m "$PWD/rusty-slap/target/x86_64-pc-windows-gnu/release")" > cabal.project.release.local
+          printf 'extra-lib-dirs: %s\n' "$(cygpath -m "$PWD/rusty-slap/target/x86_64-pc-windows-gnu/release")" > cabal.project.local
           cabal update
-          cabal build exe:slap --project-file=cabal.project.release
+          cabal build exe:slap
+          strip "$(cygpath -u "$(cabal -v0 list-bin exe:slap)")"
       # GHC's clang toolchain links exes against its private libunwind.dll: the runner finds it via PATH,
       # and the archive ships it beside slap.exe
       - name: put the toolchain's dlls on PATH
         run: cygpath -w "$(cygpath -u "$(ghc --print-libdir)")/../mingw/bin" >> "$GITHUB_PATH"
       - name: smoke the exe
         run: |
-          slapBinary="$(cygpath -u "$(cabal -v0 list-bin exe:slap --project-file=cabal.project.release)")"
+          slapBinary="$(cygpath -u "$(cabal -v0 list-bin exe:slap)")"
           ldd "$slapBinary" || true
           "$slapBinary" --version
       - name: props
         run: |
           chcp.com 65001   # the default console code page cannot spell the suite's output
-          cabal test props --project-file=cabal.project.release --test-show-details=direct
+          cabal test props --test-show-details=direct
       - name: assemble the archive
         run: .github/assemble-release.sh x86_64-windows
       - uses: actions/attest-build-provenance@v2

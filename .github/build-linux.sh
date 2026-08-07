@@ -25,14 +25,14 @@ PATH="$HOME/.cargo/bin:$PATH"
 # and a release runs on whatever CPU a stranger owns
 RUSTFLAGS='' cargo build --release --locked --manifest-path rusty-slap/Cargo.toml
 
-printf 'extra-lib-dirs: %s/rusty-slap/target/release\n' "$PWD" > cabal.project.release.local
+printf 'extra-lib-dirs: %s/rusty-slap/target/release\n' "$PWD" > cabal.project.local
 cabal update
-cabal build exe:slap --project-file=cabal.project.release --enable-executable-static --ghc-options=-split-sections
-slapBinary="$(cabal -v0 list-bin exe:slap --project-file=cabal.project.release)"
+cabal build exe:slap --enable-executable-static
+slapBinary="$(cabal -v0 list-bin exe:slap)"
 file "$slapBinary" | grep -q 'statically linked'
 strip "$slapBinary"
 
 # props only: the integration suite reads ROMs that cannot be in CI; it stays make test's job
-cabal test props --project-file=cabal.project.release --enable-executable-static --ghc-options=-split-sections --test-show-details=direct
+cabal test props --enable-executable-static --test-show-details=direct
 
 .github/assemble-release.sh "$platform"
